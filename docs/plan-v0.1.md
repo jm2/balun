@@ -6,7 +6,7 @@
 
 ## 1. Product direction
 
-Balun is a lightweight, fast, cross-desktop HDHomeRun live TV viewer built
+Balun is a lightweight cross-platform HDHomeRun live TV viewer built
 with Rust, GTK 4, libadwaita, and GStreamer.
 
 The first release will concentrate on one job: discover one or more HDHomeRun

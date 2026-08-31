@@ -1,0 +1,26 @@
+[package]
+name = "balun"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.94"
+description = "A lightweight cross-platform HDHomeRun live TV viewer"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/jm2/balun"
+authors = ["Balun Contributors"]
+
+[dependencies]
+crc32fast = "1.5"
+if-addrs = { version = "0.15", features = ["link-local"] }
+ipnet = "2.12"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = true
+
+[lints.rust]
+unsafe_code = "forbid"
