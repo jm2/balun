@@ -242,6 +242,7 @@ impl DiscoveryClient {
             destination,
             method: DiscoveryMethod::Targeted,
             interface: None,
+            accepted_source_network: None,
         };
 
         self.probe_endpoint(endpoint, expected_device, cancellation)
@@ -485,6 +486,26 @@ fn validate_endpoint(endpoint: &ProbeEndpoint) -> Result<(), DiscoveryError> {
             reason: "destination port is zero",
         });
     }
+    let source_policy_is_valid = match (endpoint.method, endpoint.accepted_source_network) {
+        (DiscoveryMethod::Targeted, None) => true,
+        (DiscoveryMethod::Ipv4Broadcast, Some(ipnet::IpNet::V4(network))) => {
+            matches!(endpoint.bind.ip(), std::net::IpAddr::V4(address) if network.contains(&address))
+                && endpoint.destination.ip() == std::net::IpAddr::V4(network.broadcast())
+        }
+        (
+            DiscoveryMethod::Ipv6LinkLocalMulticast | DiscoveryMethod::Ipv6SiteLocalMulticast,
+            Some(ipnet::IpNet::V6(network)),
+        ) => {
+            matches!(endpoint.bind.ip(), std::net::IpAddr::V6(address) if network.contains(&address))
+        }
+        _ => false,
+    };
+    if !source_policy_is_valid {
+        return Err(DiscoveryError::InvalidEndpoint {
+            endpoint: endpoint.destination,
+            reason: "discovery source policy does not match the probe method",
+        });
+    }
 
     Ok(())
 }
@@ -497,8 +518,24 @@ fn source_matches(endpoint: &ProbeEndpoint, source: SocketAddr) -> bool {
     {
         return false;
     }
+    if endpoint.method == DiscoveryMethod::Ipv6LinkLocalMulticast
+        && !matches!(
+            (endpoint.bind, source),
+            (SocketAddr::V6(bind), SocketAddr::V6(source))
+                if bind.scope_id() != 0 && source.scope_id() == bind.scope_id()
+        )
+    {
+        return false;
+    }
 
-    endpoint.method != DiscoveryMethod::Targeted || source.ip() == endpoint.destination.ip()
+    match endpoint.method {
+        DiscoveryMethod::Targeted => source.ip() == endpoint.destination.ip(),
+        DiscoveryMethod::Ipv4Broadcast
+        | DiscoveryMethod::Ipv6LinkLocalMulticast
+        | DiscoveryMethod::Ipv6SiteLocalMulticast => endpoint
+            .accepted_source_network
+            .is_some_and(|network| network.contains(&source.ip())),
+    }
 }
 
 fn invalid_target(destination: SocketAddr) -> bool {
@@ -577,6 +614,7 @@ mod tests {
             destination: "192.0.2.10:65001".parse().unwrap(),
             method: DiscoveryMethod::Targeted,
             interface: None,
+            accepted_source_network: None,
         };
 
         assert!(source_matches(
@@ -594,12 +632,13 @@ mod tests {
     }
 
     #[test]
-    fn broadcast_source_can_be_any_unicast_in_family() {
+    fn broadcast_source_must_belong_to_the_probed_interface_prefix() {
         let endpoint = ProbeEndpoint {
             bind: "192.0.2.20:0".parse().unwrap(),
             destination: "192.0.2.255:65001".parse().unwrap(),
             method: DiscoveryMethod::Ipv4Broadcast,
             interface: Some("test0".to_owned()),
+            accepted_source_network: Some("192.0.2.0/24".parse().unwrap()),
         };
 
         assert!(source_matches(
@@ -609,6 +648,61 @@ mod tests {
         assert!(!source_matches(
             &endpoint,
             "[2001:db8::10]:65001".parse().unwrap()
+        ));
+        assert!(!source_matches(
+            &endpoint,
+            "198.51.100.10:65001".parse().unwrap()
+        ));
+    }
+
+    #[test]
+    fn validates_method_specific_source_policies() {
+        let valid = ProbeEndpoint {
+            bind: "192.0.2.20:0".parse().unwrap(),
+            destination: "192.0.2.255:65001".parse().unwrap(),
+            method: DiscoveryMethod::Ipv4Broadcast,
+            interface: Some("test0".to_owned()),
+            accepted_source_network: Some("192.0.2.0/24".parse().unwrap()),
+        };
+        assert!(validate_endpoint(&valid).is_ok());
+
+        let mut wrong_prefix = valid.clone();
+        wrong_prefix.accepted_source_network = Some("198.51.100.0/24".parse().unwrap());
+        assert!(matches!(
+            validate_endpoint(&wrong_prefix),
+            Err(DiscoveryError::InvalidEndpoint { .. })
+        ));
+
+        let mut targeted_with_prefix = valid;
+        targeted_with_prefix.method = DiscoveryMethod::Targeted;
+        targeted_with_prefix.destination = "192.0.2.10:65001".parse().unwrap();
+        assert!(matches!(
+            validate_endpoint(&targeted_with_prefix),
+            Err(DiscoveryError::InvalidEndpoint { .. })
+        ));
+    }
+
+    #[test]
+    fn link_local_multicast_source_must_match_the_interface_scope() {
+        let endpoint = ProbeEndpoint {
+            bind: "[fe80::20%7]:0".parse().unwrap(),
+            destination: "[ff02::176%7]:65001".parse().unwrap(),
+            method: DiscoveryMethod::Ipv6LinkLocalMulticast,
+            interface: Some("test0".to_owned()),
+            accepted_source_network: Some("fe80::/64".parse().unwrap()),
+        };
+
+        assert!(source_matches(
+            &endpoint,
+            "[fe80::10%7]:65001".parse().unwrap()
+        ));
+        assert!(!source_matches(
+            &endpoint,
+            "[fe80::10%8]:65001".parse().unwrap()
+        ));
+        assert!(!source_matches(
+            &endpoint,
+            "[fe80::10]:65001".parse().unwrap()
         ));
     }
 
@@ -647,6 +741,7 @@ mod tests {
             destination: server_address,
             method: DiscoveryMethod::Targeted,
             interface: None,
+            accepted_source_network: None,
         };
         let report = DiscoveryClient::new(config)
             .probe_endpoint(endpoint, None, &CancellationToken::new())

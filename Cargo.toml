@@ -12,9 +12,13 @@ authors = ["Balun Contributors"]
 crc32fast = "1.5"
 if-addrs = { version = "0.15", features = ["link-local"] }
 ipnet = "2.12"
+reqwest = { version = "0.13", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+zeroize = "1"
 
 [profile.release]
 codegen-units = 1

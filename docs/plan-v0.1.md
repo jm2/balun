@@ -1,6 +1,6 @@
 # Balun v0.1 Implementation Plan
 
-- Status: Draft
+- Status: Active
 - Target: v0.1.0-alpha.1
 - Last updated: 2026-08-31
 
@@ -330,6 +330,8 @@ not leak into the registry, controller, or UI.
 - Accept device HTTP only from an approved locator.
 - Reject URL credentials and unexpected schemes.
 - Bind or normalize advertised hosts to the accepted responder.
+- Require the observed device metadata and stream ports; do not follow
+  responder-supplied arbitrary ports.
 - Reject cross-host redirects; use no redirects unless a same-origin case is
   explicitly validated.
 - Send no Referer and redact URLs or query values from logs.
@@ -347,8 +349,10 @@ Balun will fetch the device-provided lineup URL and use:
 
 - GuideNumber.
 - UTF-8 GuideName.
-- Tags such as favorite and drm.
-- The exact stream URL supplied by the device.
+- Tags such as favorite and drm, including current firmware's equivalent
+  dedicated `Favorite`, `DRM`, and `HD` sentinel fields.
+- The device-supplied stream path and port, with its host pinned to the
+  validated responder.
 
 Unknown JSON fields are ignored, while malformed known fields, oversized
 responses, unsafe URLs, and excessive rows are rejected. Lineups remain
@@ -361,7 +365,7 @@ The first player implementation uses:
 
 - playbin3.
 - gtk4paintablesink exposed through GtkPicture.
-- The exact device-provided stream URI.
+- The validated, responder-pinned device stream URI.
 - GStreamer bus handling for error, EOS, state, buffering, stream collection,
   and missing-plugin messages.
 - Deinterlacing support suitable for normal 1080i broadcast content.
@@ -744,7 +748,8 @@ Maintain sanitized fixtures and a manual matrix covering:
 - Tuner-busy and device-restart behavior.
 
 Hardware tests complement rather than replace deterministic fake-device
-tests.
+tests. Sanitized observations from completed rows are maintained in
+[`compatibility-v0.1.md`](compatibility-v0.1.md).
 
 ## 12. CI, dependency, and release policy
 

@@ -251,6 +251,7 @@ fn routed_endpoint(candidate: Ipv4Addr) -> ProbeEndpoint {
         destination: SocketAddr::new(IpAddr::V4(candidate), DISCOVERY_UDP_PORT),
         method: DiscoveryMethod::Targeted,
         interface: None,
+        accepted_source_network: None,
     }
 }
 

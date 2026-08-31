@@ -12,8 +12,8 @@ device sidebar, a second sidebar for that device's channels and available
 program information, and a live-video area.
 
 > **Pre-alpha status:** the repository currently contains the GTK-free
-> discovery foundation and a diagnostic command. It does not yet contain the
-> desktop viewer, channel lineup, EPG, or playback implementation.
+> discovery, device-registry, and lineup foundation plus a diagnostic command.
+> It does not yet contain the desktop viewer, EPG, or playback implementation.
 
 ## Current foundation
 
@@ -26,11 +26,24 @@ program information, and a live-video area.
   than `/24`.
 - Cancellation, response and device limits, duplicate accounting, and
   diagnostic packet statistics.
+- A bounded DeviceID registry that keeps multiple locators without merging
+  devices or channels, expires discovery origins independently, and rejects
+  unconfirmed address/identity conflicts.
+- Responder-pinned, identity-checked `/discover.json` and `/lineup.json`
+  fetching with strict time, body, row, string, origin, port, redirect, proxy,
+  and credential-handling policy.
+- Device-scoped natural channel identities and compatibility with both the
+  documented lineup `Tags` field and current `Favorite`, `DRM`, and `HD`
+  fields.
+- A cross-platform route snapshot and candidate policy with deterministic fake
+  providers. Native Linux, macOS, and Windows route providers are still
+  pending.
 - GTK-free library boundaries and deterministic fake-device tests.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
 hardware-validation, packaging, and release boundaries, is in
-[`docs/plan-v0.1.md`](docs/plan-v0.1.md).
+[`docs/plan-v0.1.md`](docs/plan-v0.1.md). Sanitized hardware observations are
+recorded in [`docs/compatibility-v0.1.md`](docs/compatibility-v0.1.md).
 
 ## Try discovery
 
@@ -40,6 +53,17 @@ default:
 ```bash
 cargo run --locked --bin balun-discover
 ```
+
+Inspect discovered device metadata and lineup summaries without opening a
+channel stream or allocating a tuner:
+
+```bash
+cargo run --locked --bin balun-discover -- --inspect --local
+```
+
+Inspection fetches only bounded device JSON from identity-checked responders.
+Advertised URL values are hidden. `DeviceAuth` is never deserialized, persisted,
+or printed, and the temporary metadata buffer is wiped after parsing.
 
 Probe one known device address, such as an HDHomeRun reached over WireGuard or
 another routed link:
@@ -59,6 +83,9 @@ accepts only ranges wholly inside RFC 1918 private space, rejects anything
 wider than `/24`, caps the candidate set at 256 addresses, and applies bounded
 packet-rate and concurrency defaults. Only scan a network you own or administer.
 Prefer a known `--target` address whenever one is available.
+
+Automatic route-derived tunnel candidates are not wired to the diagnostic
+until the native route providers and remembered user-approval flow land.
 
 Press `Ctrl+C` to cancel discovery.
 
