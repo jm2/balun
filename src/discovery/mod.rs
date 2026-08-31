@@ -17,9 +17,13 @@ pub use registry::{
     RegisteredDevice, RegistryError, RegistryInstant,
 };
 pub use routed::{
-    ApprovedIpv4Range, InvalidRoutedScanConfig, MAX_ROUTED_CANDIDATES, MAX_ROUTED_CONCURRENCY,
-    MAX_ROUTED_WIRE_DATAGRAMS_PER_SECOND, RoutedRangeError, RoutedScanConfig,
+    ApprovedIpv4Range, DEFAULT_ROUTED_SCAN_DEADLINE, InvalidRoutedScanConfig,
+    MAX_ROUTED_CANDIDATES, MAX_ROUTED_CONCURRENCY, MAX_ROUTED_SCAN_DEADLINE,
+    MAX_ROUTED_WIRE_DATAGRAMS_PER_SECOND, MIN_ROUTED_SCAN_DEADLINE, RoutedRangeError,
+    RoutedScanConfig,
 };
+#[cfg(target_os = "linux")]
+pub use routes::LinuxRouteProvider;
 pub use routes::{
     InterfaceId, InterfaceKind, NetworkInterface, NetworkRoute, RouteCandidate,
     RouteCandidateError, RouteCandidateOrigin, RouteKind, RouteProvider, RouteScope, RouteSnapshot,

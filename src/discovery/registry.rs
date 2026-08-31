@@ -182,6 +182,7 @@ impl LocatorClaim {
             .map(|(origin, freshness)| {
                 let method_preference = match origin.method {
                     DiscoveryMethod::Targeted => 4,
+                    DiscoveryMethod::RoutedTargeted => 4,
                     DiscoveryMethod::Ipv4Broadcast => 3,
                     DiscoveryMethod::Ipv6SiteLocalMulticast => 2,
                     DiscoveryMethod::Ipv6LinkLocalMulticast => 1,
@@ -691,6 +692,36 @@ mod tests {
         assert_eq!(locator.origin_last_seen(&broadcast), Some(at(10)));
         assert_eq!(locator.origin_first_seen(&targeted), Some(at(20)));
         assert_eq!(locator.origin_last_seen(&targeted), Some(at(20)));
+    }
+
+    #[test]
+    fn retains_exact_and_routed_targeted_origins_separately() {
+        let id = DeviceId::new(FIRST_ID).unwrap();
+        let source = "192.0.2.10:65001";
+        let mut registry = DeviceRegistry::default();
+        registry
+            .observe(
+                observation(FIRST_ID, source, DiscoveryMethod::Targeted),
+                at(10),
+            )
+            .unwrap();
+        registry
+            .observe(
+                observation(FIRST_ID, source, DiscoveryMethod::RoutedTargeted),
+                at(20),
+            )
+            .unwrap();
+
+        let locator = registry.get(id).unwrap().locators().next().unwrap();
+        assert_eq!(locator.origins().len(), 2);
+        assert!(locator.origins().any(|origin| {
+            origin.method == DiscoveryMethod::Targeted
+                && origin.interface.as_deref() == Some("test0")
+        }));
+        assert!(locator.origins().any(|origin| {
+            origin.method == DiscoveryMethod::RoutedTargeted
+                && origin.interface.as_deref() == Some("test0")
+        }));
     }
 
     #[test]

@@ -7,6 +7,12 @@ use thiserror::Error;
 
 use super::routed::MAX_ROUTED_CANDIDATES;
 
+#[cfg(target_os = "linux")]
+mod linux;
+
+#[cfg(target_os = "linux")]
+pub use linux::LinuxRouteProvider;
+
 /// An operating-system interface identifier, normalized to fit Linux and
 /// macOS interface indexes as well as Windows interface LUIDs.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -125,9 +131,13 @@ pub enum RouteScope {
 /// may all be returned. A more-specific selected route may shadow part of a
 /// broader route, so candidate selection also applies longest-prefix matching.
 ///
-/// Providers that cannot determine the effective route for the discovery
-/// socket should omit the uncertain route. Users can still approve an exact
-/// address or bounded explicit range.
+/// A provider must never omit an uncertain route when doing so could promote a
+/// broader candidate-producing route. It must either fail the complete
+/// snapshot or retain that destination prefix as a non-candidate blocker with
+/// [`RouteKind::Other`] and [`RouteScope::Other`]. Omission is safe only when
+/// the provider can prove that candidate selection cannot change. Users can
+/// still approve an exact address or bounded explicit range when a provider
+/// fails closed.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct NetworkRoute {
     destination: IpNet,
@@ -224,6 +234,9 @@ impl RouteSnapshot {
 /// compartments, and metrics as the operating system would for the discovery
 /// socket. Snapshots must contain only routes satisfying
 /// [`NetworkRoute::effective`], never an unfiltered dump of installed routes.
+/// An uncertain potentially winning prefix must be represented as a
+/// non-candidate blocker or make the whole snapshot fail; silently dropping it
+/// can expose a broader route that the operating system would not select.
 pub trait RouteProvider: Send + Sync {
     fn snapshot(&self) -> io::Result<RouteSnapshot>;
 }
@@ -899,6 +912,27 @@ mod tests {
         assert_eq!(
             candidate_addresses(&select_route_candidates(&snapshot, &[]).unwrap()),
             vec![Ipv4Addr::new(10, 83, 4, 2)]
+        );
+    }
+
+    #[test]
+    fn more_specific_uncertain_blocker_prevents_broader_route_promotion() {
+        let snapshot = RouteSnapshot::from_effective_routes(
+            vec![interface(1, InterfaceKind::Tunnel, true, &[])],
+            vec![
+                route("10.85.4.0/30", Some(1), RouteKind::Unicast),
+                NetworkRoute::effective(
+                    net("10.85.4.1/32"),
+                    None,
+                    RouteKind::Other,
+                    RouteScope::Other,
+                ),
+            ],
+        );
+
+        assert_eq!(
+            candidate_addresses(&select_route_candidates(&snapshot, &[]).unwrap()),
+            vec![Ipv4Addr::new(10, 85, 4, 2)]
         );
     }
 

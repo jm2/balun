@@ -225,6 +225,39 @@ impl DiscoveryClient {
         expected_device: Option<DeviceId>,
         cancellation: &CancellationToken,
     ) -> Result<DiscoveryReport, DiscoveryError> {
+        self.discover_target_with_method(
+            target,
+            expected_device,
+            DiscoveryMethod::Targeted,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Probe one routed IPv4 candidate while retaining its lower-confidence
+    /// routed provenance in accepted observations.
+    pub(super) async fn discover_routed_target(
+        &self,
+        target: Ipv4Addr,
+        cancellation: &CancellationToken,
+    ) -> Result<DiscoveryReport, DiscoveryError> {
+        self.discover_target_with_method(
+            SocketAddr::new(target.into(), 0),
+            None,
+            DiscoveryMethod::RoutedTargeted,
+            cancellation,
+        )
+        .await
+    }
+
+    async fn discover_target_with_method(
+        &self,
+        target: SocketAddr,
+        expected_device: Option<DeviceId>,
+        method: DiscoveryMethod,
+        cancellation: &CancellationToken,
+    ) -> Result<DiscoveryReport, DiscoveryError> {
+        debug_assert!(method.is_targeted());
         let destination = with_port(target, DISCOVERY_UDP_PORT);
         if invalid_target(destination) {
             return Err(DiscoveryError::InvalidEndpoint {
@@ -240,7 +273,7 @@ impl DiscoveryClient {
         let endpoint = ProbeEndpoint {
             bind,
             destination,
-            method: DiscoveryMethod::Targeted,
+            method,
             interface: None,
             accepted_source_network: None,
         };
@@ -466,6 +499,9 @@ pub enum DiscoveryError {
     #[error("discovery task failed: {0}")]
     Task(String),
 
+    #[error("routed discovery exceeded its {deadline:?} overall deadline")]
+    RoutedScanDeadline { deadline: Duration },
+
     #[error("discovery was cancelled")]
     Cancelled,
 
@@ -487,7 +523,7 @@ fn validate_endpoint(endpoint: &ProbeEndpoint) -> Result<(), DiscoveryError> {
         });
     }
     let source_policy_is_valid = match (endpoint.method, endpoint.accepted_source_network) {
-        (DiscoveryMethod::Targeted, None) => true,
+        (DiscoveryMethod::Targeted | DiscoveryMethod::RoutedTargeted, None) => true,
         (DiscoveryMethod::Ipv4Broadcast, Some(ipnet::IpNet::V4(network))) => {
             matches!(endpoint.bind.ip(), std::net::IpAddr::V4(address) if network.contains(&address))
                 && endpoint.destination.ip() == std::net::IpAddr::V4(network.broadcast())
@@ -529,7 +565,9 @@ fn source_matches(endpoint: &ProbeEndpoint, source: SocketAddr) -> bool {
     }
 
     match endpoint.method {
-        DiscoveryMethod::Targeted => source.ip() == endpoint.destination.ip(),
+        DiscoveryMethod::Targeted | DiscoveryMethod::RoutedTargeted => {
+            source.ip() == endpoint.destination.ip()
+        }
         DiscoveryMethod::Ipv4Broadcast
         | DiscoveryMethod::Ipv6LinkLocalMulticast
         | DiscoveryMethod::Ipv6SiteLocalMulticast => endpoint
@@ -609,26 +647,29 @@ mod tests {
 
     #[test]
     fn targeted_source_must_match_address_and_port() {
-        let endpoint = ProbeEndpoint {
-            bind: "0.0.0.0:0".parse().unwrap(),
-            destination: "192.0.2.10:65001".parse().unwrap(),
-            method: DiscoveryMethod::Targeted,
-            interface: None,
-            accepted_source_network: None,
-        };
+        for method in [DiscoveryMethod::Targeted, DiscoveryMethod::RoutedTargeted] {
+            let endpoint = ProbeEndpoint {
+                bind: "0.0.0.0:0".parse().unwrap(),
+                destination: "192.0.2.10:65001".parse().unwrap(),
+                method,
+                interface: None,
+                accepted_source_network: None,
+            };
 
-        assert!(source_matches(
-            &endpoint,
-            "192.0.2.10:65001".parse().unwrap()
-        ));
-        assert!(!source_matches(
-            &endpoint,
-            "192.0.2.11:65001".parse().unwrap()
-        ));
-        assert!(!source_matches(
-            &endpoint,
-            "192.0.2.10:65000".parse().unwrap()
-        ));
+            assert!(validate_endpoint(&endpoint).is_ok());
+            assert!(source_matches(
+                &endpoint,
+                "192.0.2.10:65001".parse().unwrap()
+            ));
+            assert!(!source_matches(
+                &endpoint,
+                "192.0.2.11:65001".parse().unwrap()
+            ));
+            assert!(!source_matches(
+                &endpoint,
+                "192.0.2.10:65000".parse().unwrap()
+            ));
+        }
     }
 
     #[test]
@@ -766,6 +807,40 @@ mod tests {
         assert_eq!(report.stats.datagrams_received, 2);
         assert_eq!(report.stats.datagrams_accepted, 1);
         assert_eq!(report.stats.datagrams_rejected, 1);
+    }
+
+    #[tokio::test]
+    async fn routed_targeted_probe_marks_observation_provenance() {
+        let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let server_address = server.local_addr().unwrap();
+        let server_task = tokio::spawn(async move {
+            let mut request = [0_u8; 64];
+            let (_, client) = server.recv_from(&mut request).await.unwrap();
+            server
+                .send_to(&GOLDEN_TUNER_RESPONSE, client)
+                .await
+                .unwrap();
+        });
+
+        let config = ProbeConfig::new(1, MIN_RESPONSE_WINDOW, 8, 4).unwrap();
+        let endpoint = ProbeEndpoint {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            destination: server_address,
+            method: DiscoveryMethod::RoutedTargeted,
+            interface: None,
+            accepted_source_network: None,
+        };
+        let report = DiscoveryClient::new(config)
+            .probe_endpoint(endpoint, None, &CancellationToken::new())
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+
+        assert_eq!(report.observations.len(), 1);
+        assert_eq!(
+            report.observations[0].method,
+            DiscoveryMethod::RoutedTargeted
+        );
     }
 
     #[tokio::test]

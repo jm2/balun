@@ -5,10 +5,23 @@ use ipnet::IpNet;
 /// How a discovery request reached its destination.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum DiscoveryMethod {
+    /// Exact unicast address supplied by a manual, cached, or similarly
+    /// high-confidence source.
     Targeted,
+    /// Unicast address selected by the separately approved routed-scan
+    /// policy.
+    RoutedTargeted,
     Ipv4Broadcast,
     Ipv6LinkLocalMulticast,
     Ipv6SiteLocalMulticast,
+}
+
+impl DiscoveryMethod {
+    /// Whether this method uses exact-source unicast response validation.
+    #[must_use]
+    pub const fn is_targeted(self) -> bool {
+        matches!(self, Self::Targeted | Self::RoutedTargeted)
+    }
 }
 
 /// One socket binding and destination used for a discovery probe.

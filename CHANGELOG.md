@@ -22,8 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fetching plus `balun-discover --inspect`, which summarizes devices and
   channels without opening a stream or allocating a tuner.
 - **Route candidate policy** — Add a platform-neutral route snapshot/provider
-  boundary and deterministic policy for exact or approved private tunnel
-  candidates; native platform providers remain pending.
+  boundary, a native Linux rtnetlink provider, and deterministic policy for
+  exact or approved private tunnel candidates; native macOS and Windows
+  providers remain pending.
+- **Approved routed target runner** — Probe a caller-approved, deduplicated set
+  of private IPv4 route candidates with separate provenance, bounded packet
+  rate and concurrency, immediate cancellation, and a hard overall deadline.
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.
@@ -35,7 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Bounded routed discovery** — Require an explicit RFC 1918 range no wider
   than `/24`, cap candidates and concurrency, rate-limit targeted starts, and
-  keep point-to-point interfaces out of automatic local enumeration.
+  keep point-to-point interfaces out of automatic local enumeration. Native
+  Linux route inspection fails closed on policy routing, ambiguous next hops,
+  and route-table precedence it cannot model safely.
+- **Bounded lineup parsing** — Enforce the channel-row limit while
+  deserializing lineup JSON so oversized responses cannot allocate every raw
+  row before rejection.
 - **Untrusted packet boundaries** — Reject malformed, oversized, bad-CRC, and
   inconsistent discovery replies and restrict broadcast or multicast replies
   to the directly attached prefix that was probed.

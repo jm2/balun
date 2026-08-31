@@ -301,6 +301,13 @@ Initial route providers:
 - Windows: GetIpForwardTable2 and GetAdaptersAddresses, including tunnel
   interface types.
 
+Implementation status: the platform-neutral candidate policy, bounded routed
+target runner, and conservative Linux rtnetlink provider are present. The
+Linux provider accepts only route-policy state it can compose safely and fails
+closed otherwise. Route-derived execution remains deliberately disconnected
+from the diagnostic until the remembered user-approval, fingerprint, cooldown,
+and backoff layer is complete; macOS and Windows providers remain pending.
+
 For wider routed sites, the supported solutions are an exact address,
 operator-provided DNS record, explicit smaller range, or a future
 administrator-operated discovery relay.

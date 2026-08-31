@@ -23,7 +23,7 @@ program information, and a live-video area.
 - Exact-address unicast discovery for routed networks, including tunnels where
   broadcast and multicast are unavailable.
 - Explicit, bounded enumeration of an approved RFC 1918 IPv4 range no wider
-  than `/24`.
+  than `/24`, with a hard overall scan deadline.
 - Cancellation, response and device limits, duplicate accounting, and
   diagnostic packet statistics.
 - A bounded DeviceID registry that keeps multiple locators without merging
@@ -36,8 +36,9 @@ program information, and a live-video area.
   documented lineup `Tags` field and current `Favorite`, `DRM`, and `HD`
   fields.
 - A cross-platform route snapshot and candidate policy with deterministic fake
-  providers. Native Linux, macOS, and Windows route providers are still
-  pending.
+  providers, plus a native Linux rtnetlink provider that recognizes WireGuard
+  and other unambiguous tunnel links. Native macOS and Windows providers are
+  still pending.
 - GTK-free library boundaries and deterministic fake-device tests.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
@@ -81,11 +82,16 @@ cargo run --locked --bin balun-discover -- --approved-range 10.42.7.0/24
 Routed enumeration is never part of ordinary local discovery. The diagnostic
 accepts only ranges wholly inside RFC 1918 private space, rejects anything
 wider than `/24`, caps the candidate set at 256 addresses, and applies bounded
-packet-rate and concurrency defaults. Only scan a network you own or administer.
-Prefer a known `--target` address whenever one is available.
+packet-rate, concurrency, and 15-second overall-deadline defaults. Only scan a
+network you own or administer. Prefer a known `--target` address whenever one
+is available.
 
-Automatic route-derived tunnel candidates are not wired to the diagnostic
-until the native route providers and remembered user-approval flow land.
+On Linux, Balun can now derive conservative candidates from a stable native
+route snapshot. It fails closed on policy routing, VRFs, ambiguous next hops,
+or route-table state that cannot be represented safely. Route-derived targets
+are not wired to the diagnostic until the remembered user-approval and
+cooldown flow lands; installing the provider does not silently enumerate a
+network.
 
 Press `Ctrl+C` to cancel discovery.
 

@@ -58,6 +58,18 @@ Every accepted channel URL used the responder host, port 5004, and an
 `/auto/v<GuideNumber>` path. Balun now enforces all three properties without
 connecting to the stream.
 
+## Linux route-provider smoke
+
+The native Linux rtnetlink provider was exercised separately on the
+development host. It completed its bounded, deadline-protected double snapshot
+and normalization successfully. The smoke diagnostic reported only success;
+it did not print or persist interface names, addresses, routes, or candidate
+targets, and it sent no discovery packets.
+
+This establishes only that native route inspection works on one Linux routing
+configuration. It does not approve or exercise a route-derived scan, and it is
+not evidence yet for WireGuard or UniFi Site Magic discovery.
+
 ## Boundaries of this result
 
 This probe establishes local discovery, stable device separation, responder
