@@ -423,7 +423,9 @@ pub fn parse_tuner_discover_response(datagram: &[u8]) -> Result<DiscoverResponse
                     });
                 }
 
-                for encoded_type in item.value.chunks_exact(4) {
+                let (encoded_types, remainder) = item.value.as_chunks::<4>();
+                debug_assert!(remainder.is_empty(), "length was validated above");
+                for encoded_type in encoded_types {
                     add_device_type(&mut device_types, read_u32(encoded_type)?)?;
                 }
             }
