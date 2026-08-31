@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Approved routed target runner** — Probe a caller-approved, deduplicated set
   of private IPv4 route candidates with separate provenance, bounded packet
   rate and concurrency, immediate cancellation, and a hard overall deadline.
+- **Route-derived approval policy** — Bind remembered consent to a keyed,
+  topology-redacted fingerprint of the exact targets, tunnel bindings, route
+  scopes, and packet policy, then issue only single-use, crash-reserved scan
+  authority with deterministic cooldown and backoff transitions.
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.
@@ -42,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep point-to-point interfaces out of automatic local enumeration. Native
   Linux route inspection fails closed on policy routing, ambiguous next hops,
   and route-table precedence it cannot model safely.
+- **Fail-closed automatic authority** — Reject ambiguous tunnel origins,
+  changed topology or traffic policy, stale and expired run completion,
+  and backward-clock shortcuts, while staging permit release behind explicit
+  durable-commit confirmation. Automatic route-derived traffic remains
+  disconnected until durable storage, fresh route revalidation, and pinned
+  egress land.
 - **Bounded lineup parsing** — Enforce the channel-row limit while
   deserializing lineup JSON so oversized responses cannot allocate every raw
   row before rejection.
@@ -64,3 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Credential-safe diagnostics** — Hide advertised URL values, never
   deserialize, persist, or print `DeviceAuth`, and wipe the bounded metadata
   response buffer after use.
+- **Topology-redacted approvals** — Keep route summaries ephemeral and redact
+  keys, fingerprints, targets, interface names, and prefixes from default
+  debug output; the planned store will retain only keyed fingerprints and
+  policy metadata rather than raw route topology.

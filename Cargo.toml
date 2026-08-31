@@ -9,6 +9,7 @@ repository = "https://github.com/jm2/balun"
 authors = ["Balun Contributors"]
 
 [dependencies]
+blake3 = { version = "1.8", features = ["zeroize"] }
 crc32fast = "1.5"
 if-addrs = { version = "0.15", features = ["link-local"] }
 ipnet = "2.12"

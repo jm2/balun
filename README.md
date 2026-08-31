@@ -39,6 +39,10 @@ program information, and a live-video area.
   providers, plus a native Linux rtnetlink provider that recognizes WireGuard
   and other unambiguous tunnel links. Native macOS and Windows providers are
   still pending.
+- A GTK-free route-approval policy that fingerprints the exact private
+  targets, tunnel identity, route scopes, and traffic budget with an
+  installation key, fails closed on ambiguous paths or clock rollback, and
+  reserves single-use scan authority before it can be released.
 - GTK-free library boundaries and deterministic fake-device tests.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
@@ -88,10 +92,11 @@ is available.
 
 On Linux, Balun can now derive conservative candidates from a stable native
 route snapshot. It fails closed on policy routing, VRFs, ambiguous next hops,
-or route-table state that cannot be represented safely. Route-derived targets
-are not wired to the diagnostic until the remembered user-approval and
-cooldown flow lands; installing the provider does not silently enumerate a
-network.
+or route-table state that cannot be represented safely. The pure remembered
+approval, cooldown, and crash-reservation policy is present, but route-derived
+targets are not wired to the diagnostic until its durable store, immediate
+route revalidation, and interface-pinned egress gate land. Installing the
+provider does not silently enumerate a network.
 
 Press `Ctrl+C` to cancel discovery.
 

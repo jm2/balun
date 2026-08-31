@@ -302,11 +302,16 @@ Initial route providers:
   interface types.
 
 Implementation status: the platform-neutral candidate policy, bounded routed
-target runner, and conservative Linux rtnetlink provider are present. The
-Linux provider accepts only route-policy state it can compose safely and fails
-closed otherwise. Route-derived execution remains deliberately disconnected
-from the diagnostic until the remembered user-approval, fingerprint, cooldown,
-and backoff layer is complete; macOS and Windows providers remain pending.
+target runner, conservative Linux rtnetlink provider, and pure remembered
+approval policy are present. Approval fingerprints bind the exact targets,
+tunnel identity, route scopes, and traffic policy without exposing topology in
+default diagnostics; single-use authority is held behind a crash reservation,
+clock high-water, cooldown, and backoff state machine. Route-derived execution
+remains deliberately disconnected from the diagnostic until the strict
+durable store, immediate exact route revalidation, and interface-pinned egress
+gate are complete. Native macOS and Windows providers remain pending; Windows
+automatic route scans also remain disabled until a safe unicast-interface
+binding API is available under Balun's no-unsafe policy.
 
 For wider routed sites, the supported solutions are an exact address,
 operator-provided DNS record, explicit smaller range, or a future

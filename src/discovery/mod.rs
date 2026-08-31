@@ -1,5 +1,6 @@
 //! Bounded HDHomeRun discovery orchestration.
 
+pub(crate) mod approval;
 mod client;
 mod local;
 mod registry;
