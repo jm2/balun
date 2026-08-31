@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
+use std::fmt;
 
 use reqwest::Url;
 use serde::Deserialize;
+use serde::de::{DeserializeSeed, IgnoredAny, SeqAccess, Visitor};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -128,20 +130,84 @@ enum RawFlag {
     Boolean(bool),
 }
 
+enum BoundedRawLineup {
+    WithinLimit(Vec<RawLineupChannel>),
+    TooMany { actual: usize },
+}
+
+struct RawLineupSeed {
+    maximum_channels: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for RawLineupSeed {
+    type Value = BoundedRawLineup;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(RawLineupVisitor {
+            maximum_channels: self.maximum_channels,
+        })
+    }
+}
+
+struct RawLineupVisitor {
+    maximum_channels: usize,
+}
+
+impl<'de> Visitor<'de> for RawLineupVisitor {
+    type Value = BoundedRawLineup;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an array of HDHomeRun lineup rows")
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let capacity = sequence.size_hint().unwrap_or(0).min(self.maximum_channels);
+        let mut rows = Vec::with_capacity(capacity);
+        while rows.len() < self.maximum_channels {
+            let Some(row) = sequence.next_element::<RawLineupChannel>()? else {
+                return Ok(BoundedRawLineup::WithinLimit(rows));
+            };
+            rows.push(row);
+        }
+
+        let mut actual = rows.len();
+        while sequence.next_element::<IgnoredAny>()?.is_some() {
+            actual = actual.saturating_add(1);
+        }
+        if actual > self.maximum_channels {
+            Ok(BoundedRawLineup::TooMany { actual })
+        } else {
+            Ok(BoundedRawLineup::WithinLimit(rows))
+        }
+    }
+}
+
 fn parse_lineup(
     body: &[u8],
     device_id: DeviceId,
     endpoint: &DeviceEndpoint,
     maximum_channels: usize,
 ) -> Result<DeviceLineup, LineupError> {
-    let raw_channels: Vec<RawLineupChannel> =
-        serde_json::from_slice(body).map_err(LineupError::Json)?;
-    if raw_channels.len() > maximum_channels {
-        return Err(LineupError::TooManyChannels {
-            actual: raw_channels.len(),
-            maximum: maximum_channels,
-        });
-    }
+    let mut deserializer = serde_json::Deserializer::from_slice(body);
+    let bounded = RawLineupSeed { maximum_channels }
+        .deserialize(&mut deserializer)
+        .map_err(LineupError::Json)?;
+    deserializer.end().map_err(LineupError::Json)?;
+    let raw_channels = match bounded {
+        BoundedRawLineup::WithinLimit(rows) => rows,
+        BoundedRawLineup::TooMany { actual } => {
+            return Err(LineupError::TooManyChannels {
+                actual,
+                maximum: maximum_channels,
+            });
+        }
+    };
 
     let mut seen_numbers = BTreeSet::new();
     let mut channels = Vec::with_capacity(raw_channels.len());
@@ -506,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_oversized_lineups_before_row_conversion() {
+    fn rejects_oversized_lineups_before_allocating_every_raw_row() {
         let body = br#"[
           {"GuideNumber":"1","GuideName":"A","URL":"http://192.0.2.10:5004/auto/v1"},
           {"GuideNumber":"2","GuideName":"B","URL":"http://192.0.2.10:5004/auto/v2"}
@@ -515,6 +581,23 @@ mod tests {
             parse_lineup(body, id(), &endpoint(), 1),
             Err(LineupError::TooManyChannels {
                 actual: 2,
+                maximum: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn oversized_lineup_skips_semantic_conversion_after_the_limit() {
+        let body = br#"[
+          {"GuideNumber":"1","GuideName":"A","URL":"http://192.0.2.10:5004/auto/v1"},
+          {"GuideNumber":{"unexpected":"shape"},"GuideName":["not","a","name"],"URL":false},
+          {"arbitrary":[1,2,3]}
+        ]"#;
+
+        assert!(matches!(
+            parse_lineup(body, id(), &endpoint(), 1),
+            Err(LineupError::TooManyChannels {
+                actual: 3,
                 maximum: 1
             })
         ));
