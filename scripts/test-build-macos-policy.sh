@@ -8,6 +8,9 @@ set -euo pipefail
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 script_under_test="$script_dir/build-macos.sh"
 temp_dir=$(mktemp -d)
+# macOS exposes /var through /private/var. Match the helper's physical-path
+# normalization so exact routing assertions remain stable across that alias.
+temp_dir=$(CDPATH= cd -- "$temp_dir" && pwd -P)
 trap 'rm -rf -- "$temp_dir"' EXIT HUP INT TERM
 
 fixture="$temp_dir/repository with spaces"
