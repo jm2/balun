@@ -1,17 +1,17 @@
-//! Pure authority and cooldown policy for route-derived discovery.
+//! Authority and fresh-route policy for routed discovery.
 //!
-//! This module deliberately performs no route collection, persistence, clock
-//! reads, random-number generation, or network I/O. A controller must build a
-//! proposal from one internally consistent [`RouteSnapshot`], show its
-//! ephemeral summary to the user, durably store the resulting transition, and
-//! re-snapshot immediately before any future scanner integration consumes a
-//! [`RoutedScanPermit`]. That future egress gate must compare the fresh full
-//! resolved plan (including fresh interface identities) and cap work by both
-//! the configured scan deadline and the permit's reservation expiry.
+//! The policy state machine remains deterministic and reads no clock, storage,
+//! or network itself. Its packet-free gate consumes a committed
+//! [`RoutedScanPermit`] only after rebuilding the complete proposal from a
+//! caller-supplied fresh [`RouteSnapshot`]. No code in this module opens a
+//! discovery socket or sends network traffic.
 
-// This deliberately unwired pure slice has no production caller until the
-// persistence transaction and fresh-snapshot egress gate land together.
+// Automatic execution stays deliberately unwired until a future runner can
+// combine durable persistence, atomic cancellation registration, and sockets
+// pinned to the fresh interface.
 #![cfg_attr(not(test), allow(dead_code))]
+
+mod gate;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -781,9 +781,8 @@ impl RoutedApprovalState {
     /// Plan a reservation for one exact proposal without publishing authority.
     ///
     /// A successful decision contains a [`RoutedPendingReservation`], not a
-    /// scan permit. The future repository must durably persist its complete
-    /// `state_after_reservation()` before calling `confirm_persisted`. No
-    /// production path performs that confirmation yet.
+    /// scan permit. The future persistence owner must durably persist its
+    /// complete `state_after_reservation()` before calling `confirm_persisted`.
     pub(crate) fn plan_begin(
         &self,
         proposal: RoutedScanProposal,
@@ -1015,13 +1014,13 @@ pub enum RoutedCompletionDecision {
 
 /// Single-use authority for one exact route-derived target set.
 ///
-/// This type deliberately does not implement `Clone`; its future scanner
-/// entry point must consume it by value. Its fields are private, so callers
-/// cannot synthesize or alter authority. The future egress gate must
-/// re-snapshot, reconstruct the complete resolved proposal, compare it with
-/// this retained plan, and use the fresh resolved `InterfaceId` values. It
-/// must also shorten the scan deadline to `expires_at`; starting near lease
-/// expiry must never overlap a successor reservation.
+/// This type deliberately does not implement `Clone`; the fresh-route gate
+/// consumes it by value. Its fields are private, so callers cannot synthesize
+/// or alter authority. The gate re-snapshots, reconstructs the complete
+/// resolved proposal, compares it with this retained plan, uses the fresh
+/// resolved `InterfaceId` values, and shortens the scan deadline to
+/// `expires_at`. Starting near lease expiry can therefore never use the
+/// original longer work budget.
 ///
 /// A compile-time ambiguity assertion in this module's tests prevents a
 /// future accidental `Clone` implementation.
