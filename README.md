@@ -50,6 +50,10 @@ program information, and a live-video area.
 - A packet-free fresh-route gate that consumes the stored authority, permits
   only a transient interface-ID replacement, and caps work to the remaining
   reservation lease. No automatic socket runner is connected yet.
+- A fail-closed Linux rtnetlink event-monitor building block that subscribes
+  before a route snapshot, authenticates kernel senders, applies strict
+  drain/barrier budgets, coalesces reconciliation, and invalidates authority
+  before notification. It remains deliberately unwired.
 - GTK-free library boundaries and deterministic fake-device tests.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
@@ -106,9 +110,10 @@ fresh interface after name/index readback, and a packet-free admission boundary
 registers invalidation before reserve and carries one non-extending monotonic
 deadline. Neither capability exposes an automatic send path yet. Route-derived
 targets remain disconnected from the diagnostic until a live route-observer
-session, a separate cross-process approval-store observer, final pre-send
-revalidation, and a consuming runner with exact completion ownership are all
-present. Installing the provider does not silently enumerate a network.
+session owns the route-event monitor, a separate cross-process approval-store
+observer is complete, final pre-send revalidation is serialized, and a
+consuming runner has exact completion ownership. Installing the provider does
+not silently enumerate a network.
 
 Press `Ctrl+C` to cancel discovery.
 

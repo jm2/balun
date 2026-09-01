@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   durable reserve, obtain and revalidate a fresh route snapshot, map wall-clock
   authority onto one non-extending monotonic deadline, and leave abandoned
   authority under its crash-conservative reservation and cooldown.
+- **Linux route-event monitor** — Add an unwired rtnetlink observer foundation
+  with subscribe-before-snapshot barriers, strict work bounds, coalesced
+  reconciliation, and invalidate-before-notify behavior.
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.
@@ -89,6 +92,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are present, but automatic route-derived traffic remains disconnected until
   live observer-session provenance, cross-process store observation, final
   pre-send revalidation, and consuming-runner completion land.
+- **Authenticated route invalidation** — Accept Linux route notifications only
+  from the kernel sender address, preflight every untrusted frame and attribute
+  length without third-party payload logging, and poison authority on overflow,
+  malformed input, observer loss, or budget exhaustion.
 - **Bounded lineup parsing** — Enforce the channel-row limit while
   deserializing lineup JSON so oversized responses cannot allocate every raw
   row before rejection.
