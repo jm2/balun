@@ -13,6 +13,7 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 mod gate;
+mod run;
 mod store;
 
 use std::collections::BTreeSet;

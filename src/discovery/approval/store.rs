@@ -416,7 +416,7 @@ impl ApprovalStore {
 
     /// Reserve one global run and release its permit only after a confirmed
     /// file and parent-directory commit.
-    pub(crate) fn reserve(
+    pub(super) fn reserve(
         &self,
         proposal: StoredRoutedProposal,
         trigger: RoutedScanTrigger,
@@ -518,7 +518,7 @@ impl ApprovalStore {
 
     /// Revoke the exact proposal fingerprint. The immutable key and global
     /// run high-water are retained so an old completion can never be reused.
-    pub(crate) fn revoke(
+    pub(super) fn revoke(
         &self,
         proposal: &StoredRoutedProposal,
     ) -> Result<StoredRevokeDecision, StoreError> {
@@ -543,7 +543,7 @@ impl ApprovalStore {
     /// Revoke all remembered routed authority without requiring the old
     /// topology to still exist. The immutable key and global run high-water
     /// remain, preventing reuse of any previously issued run identity.
-    pub(crate) fn revoke_all(&self) -> Result<StoredRevokeDecision, StoreError> {
+    pub(super) fn revoke_all(&self) -> Result<StoredRevokeDecision, StoreError> {
         let _lock = self.acquire_lock()?;
         let (mut ledger, _key) = match self.load_mutable_if_present_locked()? {
             Some(loaded) => loaded,
@@ -561,11 +561,11 @@ impl ApprovalStore {
     /// Consume one committed permit and revalidate it with the store-owned
     /// key only while its exact fingerprint and run remain globally active.
     ///
-    /// The store lock prevents cooperative revocation during this check. A
-    /// later pinned runner must still register cancellation before consuming
-    /// the returned capability: revocation or a network change can occur
-    /// immediately after this method releases the lock.
-    pub(crate) fn revalidate_permit(
+    /// The store lock prevents cooperative revocation during this check. The
+    /// approval admission boundary must already hold a live invalidation
+    /// registration, then recheck it immediately after this method releases
+    /// the lock because revocation or a network change can occur at once.
+    pub(super) fn revalidate_permit(
         &self,
         permit: RoutedScanPermit,
         snapshot: &RouteSnapshot,
