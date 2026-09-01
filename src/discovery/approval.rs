@@ -1,17 +1,19 @@
-//! Authority and fresh-route policy for routed discovery.
+//! Authority, persistence, and fresh-route policy for routed discovery.
 //!
-//! The policy state machine remains deterministic and reads no clock, storage,
-//! or network itself. Its packet-free gate consumes a committed
-//! [`RoutedScanPermit`] only after rebuilding the complete proposal from a
-//! caller-supplied fresh [`RouteSnapshot`]. No code in this module opens a
-//! discovery socket or sends network traffic.
+//! The policy state machine remains deterministic and reads no clock or
+//! network itself. Its private store owns key generation, strict durable state,
+//! and globally serialized reservations; its packet-free gate consumes a
+//! committed [`RoutedScanPermit`] only after rebuilding the complete proposal
+//! from a caller-supplied fresh [`RouteSnapshot`]. No code in this module opens
+//! a discovery socket or sends network traffic.
 
 // Automatic execution stays deliberately unwired until a future runner can
-// combine durable persistence, atomic cancellation registration, and sockets
-// pinned to the fresh interface.
+// pin every socket to the fresh interface and register cancellation before it
+// consumes revalidated authority.
 #![cfg_attr(not(test), allow(dead_code))]
 
 mod gate;
+mod store;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -50,7 +52,7 @@ const MAX_AUTOMATIC_COOLDOWN: Duration = Duration::from_secs(30 * 60);
 const RESERVATION_LEASE: Duration = Duration::from_secs(60);
 const MAX_EMPTY_RUN_STREAK: u8 = 2;
 
-/// An installation-scoped key supplied by the future persistence boundary.
+/// An installation-scoped key supplied by the private persistence boundary.
 ///
 /// The key is intentionally neither generated nor persisted here. Its debug
 /// representation is redacted and the raw bytes cannot be recovered through
@@ -781,8 +783,9 @@ impl RoutedApprovalState {
     /// Plan a reservation for one exact proposal without publishing authority.
     ///
     /// A successful decision contains a [`RoutedPendingReservation`], not a
-    /// scan permit. The future persistence owner must durably persist its
-    /// complete `state_after_reservation()` before calling `confirm_persisted`.
+    /// scan permit. The store must durably persist its complete
+    /// `state_after_reservation()` before calling `confirm_persisted`; the
+    /// store-owned reserve path releases nothing at weaker durability.
     pub(crate) fn plan_begin(
         &self,
         proposal: RoutedScanProposal,
@@ -971,8 +974,8 @@ impl fmt::Debug for RoutedBeginDecision {
 /// A reservation transition which has not yet been durably committed.
 ///
 /// This value is non-cloneable. It contains a permit, but exposes no method to
-/// obtain it until the future persistence owner explicitly confirms that the
-/// exact next state was stored successfully.
+/// obtain it until the persistence owner explicitly confirms that the exact
+/// next state was stored successfully.
 pub struct RoutedPendingReservation {
     state_after_reservation: RoutedApprovalState,
     permit: RoutedScanPermit,
