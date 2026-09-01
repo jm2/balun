@@ -102,7 +102,7 @@ jobs:
     steps:
       - name: Install desktop build dependencies (Fedora)
         run: >-
-          dnf install -y dbus-daemon gcc gtk4-devel libadwaita-devel
+          dnf install -y binutils dbus-daemon gcc gtk4-devel libadwaita-devel
           pkgconf-pkg-config git curl xorg-x11-server-Xvfb
 
       - uses: actions/checkout@v7
@@ -127,8 +127,8 @@ jobs:
       - name: Smoke desktop lifecycle
         run: scripts/test-desktop-lifecycle.sh
 
-      - name: Build desktop shell
-        run: cargo build --locked --features desktop --bin balun
+      - name: Build and inspect desktop through default helper
+        run: scripts/build-linux.sh
 
   platform-smoke:
     name: ${{ matrix.name }} compile smoke
@@ -194,24 +194,22 @@ jobs:
       - name: Check all targets
         run: cargo check --all-targets --locked
 
-      - name: Build and inspect macOS diagnostic
+      - name: Test GTK-free library on Windows
+        if: runner.os == 'Windows'
+        run: cargo test --lib --locked
+
+      - name: Build and inspect macOS diagnostic through helper
         if: runner.os == 'macOS'
-        run: /bin/bash scripts/build-macos.sh
+        run: /bin/bash scripts/build-macos.sh --diagnostic
 
       - name: Build Windows diagnostic through helper
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/build-windows.ps1 -Diagnostic
 
-      - name: Verify and build macOS desktop shell
+      - name: Build and inspect macOS desktop through default helper
         if: runner.os == 'macOS'
-        run: |
-          brew_prefix="$(brew --prefix)"
-          export PKG_CONFIG_PATH="$brew_prefix/lib/pkgconfig"
-          pkg-config --atleast-version=4.16 gtk4
-          pkg-config --atleast-version=1.6 libadwaita-1
-          cargo build --locked --features desktop --bin balun \
-            --target "${{ matrix.desktop_target }}"
+        run: /bin/bash scripts/build-macos.sh
 
       - name: Build Windows desktop shell through helper
         if: runner.os == 'Windows'

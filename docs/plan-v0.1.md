@@ -4,6 +4,10 @@
 - Target: v0.1.0-alpha.1
 - Last updated: 2026-09-01
 
+The countable done/remaining execution ledger is maintained in
+[`task.md`](task.md); this document remains the authoritative scope,
+architecture, and acceptance contract.
+
 ## 1. Product direction
 
 Balun is a lightweight cross-platform HDHomeRun live TV viewer built
@@ -246,8 +250,11 @@ Normal discovery will:
 
 1. Probe previously successful and manually configured targets.
 2. Send the documented tuner-only IPv4 broadcast request on eligible
-   interfaces.
-3. Perform supported IPv6 local discovery.
+   interface-bound sockets. Use limited broadcast on Windows for compatibility
+   with the vendor implementation and directed subnet broadcast elsewhere;
+   validate every reply against the attached prefix either way.
+3. Perform supported non-link-local IPv6 local discovery. Do not advertise a
+   link-local-only result until lineup HTTP can retain and use its scope ID.
 4. Collect replies for the documented bounded discovery window.
 5. Validate framing, CRC, packet type, DeviceID, string lengths, and reply
    origin.
@@ -293,6 +300,19 @@ The route policy is:
   local and remote devices may coexist.
 - Invalidate remembered route approval when the network fingerprint changes
   materially.
+
+The initial desktop manual path is intentionally narrower than automatic
+routed discovery. It accepts one numeric IPv4 or unscoped IPv6 address, never
+resolves DNS or accepts a URL, port, or range, and never enumerates neighbors or
+falls back to broadcast. Each operation uses at most two request datagrams,
+200 ms response windows, 16 received datagrams, and one accepted identity. A
+controller-private ledger admits at most 32 distinct exact addresses per
+application session, including targets that fail or yield no accepted reply,
+while a successful target becomes bound to its first DeviceID. Local and
+successful exact-address observations are retained as independently
+replaceable source batches and rebuilt atomically into the DeviceID registry.
+Exact no-response removes only that target's current evidence; transport or
+validation failure retains the last-good registry.
 
 Initial route providers:
 
@@ -539,6 +559,12 @@ Diagnostics should report:
 Diagnostics must not include DeviceAuth, full sensitive URLs, or unrelated
 network inventory.
 
+Implementation status: the Windows helper's explicit `-InspectLocal` mode
+builds and validates the GTK-free diagnostic at its exact native-target path,
+then invokes only `--inspect --local`. This avoids manual path handling without
+turning the desktop default into a network operation or accepting arbitrary
+diagnostic arguments.
+
 ## 9. Cross-platform policy
 
 Development may be Linux-led, but architectural changes are not complete
@@ -561,15 +587,18 @@ Implementation status: the first desktop shell declares GTK 4.16 and
 libadwaita 1.6 as its API floors. The feature-gated binary is compiled and
 linted in a Fedora desktop job while default library and diagnostic builds
 remain GTK-free. Native macOS arm64 and Windows x86_64 CI lanes also link the
-shell against their GTK/libadwaita SDKs while continuing to prove the headless
+shell against their GTK/libadwaita SDKs while continuing to prove the GTK-free
 core. The Windows developer helper now auto-detects an installed MSYS2 CLANG64
 environment and makes a locked, build-only release desktop build its no-flag
 operation; `-Run` explicitly builds and launches, while `-Diagnostic` retains
-the GTK-free path. This removes manual compiler, `pkg-config`, Rust-target, and
-Cargo-output path handling without making a portable bundle or installer
-claim. A local Linux GTK 4 Broadway smoke has verified display initialization
-and event-loop entry. Automated display-backed clean-shutdown smoke tests
-remain pending on every platform.
+the GTK-free path. `-InspectLocal` is a separate Windows-only, fixed-argument
+diagnostic operation. Linux, macOS, and Windows helpers bind every compiling
+route to an explicit validated Rust target and repository-local target tree.
+This removes manual compiler, `pkg-config`, Rust-target, and Cargo-output path
+handling without making a portable bundle or installer claim. A local Linux
+GTK 4 Broadway smoke has verified display initialization and event-loop entry.
+Automated display-backed clean-shutdown smoke tests remain pending on every
+platform.
 
 Every completed package must run an exact runtime probe for:
 
@@ -630,19 +659,20 @@ Exit criteria:
 Implementation status: an opt-in thin desktop binary now constructs the exact
 Balun application identity and an adaptive nested device/channel/player shell.
 Construction is packet-free; Refresh explicitly starts bounded local discovery
-and selecting one DeviceID resolves only that registry device's metadata and
-lineup without tuning. The GTK-free controller owns discovery and independent
-selection lanes on a named current-thread Tokio worker, cancels and joins
-superseded work, retains complete URL-bearing selected snapshots only inside
-the actor, and publishes coalesced URL-free projections through a bounded watch
-boundary. A GLib reducer applies complete snapshots to virtualized device and
-channel models, preserves stable identity across replacement, and never merges
-lineups. The ordinary window close path cancels and joins the controller and is
-covered by an isolated Linux Xvfb/D-Bus smoke. The default library and
-diagnostic remain GTK-free, Linux desktop/MSRV compilation is enforced in CI,
-and native macOS and Windows desktop link checks are also enforced. Versioned
-settings and native desktop runtime smoke remain required to complete this
-milestone; playback remains a Milestone 2 concern.
+and an adjacent action admits one bounded numeric exact-address request without
+DNS, range scanning, or fallback. Selecting one DeviceID resolves only that
+registry device's metadata and lineup without tuning. The GTK-free controller
+owns discovery and independent selection lanes on a named current-thread Tokio
+worker, cancels and joins superseded work, retains complete URL-bearing
+selected snapshots only inside the actor, and publishes coalesced URL-free
+projections through a bounded watch boundary. A GLib reducer applies complete
+snapshots to virtualized device and channel models, preserves stable identity
+across replacement, and never merges lineups. The ordinary window close path
+cancels and joins the controller and is covered by an isolated Linux Xvfb/D-Bus
+smoke. The default library and diagnostic remain GTK-free, Linux desktop/MSRV
+compilation is enforced in CI, and native macOS and Windows desktop link checks
+are also enforced. Versioned settings and native desktop runtime smoke remain
+required to complete this milestone; playback remains a Milestone 2 concern.
 
 ### Milestone 2: Playable vertical slice
 
@@ -663,6 +693,16 @@ Exit criteria:
 - 404, 503, protected channel, missing codec, and offline-device paths are
   covered by tests or fixtures.
 - Linux, macOS, and Windows smoke validation passes.
+
+Implementation status: standard desktop local discovery, bounded numeric
+exact-address entry, the DeviceID registry, selected-device lineup loading, and
+both virtualized sidebars are implemented. Hostname admission and the
+playback/control/pipeline/package-runtime work remain open, so this milestone
+is not yet complete. Initial Windows desktop trials exposed inconsistent IPv4
+broadcast discovery and an unusable-only locator path; the local endpoint
+projection now follows Windows limited-broadcast behavior, consumes the direct
+on-link prefix length, and omits link-local IPv6 until scoped HTTP is supported.
+Real-host regression testing remains required.
 
 ### Milestone 3: Multi-device and routed discovery
 
@@ -880,9 +920,10 @@ tests. Sanitized observations from completed rows are maintained in
 - Markdown, TOML, YAML, and GitHub Actions linting.
 - Linux debug and release tests.
 - Linux GTK desktop compile and strict-lint checks.
-- macOS and Windows headless compile plus native desktop link smoke tests.
-- Windows desktop linking through the same no-flag PowerShell helper used by
-  developers, with the headless diagnostic selected explicitly.
+- macOS and Windows GTK-free compile plus native desktop link smoke tests.
+- Linux, macOS, and Windows desktop builds through the same no-option,
+  build-only helpers used by developers, with GTK-free diagnostics selected
+  explicitly for release; only Windows retains Tributary's existing `-Run`.
 - Concurrency cancellation for superseded branch runs.
 
 Add full packaging jobs, coverage ratchets, weekly fuzzing, and expensive GUI

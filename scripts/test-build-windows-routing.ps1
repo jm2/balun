@@ -38,6 +38,9 @@ $EnvironmentNames = @(
     'BALUN_WINDOWS_FAKE_CARGO_STATUS',
     'BALUN_WINDOWS_FAKE_CARGO_AVAILABLE',
     'BALUN_WINDOWS_FAKE_COVERAGE_VERSION',
+    'BALUN_WINDOWS_FAKE_RUSTC_STATUS',
+    'BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE',
+    'BALUN_WINDOWS_FAKE_RUSTC_HOST_TUPLE',
     'BALUN_WINDOWS_FAKE_PKG_STATUS',
     'BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE',
     'BALUN_WINDOWS_FAKE_SKIP_BINARY',
@@ -45,6 +48,9 @@ $EnvironmentNames = @(
     'BALUN_WINDOWS_FAKE_DIRECTORY_BINARY',
     'BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY',
     'BALUN_WINDOWS_TEST_RESTRICTED_PATH',
+    'CARGO_BUILD_TARGET',
+    'CARGO_LLVM_COV_BUILD_DIR',
+    'CARGO_LLVM_COV_TARGET_DIR',
     'CARGO_TARGET_DIR',
     'MSYS2_ROOT',
     'RUST_TARGET'
@@ -161,6 +167,20 @@ function Assert-DesktopEnvironment {
     }
 }
 
+function Assert-CoverageEnvironment {
+    $EnvironmentText = [System.IO.File]::ReadAllText($EnvironmentLog)
+    $CoverageArtifactRoot = Join-Path $FixtureTargetRoot 'llvm-cov-target'
+    foreach ($Expected in @(
+        "CARGO_TARGET_DIR=<$FixtureTargetRoot>",
+        "CARGO_LLVM_COV_TARGET_DIR=<$CoverageArtifactRoot>",
+        "CARGO_LLVM_COV_BUILD_DIR=<$CoverageArtifactRoot>"
+    )) {
+        if (-not $EnvironmentText.Contains($Expected)) {
+            Assert-RoutingTestFailure "coverage environment is missing: $Expected"
+        }
+    }
+}
+
 try {
     [System.IO.Directory]::CreateDirectory($FixtureScripts) | Out-Null
     [System.IO.Directory]::CreateDirectory($RestrictedPath) | Out-Null
@@ -220,6 +240,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $env:PATH = $env:BALUN_WINDOWS_TEST_RESTRICTED_PATH
 
+function global:rustc {
+    $RenderedArguments = @($args | ForEach-Object { "<$($_.ToString())>" }) -join ' '
+    [System.IO.File]::AppendAllText(
+        $env:BALUN_WINDOWS_TEST_LOG,
+        "rustc $RenderedArguments`n"
+    )
+    Write-Output $env:BALUN_WINDOWS_FAKE_RUSTC_HOST_TUPLE
+    $global:LASTEXITCODE = [int]$env:BALUN_WINDOWS_FAKE_RUSTC_STATUS
+}
+
 function global:cargo {
     $RenderedArguments = @($args | ForEach-Object { "<$($_.ToString())>" }) -join ' '
     [System.IO.File]::AppendAllText(
@@ -234,6 +264,10 @@ function global:cargo {
     [System.IO.File]::WriteAllLines(
         $env:BALUN_WINDOWS_TEST_ENV_LOG,
         @(
+            "CARGO_BUILD_TARGET=<$env:CARGO_BUILD_TARGET>",
+            "CARGO_TARGET_DIR=<$env:CARGO_TARGET_DIR>",
+            "CARGO_LLVM_COV_TARGET_DIR=<$env:CARGO_LLVM_COV_TARGET_DIR>",
+            "CARGO_LLVM_COV_BUILD_DIR=<$env:CARGO_LLVM_COV_BUILD_DIR>",
             "PKG_CONFIG=<$env:PKG_CONFIG>",
             "PKG_CONFIG_PATH=<$env:PKG_CONFIG_PATH>",
             "PKG_CONFIG_LIBDIR=<$env:PKG_CONFIG_LIBDIR>",
@@ -307,6 +341,9 @@ function global:cargo {
 if ([int]$env:BALUN_WINDOWS_FAKE_CARGO_AVAILABLE -ne 1) {
     Remove-Item -LiteralPath Function:\cargo -Force
 }
+if ([int]$env:BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE -ne 1) {
+    Remove-Item -LiteralPath Function:\rustc -Force
+}
 
 & $env:BALUN_WINDOWS_HELPER @args
 exit $global:LASTEXITCODE
@@ -323,6 +360,9 @@ exit $global:LASTEXITCODE
     $env:BALUN_WINDOWS_FAKE_CARGO_STATUS = '0'
     $env:BALUN_WINDOWS_FAKE_CARGO_AVAILABLE = '1'
     $env:BALUN_WINDOWS_FAKE_COVERAGE_VERSION = 'cargo-llvm-cov 0.8.7'
+    $env:BALUN_WINDOWS_FAKE_RUSTC_STATUS = '0'
+    $env:BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE = '1'
+    $env:BALUN_WINDOWS_FAKE_RUSTC_HOST_TUPLE = 'x86_64-pc-windows-msvc'
     $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '0'
     $env:BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE = ''
     $env:BALUN_WINDOWS_FAKE_SKIP_BINARY = '0'
@@ -330,6 +370,9 @@ exit $global:LASTEXITCODE
     $env:BALUN_WINDOWS_FAKE_DIRECTORY_BINARY = '0'
     $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = ''
     $env:BALUN_WINDOWS_TEST_RESTRICTED_PATH = $RestrictedPath
+    $env:CARGO_BUILD_TARGET = 'i686-pc-windows-msvc'
+    $env:CARGO_LLVM_COV_BUILD_DIR = Join-Path $TemporaryRoot 'caller llvm-cov build override'
+    $env:CARGO_LLVM_COV_TARGET_DIR = Join-Path $TemporaryRoot 'caller llvm-cov target override'
     $env:CARGO_TARGET_DIR = Join-Path $TemporaryRoot 'caller cargo target override'
     $env:MSYS2_ROOT = $FakeMsysRoot
     $env:RUST_TARGET = $DesktopTarget
@@ -339,6 +382,7 @@ exit $global:LASTEXITCODE
     Assert-ExpectedOutput 'A lightweight cross-platform HDHomeRun live TV viewer'
     Assert-ExpectedOutput 'Application ID: io.github.jm2.Balun'
     Assert-ExpectedOutput 'Windows desktop build helper'
+    Assert-ExpectedOutput 'InspectLocal'
     Assert-EmptyLog $CommandLog 'Cargo'
     Assert-EmptyLog $PkgConfigLog 'pkg-config'
 
@@ -411,6 +455,41 @@ exit $global:LASTEXITCODE
     Assert-ExpectedOutput 'cannot be combined with -Diagnostic'
     Assert-EmptyLog $CommandLog 'Cargo'
 
+    Invoke-TestHelper -Arguments @('-Run', '-InspectLocal')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput 'mutually exclusive launch operations'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    foreach ($QuickMode in @('-Fmt', '-Check', '-Clippy', '-Test', '-Coverage')) {
+        Invoke-TestHelper -Arguments @('-InspectLocal', $QuickMode)
+        Assert-ExpectedStatus 2
+        Assert-ExpectedOutput '-InspectLocal cannot be combined with quick-exit mode'
+        Assert-ExpectedOutput $QuickMode
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+    }
+
+    Invoke-TestHelper -Arguments @('-InspectLocal', '-Msys2Root', $FakeMsysRoot)
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput '-Msys2Root cannot be combined with GTK-free -InspectLocal'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-InspectLocal', '-Bundle')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput 'Unavailable option(s): -Bundle'
+    Assert-ExpectedOutput 'no external work was started'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-InspectLocal', '-CargoUpdateArgs', '-p example')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput 'Unavailable option(s): -CargoUpdateArgs'
+    Assert-ExpectedOutput 'no external work was started'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
     Invoke-TestHelper -Arguments @('-Diagnostic', '-Msys2Root', $FakeMsysRoot)
     Assert-ExpectedStatus 2
     Assert-ExpectedOutput '-Msys2Root applies only to desktop compilation'
@@ -420,6 +499,12 @@ exit $global:LASTEXITCODE
     Assert-ExpectedStatus 2
     Assert-ExpectedOutput 'Unknown argument(s): unexpected-positional-argument'
     Assert-EmptyLog $CommandLog 'Cargo'
+
+    Invoke-TestHelper -Arguments @('-InspectLocal', '--remote')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput 'Unknown argument(s): --remote'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
 
     $env:BALUN_WINDOWS_FAKE_CARGO_AVAILABLE = '0'
     Invoke-TestHelper -Arguments @('-Diagnostic', '-Check')
@@ -435,6 +520,10 @@ exit $global:LASTEXITCODE
 
     $DesktopBuildCommand = (
         'cargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
+    )
+    $DiagnosticBuildCommand = (
+        'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
         "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
     )
     Invoke-TestHelper -Arguments @()
@@ -482,6 +571,17 @@ exit $global:LASTEXITCODE
         "<--target> <$DesktopTarget> <--summary-only>"
     )
     Assert-ExpectedPkgConfigProbeSet
+    Assert-CoverageEnvironment
+
+    Invoke-TestHelper -Arguments @('-Diagnostic', '-Coverage')
+    Assert-ExpectedStatus 0
+    Assert-ExpectedLog (
+        "cargo <llvm-cov> <--version>`n" +
+        'cargo <llvm-cov> <--all-targets> <--no-default-features> <--locked> ' +
+        "<--target> <$DesktopTarget> <--summary-only>"
+    )
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+    Assert-CoverageEnvironment
 
     $env:BALUN_WINDOWS_FAKE_COVERAGE_VERSION = 'cargo-llvm-cov 9.9.9'
     Invoke-TestHelper -Arguments @('-Coverage')
@@ -502,11 +602,54 @@ exit $global:LASTEXITCODE
     Assert-ExpectedStatus 0
     Assert-ExpectedOutput 'Diagnostic output:'
     Assert-ExpectedOutput 'balun-discover.exe'
-    Assert-ExpectedLog (
-        'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
-        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
-    )
+    Assert-ExpectedLog $DiagnosticBuildCommand
     Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    if ($WindowsHost) {
+        # where.exe treats the two fixed diagnostic arguments as independent
+        # current-directory patterns and resolves these PATHEXT fixtures only
+        # when both arguments reach the validated executable unchanged.
+        $InspectArgumentPath = Join-Path $FixtureRoot '--inspect.exe'
+        $LocalArgumentPath = Join-Path $FixtureRoot '--local.exe'
+        [System.IO.File]::WriteAllText($InspectArgumentPath, '')
+        [System.IO.File]::WriteAllText($LocalArgumentPath, '')
+        $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = Join-Path $env:SystemRoot 'System32\where.exe'
+
+        Invoke-TestHelper -Arguments @('-InspectLocal')
+        Assert-ExpectedStatus 0
+        Assert-ExpectedOutput 'Diagnostic output:'
+        Assert-ExpectedOutput (
+            Join-Path $FixtureTargetRoot "$DesktopTarget\release\balun-discover.exe"
+        )
+        Assert-ExpectedOutput 'Inspecting local HDHomeRun discovery'
+        Assert-ExpectedOutput $InspectArgumentPath
+        Assert-ExpectedOutput $LocalArgumentPath
+        Assert-ExpectedLog $DiagnosticBuildCommand
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+        Invoke-TestHelper -Arguments @('-InspectLocal', '-Diagnostic')
+        Assert-ExpectedStatus 0
+        Assert-ExpectedOutput $InspectArgumentPath
+        Assert-ExpectedOutput $LocalArgumentPath
+        Assert-ExpectedLog $DiagnosticBuildCommand
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+        $env:BALUN_WINDOWS_FAKE_SKIP_BINARY = '1'
+        Invoke-TestHelper -Arguments @('-InspectLocal')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'is not a nonempty regular, non-reparse-point file'
+        Assert-ExpectedLog $DiagnosticBuildCommand
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+        $env:BALUN_WINDOWS_FAKE_SKIP_BINARY = '0'
+        $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = ''
+    }
+    else {
+        Invoke-TestHelper -Arguments @('-InspectLocal')
+        Assert-ExpectedStatus 2
+        Assert-ExpectedOutput '-InspectLocal can run the Windows diagnostic only from Windows'
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+    }
 
     Invoke-TestHelper -Arguments @('-Diagnostic', '-Check')
     Assert-ExpectedStatus 0
@@ -519,14 +662,46 @@ exit $global:LASTEXITCODE
 
     $env:RUST_TARGET = ''
     if ($WindowsHost) {
+        $NativeDiagnosticTarget = $env:BALUN_WINDOWS_FAKE_RUSTC_HOST_TUPLE
+        $NativeDiagnosticBuildCommand = (
+            'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
+            "<--target-dir> <$FixtureTargetRoot> <--target> <$NativeDiagnosticTarget>"
+        )
         Invoke-TestHelper -Arguments @('-Diagnostic')
         Assert-ExpectedStatus 0
         Assert-ExpectedLog (
-            'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
-            "<--target-dir> <$FixtureTargetRoot>"
+            "rustc <--print> <host-tuple>`n$NativeDiagnosticBuildCommand"
         )
-        Assert-ExpectedOutput 'Diagnostic output:'
+        Assert-ExpectedOutput (
+            Join-Path $FixtureTargetRoot (
+                "$NativeDiagnosticTarget\release\balun-discover.exe"
+            )
+        )
         Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+        $env:BALUN_WINDOWS_FAKE_RUSTC_STATUS = '37'
+        Invoke-TestHelper -Arguments @('-Diagnostic')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'rustc --print host-tuple did not return one bounded Windows Rust target'
+        Assert-ExpectedLog 'rustc <--print> <host-tuple>'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+        $env:BALUN_WINDOWS_FAKE_RUSTC_STATUS = '0'
+
+        $env:BALUN_WINDOWS_FAKE_RUSTC_HOST_TUPLE = 'x86_64-unknown-linux-gnu'
+        Invoke-TestHelper -Arguments @('-Diagnostic')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'rustc --print host-tuple did not return one bounded Windows Rust target'
+        Assert-ExpectedLog 'rustc <--print> <host-tuple>'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+        $env:BALUN_WINDOWS_FAKE_RUSTC_HOST_TUPLE = $NativeDiagnosticTarget
+
+        $env:BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE = '0'
+        Invoke-TestHelper -Arguments @('-Diagnostic')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'rustc is unavailable'
+        Assert-EmptyLog $CommandLog 'Cargo or rustc'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+        $env:BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE = '1'
 
         Invoke-TestHelper -Arguments @()
         Assert-ExpectedStatus 0
@@ -664,7 +839,8 @@ exit $global:LASTEXITCODE
         'io.github.jm2.Balun',
         "'--features',",
         "'desktop',",
-        '& $BinaryItem.FullName'
+        '& $BinaryItem.FullName',
+        "& `$BinaryItem.FullName '--inspect' '--local'"
     )) {
         if (-not $HelperText.Contains($RequiredText)) {
             Assert-RoutingTestFailure "helper is missing required text: $RequiredText"

@@ -21,13 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shell against native Homebrew GTK/libadwaita on macOS arm64 and an MSYS2
   CLANG64 GTK/libadwaita environment on Windows x86_64, without claiming a
   runnable bundle or package.
-- **Windows desktop build helper** — Make the same-named Tributary-derived
-  `build-windows.ps1` route a no-flag invocation to a build-only locked release
-  of `balun.exe`, auto-detect and configure an MSYS2 CLANG64 environment, keep
-  launch explicit behind `-Run`, and preserve the GTK-free
-  `balun-discover.exe` route behind `-Diagnostic`. Bundle, ZIP, Inno Setup, and
-  dependency-update modes remain fail-closed; the output is not yet a portable
-  bundle or installer.
+- **Desktop-default platform build helpers** — Make the same-named Linux,
+  macOS, and Windows helpers derived from Tributary build locked release desktop
+  executables without launching when invoked with no options. Keep the GTK-
+  free diagnostic explicit behind `--diagnostic` on Linux/macOS and
+  `-Diagnostic` on Windows, and make compile-oriented quick modes desktop-first
+  by default. Preserve Tributary's existing Windows-only `-Run` launch flag
+  without inventing a shell `--run`. Linux binds Cargo to the exact validated
+  native target and repository target path and applies its ELF gate; macOS does
+  the same before its pinned Mach-O component gate; Windows already pins the
+  desktop target and now also pins native diagnostic targets. A Windows-only
+  `-InspectLocal` mode builds and validates the GTK-free tool before invoking
+  exactly `--inspect --local`, avoiding manual executable paths. Unavailable
+  packaging modes remain fail-closed. CI exercises all three no-option desktop
+  routes, while release-candidate jobs select the diagnostic routes explicitly.
+  None of these native executables is yet a portable bundle, installer, or
+  application package.
 - **Headless discovery foundation** — Add the initial Rust library and
   `balun-discover` diagnostic for ordinary local discovery, exact-address
   probes, and explicitly approved routed discovery.
@@ -52,23 +61,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and selected-lineup projections with independent discovery and selection
   generations, URL-free channel rows, deterministic ordering, and validation
   that prevents cross-device lineup merging or stale reducer replacement.
-- **Packet-free controller runtime** — Own local discovery and the device
-  registry on one named current-thread Tokio worker, behind an eight-command
+- **Packet-free controller runtime** — Own local and exact-address discovery
+  and the device registry on one named current-thread Tokio worker, behind an
+  eight-command
   nonblocking ingress and coalesced immutable snapshot receiver. Startup is
-  inert; only an explicit refresh invokes discovery, supersession cancels and
-  joins its predecessor, successful scans atomically replace the local view,
+  inert; only an explicit discovery command invokes network work,
+  supersession cancels and joins its predecessor, successful scans atomically
+  replace their authoritative source view,
   failed scans retain last-good devices, and queue-independent shutdown wins
   races before joining the worker. An independent selection lane resolves
   exactly one registered device, cancels and joins superseded work, re-resolves
   after a successful registry refresh, rejects stale completions, retains
   stream URLs only inside the actor, and publishes URL-free metadata and
   channel rows.
+- **Desktop exact-address discovery** — Add parser-gated numeric IPv4 and
+  unscoped-IPv6 entry for one known routed tuner, a fixed two-attempt/200 ms
+  probe budget, one accepted identity, bounded receive work, DeviceID binding
+  after first success, and an independent local-plus-exact registry union.
+  Keep the entry itself out of snapshots and fixed status/error copy so only a
+  validated responder locator reaches the device projection. A never-validated
+  target creates no device evidence, while transport or validation failure
+  retains any prior last-good evidence. Count at most 32 distinct addresses
+  toward session traffic admission even when no valid reply is accepted, and
+  weakly capture address-entry widgets so dialog close clears and releases the
+  raw text. Expose one Stop action that cancels and joins either discovery kind.
 - **Connected device and channel sidebars** — Reduce complete controller
   snapshots on the GLib main context into virtualized device and selected-
   lineup models, restore selection by stable DeviceID or ChannelKey rather
   than list position, strictly reset recycled rows, keep protected channels
-  visible but disabled, and expose discovery only through an explicit Refresh
-  action. Selecting a device never starts playback.
+  visible but disabled, expose local discovery through explicit Refresh and
+  exact discovery through a parser-gated address action, and offer a shared
+  Stop action only while discovery is active. Selecting a device never starts
+  playback.
 - **Route candidate policy** — Add a platform-neutral route snapshot/provider
   boundary, a native Linux rtnetlink provider, and deterministic policy for
   exact or approved private tunnel candidates; native macOS and Windows
@@ -142,9 +166,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **v0.1 product plan** — Define the separate device/channel sidebars,
   unprotected playback and guide scope, neighbor-friendly tunnel discovery,
   supported hardware sites, architecture, test strategy, and release contract.
+  Add a countable dependency-aware task ledger that distinguishes completed
+  foundations from the work still required for the first alpha.
 
 ### Changed
 
+- **Windows local discovery compatibility** — Derive each attached IPv4
+  network from the OS-reported prefix length, use the vendor-compatible limited
+  broadcast from each Windows interface-bound socket, and continue to accept
+  replies only from that interface prefix and discovery port. Other platforms
+  retain directed subnet broadcast. Omit link-local IPv6 probes until the HTTP
+  layer can preserve the required scope, preventing an unusable-only device
+  row from failing selection before a lineup request can start.
 - **Rust minimum version** — Deliberately adopt the Dependabot-proposed Rust
   1.98 toolchain across Cargo, exact-MSRV CI, and developer documentation, and
   preserve workflow whitespace during future synchronized promotions.

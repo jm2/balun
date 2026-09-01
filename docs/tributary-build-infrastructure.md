@@ -62,9 +62,9 @@ final artifact reopening for that format.
 
 | Tributary file | Status and landing condition |
 | --- | --- |
-| `build-linux.sh` | Adapted for the current headless diagnostic; native/Flatpak package modes fail before build work until their complete gates land |
-| `build-macos.sh` | Adapted for the current native headless diagnostic and pinned Mach-O inspection; app, DMG, signing, and notarization modes fail before external work until their complete gates land |
-| `build-windows.ps1` | Adapted to Tributary's desktop-default flag semantics: no flags auto-detect MSYS2 CLANG64 and build a locked release `balun.exe` without launching, `-Run` builds and launches, and `-Diagnostic` selects the GTK-free tool; bundle, ZIP, Inno, and update paths remain fail-closed |
+| `build-linux.sh` | Adapted to a no-option, build-only locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, an exact native target and repository-local Cargo target path, and Linux ELF inspection; native/Flatpak package modes fail before build work until their complete gates land |
+| `build-macos.sh` | Adapted to a no-option, build-only native locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, exact native-target output binding, and pinned Mach-O inspection; app, DMG, signing, and notarization modes fail before external work until their complete gates land |
+| `build-windows.ps1` | Adapted to Tributary's desktop-default flag semantics: no flags auto-detect MSYS2 CLANG64 and build a locked release `balun.exe` without launching, `-Run` is the sole desktop launch route, `-Diagnostic` selects the GTK-free tool, and the new-purpose `-InspectLocal` builds, validates, and runs only its fixed local inspection; every compiling route pins its Rust target and repository-local output while bundle, ZIP, Inno, and update paths remain fail-closed |
 | `macos-icon-bundle-policy.sh` | Adapted preparatory helper with Balun identity/temp names |
 | `macos-package-policy.sh` | Adapted inspection-only core with bounded Mach-O output and completed-tree checks; broad copy-any-allowed-plugin staging API removed |
 | `sync_rust_toolchain.py` | Port independently against Balun's actual MSRV declarations |
@@ -73,20 +73,26 @@ final artifact reopening for that format.
 | `test-macos-package-policy.sh` | Adapted synthetic test; denied fixtures are derived from the shared policy |
 | `test_dependency_update_policy.py` | Split by feature: the applicable compiler portion is `test_rust_toolchain_policy.py`; fuzz and automerge tests remain deferred or inapplicable until their owners exist |
 
-Balun additionally has deterministic command-routing tests for the current
-headless Linux and macOS helpers and for the Windows desktop/diagnostic routes.
+Balun additionally has deterministic command-routing tests for the Linux,
+macOS, and Windows desktop/diagnostic routes.
 Tributary has no equivalent scripts, so `test-build-linux-policy.sh`,
 `test-build-macos-policy.sh`, and `test-build-windows-routing.ps1` are new,
 narrow responsibilities rather than renamed upstream ports.
 
-Linux and macOS keep their default build and coverage routes explicitly
-headless for now. Windows follows Tributary's desktop-default shape: its
-PowerShell helper discovers a standard MSYS2 CLANG64 installation, owns the
-compiler, `pkg-config`, Rust-target, and Cargo-output path wiring, builds without
-launching by default, and launches only when `-Run` is present. `-Diagnostic`
-keeps the existing GTK-free path available. This developer convenience does not
-imply a bundle, installer, redistributable runtime closure, or PE/package
-validation.
+All three helpers now make a locked, build-only desktop executable their route
+when invoked without options, and their compile-oriented quick modes select
+desktop features by default. Linux and macOS retain the GTK-free tool behind
+`--diagnostic`; Windows uses `-Diagnostic`. Tributary defines an explicit launch
+flag only for its Windows PowerShell helper, so Balun preserves `-Run` there and
+does not invent a shell `--run`. Linux and macOS derive, validate, and pass the
+native Rust host target explicitly before applying their ELF or Mach-O gates;
+Windows does the same for native diagnostics and already fixes its CLANG64
+desktop target. This prevents inherited Cargo target configuration from moving
+a fresh artifact away from the path being inspected. Windows owns the compiler,
+`pkg-config`, Rust-target, and output-path wiring but makes no PE validation
+claim. The release-candidate workflow selects all three diagnostic routes
+explicitly. These developer conveniences do not imply a bundle, installer,
+redistributable runtime closure, or package validation.
 
 The compiler proposal manifest lives at
 `build-aux/toolchain/rust-toolchain.toml`. Dependabot supports a configured

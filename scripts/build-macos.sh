@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Balun — macOS headless diagnostic build helper
+# Balun — macOS desktop build helper
 #
-# This intentionally stops at the current, reviewable Balun deliverable:
-# balun-discover. It does not create an application bundle, disk image, native
-# package, or staged runtime closure.
+# This intentionally stops at a native executable. It does not create an
+# application bundle, disk image, native package, or staged runtime closure.
 
 set -euo pipefail
 
@@ -12,24 +11,35 @@ usage()
     while IFS= read -r usage_line; do
         printf '%s\n' "$usage_line"
     done <<'EOF'
-Balun — macOS headless diagnostic build helper.
+Balun — macOS desktop build helper.
 A lightweight cross-platform HDHomeRun live TV viewer
 Application ID: io.github.jm2.Balun
 
 Usage:
-  ./scripts/build-macos.sh [MODE]
+  ./scripts/build-macos.sh [options]
 
-With no mode, builds the native balun-discover executable with Cargo's locked
-release dependency graph, then applies Balun's pinned Mach-O component policy.
-This produces only target/release/balun-discover. It does not create Balun.app,
-a DMG, a native package, or a staged runtime closure.
+With no options, builds the native Balun desktop executable with Cargo's locked
+release dependency graph and the desktop feature, then applies Balun's pinned
+Mach-O component policy. This produces only
+target/<native-target>/release/balun and does not launch Balun.
+It does not create Balun.app, a DMG, a native package, or a staged runtime
+closure.
+
+Build selector:
+  --diagnostic      Use the GTK-free balun-discover diagnostic instead of the
+                    desktop application. May be combined with a quick mode.
 
 Quick-exit modes (choose at most one):
   --fmt             Run cargo fmt across the workspace.
-  --check           Check all targets with the locked dependency graph.
-  --clippy          Lint all targets with warnings denied and dependencies locked.
-  --coverage        Print a GTK-free all-target coverage summary; requires
-                    cargo-llvm-cov 0.8.7 to be installed already.
+  --check           Check all targets with desktop features by default.
+  --clippy          Lint all targets with desktop features and warnings denied.
+  --coverage        Print an all-target coverage summary with desktop features
+                    by default; requires cargo-llvm-cov 0.8.7 installed already.
+
+Desktop compilation requires preinstalled, pkg-config-visible GTK 4.16 and
+libadwaita 1.6 development libraries. The diagnostic and format routes do not.
+Every compilation route requires a preinstalled rustc reporting one native
+Apple Darwin host tuple. The format route does not.
 
 Unavailable until complete app-bundle recipes and final-artifact gates land:
   --dmg, --app, --bundle, --package, --pkg, --installer, --sign, --notarize
@@ -37,7 +47,7 @@ Unavailable until complete app-bundle recipes and final-artifact gates land:
 This helper never invokes Homebrew, another package manager, an installer, a
 downloader, or runtime-copy staging.
 Cargo may fetch locked dependencies unless cached.
-A rustup-managed Cargo invocation may also fetch the selected Rust toolchain.
+A rustup-managed Cargo or rustc may also fetch the selected Rust toolchain.
 This helper never installs or updates either one itself.
 
 Other:
@@ -69,9 +79,40 @@ require_command()
         fail "Required command '$1' is unavailable; install it explicitly and retry."
 }
 
+require_desktop_dependencies()
+{
+    require_command pkg-config
+
+    pkg-config --atleast-version=4.16 gtk4 >/dev/null 2>&1 || \
+        fail 'gtk4 >= 4.16 was not found through pkg-config; install its development package explicitly and retry.'
+    pkg-config --atleast-version=1.6 libadwaita-1 >/dev/null 2>&1 || \
+        fail 'libadwaita-1 >= 1.6 was not found through pkg-config; install its development package explicitly and retry.'
+    info 'GTK 4.16 and libadwaita 1.6 development-library checks passed.'
+}
+
+resolve_native_target()
+{
+    local LC_ALL=C
+    local rustc_target_status=0
+    export LC_ALL
+
+    require_command rustc
+
+    native_target=$(rustc --print host-tuple 2>/dev/null) \
+        || rustc_target_status=$?
+    if [ "$rustc_target_status" -ne 0 ]; then
+        fail 'rustc could not report its native host tuple; select a preinstalled macOS Rust toolchain and retry.'
+    fi
+    if [ -z "$native_target" ] || [ "${#native_target}" -gt 128 ] \
+        || [[ ! "$native_target" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*-apple-darwin$ ]]; then
+        fail 'rustc host tuple must be one bounded Apple Darwin target; no Cargo build was started.'
+    fi
+}
+
 mode=build
 mode_option=
 show_help=false
+diagnostic=false
 
 # Reject every recognized package-producing route while argument parsing is
 # still the only work performed. In particular, --help cannot mask --dmg.
@@ -79,6 +120,9 @@ for argument in "$@"; do
     case "$argument" in
         -h|--help)
             show_help=true
+            ;;
+        --diagnostic)
+            diagnostic=true
             ;;
         --fmt|--check|--clippy|--coverage)
             if [ "$mode" != build ]; then
@@ -105,35 +149,82 @@ fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repository_root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
-binary="$repository_root/target/release/balun-discover"
+target_directory="$repository_root/target"
+coverage_target_directory="$target_directory/llvm-cov-target"
 policy_helper="$script_dir/macos-package-policy.sh"
 policy_file="$repository_root/build-aux/packaging/forbidden-bundled-components.txt"
 coverage_version='cargo-llvm-cov 0.8.7'
 application_id='io.github.jm2.Balun'
 
+if $diagnostic; then
+    binary_name=balun-discover
+    mode_label=diagnostic
+    artifact_label='balun-discover diagnostic'
+else
+    binary_name=balun
+    mode_label=desktop
+    artifact_label='Balun desktop'
+fi
+
 cd "$repository_root"
 require_command cargo
 
+if [ "$mode" = fmt ]; then
+    info 'Formatting Balun...'
+    cargo fmt --all
+    info 'Formatting complete.'
+    exit 0
+fi
+
+if [ "$mode" = build ]; then
+    host_system=$(uname -s 2>/dev/null || true)
+    [ "$host_system" = Darwin ] || \
+        fail 'The default build route requires a native macOS host; no Cargo build was started.'
+
+    [ -f "$policy_helper" ] && [ ! -L "$policy_helper" ] || \
+        fail "Required macOS package-policy helper is unavailable or unsafe: $policy_helper"
+    [ -f "$policy_file" ] && [ ! -L "$policy_file" ] || \
+        fail "Pinned macOS component policy is unavailable or unsafe: $policy_file"
+fi
+
+resolve_native_target
+binary="$target_directory/$native_target/release/$binary_name"
+
 case "$mode" in
-    fmt)
-        info 'Formatting Balun...'
-        cargo fmt --all
-        info 'Formatting complete.'
-        exit 0
-        ;;
     check)
-        info 'Checking all Balun targets with locked dependencies...'
-        cargo check --all-targets --locked
+        if $diagnostic; then
+            info "Checking all Balun $mode_label targets with locked dependencies..."
+            cargo check --all-targets --locked \
+                --target "$native_target" --target-dir "$target_directory"
+        else
+            require_desktop_dependencies
+            info "Checking all Balun $mode_label targets with locked dependencies..."
+            cargo check --all-targets --all-features --locked \
+                --target "$native_target" --target-dir "$target_directory"
+        fi
         info 'Check passed.'
         exit 0
         ;;
     clippy)
-        info 'Linting all Balun targets with locked dependencies...'
-        cargo clippy --all-targets --locked -- -D warnings
+        if $diagnostic; then
+            info "Linting all Balun $mode_label targets with locked dependencies..."
+            cargo clippy --all-targets --locked \
+                --target "$native_target" --target-dir "$target_directory" \
+                -- -D warnings
+        else
+            require_desktop_dependencies
+            info "Linting all Balun $mode_label targets with locked dependencies..."
+            cargo clippy --all-targets --all-features --locked \
+                --target "$native_target" --target-dir "$target_directory" \
+                -- -D warnings
+        fi
         info 'Clippy passed.'
         exit 0
         ;;
     coverage)
+        if ! $diagnostic; then
+            require_desktop_dependencies
+        fi
         coverage_version_status=0
         installed_coverage_version=$(cargo llvm-cov --version 2>/dev/null) \
             || coverage_version_status=$?
@@ -142,7 +233,19 @@ case "$mode" in
             fail "Coverage requires preinstalled $coverage_version exactly; this helper will not install or replace tools."
         fi
         info "Running informational coverage with $coverage_version..."
-        cargo llvm-cov --all-targets --no-default-features --locked --summary-only
+        if $diagnostic; then
+            CARGO_TARGET_DIR="$target_directory" \
+                CARGO_LLVM_COV_TARGET_DIR="$coverage_target_directory" \
+                CARGO_LLVM_COV_BUILD_DIR="$coverage_target_directory" \
+                cargo llvm-cov --all-targets --no-default-features --locked \
+                --target "$native_target" --summary-only
+        else
+            CARGO_TARGET_DIR="$target_directory" \
+                CARGO_LLVM_COV_TARGET_DIR="$coverage_target_directory" \
+                CARGO_LLVM_COV_BUILD_DIR="$coverage_target_directory" \
+                cargo llvm-cov --all-targets --all-features --locked \
+                --target "$native_target" --summary-only
+        fi
         exit 0
         ;;
     build)
@@ -152,14 +255,9 @@ case "$mode" in
         ;;
 esac
 
-host_system=$(uname -s 2>/dev/null || true)
-[ "$host_system" = Darwin ] || \
-    fail 'The default build route requires a native macOS host; no Cargo build was started.'
-
-[ -f "$policy_helper" ] && [ ! -L "$policy_helper" ] || \
-    fail "Required macOS package-policy helper is unavailable or unsafe: $policy_helper"
-[ -f "$policy_file" ] && [ ! -L "$policy_file" ] || \
-    fail "Pinned macOS component policy is unavailable or unsafe: $policy_file"
+if ! $diagnostic; then
+    require_desktop_dependencies
+fi
 
 # shellcheck source=scripts/macos-package-policy.sh
 source "$policy_helper"
@@ -187,17 +285,25 @@ if [ "$MACOS_PACKAGE_POLICY_RESULT" != loaded ] \
 fi
 info "Loaded $MACOS_FORBIDDEN_COMPONENT_TOKEN_COUNT forbidden bundle filename tokens."
 
-info 'Building balun-discover (native locked release)...'
-cargo build --release --locked --bin balun-discover
+if $diagnostic; then
+    info 'Building balun-discover (native locked release diagnostic)...'
+    cargo build --release --locked --bin balun-discover \
+        --target "$native_target" --target-dir "$target_directory"
+else
+    info 'Building Balun desktop (native locked release)...'
+    cargo build --release --locked --features desktop --bin balun \
+        --target "$native_target" --target-dir "$target_directory"
+fi
 
-[ -f "$binary" ] && [ ! -L "$binary" ] && [ -s "$binary" ] || \
-    fail "Cargo did not produce the expected nonempty regular, non-symlink binary: $binary"
+[ -f "$binary" ] && [ ! -L "$binary" ] && [ -s "$binary" ] \
+    && [ -x "$binary" ] || \
+    fail "Cargo did not produce the expected nonempty, executable, regular, non-symlink binary: $binary"
 
 if ! macos_validate_macho_copy_control "$binary" false; then
-    fail "balun-discover failed macOS Mach-O component-policy inspection: $MACOS_PACKAGE_POLICY_REASON"
+    fail "$artifact_label failed macOS Mach-O component-policy inspection: $MACOS_PACKAGE_POLICY_REASON"
 fi
 [ "$MACOS_PACKAGE_POLICY_RESULT" = allowed ] || \
-    fail 'macOS Mach-O policy returned success without marking the diagnostic allowed.'
+    fail 'macOS Mach-O policy returned success without marking the build output allowed.'
 
 info "Application ID: $application_id"
-info "Mach-O component policy passed for expected diagnostic path: $binary"
+info "Mach-O component policy passed for expected $artifact_label path: $binary"

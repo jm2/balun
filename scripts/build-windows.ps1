@@ -39,7 +39,8 @@
 
 .PARAMETER Coverage
     Print an all-target coverage summary. Requires preinstalled cargo-llvm-cov
-    0.8.7 and its compiler support; nothing is installed.
+    0.8.7 and its compiler support; nothing is installed. Build, coverage, and
+    intermediate artifacts are confined under this repository's target tree.
 
 .PARAMETER Bundle
     Unavailable until Balun has a reviewed packaged-GUI runtime closure.
@@ -70,10 +71,19 @@
 .PARAMETER Diagnostic
     Use the GTK-free balun-discover diagnostic instead of the desktop app.
     This preserves native Windows diagnostic builds without requiring MSYS2.
+    When RUST_TARGET is absent on Windows, rustc's bounded native host tuple is
+    passed to Cargo explicitly and is included in the validated output path.
+
+.PARAMETER InspectLocal
+    On a Windows host, build the GTK-free balun-discover diagnostic, validate
+    its exact output path, and run it with exactly --inspect --local. This is a
+    bounded one-command local-discovery diagnostic: it accepts no discovery
+    argument passthrough. Combining Diagnostic is allowed but redundant.
 
 .PARAMETER Run
     Build the release desktop application and launch the exact validated output
-    path. This cannot be combined with Diagnostic or a quick-exit mode.
+    path. This cannot be combined with Diagnostic, InspectLocal, or a quick-exit
+    mode.
 
 .PARAMETER CargoUpdate
     Unavailable because this build helper never edits the locked dependency
@@ -101,6 +111,7 @@ param(
     [switch]$NoCargoBuild,
     [AllowNull()][string]$Msys2Root,
     [switch]$Diagnostic,
+    [switch]$InspectLocal,
     [switch]$Run,
     [switch]$CargoUpdate,
     [AllowNull()][string]$CargoUpdateArgs,
@@ -202,8 +213,19 @@ if ($QuickModes.Count -gt 1) {
 if ($Run.IsPresent -and $QuickModes.Count -gt 0) {
     Exit-WithUsageError "-Run cannot be combined with quick-exit mode $($QuickModes[0])."
 }
+if ($InspectLocal.IsPresent -and $QuickModes.Count -gt 0) {
+    Exit-WithUsageError (
+        "-InspectLocal cannot be combined with quick-exit mode $($QuickModes[0])."
+    )
+}
+if ($Run.IsPresent -and $InspectLocal.IsPresent) {
+    Exit-WithUsageError '-Run and -InspectLocal are mutually exclusive launch operations.'
+}
 if ($Run.IsPresent -and $Diagnostic.IsPresent) {
-    Exit-WithUsageError '-Run launches only the packet-free desktop shell and cannot be combined with -Diagnostic.'
+    Exit-WithUsageError '-Run launches only the desktop application and cannot be combined with -Diagnostic.'
+}
+if ($InspectLocal.IsPresent -and $Msys2RootSpecified) {
+    Exit-WithUsageError '-Msys2Root cannot be combined with GTK-free -InspectLocal.'
 }
 if ($Diagnostic.IsPresent -and $Msys2RootSpecified) {
     Exit-WithUsageError '-Msys2Root applies only to desktop compilation and cannot be combined with -Diagnostic.'
@@ -216,16 +238,27 @@ function Test-IsWindowsHost {
 if ($Run.IsPresent -and -not (Test-IsWindowsHost)) {
     Exit-WithUsageError '-Run can launch the Windows desktop application only from Windows.'
 }
+if ($InspectLocal.IsPresent -and -not (Test-IsWindowsHost)) {
+    Exit-WithUsageError '-InspectLocal can run the Windows diagnostic only from Windows.'
+}
+
+$DiagnosticMode = $Diagnostic.IsPresent -or $InspectLocal.IsPresent
 
 function Assert-BoundedWindowsRustTarget {
     param([string]$Target)
 
-    if ([string]::IsNullOrWhiteSpace($Target) -or
-        $Target.Length -gt 128 -or
-        $Target -notmatch '^[A-Za-z0-9_][A-Za-z0-9_.-]*$' -or
-        $Target -notmatch '-windows-') {
+    if (-not (Test-IsBoundedWindowsRustTarget $Target)) {
         Exit-WithUsageError 'RUST_TARGET must name one bounded Windows Rust target.'
     }
+}
+
+function Test-IsBoundedWindowsRustTarget {
+    param([AllowNull()][string]$Target)
+
+    return -not ([string]::IsNullOrWhiteSpace($Target) -or
+        $Target.Length -gt 128 -or
+        $Target -notmatch '^[A-Za-z0-9_][A-Za-z0-9_.-]*$' -or
+        $Target -notmatch '-windows-')
 }
 
 function Resolve-DiagnosticRustTarget {
@@ -234,14 +267,38 @@ function Resolve-DiagnosticRustTarget {
         return $env:RUST_TARGET
     }
 
-    if (Test-IsWindowsHost) {
-        return $null
+    if (-not (Test-IsWindowsHost)) {
+        Exit-WithUsageError (
+            'A non-Windows host must set RUST_TARGET to an already-installed ' +
+            'Windows target; this helper will not install one.'
+        )
     }
 
-    Exit-WithUsageError (
-        'A non-Windows host must set RUST_TARGET to an already-installed ' +
-        'Windows target; this helper will not install one.'
+    $rustcCommand = Get-Command rustc -ErrorAction SilentlyContinue
+    if ($null -eq $rustcCommand) {
+        Exit-WithError (
+            'rustc is unavailable; it is required to resolve the native Windows ' +
+            'diagnostic target explicitly.'
+        )
+    }
+
+    $global:LASTEXITCODE = 0
+    $hostOutput = @(& $rustcCommand '--print' 'host-tuple' 2>$null)
+    $hostStatus = $LASTEXITCODE
+    $hostLines = @(
+        $hostOutput |
+            Where-Object { $null -ne $_ } |
+            ForEach-Object { $_.ToString().Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     )
+    if ($hostStatus -ne 0 -or
+        $hostLines.Count -ne 1 -or
+        -not (Test-IsBoundedWindowsRustTarget $hostLines[0])) {
+        Exit-WithError (
+            'rustc --print host-tuple did not return one bounded Windows Rust target.'
+        )
+    }
+    return $hostLines[0]
 }
 
 function Resolve-DesktopRustTarget {
@@ -587,20 +644,15 @@ try {
         exit 0
     }
 
-    $RustTarget = if ($Diagnostic.IsPresent) {
+    $RustTarget = if ($DiagnosticMode) {
         Resolve-DiagnosticRustTarget
     }
     else {
         Resolve-DesktopRustTarget
     }
-    $TargetArguments = if ($null -eq $RustTarget) {
-        @()
-    }
-    else {
-        @('--target', $RustTarget)
-    }
+    $TargetArguments = @('--target', $RustTarget)
 
-    if (-not $Diagnostic.IsPresent) {
+    if (-not $DiagnosticMode) {
         $MsysLayout = Resolve-Msys2Layout
         Initialize-DesktopBuildEnvironment $MsysLayout
         Write-Info "Using MSYS2 CLANG64 at $($MsysLayout.Prefix)."
@@ -609,7 +661,7 @@ try {
         Write-Info 'GTK 4.16 and libadwaita 1.6 development-library checks passed.'
     }
 
-    $FeatureArguments = if ($Diagnostic.IsPresent) {
+    $FeatureArguments = if ($DiagnosticMode) {
         @()
     }
     else {
@@ -617,7 +669,7 @@ try {
     }
 
     if ($Check) {
-        $ModeName = if ($Diagnostic.IsPresent) { 'diagnostic' } else { 'desktop' }
+        $ModeName = if ($DiagnosticMode) { 'diagnostic' } else { 'desktop' }
         Write-Info "Checking all Balun $ModeName targets with locked dependencies..."
         $CargoArguments = @('check', '--all-targets') +
             $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
@@ -628,7 +680,7 @@ try {
     }
 
     if ($Clippy) {
-        $ModeName = if ($Diagnostic.IsPresent) { 'diagnostic' } else { 'desktop' }
+        $ModeName = if ($DiagnosticMode) { 'diagnostic' } else { 'desktop' }
         Write-Info "Linting all Balun $ModeName targets with locked dependencies..."
         $CargoArguments = @('clippy', '--all-targets') +
             $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
@@ -639,7 +691,7 @@ try {
     }
 
     if ($Test) {
-        $ModeName = if ($Diagnostic.IsPresent) { 'diagnostic' } else { 'desktop' }
+        $ModeName = if ($DiagnosticMode) { 'diagnostic' } else { 'desktop' }
         Write-Info "Testing all Balun $ModeName targets with locked dependencies..."
         $CargoArguments = @('test', '--all-targets') +
             $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
@@ -650,6 +702,10 @@ try {
     }
 
     if ($Coverage) {
+        $CoverageArtifactRoot = Join-Path $CargoTargetRoot 'llvm-cov-target'
+        $env:CARGO_TARGET_DIR = $CargoTargetRoot
+        $env:CARGO_LLVM_COV_TARGET_DIR = $CoverageArtifactRoot
+        $env:CARGO_LLVM_COV_BUILD_DIR = $CoverageArtifactRoot
         $global:LASTEXITCODE = 0
         $VersionOutput = @(& $CargoCommand llvm-cov --version 2>$null)
         $VersionStatus = $LASTEXITCODE
@@ -668,7 +724,7 @@ try {
         }
 
         Write-Info "Running informational coverage with $RequiredCoverageVersion..."
-        $CoverageFeatures = if ($Diagnostic.IsPresent) {
+        $CoverageFeatures = if ($DiagnosticMode) {
             @('--no-default-features')
         }
         else {
@@ -680,7 +736,7 @@ try {
         exit 0
     }
 
-    if ($Diagnostic.IsPresent) {
+    if ($DiagnosticMode) {
         $CargoArguments = @(
             'build',
             '--release',
@@ -691,15 +747,23 @@ try {
         Write-Info 'Building balun-discover (locked release diagnostic)...'
         Invoke-Cargo $CargoCommand $CargoArguments 'cargo build'
 
-        $BinaryPath = if ($null -eq $RustTarget) {
-            Join-Path $RepositoryRoot "target\release\$DiagnosticBinaryName"
-        }
-        else {
-            Join-Path $RepositoryRoot "target\$RustTarget\release\$DiagnosticBinaryName"
-        }
+        $BinaryPath = Join-Path (
+            $CargoTargetRoot
+        ) "$RustTarget\release\$DiagnosticBinaryName"
         $BinaryItem = Get-ValidatedBuildOutput $BinaryPath 'diagnostic'
         Write-Info "Application ID: $ApplicationId"
         Write-Info "Diagnostic output: $($BinaryItem.FullName)"
+
+        if ($InspectLocal.IsPresent) {
+            Write-Info 'Inspecting local HDHomeRun discovery...'
+            $global:LASTEXITCODE = 0
+            & $BinaryItem.FullName '--inspect' '--local'
+            if ($LASTEXITCODE -ne 0) {
+                Exit-WithError (
+                    "balun-discover --inspect --local failed with exit code $LASTEXITCODE."
+                )
+            }
+        }
         exit 0
     }
 

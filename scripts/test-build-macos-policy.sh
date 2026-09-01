@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deterministic command-routing tests for scripts/build-macos.sh. The fixture
-# substitutes Cargo and the policy helper, so no compiler, package manager,
-# installer, network access, or real Mach-O inspection is used.
+# substitutes Cargo, rustc, and the policy helper, so no compiler, package
+# manager, installer, network access, or real Mach-O inspection is used.
 
 set -euo pipefail
 
@@ -16,6 +16,9 @@ trap 'rm -rf -- "$temp_dir"' EXIT HUP INT TERM
 fixture="$temp_dir/repository with spaces"
 fake_bin="$fixture/fake-bin"
 command_log="$temp_dir/commands.log"
+hostile_target_directory="$temp_dir/hostile cargo target"
+hostile_coverage_directory="$temp_dir/hostile coverage target"
+hostile_build_target=wasm32-unknown-unknown
 
 mkdir -p \
     "$fixture/scripts" \
@@ -32,6 +35,13 @@ printf 'cargo' >> "$BALUN_TEST_LOG"
 for argument in "$@"; do
     printf ' <%s>' "$argument" >> "$BALUN_TEST_LOG"
 done
+if [ "${1-}" = llvm-cov ] && [ "${2-}" != --version ]; then
+    printf ' <CARGO_TARGET_DIR=%s>' "$CARGO_TARGET_DIR" >> "$BALUN_TEST_LOG"
+    printf ' <CARGO_LLVM_COV_TARGET_DIR=%s>' \
+        "$CARGO_LLVM_COV_TARGET_DIR" >> "$BALUN_TEST_LOG"
+    printf ' <CARGO_LLVM_COV_BUILD_DIR=%s>' \
+        "$CARGO_LLVM_COV_BUILD_DIR" >> "$BALUN_TEST_LOG"
+fi
 printf '\n' >> "$BALUN_TEST_LOG"
 
 if [ "${1-}" = llvm-cov ] && [ "${2-}" = --version ]; then
@@ -43,12 +53,62 @@ if [ "$BALUN_FAKE_CARGO_STATUS" -ne 0 ]; then
 fi
 
 if [ "${1-}" = build ] && [ "$BALUN_FAKE_SKIP_BINARY" -eq 0 ]; then
-    mkdir -p target/release
+    output_name=
+    cargo_target_dir=$CARGO_TARGET_DIR
+    cargo_build_target=$CARGO_BUILD_TARGET
+    previous_argument=
+    for argument in "$@"; do
+        if [ "$previous_argument" = --bin ]; then
+            output_name=$argument
+        fi
+        if [ "$previous_argument" = --target-dir ]; then
+            cargo_target_dir=$argument
+        fi
+        if [ "$previous_argument" = --target ]; then
+            cargo_build_target=$argument
+        fi
+        previous_argument=$argument
+    done
+    [ -n "$output_name" ] || exit 98
+    mkdir -p "$cargo_target_dir/$cargo_build_target/release"
     if [ "$BALUN_FAKE_EMPTY_BINARY" -eq 1 ]; then
-        : > target/release/balun-discover
+        : > "$cargo_target_dir/$cargo_build_target/release/$output_name"
     else
-        printf 'synthetic Mach-O\n' > target/release/balun-discover
+        printf 'synthetic Mach-O\n' \
+            > "$cargo_target_dir/$cargo_build_target/release/$output_name"
     fi
+    chmod +x "$cargo_target_dir/$cargo_build_target/release/$output_name"
+fi
+EOF
+
+cat > "$fake_bin/rustc" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf 'rustc' >> "$BALUN_TEST_LOG"
+for argument in "$@"; do
+    printf ' <%s>' "$argument" >> "$BALUN_TEST_LOG"
+done
+printf '\n' >> "$BALUN_TEST_LOG"
+
+if [ "$BALUN_FAKE_RUSTC_STATUS" -ne 0 ]; then
+    exit "$BALUN_FAKE_RUSTC_STATUS"
+fi
+printf '%s\n' "$BALUN_FAKE_RUSTC_TARGET"
+EOF
+
+cat > "$fake_bin/pkg-config" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf 'pkg-config' >> "$BALUN_TEST_LOG"
+for argument in "$@"; do
+    printf ' <%s>' "$argument" >> "$BALUN_TEST_LOG"
+done
+printf '\n' >> "$BALUN_TEST_LOG"
+
+if [ "${2-}" = "$BALUN_FAKE_PKG_CONFIG_FAILURE" ]; then
+    exit 1
 fi
 EOF
 
@@ -96,11 +156,13 @@ EOF
 chmod +x \
     "$fixture/scripts/build-macos.sh" \
     "$fake_bin/cargo" \
+    "$fake_bin/pkg-config" \
+    "$fake_bin/rustc" \
     "$fake_bin/uname"
 
 # Restrict PATH to the reviewed route's commands. Unexpected direct package
 # managers, downloaders, or installers therefore cannot reach host tools.
-for utility in bash cat dirname mkdir; do
+for utility in bash cat chmod dirname mkdir; do
     utility_path=$(command -v "$utility")
     [ -n "$utility_path" ] || {
         printf 'build-macos policy test requires %s\n' "$utility" >&2
@@ -110,14 +172,19 @@ for utility in bash cat dirname mkdir; do
 done
 
 fake_host_system=Darwin
+fake_native_target=aarch64-apple-darwin
 fake_coverage_version='cargo-llvm-cov 0.8.7'
 fake_cargo_status=0
+fake_rustc_status=0
+fake_pkg_config_failure=
 fake_policy_status=0
 fake_macho_status=0
 fake_skip_binary=0
 fake_empty_binary=0
 status=0
 output=
+desktop_output="$fixture/target/$fake_native_target/release/balun"
+diagnostic_output="$fixture/target/$fake_native_target/release/balun-discover"
 
 run_helper()
 {
@@ -127,6 +194,10 @@ run_helper()
         cd "$temp_dir"
         PATH="$fake_bin" \
         CDPATH="$temp_dir/hostile-cdpath" \
+        CARGO_TARGET_DIR="$hostile_target_directory" \
+        CARGO_BUILD_TARGET="$hostile_build_target" \
+        CARGO_LLVM_COV_TARGET_DIR="$hostile_coverage_directory" \
+        CARGO_LLVM_COV_BUILD_DIR="$hostile_coverage_directory" \
         MACOS_SHA256_COMMAND="$fake_bin/hostile-sha" \
         MACOS_PERL_COMMAND="$fake_bin/hostile-perl" \
         MACOS_OTOOL_COMMAND="$fake_bin/hostile-otool" \
@@ -134,6 +205,9 @@ run_helper()
         BALUN_FAKE_HOST_SYSTEM="$fake_host_system" \
         BALUN_FAKE_COVERAGE_VERSION="$fake_coverage_version" \
         BALUN_FAKE_CARGO_STATUS="$fake_cargo_status" \
+        BALUN_FAKE_RUSTC_STATUS="$fake_rustc_status" \
+        BALUN_FAKE_RUSTC_TARGET="$fake_native_target" \
+        BALUN_FAKE_PKG_CONFIG_FAILURE="$fake_pkg_config_failure" \
         BALUN_FAKE_POLICY_STATUS="$fake_policy_status" \
         BALUN_FAKE_MACHO_STATUS="$fake_macho_status" \
         BALUN_FAKE_SKIP_BINARY="$fake_skip_binary" \
@@ -181,7 +255,14 @@ run_helper --help
 expect_status 0
 expect_output 'A lightweight cross-platform HDHomeRun live TV viewer'
 expect_output 'Application ID: io.github.jm2.Balun'
+expect_output 'With no options, builds the native Balun desktop executable'
+expect_output 'target/<native-target>/release/balun'
+expect_output '--diagnostic'
+expect_output 'pkg-config-visible GTK 4.16'
+expect_output 'preinstalled rustc reporting one native'
 expect_output 'does not create Balun.app'
+expect_output 'does not'
+expect_output 'launch Balun'
 expect_output 'never invokes Homebrew'
 expect_output 'Cargo may fetch locked dependencies unless cached.'
 expect_output 'may also fetch the selected Rust toolchain.'
@@ -189,7 +270,12 @@ expect_empty_log
 
 run_helper --help --help
 expect_status 0
-expect_output 'macOS headless diagnostic build helper'
+expect_output 'macOS desktop build helper'
+expect_empty_log
+
+run_helper --diagnostic --help
+expect_status 0
+expect_output 'macOS desktop build helper'
 expect_empty_log
 
 # Packaging rejection itself uses only Bash builtins and therefore still wins
@@ -209,6 +295,13 @@ esac
 run_helper --unknown
 expect_status 2
 expect_output 'Unknown option: --unknown'
+expect_empty_log
+
+# Tributary's macOS helper has no run selector. Keep this preparatory helper
+# build-only and reject a launch spelling before any dependency probe.
+run_helper --run
+expect_status 2
+expect_output 'Unknown option: --run'
 expect_empty_log
 
 run_helper --help --unknown
@@ -234,6 +327,11 @@ do
     expect_status 2
     expect_output "Packaging mode '$package_mode' is not available yet"
     expect_empty_log
+
+    run_helper --diagnostic "$package_mode"
+    expect_status 2
+    expect_output "Packaging mode '$package_mode' is not available yet"
+    expect_empty_log
 done
 
 for valued_package_mode in --dmg=output.dmg --app=Balun.app --package=pkg; do
@@ -256,7 +354,7 @@ for quick_mode in --fmt --check --clippy --coverage; do
 
     run_helper --help "$quick_mode"
     expect_status 0
-    expect_output 'macOS headless diagnostic build helper'
+    expect_output 'macOS desktop build helper'
     expect_empty_log
 done
 
@@ -269,42 +367,127 @@ for first_quick_mode in --fmt --check --clippy --coverage; do
     done
 done
 
+mv "$fake_bin/rustc" "$fake_bin/rustc.saved"
+run_helper --check
+expect_status 1
+expect_output "Required command 'rustc' is unavailable"
+expect_empty_log
+mv "$fake_bin/rustc.saved" "$fake_bin/rustc"
+
+fake_rustc_status=27
+run_helper --check
+expect_status 1
+expect_output 'rustc could not report its native host tuple'
+expect_log 'rustc <--print> <host-tuple>'
+fake_rustc_status=0
+
+fake_native_target=x86_64-unknown-linux-gnu
+run_helper --check
+expect_status 1
+expect_output 'rustc host tuple must be one bounded Apple Darwin target'
+expect_log 'rustc <--print> <host-tuple>'
+
+fake_native_target='invalid target-apple-darwin'
+run_helper --check
+expect_status 1
+expect_output 'rustc host tuple must be one bounded Apple Darwin target'
+expect_log 'rustc <--print> <host-tuple>'
+
+overlong_target=
+while [ "${#overlong_target}" -le 128 ]; do
+    overlong_target="${overlong_target}a"
+done
+fake_native_target="${overlong_target}-apple-darwin"
+run_helper --check
+expect_status 1
+expect_output 'rustc host tuple must be one bounded Apple Darwin target'
+expect_log 'rustc <--print> <host-tuple>'
+
+fake_native_target=aarch64-apple-darwin
+
+mv "$fake_bin/pkg-config" "$fake_bin/pkg-config.saved"
+run_helper --check
+expect_status 1
+expect_output "Required command 'pkg-config' is unavailable"
+expect_log 'rustc <--print> <host-tuple>'
+
+run_helper --diagnostic --check
+expect_status 0
+expect_log $'rustc <--print> <host-tuple>\ncargo <check> <--all-targets> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+mv "$fake_bin/pkg-config.saved" "$fake_bin/pkg-config"
+
+fake_pkg_config_failure=gtk4
+run_helper --check
+expect_status 1
+expect_output 'gtk4 >= 4.16 was not found through pkg-config'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>'
+
+run_helper
+expect_status 1
+expect_output 'gtk4 >= 4.16 was not found through pkg-config'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>'
+
+fake_pkg_config_failure=libadwaita-1
+run_helper --check
+expect_status 1
+expect_output 'libadwaita-1 >= 1.6 was not found through pkg-config'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>'
+fake_pkg_config_failure=
+
 run_helper --fmt
+expect_status 0
+expect_log 'cargo <fmt> <--all>'
+
+run_helper --diagnostic --fmt
 expect_status 0
 expect_log 'cargo <fmt> <--all>'
 
 run_helper --check
 expect_status 0
-expect_log 'cargo <check> <--all-targets> <--locked>'
+expect_output 'Checking all Balun desktop targets'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <check> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+
+run_helper --diagnostic --check
+expect_status 0
+expect_output 'Checking all Balun diagnostic targets'
+expect_log $'rustc <--print> <host-tuple>\ncargo <check> <--all-targets> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 
 run_helper --clippy
 expect_status 0
-expect_log 'cargo <clippy> <--all-targets> <--locked> <--> <-D> <warnings>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <clippy> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target> <--> <-D> <warnings>'
+
+run_helper --clippy --diagnostic
+expect_status 0
+expect_log $'rustc <--print> <host-tuple>\ncargo <clippy> <--all-targets> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target> <--> <-D> <warnings>'
 
 run_helper --coverage
 expect_status 0
-expect_log $'cargo <llvm-cov> <--version>\ncargo <llvm-cov> <--all-targets> <--no-default-features> <--locked> <--summary-only>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <llvm-cov> <--version>\ncargo <llvm-cov> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--summary-only> <CARGO_TARGET_DIR='"$fixture"$'/target> <CARGO_LLVM_COV_TARGET_DIR='"$fixture"$'/target/llvm-cov-target> <CARGO_LLVM_COV_BUILD_DIR='"$fixture"$'/target/llvm-cov-target>'
+
+run_helper --diagnostic --coverage
+expect_status 0
+expect_log $'rustc <--print> <host-tuple>\ncargo <llvm-cov> <--version>\ncargo <llvm-cov> <--all-targets> <--no-default-features> <--locked> <--target> <'"$fake_native_target"$'> <--summary-only> <CARGO_TARGET_DIR='"$fixture"$'/target> <CARGO_LLVM_COV_TARGET_DIR='"$fixture"$'/target/llvm-cov-target> <CARGO_LLVM_COV_BUILD_DIR='"$fixture"$'/target/llvm-cov-target>'
 
 fake_coverage_version='cargo-llvm-cov 9.9.9'
 run_helper --coverage
 expect_status 1
 expect_output 'requires preinstalled cargo-llvm-cov 0.8.7 exactly'
 expect_output 'will not install or replace tools'
-expect_log 'cargo <llvm-cov> <--version>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <llvm-cov> <--version>'
 fake_coverage_version='cargo-llvm-cov 0.8.7'
 
 fake_coverage_version=$'cargo-llvm-cov 0.8.7\nunexpected second line'
 run_helper --coverage
 expect_status 1
 expect_output 'requires preinstalled cargo-llvm-cov 0.8.7 exactly'
-expect_log $'cargo <llvm-cov> <--version>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <llvm-cov> <--version>'
 fake_coverage_version='cargo-llvm-cov 0.8.7'
 
 fake_cargo_status=26
 run_helper --coverage
 expect_status 1
 expect_output 'requires preinstalled cargo-llvm-cov 0.8.7 exactly'
-expect_log 'cargo <llvm-cov> <--version>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <llvm-cov> <--version>'
 fake_cargo_status=0
 
 mv "$fake_bin/cargo" "$fake_bin/cargo.saved"
@@ -325,7 +508,7 @@ policy_helper="$fixture/scripts/macos-package-policy.sh"
 mv "$policy_helper" "$policy_helper.saved"
 run_helper --check
 expect_status 0
-expect_log 'cargo <check> <--all-targets> <--locked>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <check> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 run_helper
 expect_status 1
 expect_output 'package-policy helper is unavailable or unsafe'
@@ -351,7 +534,7 @@ printf '%s\n' \
 run_helper
 expect_status 1
 expect_output 'does not provide macos_validate_macho_copy_control'
-expect_empty_log
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>'
 rm -f -- "$policy_helper"
 mv "$policy_helper.saved" "$policy_helper"
 
@@ -378,71 +561,93 @@ mv "$policy_file.saved" "$policy_file"
 run_helper
 expect_status 0
 expect_output 'Application ID: io.github.jm2.Balun'
-expect_output 'Mach-O component policy passed for expected diagnostic path:'
-expect_log $'policy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--bin> <balun-discover>\nmacho-inspect <'"$fixture"$'/target/release/balun-discover> <false>'
+expect_output 'Mach-O component policy passed for expected Balun desktop path:'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
+[ ! -e "$hostile_target_directory/$fake_native_target/release/balun" ] || \
+    fail_test 'hostile CARGO_TARGET_DIR received the desktop output'
+[ ! -e "$fixture/target/$hostile_build_target/release/balun" ] || \
+    fail_test 'hostile CARGO_BUILD_TARGET received the desktop output'
+
+run_helper --diagnostic
+expect_status 0
+expect_output 'Mach-O component policy passed for expected balun-discover diagnostic path:'
+expect_log $'rustc <--print> <host-tuple>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--bin> <balun-discover> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$diagnostic_output"$'> <false>'
+[ ! -e "$hostile_target_directory/$fake_native_target/release/balun-discover" ] || \
+    fail_test 'hostile CARGO_TARGET_DIR received the diagnostic output'
+[ ! -e "$fixture/target/$hostile_build_target/release/balun-discover" ] || \
+    fail_test 'hostile CARGO_BUILD_TARGET received the diagnostic output'
 
 fake_policy_status=2
 run_helper
 expect_status 1
 expect_output 'Pinned macOS component policy could not be loaded: synthetic policy failure'
-expect_log 'policy-load <'"$fixture"'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>'
 fake_policy_status=0
 
 fake_cargo_status=24
 run_helper
 expect_status 24
-expect_log $'policy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--bin> <balun-discover>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 fake_cargo_status=0
 
-rm -f -- "$fixture/target/release/balun-discover"
+rm -f -- "$desktop_output"
 fake_skip_binary=1
 run_helper
 expect_status 1
-expect_output 'expected nonempty regular, non-symlink binary'
-expect_log $'policy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--bin> <balun-discover>'
+expect_output 'expected nonempty, executable, regular, non-symlink binary'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 fake_skip_binary=0
 
-: > "$fixture/target/release/balun-discover"
+: > "$desktop_output"
 fake_skip_binary=1
 run_helper
 expect_status 1
-expect_output 'expected nonempty regular, non-symlink binary'
+expect_output 'expected nonempty, executable, regular, non-symlink binary'
 fake_skip_binary=0
 
-rm -f -- "$fixture/target/release/balun-discover"
-mkdir "$fixture/target/release/balun-discover"
+printf 'synthetic non-executable Mach-O\n' > "$desktop_output"
+chmod -x "$desktop_output"
 fake_skip_binary=1
 run_helper
 expect_status 1
-expect_output 'expected nonempty regular, non-symlink binary'
+expect_output 'expected nonempty, executable, regular, non-symlink binary'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 fake_skip_binary=0
-rmdir "$fixture/target/release/balun-discover"
 
-mkfifo "$fixture/target/release/balun-discover"
+rm -f -- "$desktop_output"
+mkdir "$desktop_output"
 fake_skip_binary=1
 run_helper
 expect_status 1
-expect_output 'expected nonempty regular, non-symlink binary'
+expect_output 'expected nonempty, executable, regular, non-symlink binary'
 fake_skip_binary=0
-rm -f -- "$fixture/target/release/balun-discover"
+rmdir "$desktop_output"
 
-rm -f -- "$fixture/target/release/balun-discover"
+mkfifo "$desktop_output"
+fake_skip_binary=1
+run_helper
+expect_status 1
+expect_output 'expected nonempty, executable, regular, non-symlink binary'
+fake_skip_binary=0
+rm -f -- "$desktop_output"
+
+rm -f -- "$desktop_output"
 : > "$temp_dir/outside-symlink-target"
 ln -s "$temp_dir/outside-symlink-target" \
-    "$fixture/target/release/balun-discover"
+    "$desktop_output"
 fake_skip_binary=1
 run_helper
 expect_status 1
-expect_output 'expected nonempty regular, non-symlink binary'
+expect_output 'expected nonempty, executable, regular, non-symlink binary'
 fake_skip_binary=0
-rm -f -- "$fixture/target/release/balun-discover"
+rm -f -- "$desktop_output"
 
 fake_macho_status=2
 run_helper
 expect_status 1
 expect_output 'failed macOS Mach-O component-policy inspection'
 expect_output 'synthetic Mach-O policy failure'
-expect_log $'policy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--bin> <balun-discover>\nmacho-inspect <'"$fixture"$'/target/release/balun-discover> <false>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
 fake_macho_status=0
 
 forbidden_command_pattern='^[[:space:]]*([^[:space:]]*/)?(sudo|curl|wget|git|rustup|brew|port|apt|apt-get|dnf|yum|pacman|zypper|apk|snap|flatpak|hdiutil|create-dmg|productbuild|pkgbuild|codesign|xcrun)([[:space:]]|$)'

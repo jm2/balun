@@ -1,7 +1,7 @@
 # Balun v0.1 Compatibility Notes
 
 - Status: Active
-- Last updated: 2026-08-31
+- Last updated: 2026-09-01
 
 This document records sanitized, reproducible observations that refine the
 v0.1 implementation plan. Device IDs, network addresses, channel names,
@@ -25,6 +25,38 @@ Multiple IPv4 and IPv6 observations for the HDHR5-4K collapsed to one stable
 DeviceID without merging it with the HDHR4-2US. The lineup parser kept channel
 identity scoped to the originating DeviceID and natural-sorted its virtual
 channel numbers.
+
+## Initial Windows desktop discovery trial
+
+The first desktop build was exercised on two Windows hosts against the two
+accessible primary-site tuners. One host displayed one of the two devices; the
+other displayed none. Selecting the single displayed device failed before any
+lineup HTTP attempt because all of its retained locators were unsupported by
+the HTTP boundary.
+
+The code path allowed scoped link-local IPv6 discovery while intentionally
+rejecting scoped IPv6 HTTP. It also depended on optional netmask/broadcast
+values separately derived by the interface library and used directed IPv4
+broadcast on Windows. The follow-up endpoint policy now:
+
+- derives the IPv4 network from Windows' direct on-link prefix length;
+- sends the same bounded requests to `255.255.255.255` from each eligible,
+  specifically bound Windows IPv4 socket while retaining strict source-prefix
+  and source-port validation;
+- retains directed subnet broadcast on other platforms; and
+- omits link-local IPv6 discovery until the HTTP client can preserve its scope.
+
+These changes are covered by platform-neutral endpoint-policy tests, but the
+result is not recorded as a Windows pass until both real hosts are retested.
+Host firewall or network-profile filtering remains a separate possibility if a
+host still receives no valid replies.
+
+A same-day Linux regression after this endpoint-policy change again discovered
+both accessible primary-site devices over IPv4 and completed identity-checked
+metadata and lineup inspection for both. The 4K device's usable non-link-local
+IPv6 observations also remained available. This proves the policy did not
+regress the known-good Linux LAN, but it does not predict Windows firewall or
+adapter behavior.
 
 ## Observed JSON compatibility
 

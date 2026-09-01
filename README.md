@@ -13,16 +13,23 @@ available program information, and a live-video area.
 
 > **Pre-alpha status:** the repository contains a runnable GTK development
 > shell plus the GTK-free discovery, device-registry, and lineup foundation.
-> The window can explicitly discover local tuners and load the selected
-> device's lineup. Manual address entry, EPG, and playback remain unimplemented.
+> The window can explicitly discover local tuners, probe one known numeric
+> device address, and load the selected device's lineup. Hostname entry, EPG,
+> and playback remain unimplemented.
 
 ## Current foundation
 
 - Validated HDHomeRun DeviceID and discovery packet framing, TLV, and CRC
   handling.
-- Per-interface IPv4 broadcast and scoped IPv6 multicast discovery.
+- Per-interface IPv4 discovery using a Windows-compatible limited broadcast
+  from each bound interface and the narrower directed broadcast elsewhere,
+  with replies restricted to the interface's reported prefix. Supported
+  non-link-local IPv6 interfaces use scoped site-local multicast; link-local
+  IPv6 remains excluded until lineup HTTP can preserve its required scope.
 - Exact-address unicast discovery for routed networks, including tunnels where
-  broadcast and multicast are unavailable.
+  broadcast and multicast are unavailable. The desktop admits only one
+  validated numeric address at a time, applies a fixed small probe budget, and
+  caps distinct exact targets across the application session.
 - Explicit, bounded enumeration of an approved RFC 1918 IPv4 range no wider
   than `/24`, with a hard overall scan deadline.
 - Cancellation, response and device limits, duplicate accounting, and
@@ -48,10 +55,12 @@ available program information, and a live-video area.
   no URL-bearing values at the GTK boundary.
 - A packet-free controller runtime on one named current-thread Tokio worker,
   with a bounded nonblocking command ingress, coalesced immutable snapshots,
-  explicit-only local refresh, supersession cancellation, atomic last-good
-  registry replacement, and queue-independent joined shutdown. An independent
-  cancellable selection lane retains the complete URL-bearing device snapshot
-  inside the actor while publishing only device-scoped, URL-free channel rows.
+  explicit-only local and exact-address discovery, supersession cancellation,
+  an atomic union of independently replaceable local and exact source batches,
+  a 32-distinct-address session traffic ledger, last-good retention on errors,
+  and queue-independent joined shutdown. An independent cancellable selection
+  lane retains the complete URL-bearing device snapshot inside the actor while
+  publishing only device-scoped, URL-free channel rows.
 - A cross-platform route snapshot and candidate policy with deterministic fake
   providers, plus a native Linux rtnetlink provider that recognizes WireGuard
   and other unambiguous tunnel links. Native macOS and Windows automatic
@@ -95,13 +104,15 @@ available program information, and a live-video area.
 - GTK-free library boundaries and deterministic fake-device tests.
 - An opt-in GTK 4/libadwaita development shell with adaptive, separate device
   and channel sidebars plus a live-TV empty state. Construction remains inert;
-  Refresh explicitly starts local discovery, selecting one device loads only
-  that device's lineup, and a joined close path stops the controller. It does
+  Refresh explicitly starts local discovery, the adjacent add action admits a
+  bounded exact-address request, selecting one device loads only that device's
+  lineup, and Stop or the joined close path cancels controller work. It does
   not start playback and keeps the core library and diagnostic GTK-free.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
 hardware-validation, packaging, and release boundaries, is in
-[`docs/plan-v0.1.md`](docs/plan-v0.1.md). Sanitized hardware observations are
+[`docs/plan-v0.1.md`](docs/plan-v0.1.md). The countable done/remaining ledger is
+in [`docs/task.md`](docs/task.md), and sanitized hardware observations are
 recorded in [`docs/compatibility-v0.1.md`](docs/compatibility-v0.1.md).
 
 ## Try discovery
@@ -174,11 +185,46 @@ cargo run --locked --features desktop --bin balun
 
 This opens Balun's adaptive device, channel, and live-TV panes without starting
 network work. Choose **Refresh** to run one bounded local discovery operation.
+Use the adjacent add action to probe one known numeric IPv4 or unscoped IPv6
+address when broadcast or multicast cannot cross a routed link. This path does
+not resolve a hostname, accept a URL, port, or CIDR range, enumerate neighbors,
+scan a prefix, or fall back to local discovery. It sends at most two HDHomeRun
+UDP request datagrams with 200 ms response windows, accepts at most 16 received
+datagrams and one device identity, and permits at most 32 distinct exact
+addresses during one application session. A failed target or one with no
+accepted valid reply still consumes that traffic allowance, while retrying an
+already admitted address does not. After the first valid reply, retries are
+bound to that DeviceID. The raw entry is not echoed into validation, status,
+or error copy, and the admission target's debug representation is redacted.
+After a reply passes
+source and identity validation, that responder's locator appears in the normal
+device projection and sidebar. Use **Stop** to cancel and join either kind of
+active discovery operation.
 Selecting a discovered device fetches its identity-checked metadata and lineup
 for the channel sidebar; it does not tune a channel or allocate a tuner. The
 live-TV pane remains an intentional empty state until playback lands.
 
-On Windows, install Rust with the
+On Windows, Refresh sends the same bounded request count from each eligible
+interface-bound IPv4 socket using the limited local broadcast. Balun derives
+the accepted reply prefix from Windows' direct on-link prefix length instead
+of depending on optional derived broadcast metadata. It intentionally omits
+link-local IPv6-only responders until scoped HTTP requests are implemented, so
+that known unusable-only path is not displayed as if lineup HTTP could use it.
+If host firewall or network policy still prevents local replies, use the add
+action with the tuner's known IPv4 address; that exact path sends no broadcast.
+To collect the bounded discovery, endpoint, and lineup diagnostic without
+manually locating an executable, run this explicit Windows-only mode:
+
+```powershell
+pwsh -NoProfile -File scripts/build-windows.ps1 -InspectLocal
+```
+
+It builds and validates the GTK-free diagnostic, then invokes it with exactly
+`--inspect --local`; it accepts no destination or argument passthrough. Native
+`-Diagnostic` and `-InspectLocal` builds use the installed Rust host target and
+need neither MSYS2 nor the gnullvm target.
+
+For the Windows desktop build, install Rust with the
 `x86_64-pc-windows-gnullvm` target and an MSYS2 CLANG64 environment containing
 `mingw-w64-clang-x86_64-gtk4`,
 `mingw-w64-clang-x86_64-libadwaita`,
@@ -216,39 +262,59 @@ cargo test --release --all-targets --locked
 ```
 
 CI verifies the declared Rust 1.98 minimum across the desktop feature, runs
-strict Linux headless debug and release checks, compiles, links, and lints the
+strict Linux GTK-free debug and release checks, compiles, links, and lints the
 Linux desktop shell, links that shell against native macOS and Windows toolkit
-SDKs, and keeps compile-checking the headless code on both platforms. The
-release candidate workflow accepts an existing annotated, v-prefixed
-Semantic Version tag, verifies it against `Cargo.toml` and `CHANGELOG.md`, and
-builds the exact tag commit on all three platforms. It intentionally produces
-internal diagnostic workflow artifacts only; application packages and public
-artifact publication begin with the playable GTK/GStreamer slice.
+SDKs, and keeps compile-checking the GTK-free code on both platforms. CI also
+exercises each platform helper's no-option desktop route. The release candidate
+workflow accepts an existing annotated, v-prefixed Semantic Version tag,
+verifies it against `Cargo.toml` and `CHANGELOG.md`, and builds the exact tag
+commit on all three platforms. It selects `--diagnostic` on Linux/macOS and
+`-Diagnostic` on Windows explicitly, producing internal diagnostic workflow
+artifacts only; application packages and public artifact publication begin
+with the playable GTK/GStreamer slice.
 
-The Tributary-derived Linux helper currently builds and inspects only the
-headless diagnostic. Its package switches fail before starting build or
-network work until their recipes and complete artifact gates exist:
+The same-named Tributary-derived Linux, macOS, and Windows helpers use desktop
+defaults and are build-only with no options. Their check, Clippy, and coverage
+routes also include desktop features by default. Select the GTK-free diagnostic
+explicitly with `--diagnostic` on Linux/macOS or `-Diagnostic` on Windows.
+Tributary established a launch flag only for its Windows PowerShell helper, so
+Balun preserves `-Run` there and deliberately does not invent `--run` for the
+shell helpers.
+
+On Linux, the default helper checks the GTK 4.16/libadwaita 1.6 development
+floors, binds Cargo to the validated native Rust host target and exact
+repository target directory, builds
+`target/<native-target>/release/balun`, and applies the locked metadata and ELF
+component gates. Its package switches fail before starting build or network
+work until their recipes and complete artifact gates exist:
 
 ```bash
 scripts/test-build-linux-policy.sh
 scripts/build-linux.sh --check
 scripts/build-linux.sh
+scripts/build-linux.sh --diagnostic
 ```
 
-The helper never installs tools or packages. Cargo can still fetch the locked
-dependency graph when it is not cached, and a rustup-managed invocation can
-fetch the selected Rust toolchain.
-
-The same-named Tributary macOS and Windows helpers are also present. On macOS,
-a default run builds the native diagnostic, loads the checksum-pinned component
+On macOS, the default route likewise checks the desktop development floors,
+binds the native Apple target, builds
+`target/<native-target>/release/balun`, loads the checksum-pinned component
 policy through system inspection tools, and validates the resulting Mach-O
-without creating an app bundle or DMG:
+without creating an app bundle or DMG. App, DMG, signing, notarization, and
+other package-producing switches remain unavailable and fail before external
+work:
 
 ```bash
 scripts/test-build-macos-policy.sh
 /bin/bash scripts/build-macos.sh --check
 /bin/bash scripts/build-macos.sh
+/bin/bash scripts/build-macos.sh --diagnostic
 ```
+
+Both shell helpers validate a nonempty executable regular file at the expected
+non-symlink output path before the platform component gate. They never install
+tools or packages. Cargo can still fetch the locked dependency graph when it is
+not cached, and a rustup-managed invocation can fetch the selected Rust
+toolchain.
 
 On Windows:
 
@@ -257,16 +323,20 @@ pwsh -NoProfile -File scripts/test-build-windows-routing.ps1
 pwsh -NoProfile -File scripts/build-windows.ps1
 pwsh -NoProfile -File scripts/build-windows.ps1 -Run
 pwsh -NoProfile -File scripts/build-windows.ps1 -Diagnostic
+pwsh -NoProfile -File scripts/build-windows.ps1 -InspectLocal
 pwsh -NoProfile -File scripts/build-windows.ps1 -Check
 ```
 
-The default and `-Run` modes build the release desktop shell through an
+The no-option and `-Run` modes build the release desktop shell through an
 automatically detected MSYS2 CLANG64 environment; only `-Run` launches it.
 `-Diagnostic` preserves the GTK-free diagnostic route, and can be combined
-with quick modes such as `-Check`. Bundle, ZIP, Inno Setup, and dependency-
-update switches remain fail-closed before external work. The helper validates
-the expected Cargo output as a nonempty regular, non-reparse file, but does not
-claim PE validation, a portable runtime closure, or package validation.
+with quick modes such as `-Check`. `-InspectLocal` is the separate, explicit
+build-and-run diagnostic with fixed local-inspection arguments. Every compile
+route pins an explicit Rust target and repository-local target tree before
+validating the expected output as a nonempty regular, non-reparse file. Bundle,
+ZIP, Inno Setup, and dependency-update switches remain fail-closed before
+external work. The helper does not claim PE validation, a portable runtime
+closure, or package validation.
 
 `build-aux/toolchain/rust-toolchain.toml` is the Dependabot proposal source for
 the compiler floor. Its deliberately nested location prevents it from acting as
