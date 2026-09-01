@@ -1,41 +1,45 @@
 <#
 .SYNOPSIS
-    Balun - Windows headless diagnostic build helper
+    Balun - Windows desktop build helper
 
 .DESCRIPTION
-    Builds Balun's current GTK-free balun-discover diagnostic only.
+    Builds Balun's GTK4/libadwaita desktop application with the MSYS2 CLANG64
+    toolchain. With no mode, this runs a locked release build and requires a
+    nonempty, regular, non-reparse-point balun.exe at Cargo's expected output
+    path. It does not launch, bundle, or install the application.
 
     A lightweight cross-platform HDHomeRun live TV viewer
     Application ID: io.github.jm2.Balun
 
-    With no mode, this runs a locked release build and requires a nonempty,
-    regular, non-reparse-point balun-discover.exe at Cargo's expected output
-    path. This is a path-shape check, not PE or package validation.
+    The helper selects x86_64-pc-windows-gnullvm, discovers a standard MSYS2
+    installation automatically, configures its CLANG64 compiler and pkg-config
+    paths, and checks the GTK 4.16 and libadwaita 1.6 development-library
+    floors. Use Msys2Root only for a nonstandard MSYS2 installation.
 
     The helper never invokes an installer, package manager, dependency update,
     or toolchain installation command. Cargo may fetch missing locked dependency
     sources, and a rustup-managed Cargo invocation may fetch the caller-selected
     Rust toolchain before Cargo starts.
 
-    On Windows, Cargo's native target is used unless RUST_TARGET names an
-    explicit Windows target. A non-Windows host must set an already-installed
-    Windows RUST_TARGET; this helper never provisions cross-compilation tools.
-
 .PARAMETER Fmt
-    Run cargo fmt across the workspace and exit.
+    Run cargo fmt across the workspace and exit. This mode does not require
+    MSYS2 because it does not compile the application.
 
 .PARAMETER Check
-    Check all targets with Cargo's locked dependency graph and exit.
+    Check all targets with Cargo's locked dependency graph and exit. The
+    desktop feature is included unless Diagnostic is also specified.
 
 .PARAMETER Clippy
     Lint all targets with locked dependencies and warnings denied, then exit.
+    The desktop feature is included unless Diagnostic is also specified.
 
 .PARAMETER Test
-    Test all targets with Cargo's locked dependency graph, then exit.
+    Test all targets with Cargo's locked dependency graph, then exit. The
+    desktop feature is included unless Diagnostic is also specified.
 
 .PARAMETER Coverage
-    Print a headless all-target coverage summary. Requires preinstalled
-    cargo-llvm-cov 0.8.7 and its compiler support; nothing is installed.
+    Print an all-target coverage summary. Requires preinstalled cargo-llvm-cov
+    0.8.7 and its compiler support; nothing is installed.
 
 .PARAMETER Bundle
     Unavailable until Balun has a reviewed packaged-GUI runtime closure.
@@ -53,17 +57,23 @@
     Unavailable until Balun has a reviewed installer recipe and artifact gates.
 
 .PARAMETER SkipBundle
-    Obsolete because this helper never bundles the diagnostic.
+    Obsolete because the current default action is already build-only.
 
 .PARAMETER NoCargoBuild
     Unavailable because this helper has no post-build package operation.
 
 .PARAMETER Msys2Root
-    Unavailable because the current headless diagnostic has no MSYS2 closure.
+    Optional root of a nonstandard MSYS2 installation. When omitted, the helper
+    checks MSYS2_ROOT, CLANG64 tools already on PATH, C:\msys64, and the common
+    GitHub Actions temporary installation location.
+
+.PARAMETER Diagnostic
+    Use the GTK-free balun-discover diagnostic instead of the desktop app.
+    This preserves native Windows diagnostic builds without requiring MSYS2.
 
 .PARAMETER Run
-    Unavailable so the helper never initiates network discovery. Run the
-    diagnostic explicitly when discovery is intended.
+    Build the release desktop application and launch the exact validated output
+    path. This cannot be combined with Diagnostic or a quick-exit mode.
 
 .PARAMETER CargoUpdate
     Unavailable because this build helper never edits the locked dependency
@@ -90,6 +100,7 @@ param(
     [switch]$SkipBundle,
     [switch]$NoCargoBuild,
     [AllowNull()][string]$Msys2Root,
+    [switch]$Diagnostic,
     [switch]$Run,
     [switch]$CargoUpdate,
     [AllowNull()][string]$CargoUpdateArgs,
@@ -102,8 +113,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $ApplicationId = 'io.github.jm2.Balun'
-$BinaryName = 'balun-discover.exe'
+$DesktopBinaryName = 'balun.exe'
+$DiagnosticBinaryName = 'balun-discover.exe'
+$DesktopRustTarget = 'x86_64-pc-windows-gnullvm'
+$MsysEnvironment = 'clang64'
 $RequiredCoverageVersion = 'cargo-llvm-cov 0.8.7'
+$Msys2RootSpecified = $PSBoundParameters.ContainsKey('Msys2Root')
 
 function Write-Info {
     param([string]$Message)
@@ -124,7 +139,7 @@ function Exit-WithUsageError {
 
 # Keep obsolete Tributary packaging entry points recognizable, but reject them
 # before resolving Cargo, changing location, probing MSYS2, or starting any
-# build, install, package, or network work.
+# build, install, package, launch, or network work.
 $UnavailableOptions = @()
 foreach ($option in @(
     @{ Name = '-Bundle'; Enabled = $PSBoundParameters.ContainsKey('Bundle') },
@@ -134,8 +149,6 @@ foreach ($option in @(
     @{ Name = '-Installer'; Enabled = $PSBoundParameters.ContainsKey('Installer') },
     @{ Name = '-SkipBundle'; Enabled = $PSBoundParameters.ContainsKey('SkipBundle') },
     @{ Name = '-NoCargoBuild'; Enabled = $PSBoundParameters.ContainsKey('NoCargoBuild') },
-    @{ Name = '-Msys2Root'; Enabled = $PSBoundParameters.ContainsKey('Msys2Root') },
-    @{ Name = '-Run'; Enabled = $PSBoundParameters.ContainsKey('Run') },
     @{ Name = '-CargoUpdate'; Enabled = $PSBoundParameters.ContainsKey('CargoUpdate') },
     @{ Name = '-CargoUpdateArgs'; Enabled = $PSBoundParameters.ContainsKey('CargoUpdateArgs') }
 )) {
@@ -147,8 +160,8 @@ foreach ($option in @(
 if ($UnavailableOptions.Count -gt 0) {
     Exit-WithUsageError (
         "Unavailable option(s): $($UnavailableOptions -join ', '). " +
-        'Balun currently builds only the headless diagnostic; no build, ' +
-        'install, package, launch, or network work was started.'
+        'Balun currently supports build, check, test, and explicit desktop ' +
+        'launch operations only; no external work was started.'
     )
 }
 
@@ -186,20 +199,39 @@ foreach ($mode in @(
 if ($QuickModes.Count -gt 1) {
     Exit-WithUsageError "Quick-exit modes cannot be combined: $($QuickModes -join ', ')"
 }
+if ($Run.IsPresent -and $QuickModes.Count -gt 0) {
+    Exit-WithUsageError "-Run cannot be combined with quick-exit mode $($QuickModes[0])."
+}
+if ($Run.IsPresent -and $Diagnostic.IsPresent) {
+    Exit-WithUsageError '-Run launches only the packet-free desktop shell and cannot be combined with -Diagnostic.'
+}
+if ($Diagnostic.IsPresent -and $Msys2RootSpecified) {
+    Exit-WithUsageError '-Msys2Root applies only to desktop compilation and cannot be combined with -Diagnostic.'
+}
 
 function Test-IsWindowsHost {
     return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 }
 
-function Resolve-WindowsRustTarget {
+if ($Run.IsPresent -and -not (Test-IsWindowsHost)) {
+    Exit-WithUsageError '-Run can launch the Windows desktop application only from Windows.'
+}
+
+function Assert-BoundedWindowsRustTarget {
+    param([string]$Target)
+
+    if ([string]::IsNullOrWhiteSpace($Target) -or
+        $Target.Length -gt 128 -or
+        $Target -notmatch '^[A-Za-z0-9_][A-Za-z0-9_.-]*$' -or
+        $Target -notmatch '-windows-') {
+        Exit-WithUsageError 'RUST_TARGET must name one bounded Windows Rust target.'
+    }
+}
+
+function Resolve-DiagnosticRustTarget {
     if (-not [string]::IsNullOrWhiteSpace($env:RUST_TARGET)) {
-        $target = $env:RUST_TARGET
-        if ($target.Length -gt 128 -or
-            $target -notmatch '^[A-Za-z0-9_][A-Za-z0-9_.-]*$' -or
-            $target -notmatch '-windows-') {
-            Exit-WithUsageError "RUST_TARGET must name one bounded Windows Rust target."
-        }
-        return $target
+        Assert-BoundedWindowsRustTarget $env:RUST_TARGET
+        return $env:RUST_TARGET
     }
 
     if (Test-IsWindowsHost) {
@@ -210,6 +242,301 @@ function Resolve-WindowsRustTarget {
         'A non-Windows host must set RUST_TARGET to an already-installed ' +
         'Windows target; this helper will not install one.'
     )
+}
+
+function Resolve-DesktopRustTarget {
+    if (-not [string]::IsNullOrWhiteSpace($env:RUST_TARGET)) {
+        Assert-BoundedWindowsRustTarget $env:RUST_TARGET
+        if ($env:RUST_TARGET -cne $DesktopRustTarget) {
+            Exit-WithUsageError (
+                "The Windows desktop helper requires RUST_TARGET=$DesktopRustTarget " +
+                'to match the MSYS2 CLANG64 GTK libraries.'
+            )
+        }
+        return $env:RUST_TARGET
+    }
+
+    if (-not (Test-IsWindowsHost)) {
+        Exit-WithUsageError (
+            "A non-Windows host must set RUST_TARGET=$DesktopRustTarget; " +
+            'this helper will not install a cross-compilation target.'
+        )
+    }
+    return $DesktopRustTarget
+}
+
+function Get-RegularFilePath {
+    param([string[]]$Candidates)
+
+    foreach ($candidate in $Candidates) {
+        $item = Get-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue
+        if ($null -ne $item -and
+            $item -is [System.IO.FileInfo] -and
+            ($item.Attributes -band [System.IO.FileAttributes]::Directory) -eq 0 -and
+            ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0 -and
+            $item.Length -gt 0) {
+            return $item.FullName
+        }
+    }
+    return $null
+}
+
+function Get-Msys2Layout {
+    param([string]$Root)
+
+    $rootItem = Get-Item -LiteralPath $Root -Force -ErrorAction SilentlyContinue
+    if ($null -eq $rootItem -or
+        ($rootItem.Attributes -band [System.IO.FileAttributes]::Directory) -eq 0) {
+        return [pscustomobject]@{
+            Valid = $false
+            Root = $Root
+            Missing = @('installation root')
+        }
+    }
+
+    $resolvedRoot = $rootItem.FullName
+    $prefix = Join-Path $resolvedRoot $MsysEnvironment
+    $bin = Join-Path $prefix 'bin'
+    $pkgConfigDirectory = Join-Path $prefix 'lib\pkgconfig'
+    $missing = [System.Collections.Generic.List[string]]::new()
+
+    if (-not (Test-Path -LiteralPath $pkgConfigDirectory -PathType Container)) {
+        $missing.Add("$MsysEnvironment\lib\pkgconfig")
+    }
+
+    $pkgConfig = Get-RegularFilePath @(
+        (Join-Path $bin 'pkg-config.exe'),
+        (Join-Path $bin 'pkg-config.cmd'),
+        (Join-Path $bin 'pkg-config')
+    )
+    if ($null -eq $pkgConfig) {
+        $missing.Add("$MsysEnvironment\bin\pkg-config.exe")
+    }
+
+    $clang = Get-RegularFilePath @(
+        (Join-Path $bin 'clang.exe'),
+        (Join-Path $bin 'clang')
+    )
+    if ($null -eq $clang) { $missing.Add("$MsysEnvironment\bin\clang.exe") }
+
+    $clangxx = Get-RegularFilePath @(
+        (Join-Path $bin 'clang++.exe'),
+        (Join-Path $bin 'clang++')
+    )
+    if ($null -eq $clangxx) { $missing.Add("$MsysEnvironment\bin\clang++.exe") }
+
+    $archiveTool = Get-RegularFilePath @(
+        (Join-Path $bin 'llvm-ar.exe'),
+        (Join-Path $bin 'llvm-ar')
+    )
+    if ($null -eq $archiveTool) { $missing.Add("$MsysEnvironment\bin\llvm-ar.exe") }
+
+    $dllTool = Get-RegularFilePath @(
+        (Join-Path $bin 'llvm-dlltool.exe'),
+        (Join-Path $bin 'llvm-dlltool')
+    )
+    if ($null -eq $dllTool) { $missing.Add("$MsysEnvironment\bin\llvm-dlltool.exe") }
+
+    return [pscustomobject]@{
+        Valid = $missing.Count -eq 0
+        Root = $resolvedRoot
+        Prefix = $prefix
+        Bin = $bin
+        PkgConfigDirectory = $pkgConfigDirectory
+        PkgConfig = $pkgConfig
+        Clang = $clang
+        Clangxx = $clangxx
+        ArchiveTool = $archiveTool
+        DllTool = $dllTool
+        Missing = @($missing)
+    }
+}
+
+function Add-Msys2RootCandidate {
+    param(
+        [System.Collections.Generic.List[string]]$Candidates,
+        [System.Collections.Generic.HashSet[string]]$Known,
+        [AllowNull()][string]$Candidate
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Candidate) -or $Candidates.Count -ge 16) {
+        return
+    }
+    if (-not [System.IO.Path]::IsPathFullyQualified($Candidate)) {
+        return
+    }
+    try {
+        $fullPath = [System.IO.Path]::GetFullPath($Candidate)
+    }
+    catch {
+        return
+    }
+    if ($Known.Add($fullPath)) {
+        $Candidates.Add($fullPath)
+    }
+}
+
+function Add-Msys2RootFromToolPath {
+    param(
+        [System.Collections.Generic.List[string]]$Candidates,
+        [System.Collections.Generic.HashSet[string]]$Known,
+        [AllowNull()][string]$ToolPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ToolPath)) { return }
+    $binDirectory = Split-Path -Parent $ToolPath
+    if ([string]::IsNullOrWhiteSpace($binDirectory) -or
+        (Split-Path -Leaf $binDirectory) -ine 'bin') {
+        return
+    }
+    $environmentDirectory = Split-Path -Parent $binDirectory
+    if ((Split-Path -Leaf $environmentDirectory) -ine $MsysEnvironment) {
+        return
+    }
+    Add-Msys2RootCandidate $Candidates $Known (Split-Path -Parent $environmentDirectory)
+}
+
+function Resolve-Msys2Layout {
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    $known = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $explicitRoot = $script:Msys2RootSpecified
+
+    if ($explicitRoot) {
+        if ([string]::IsNullOrWhiteSpace($Msys2Root)) {
+            Exit-WithUsageError '-Msys2Root must name one existing MSYS2 installation root.'
+        }
+        if (-not [System.IO.Path]::IsPathFullyQualified($Msys2Root)) {
+            Exit-WithUsageError '-Msys2Root must be an absolute filesystem path.'
+        }
+        Add-Msys2RootCandidate $candidates $known $Msys2Root
+    }
+    else {
+        Add-Msys2RootCandidate $candidates $known $env:MSYS2_ROOT
+
+        foreach ($commandName in @('pkg-config.exe', 'pkg-config')) {
+            $command = Get-Command $commandName -CommandType Application -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($null -ne $command) {
+                Add-Msys2RootFromToolPath $candidates $known $command.Source
+            }
+        }
+
+        if (Test-IsWindowsHost) {
+            Add-Msys2RootCandidate $candidates $known 'C:\msys64'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+            Add-Msys2RootCandidate $candidates $known (Join-Path $env:RUNNER_TEMP 'msys64')
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($env:PATH)) {
+            $separator = [regex]::Escape([string][System.IO.Path]::PathSeparator)
+            foreach ($pathEntry in @($env:PATH -split $separator)) {
+                if ([string]::IsNullOrWhiteSpace($pathEntry)) { continue }
+                $leaf = Split-Path -Leaf $pathEntry
+                if ($leaf -ine 'bin') { continue }
+                $parent = Split-Path -Parent $pathEntry
+                if ((Split-Path -Leaf $parent) -ieq $MsysEnvironment) {
+                    Add-Msys2RootCandidate $candidates $known (Split-Path -Parent $parent)
+                }
+                elseif ((Split-Path -Leaf $parent) -ieq 'usr') {
+                    Add-Msys2RootCandidate $candidates $known (Split-Path -Parent $parent)
+                }
+            }
+        }
+    }
+
+    $firstIncomplete = $null
+    foreach ($candidate in $candidates) {
+        $layout = Get-Msys2Layout $candidate
+        if ($layout.Valid) { return $layout }
+        if ($null -eq $firstIncomplete -and
+            -not ($layout.Missing -contains 'installation root')) {
+            $firstIncomplete = $layout
+        }
+    }
+
+    if ($explicitRoot -and $candidates.Count -eq 0) {
+        Exit-WithUsageError '-Msys2Root is not a valid filesystem path.'
+    }
+    if ($explicitRoot -or $null -ne $firstIncomplete) {
+        $incomplete = if ($null -ne $firstIncomplete) {
+            $firstIncomplete
+        }
+        else {
+            Get-Msys2Layout $candidates[0]
+        }
+        Exit-WithError (
+            "MSYS2 CLANG64 is incomplete under $($incomplete.Root); missing: " +
+            "$($incomplete.Missing -join ', '). Install the " +
+            'mingw-w64-clang-x86_64-gtk4, ' +
+            'mingw-w64-clang-x86_64-libadwaita, ' +
+            'mingw-w64-clang-x86_64-pkg-config, and ' +
+            'mingw-w64-clang-x86_64-toolchain packages.'
+        )
+    }
+
+    Exit-WithError (
+        'Could not locate an MSYS2 CLANG64 installation automatically. ' +
+        'Install MSYS2 at C:\msys64 or pass its root once with -Msys2Root.'
+    )
+}
+
+function Initialize-DesktopBuildEnvironment {
+    param([pscustomobject]$Layout)
+
+    $env:PKG_CONFIG = $Layout.PkgConfig
+    $env:PKG_CONFIG_PATH = $Layout.PkgConfigDirectory
+    $env:PKG_CONFIG_LIBDIR = $Layout.PkgConfigDirectory
+    $env:PKG_CONFIG_ALLOW_CROSS = '1'
+    $env:PATH = $Layout.Bin + [System.IO.Path]::PathSeparator + $env:PATH
+
+    $targetToken = $DesktopRustTarget.Replace('-', '_').Replace('.', '_')
+    foreach ($targetSuffix in @($DesktopRustTarget, $targetToken)) {
+        [Environment]::SetEnvironmentVariable(
+            "PKG_CONFIG_$targetSuffix",
+            $Layout.PkgConfig,
+            'Process'
+        )
+        [Environment]::SetEnvironmentVariable(
+            "PKG_CONFIG_PATH_$targetSuffix",
+            $Layout.PkgConfigDirectory,
+            'Process'
+        )
+        [Environment]::SetEnvironmentVariable(
+            "PKG_CONFIG_LIBDIR_$targetSuffix",
+            $Layout.PkgConfigDirectory,
+            'Process'
+        )
+        [Environment]::SetEnvironmentVariable(
+            "PKG_CONFIG_ALLOW_CROSS_$targetSuffix",
+            '1',
+            'Process'
+        )
+    }
+    [Environment]::SetEnvironmentVariable("DLLTOOL_$targetToken", $Layout.DllTool, 'Process')
+    [Environment]::SetEnvironmentVariable("CC_$targetToken", $Layout.Clang, 'Process')
+    [Environment]::SetEnvironmentVariable("CXX_$targetToken", $Layout.Clangxx, 'Process')
+    [Environment]::SetEnvironmentVariable("AR_$targetToken", $Layout.ArchiveTool, 'Process')
+}
+
+function Assert-PkgConfigFloor {
+    param(
+        [pscustomobject]$Layout,
+        [string]$Package,
+        [string]$MinimumVersion,
+        [string]$InstallPackage
+    )
+
+    $global:LASTEXITCODE = 0
+    & $Layout.PkgConfig "--atleast-version=$MinimumVersion" $Package
+    if ($LASTEXITCODE -ne 0) {
+        Exit-WithError (
+            "$Package >= $MinimumVersion was not found in $($Layout.Prefix). " +
+            "Install or update mingw-w64-clang-x86_64-$InstallPackage in MSYS2 CLANG64."
+        )
+    }
 }
 
 function Invoke-Cargo {
@@ -226,7 +553,26 @@ function Invoke-Cargo {
     }
 }
 
+function Get-ValidatedBuildOutput {
+    param([string]$Path, [string]$Label)
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or
+        $item -isnot [System.IO.FileInfo] -or
+        ($item.Attributes -band [System.IO.FileAttributes]::Directory) -ne 0 -or
+        ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $item.Length -le 0) {
+        Exit-WithError (
+            "The expected $Label output path is not a nonempty regular, " +
+            "non-reparse-point file: $Path"
+        )
+    }
+    return $item
+}
+
 $RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).ProviderPath
+$CargoTargetRoot = Join-Path $RepositoryRoot 'target'
+$TargetDirectoryArguments = @('--target-dir', $CargoTargetRoot)
 $CargoCommand = Get-Command cargo -ErrorAction SilentlyContinue
 if ($null -eq $CargoCommand) {
     Exit-WithError 'cargo is unavailable; install and select Rust explicitly, then retry.'
@@ -241,7 +587,12 @@ try {
         exit 0
     }
 
-    $RustTarget = Resolve-WindowsRustTarget
+    $RustTarget = if ($Diagnostic.IsPresent) {
+        Resolve-DiagnosticRustTarget
+    }
+    else {
+        Resolve-DesktopRustTarget
+    }
     $TargetArguments = if ($null -eq $RustTarget) {
         @()
     }
@@ -249,17 +600,38 @@ try {
         @('--target', $RustTarget)
     }
 
+    if (-not $Diagnostic.IsPresent) {
+        $MsysLayout = Resolve-Msys2Layout
+        Initialize-DesktopBuildEnvironment $MsysLayout
+        Write-Info "Using MSYS2 CLANG64 at $($MsysLayout.Prefix)."
+        Assert-PkgConfigFloor $MsysLayout 'gtk4' '4.16' 'gtk4'
+        Assert-PkgConfigFloor $MsysLayout 'libadwaita-1' '1.6' 'libadwaita'
+        Write-Info 'GTK 4.16 and libadwaita 1.6 development-library checks passed.'
+    }
+
+    $FeatureArguments = if ($Diagnostic.IsPresent) {
+        @()
+    }
+    else {
+        @('--all-features')
+    }
+
     if ($Check) {
-        Write-Info 'Checking all Balun targets with locked dependencies...'
-        $CargoArguments = @('check', '--all-targets', '--locked') + $TargetArguments
+        $ModeName = if ($Diagnostic.IsPresent) { 'diagnostic' } else { 'desktop' }
+        Write-Info "Checking all Balun $ModeName targets with locked dependencies..."
+        $CargoArguments = @('check', '--all-targets') +
+            $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
+            $TargetArguments
         Invoke-Cargo $CargoCommand $CargoArguments 'cargo check'
         Write-Info 'Check passed.'
         exit 0
     }
 
     if ($Clippy) {
-        Write-Info 'Linting all Balun targets with locked dependencies...'
-        $CargoArguments = @('clippy', '--all-targets', '--locked') +
+        $ModeName = if ($Diagnostic.IsPresent) { 'diagnostic' } else { 'desktop' }
+        Write-Info "Linting all Balun $ModeName targets with locked dependencies..."
+        $CargoArguments = @('clippy', '--all-targets') +
+            $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
             $TargetArguments + @('--', '-D', 'warnings')
         Invoke-Cargo $CargoCommand $CargoArguments 'cargo clippy'
         Write-Info 'Clippy passed.'
@@ -267,8 +639,11 @@ try {
     }
 
     if ($Test) {
-        Write-Info 'Testing all Balun targets with locked dependencies...'
-        $CargoArguments = @('test', '--all-targets', '--locked') + $TargetArguments
+        $ModeName = if ($Diagnostic.IsPresent) { 'diagnostic' } else { 'desktop' }
+        Write-Info "Testing all Balun $ModeName targets with locked dependencies..."
+        $CargoArguments = @('test', '--all-targets') +
+            $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
+            $TargetArguments
         Invoke-Cargo $CargoCommand $CargoArguments 'cargo test'
         Write-Info 'Tests passed.'
         exit 0
@@ -293,13 +668,38 @@ try {
         }
 
         Write-Info "Running informational coverage with $RequiredCoverageVersion..."
-        $CargoArguments = @(
-            'llvm-cov',
-            '--all-targets',
-            '--no-default-features',
-            '--locked'
-        ) + $TargetArguments + @('--summary-only')
+        $CoverageFeatures = if ($Diagnostic.IsPresent) {
+            @('--no-default-features')
+        }
+        else {
+            @('--all-features')
+        }
+        $CargoArguments = @('llvm-cov', '--all-targets') +
+            $CoverageFeatures + @('--locked') + $TargetArguments + @('--summary-only')
         Invoke-Cargo $CargoCommand $CargoArguments 'cargo llvm-cov'
+        exit 0
+    }
+
+    if ($Diagnostic.IsPresent) {
+        $CargoArguments = @(
+            'build',
+            '--release',
+            '--locked',
+            '--bin',
+            'balun-discover'
+        ) + $TargetDirectoryArguments + $TargetArguments
+        Write-Info 'Building balun-discover (locked release diagnostic)...'
+        Invoke-Cargo $CargoCommand $CargoArguments 'cargo build'
+
+        $BinaryPath = if ($null -eq $RustTarget) {
+            Join-Path $RepositoryRoot "target\release\$DiagnosticBinaryName"
+        }
+        else {
+            Join-Path $RepositoryRoot "target\$RustTarget\release\$DiagnosticBinaryName"
+        }
+        $BinaryItem = Get-ValidatedBuildOutput $BinaryPath 'diagnostic'
+        Write-Info "Application ID: $ApplicationId"
+        Write-Info "Diagnostic output: $($BinaryItem.FullName)"
         exit 0
     }
 
@@ -307,32 +707,25 @@ try {
         'build',
         '--release',
         '--locked',
+        '--features',
+        'desktop',
         '--bin',
-        'balun-discover'
-    ) + $TargetArguments
-    Write-Info 'Building balun-discover (locked release)...'
+        'balun'
+    ) + $TargetDirectoryArguments + $TargetArguments
+    Write-Info "Building Balun desktop (locked release for $RustTarget)..."
     Invoke-Cargo $CargoCommand $CargoArguments 'cargo build'
 
-    $BinaryPath = if ($null -eq $RustTarget) {
-        Join-Path $RepositoryRoot "target\release\$BinaryName"
-    }
-    else {
-        Join-Path $RepositoryRoot "target\$RustTarget\release\$BinaryName"
-    }
-    $BinaryItem = Get-Item -LiteralPath $BinaryPath -Force -ErrorAction SilentlyContinue
-    if ($null -eq $BinaryItem -or
-        $BinaryItem -isnot [System.IO.FileInfo] -or
-        ($BinaryItem.Attributes -band [System.IO.FileAttributes]::Directory) -ne 0 -or
-        ($BinaryItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        $BinaryItem.Length -le 0) {
-        Exit-WithError (
-            'The expected diagnostic output path is not a nonempty regular, ' +
-            "non-reparse-point file: $BinaryPath"
-        )
-    }
-
+    $BinaryPath = Join-Path $RepositoryRoot "target\$RustTarget\release\$DesktopBinaryName"
+    $BinaryItem = Get-ValidatedBuildOutput $BinaryPath 'desktop application'
     Write-Info "Application ID: $ApplicationId"
-    Write-Info "Expected diagnostic output path: $($BinaryItem.FullName)"
+    Write-Info "Desktop output: $($BinaryItem.FullName)"
+
+    if ($Run.IsPresent) {
+        Write-Info "Launching $($BinaryItem.FullName)..."
+        $global:LASTEXITCODE = 0
+        & $BinaryItem.FullName
+        exit $LASTEXITCODE
+    }
     exit 0
 }
 finally {

@@ -164,6 +164,7 @@ jobs:
 
       - name: Set up Windows desktop build environment
         if: runner.os == 'Windows'
+        id: msys2
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
         env:
           __SETUP_MSYS2_USE_MAIN_MIRROR_ONLY: 'true'
@@ -194,7 +195,7 @@ jobs:
       - name: Build Windows diagnostic through helper
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/build-windows.ps1
+        run: ./scripts/build-windows.ps1 -Diagnostic
 
       - name: Verify and build macOS desktop shell
         if: runner.os == 'macOS'
@@ -206,13 +207,9 @@ jobs:
           cargo build --locked --features desktop --bin balun \
             --target "${{ matrix.desktop_target }}"
 
-      - name: Verify and build Windows desktop shell
+      - name: Build Windows desktop shell through helper
         if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          export PKG_CONFIG_ALLOW_CROSS=1
-          export PKG_CONFIG_PATH=/clang64/lib/pkgconfig
-          pkg-config --atleast-version=4.16 gtk4
-          pkg-config --atleast-version=1.6 libadwaita-1
-          cargo build --locked --features desktop --bin balun \
-            --target "${{ matrix.desktop_target }}"
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: ./scripts/build-windows.ps1

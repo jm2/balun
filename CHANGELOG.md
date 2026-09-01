@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shell against native Homebrew GTK/libadwaita on macOS arm64 and an MSYS2
   CLANG64 GTK/libadwaita environment on Windows x86_64, without claiming a
   runnable bundle or package.
+- **Windows desktop build helper** — Make the same-named Tributary-derived
+  `build-windows.ps1` route a no-flag invocation to a build-only locked release
+  of `balun.exe`, auto-detect and configure an MSYS2 CLANG64 environment, keep
+  launch explicit behind `-Run`, and preserve the GTK-free
+  `balun-discover.exe` route behind `-Diagnostic`. Bundle, ZIP, Inno Setup, and
+  dependency-update modes remain fail-closed; the output is not yet a portable
+  bundle or installer.
 - **Headless discovery foundation** — Add the initial Rust library and
   `balun-discover` diagnostic for ordinary local discovery, exact-address
   probes, and explicitly approved routed discovery.

@@ -64,7 +64,7 @@ final artifact reopening for that format.
 | --- | --- |
 | `build-linux.sh` | Adapted for the current headless diagnostic; native/Flatpak package modes fail before build work until their complete gates land |
 | `build-macos.sh` | Adapted for the current native headless diagnostic and pinned Mach-O inspection; app, DMG, signing, and notarization modes fail before external work until their complete gates land |
-| `build-windows.ps1` | Adapted for the current headless diagnostic; bundle, ZIP, Inno, update, and launch paths fail before external work until their complete gates land |
+| `build-windows.ps1` | Adapted to Tributary's desktop-default flag semantics: no flags auto-detect MSYS2 CLANG64 and build a locked release `balun.exe` without launching, `-Run` builds and launches, and `-Diagnostic` selects the GTK-free tool; bundle, ZIP, Inno, and update paths remain fail-closed |
 | `macos-icon-bundle-policy.sh` | Adapted preparatory helper with Balun identity/temp names |
 | `macos-package-policy.sh` | Adapted inspection-only core with bounded Mach-O output and completed-tree checks; broad copy-any-allowed-plugin staging API removed |
 | `sync_rust_toolchain.py` | Port independently against Balun's actual MSRV declarations |
@@ -74,15 +74,19 @@ final artifact reopening for that format.
 | `test_dependency_update_policy.py` | Split by feature: the applicable compiler portion is `test_rust_toolchain_policy.py`; fuzz and automerge tests remain deferred or inapplicable until their owners exist |
 
 Balun additionally has deterministic command-routing tests for the current
-headless Linux, macOS, and Windows helpers. Tributary has no equivalent
-scripts, so `test-build-linux-policy.sh`, `test-build-macos-policy.sh`, and
-`test-build-windows-routing.ps1` are new, narrow responsibilities rather than
-renamed upstream ports.
+headless Linux and macOS helpers and for the Windows desktop/diagnostic routes.
+Tributary has no equivalent scripts, so `test-build-linux-policy.sh`,
+`test-build-macos-policy.sh`, and `test-build-windows-routing.ps1` are new,
+narrow responsibilities rather than renamed upstream ports.
 
-All three developer helpers keep their default build and coverage routes
-explicitly headless after the optional `desktop` feature was introduced. The
-desktop shell is built directly with Cargo until each platform helper gains a
-reviewed application-binary route without implying a bundle or package.
+Linux and macOS keep their default build and coverage routes explicitly
+headless for now. Windows follows Tributary's desktop-default shape: its
+PowerShell helper discovers a standard MSYS2 CLANG64 installation, owns the
+compiler, `pkg-config`, Rust-target, and Cargo-output path wiring, builds without
+launching by default, and launches only when `-Run` is present. `-Diagnostic`
+keeps the existing GTK-free path available. This developer convenience does not
+imply a bundle, installer, redistributable runtime closure, or PE/package
+validation.
 
 The compiler proposal manifest lives at
 `build-aux/toolchain/rust-toolchain.toml`. Dependabot supports a configured

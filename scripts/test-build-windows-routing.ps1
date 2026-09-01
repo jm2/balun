@@ -1,9 +1,9 @@
 <#
 Deterministic command-routing tests for scripts/build-windows.ps1.
 
-Each invocation runs in a fresh child PowerShell process with an in-memory
-fake Cargo command. No compiler, installer, package manager, network access,
-GUI bundle, or native Windows artifact is used.
+Each invocation runs in a fresh child PowerShell process with fake Cargo and
+MSYS2 CLANG64 commands. No compiler, installer, package manager, network
+access, GUI toolkit, or Balun artifact is required.
 #>
 
 Set-StrictMode -Version Latest
@@ -17,19 +17,36 @@ $TemporaryRoot = Join-Path (
 $FixtureRoot = Join-Path $TemporaryRoot 'repository with spaces'
 $FixtureScripts = Join-Path $FixtureRoot 'scripts'
 $FixtureHelper = Join-Path $FixtureScripts 'build-windows.ps1'
+$FixtureTargetRoot = Join-Path $FixtureRoot 'target'
 $Runner = Join-Path $TemporaryRoot 'runner.ps1'
 $CommandLog = Join-Path $TemporaryRoot 'commands.log'
+$EnvironmentLog = Join-Path $TemporaryRoot 'environment.log'
+$PkgConfigLog = Join-Path $TemporaryRoot 'pkg-config.log'
 $RestrictedPath = Join-Path $TemporaryRoot 'empty-command-path'
+$FakeMsysRoot = Join-Path $TemporaryRoot 'MSYS2 root with spaces'
+$FakeMsysPrefix = Join-Path $FakeMsysRoot 'clang64'
+$FakeMsysBin = Join-Path $FakeMsysPrefix 'bin'
+$FakePkgConfigDirectory = Join-Path $FakeMsysPrefix 'lib\pkgconfig'
+$IncompleteMsysRoot = Join-Path $TemporaryRoot 'incomplete-msys2'
 $PowerShellExecutable = (Get-Process -Id $PID).Path
+$DesktopTarget = 'x86_64-pc-windows-gnullvm'
 $EnvironmentNames = @(
     'BALUN_WINDOWS_HELPER',
     'BALUN_WINDOWS_TEST_LOG',
+    'BALUN_WINDOWS_TEST_ENV_LOG',
+    'BALUN_WINDOWS_TEST_PKG_LOG',
     'BALUN_WINDOWS_FAKE_CARGO_STATUS',
     'BALUN_WINDOWS_FAKE_CARGO_AVAILABLE',
     'BALUN_WINDOWS_FAKE_COVERAGE_VERSION',
+    'BALUN_WINDOWS_FAKE_PKG_STATUS',
+    'BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE',
     'BALUN_WINDOWS_FAKE_SKIP_BINARY',
     'BALUN_WINDOWS_FAKE_ZERO_BINARY',
+    'BALUN_WINDOWS_FAKE_DIRECTORY_BINARY',
+    'BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY',
     'BALUN_WINDOWS_TEST_RESTRICTED_PATH',
+    'CARGO_TARGET_DIR',
+    'MSYS2_ROOT',
     'RUST_TARGET'
 )
 $OriginalEnvironment = @{}
@@ -42,17 +59,23 @@ foreach ($Name in $EnvironmentNames) {
 
 $LastStatus = 0
 $LastOutput = ''
+$LastArguments = @()
 
 function Assert-RoutingTestFailure {
     param([string]$Message)
 
     [Console]::Error.WriteLine("build-windows routing test failed: $Message")
+    [Console]::Error.WriteLine(
+        "arguments: $(@($script:LastArguments | ForEach-Object { "<$_>" }) -join ' ')"
+    )
     [Console]::Error.WriteLine("status: $script:LastStatus")
     [Console]::Error.WriteLine("output:`n$script:LastOutput")
-    if (Test-Path -LiteralPath $CommandLog -PathType Leaf) {
-        [Console]::Error.WriteLine(
-            "commands:`n$([System.IO.File]::ReadAllText($CommandLog))"
-        )
+    foreach ($Log in @($CommandLog, $EnvironmentLog, $PkgConfigLog)) {
+        if (Test-Path -LiteralPath $Log -PathType Leaf) {
+            [Console]::Error.WriteLine(
+                "$([System.IO.Path]::GetFileName($Log)):`n$([System.IO.File]::ReadAllText($Log))"
+            )
+        }
     }
     exit 1
 }
@@ -60,10 +83,12 @@ function Assert-RoutingTestFailure {
 function Invoke-TestHelper {
     param([string[]]$Arguments)
 
-    [System.IO.File]::WriteAllText($CommandLog, '')
-    $TargetDirectory = Join-Path $FixtureRoot 'target'
-    if (Test-Path -LiteralPath $TargetDirectory) {
-        Remove-Item -LiteralPath $TargetDirectory -Recurse -Force
+    $script:LastArguments = @($Arguments)
+    foreach ($Log in @($CommandLog, $EnvironmentLog, $PkgConfigLog)) {
+        [System.IO.File]::WriteAllText($Log, '')
+    }
+    if (Test-Path -LiteralPath $FixtureTargetRoot) {
+        Remove-Item -LiteralPath $FixtureTargetRoot -Recurse -Force
     }
 
     $Captured = @(
@@ -87,30 +112,108 @@ function Assert-ExpectedOutput {
     }
 }
 
-function Get-CommandLog {
-    return [System.IO.File]::ReadAllText($CommandLog).TrimEnd(
-        [char[]]@("`r", "`n")
-    )
-}
-
 function Assert-ExpectedLog {
     param([string]$Expected)
-    $Actual = Get-CommandLog
+    $Actual = [System.IO.File]::ReadAllText($CommandLog).TrimEnd(
+        [char[]]@("`r", "`n")
+    )
     if ($Actual -cne $Expected) {
         Assert-RoutingTestFailure "unexpected command routing; expected '$Expected', got '$Actual'"
     }
 }
 
 function Assert-EmptyLog {
-    if ((Get-Item -LiteralPath $CommandLog).Length -ne 0) {
-        Assert-RoutingTestFailure 'expected no Cargo invocation'
+    param([string]$Path, [string]$Label)
+    if ((Get-Item -LiteralPath $Path).Length -ne 0) {
+        Assert-RoutingTestFailure "expected no $Label invocation"
+    }
+}
+
+function Assert-ExpectedPkgConfigProbeSet {
+    $Lines = @([System.IO.File]::ReadAllLines($PkgConfigLog))
+    if ($Lines.Count -ne 2 -or
+        $Lines[0] -cne 'pkg-config <--atleast-version=4.16> <gtk4>' -or
+        $Lines[1] -cne 'pkg-config <--atleast-version=1.6> <libadwaita-1>') {
+        Assert-RoutingTestFailure 'unexpected pkg-config probes'
+    }
+}
+
+function Assert-DesktopEnvironment {
+    $EnvironmentText = [System.IO.File]::ReadAllText($EnvironmentLog)
+    foreach ($Expected in @(
+        "PKG_CONFIG=<$FakePkgConfigCommand>",
+        "PKG_CONFIG_PATH=<$FakePkgConfigDirectory>",
+        "PKG_CONFIG_LIBDIR=<$FakePkgConfigDirectory>",
+        'PKG_CONFIG_ALLOW_CROSS=<1>',
+        "TARGET_PKG_CONFIG=<$FakePkgConfigCommand>",
+        "TARGET_PKG_CONFIG_PATH=<$FakePkgConfigDirectory>",
+        "TARGET_PKG_CONFIG_LIBDIR=<$FakePkgConfigDirectory>",
+        'TARGET_PKG_CONFIG_ALLOW_CROSS=<1>',
+        "PATH_FIRST=<$FakeMsysBin>",
+        "CC=<$FakeMsysBin$([System.IO.Path]::DirectorySeparatorChar)clang$FakeToolSuffix>",
+        "CXX=<$FakeMsysBin$([System.IO.Path]::DirectorySeparatorChar)clang++$FakeToolSuffix>",
+        "AR=<$FakeMsysBin$([System.IO.Path]::DirectorySeparatorChar)llvm-ar$FakeToolSuffix>",
+        "DLLTOOL=<$FakeMsysBin$([System.IO.Path]::DirectorySeparatorChar)llvm-dlltool$FakeToolSuffix>"
+    )) {
+        if (-not $EnvironmentText.Contains($Expected)) {
+            Assert-RoutingTestFailure "desktop environment is missing: $Expected"
+        }
     }
 }
 
 try {
     [System.IO.Directory]::CreateDirectory($FixtureScripts) | Out-Null
     [System.IO.Directory]::CreateDirectory($RestrictedPath) | Out-Null
+    [System.IO.Directory]::CreateDirectory($FakeMsysBin) | Out-Null
+    [System.IO.Directory]::CreateDirectory($FakePkgConfigDirectory) | Out-Null
+    [System.IO.Directory]::CreateDirectory($IncompleteMsysRoot) | Out-Null
     Copy-Item -LiteralPath $HelperUnderTest -Destination $FixtureHelper
+
+    $WindowsHost = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+    $FakeToolSuffix = if ($WindowsHost) { '.exe' } else { '' }
+    foreach ($Tool in @('clang', 'clang++', 'llvm-ar', 'llvm-dlltool')) {
+        [System.IO.File]::WriteAllBytes(
+            (Join-Path $FakeMsysBin "$Tool$FakeToolSuffix"),
+            [byte[]]@(0x4d, 0x5a)
+        )
+    }
+
+    if ($WindowsHost) {
+        $FakePkgConfigCommand = Join-Path $FakeMsysBin 'pkg-config.cmd'
+        $PkgConfigSource = @'
+@echo off
+>>"%BALUN_WINDOWS_TEST_PKG_LOG%" echo pkg-config ^<%1^> ^<%2^>
+if not "%BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE%"=="" if /I not "%~2"=="%BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE%" exit /b 0
+exit /b %BALUN_WINDOWS_FAKE_PKG_STATUS%
+'@
+        [System.IO.File]::WriteAllText(
+            $FakePkgConfigCommand,
+            $PkgConfigSource,
+            [System.Text.Encoding]::ASCII
+        )
+    }
+    else {
+        $FakePkgConfigCommand = Join-Path $FakeMsysBin 'pkg-config'
+        $PkgConfigSource = @'
+#!/bin/sh
+printf 'pkg-config <%s> <%s>\n' "$1" "$2" >> "$BALUN_WINDOWS_TEST_PKG_LOG"
+if [ -n "$BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE" ] && [ "$2" != "$BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE" ]; then
+    exit 0
+fi
+exit "$BALUN_WINDOWS_FAKE_PKG_STATUS"
+'@
+        [System.IO.File]::WriteAllText(
+            $FakePkgConfigCommand,
+            $PkgConfigSource,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        [System.IO.File]::SetUnixFileMode(
+            $FakePkgConfigCommand,
+            [System.IO.UnixFileMode]::UserRead -bor
+                [System.IO.UnixFileMode]::UserWrite -bor
+                [System.IO.UnixFileMode]::UserExecute
+        )
+    }
 
     $RunnerSource = @'
 Set-StrictMode -Version Latest
@@ -124,6 +227,29 @@ function global:cargo {
         "cargo $RenderedArguments`n"
     )
 
+    $TargetToken = 'x86_64_pc_windows_gnullvm'
+    $PathFirst = @($env:PATH -split [regex]::Escape(
+        [string][System.IO.Path]::PathSeparator
+    ))[0]
+    [System.IO.File]::WriteAllLines(
+        $env:BALUN_WINDOWS_TEST_ENV_LOG,
+        @(
+            "PKG_CONFIG=<$env:PKG_CONFIG>",
+            "PKG_CONFIG_PATH=<$env:PKG_CONFIG_PATH>",
+            "PKG_CONFIG_LIBDIR=<$env:PKG_CONFIG_LIBDIR>",
+            "PKG_CONFIG_ALLOW_CROSS=<$env:PKG_CONFIG_ALLOW_CROSS>",
+            "TARGET_PKG_CONFIG=<$([Environment]::GetEnvironmentVariable("PKG_CONFIG_$TargetToken"))>",
+            "TARGET_PKG_CONFIG_PATH=<$([Environment]::GetEnvironmentVariable("PKG_CONFIG_PATH_$TargetToken"))>",
+            "TARGET_PKG_CONFIG_LIBDIR=<$([Environment]::GetEnvironmentVariable("PKG_CONFIG_LIBDIR_$TargetToken"))>",
+            "TARGET_PKG_CONFIG_ALLOW_CROSS=<$([Environment]::GetEnvironmentVariable("PKG_CONFIG_ALLOW_CROSS_$TargetToken"))>",
+            "PATH_FIRST=<$PathFirst>",
+            "CC=<$([Environment]::GetEnvironmentVariable("CC_$TargetToken"))>",
+            "CXX=<$([Environment]::GetEnvironmentVariable("CXX_$TargetToken"))>",
+            "AR=<$([Environment]::GetEnvironmentVariable("AR_$TargetToken"))>",
+            "DLLTOOL=<$([Environment]::GetEnvironmentVariable("DLLTOOL_$TargetToken"))>"
+        )
+    )
+
     $Status = [int]$env:BALUN_WINDOWS_FAKE_CARGO_STATUS
     if ($args.Count -ge 2 -and
         $args[0].ToString() -ceq 'llvm-cov' -and
@@ -135,16 +261,37 @@ function global:cargo {
         $args.Count -gt 0 -and
         $args[0].ToString() -ceq 'build' -and
         [int]$env:BALUN_WINDOWS_FAKE_SKIP_BINARY -eq 0) {
-        $ArtifactDirectory = Join-Path (Get-Location).ProviderPath 'target'
-        if (-not [string]::IsNullOrWhiteSpace($env:RUST_TARGET)) {
-            $ArtifactDirectory = Join-Path $ArtifactDirectory $env:RUST_TARGET
+        $TargetDirectoryIndex = [Array]::IndexOf([object[]]$args, '--target-dir')
+        if ($TargetDirectoryIndex -lt 0 -or
+            $TargetDirectoryIndex + 1 -ge $args.Count) {
+            throw 'fake Cargo build requires --target-dir'
+        }
+        $ArtifactDirectory = $args[$TargetDirectoryIndex + 1].ToString()
+
+        $TargetIndex = [Array]::IndexOf([object[]]$args, '--target')
+        if ($TargetIndex -ge 0) {
+            $ArtifactDirectory = Join-Path $ArtifactDirectory $args[$TargetIndex + 1].ToString()
         }
         $ArtifactDirectory = Join-Path $ArtifactDirectory 'release'
         [System.IO.Directory]::CreateDirectory($ArtifactDirectory) | Out-Null
-        $ArtifactPath = Join-Path $ArtifactDirectory 'balun-discover.exe'
-        if ([int]$env:BALUN_WINDOWS_FAKE_ZERO_BINARY -eq 1) {
+
+        $BinaryName = if (@($args | ForEach-Object { $_.ToString() }) -ccontains 'balun-discover') {
+            'balun-discover.exe'
+        }
+        else {
+            'balun.exe'
+        }
+        $ArtifactPath = Join-Path $ArtifactDirectory $BinaryName
+
+        if ([int]$env:BALUN_WINDOWS_FAKE_DIRECTORY_BINARY -eq 1) {
+            [System.IO.Directory]::CreateDirectory($ArtifactPath) | Out-Null
+        }
+        elseif ([int]$env:BALUN_WINDOWS_FAKE_ZERO_BINARY -eq 1) {
             $EmptyArtifact = [System.IO.File]::Create($ArtifactPath)
             $EmptyArtifact.Dispose()
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY)) {
+            Copy-Item -LiteralPath $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY -Destination $ArtifactPath
         }
         else {
             [System.IO.File]::WriteAllBytes(
@@ -165,29 +312,42 @@ if ([int]$env:BALUN_WINDOWS_FAKE_CARGO_AVAILABLE -ne 1) {
 exit $global:LASTEXITCODE
 '@
     [System.IO.File]::WriteAllText($Runner, $RunnerSource)
-    [System.IO.File]::WriteAllText($CommandLog, '')
+    foreach ($Log in @($CommandLog, $EnvironmentLog, $PkgConfigLog)) {
+        [System.IO.File]::WriteAllText($Log, '')
+    }
 
     $env:BALUN_WINDOWS_HELPER = $FixtureHelper
     $env:BALUN_WINDOWS_TEST_LOG = $CommandLog
+    $env:BALUN_WINDOWS_TEST_ENV_LOG = $EnvironmentLog
+    $env:BALUN_WINDOWS_TEST_PKG_LOG = $PkgConfigLog
     $env:BALUN_WINDOWS_FAKE_CARGO_STATUS = '0'
     $env:BALUN_WINDOWS_FAKE_CARGO_AVAILABLE = '1'
     $env:BALUN_WINDOWS_FAKE_COVERAGE_VERSION = 'cargo-llvm-cov 0.8.7'
+    $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '0'
+    $env:BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE = ''
     $env:BALUN_WINDOWS_FAKE_SKIP_BINARY = '0'
     $env:BALUN_WINDOWS_FAKE_ZERO_BINARY = '0'
+    $env:BALUN_WINDOWS_FAKE_DIRECTORY_BINARY = '0'
+    $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = ''
     $env:BALUN_WINDOWS_TEST_RESTRICTED_PATH = $RestrictedPath
-    $env:RUST_TARGET = 'x86_64-pc-windows-msvc'
+    $env:CARGO_TARGET_DIR = Join-Path $TemporaryRoot 'caller cargo target override'
+    $env:MSYS2_ROOT = $FakeMsysRoot
+    $env:RUST_TARGET = $DesktopTarget
 
     Invoke-TestHelper -Arguments @('-Help')
     Assert-ExpectedStatus 0
     Assert-ExpectedOutput 'A lightweight cross-platform HDHomeRun live TV viewer'
     Assert-ExpectedOutput 'Application ID: io.github.jm2.Balun'
-    Assert-EmptyLog
+    Assert-ExpectedOutput 'Windows desktop build helper'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
 
     foreach ($HelpArgument in @('--help', '-h')) {
         Invoke-TestHelper -Arguments @($HelpArgument)
         Assert-ExpectedStatus 0
-        Assert-ExpectedOutput 'Balun - Windows headless diagnostic build helper'
-        Assert-EmptyLog
+        Assert-ExpectedOutput 'Windows desktop build helper'
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
     }
 
     $UnavailableCases = @(
@@ -198,11 +358,6 @@ exit $global:LASTEXITCODE
         [pscustomobject]@{ Name = '-Installer'; Arguments = @('-Installer') },
         [pscustomobject]@{ Name = '-SkipBundle'; Arguments = @('-SkipBundle') },
         [pscustomobject]@{ Name = '-NoCargoBuild'; Arguments = @('-NoCargoBuild') },
-        [pscustomobject]@{
-            Name = '-Msys2Root'
-            Arguments = @('-Msys2Root', 'C:\msys64')
-        },
-        [pscustomobject]@{ Name = '-Run'; Arguments = @('-Run') },
         [pscustomobject]@{ Name = '-CargoUpdate'; Arguments = @('-CargoUpdate') },
         [pscustomobject]@{
             Name = '-CargoUpdateArgs'
@@ -213,8 +368,9 @@ exit $global:LASTEXITCODE
         Invoke-TestHelper -Arguments $Case.Arguments
         Assert-ExpectedStatus 2
         Assert-ExpectedOutput $Case.Name
-        Assert-ExpectedOutput 'no build, install, package, launch, or network work was started'
-        Assert-EmptyLog
+        Assert-ExpectedOutput 'no external work was started'
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
     }
 
     foreach ($FalseSwitch in @(
@@ -225,76 +381,112 @@ exit $global:LASTEXITCODE
         '-Installer:$false',
         '-SkipBundle:$false',
         '-NoCargoBuild:$false',
-        '-Run:$false',
         '-CargoUpdate:$false'
     )) {
         $SwitchName = $FalseSwitch.Substring(0, $FalseSwitch.IndexOf(':'))
         Invoke-TestHelper -Arguments @($FalseSwitch)
         Assert-ExpectedStatus 2
         Assert-ExpectedOutput "Unavailable option(s): $SwitchName"
-        Assert-EmptyLog
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
     }
 
     Invoke-TestHelper -Arguments @('-Help', '-Zip')
     Assert-ExpectedStatus 2
     Assert-ExpectedOutput '-Zip'
-    Assert-EmptyLog
+    Assert-EmptyLog $CommandLog 'Cargo'
 
     Invoke-TestHelper -Arguments @('-Check', '-Clippy')
     Assert-ExpectedStatus 2
     Assert-ExpectedOutput 'Quick-exit modes cannot be combined'
-    Assert-EmptyLog
+    Assert-EmptyLog $CommandLog 'Cargo'
+
+    Invoke-TestHelper -Arguments @('-Run', '-Check')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput '-Run cannot be combined'
+    Assert-EmptyLog $CommandLog 'Cargo'
+
+    Invoke-TestHelper -Arguments @('-Run', '-Diagnostic')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput 'cannot be combined with -Diagnostic'
+    Assert-EmptyLog $CommandLog 'Cargo'
+
+    Invoke-TestHelper -Arguments @('-Diagnostic', '-Msys2Root', $FakeMsysRoot)
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput '-Msys2Root applies only to desktop compilation'
+    Assert-EmptyLog $CommandLog 'Cargo'
 
     Invoke-TestHelper -Arguments @('unexpected-positional-argument')
     Assert-ExpectedStatus 2
     Assert-ExpectedOutput 'Unknown argument(s): unexpected-positional-argument'
-    Assert-EmptyLog
+    Assert-EmptyLog $CommandLog 'Cargo'
 
     $env:BALUN_WINDOWS_FAKE_CARGO_AVAILABLE = '0'
-    Invoke-TestHelper -Arguments @('-Check')
+    Invoke-TestHelper -Arguments @('-Diagnostic', '-Check')
     Assert-ExpectedStatus 1
     Assert-ExpectedOutput 'cargo is unavailable'
-    Assert-EmptyLog
+    Assert-EmptyLog $CommandLog 'Cargo'
     $env:BALUN_WINDOWS_FAKE_CARGO_AVAILABLE = '1'
 
     Invoke-TestHelper -Arguments @('-Fmt')
     Assert-ExpectedStatus 0
     Assert-ExpectedLog 'cargo <fmt> <--all>'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    $DesktopBuildCommand = (
+        'cargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
+    )
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 0
+    Assert-ExpectedOutput 'Desktop output:'
+    Assert-ExpectedOutput 'balun.exe'
+    Assert-ExpectedLog $DesktopBuildCommand
+    Assert-ExpectedPkgConfigProbeSet
+    Assert-DesktopEnvironment
+
+    Invoke-TestHelper -Arguments @('-Msys2Root', $FakeMsysRoot)
+    Assert-ExpectedStatus 0
+    Assert-ExpectedOutput "Using MSYS2 CLANG64 at $FakeMsysPrefix"
+    Assert-ExpectedLog $DesktopBuildCommand
+    Assert-DesktopEnvironment
 
     Invoke-TestHelper -Arguments @('-Check')
     Assert-ExpectedStatus 0
     Assert-ExpectedLog (
-        'cargo <check> <--all-targets> <--locked> <--target> ' +
-        '<x86_64-pc-windows-msvc>'
+        'cargo <check> <--all-targets> <--all-features> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
     )
+    Assert-ExpectedPkgConfigProbeSet
 
     Invoke-TestHelper -Arguments @('-Clippy')
     Assert-ExpectedStatus 0
     Assert-ExpectedLog (
-        'cargo <clippy> <--all-targets> <--locked> <--target> ' +
-        '<x86_64-pc-windows-msvc> <--> <-D> <warnings>'
+        'cargo <clippy> <--all-targets> <--all-features> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget> " +
+        '<--> <-D> <warnings>'
     )
 
     Invoke-TestHelper -Arguments @('-Test')
     Assert-ExpectedStatus 0
     Assert-ExpectedLog (
-        'cargo <test> <--all-targets> <--locked> <--target> ' +
-        '<x86_64-pc-windows-msvc>'
+        'cargo <test> <--all-targets> <--all-features> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
     )
 
     Invoke-TestHelper -Arguments @('-Coverage')
     Assert-ExpectedStatus 0
     Assert-ExpectedLog (
         "cargo <llvm-cov> <--version>`n" +
-        'cargo <llvm-cov> <--all-targets> <--no-default-features> <--locked> ' +
-        '<--target> <x86_64-pc-windows-msvc> <--summary-only>'
+        'cargo <llvm-cov> <--all-targets> <--all-features> <--locked> ' +
+        "<--target> <$DesktopTarget> <--summary-only>"
     )
+    Assert-ExpectedPkgConfigProbeSet
 
     $env:BALUN_WINDOWS_FAKE_COVERAGE_VERSION = 'cargo-llvm-cov 9.9.9'
     Invoke-TestHelper -Arguments @('-Coverage')
     Assert-ExpectedStatus 1
     Assert-ExpectedOutput 'requires preinstalled cargo-llvm-cov 0.8.7 exactly'
-    Assert-ExpectedOutput 'will not install or replace tools'
     Assert-ExpectedLog 'cargo <llvm-cov> <--version>'
     $env:BALUN_WINDOWS_FAKE_COVERAGE_VERSION = 'cargo-llvm-cov 0.8.7'
 
@@ -305,44 +497,108 @@ exit $global:LASTEXITCODE
     Assert-ExpectedLog 'cargo <llvm-cov> <--version>'
     $env:BALUN_WINDOWS_FAKE_CARGO_STATUS = '0'
 
-    Invoke-TestHelper -Arguments @()
+    $env:MSYS2_ROOT = Join-Path $TemporaryRoot 'missing-and-unused'
+    Invoke-TestHelper -Arguments @('-Diagnostic')
     Assert-ExpectedStatus 0
-    Assert-ExpectedOutput 'Application ID: io.github.jm2.Balun'
+    Assert-ExpectedOutput 'Diagnostic output:'
     Assert-ExpectedOutput 'balun-discover.exe'
     Assert-ExpectedLog (
         'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
-        '<--target> <x86_64-pc-windows-msvc>'
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
     )
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-Diagnostic', '-Check')
+    Assert-ExpectedStatus 0
+    Assert-ExpectedLog (
+        'cargo <check> <--all-targets> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
+    )
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+    $env:MSYS2_ROOT = $FakeMsysRoot
+
+    $env:RUST_TARGET = ''
+    if ($WindowsHost) {
+        Invoke-TestHelper -Arguments @('-Diagnostic')
+        Assert-ExpectedStatus 0
+        Assert-ExpectedLog (
+            'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
+            "<--target-dir> <$FixtureTargetRoot>"
+        )
+        Assert-ExpectedOutput 'Diagnostic output:'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+        Invoke-TestHelper -Arguments @()
+        Assert-ExpectedStatus 0
+        Assert-ExpectedLog $DesktopBuildCommand
+        Assert-ExpectedPkgConfigProbeSet
+    }
+    else {
+        Invoke-TestHelper -Arguments @('-Diagnostic')
+        Assert-ExpectedStatus 2
+        Assert-ExpectedOutput 'A non-Windows host must set RUST_TARGET'
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+    }
+    $env:RUST_TARGET = $DesktopTarget
+
+    $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '31'
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'gtk4 >= 4.16 was not found'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '0'
+
+    $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '32'
+    $env:BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE = 'libadwaita-1'
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'libadwaita-1 >= 1.6 was not found'
+    Assert-ExpectedPkgConfigProbeSet
+    Assert-EmptyLog $CommandLog 'Cargo'
+    $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '0'
+    $env:BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE = ''
+
+    Invoke-TestHelper -Arguments @('-Msys2Root', 'relative-msys2')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput '-Msys2Root must be an absolute filesystem path'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-Msys2Root', $IncompleteMsysRoot)
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'MSYS2 CLANG64 is incomplete'
+    Assert-ExpectedOutput 'missing:'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
 
     $env:BALUN_WINDOWS_FAKE_CARGO_STATUS = '24'
     Invoke-TestHelper -Arguments @()
     Assert-ExpectedStatus 1
     Assert-ExpectedOutput 'cargo build failed with exit code 24'
-    Assert-ExpectedLog (
-        'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
-        '<--target> <x86_64-pc-windows-msvc>'
-    )
+    Assert-ExpectedLog $DesktopBuildCommand
     $env:BALUN_WINDOWS_FAKE_CARGO_STATUS = '0'
 
     $env:BALUN_WINDOWS_FAKE_SKIP_BINARY = '1'
     Invoke-TestHelper -Arguments @()
     Assert-ExpectedStatus 1
     Assert-ExpectedOutput 'is not a nonempty regular, non-reparse-point file'
-    Assert-ExpectedLog (
-        'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
-        '<--target> <x86_64-pc-windows-msvc>'
-    )
+    Assert-ExpectedLog $DesktopBuildCommand
     $env:BALUN_WINDOWS_FAKE_SKIP_BINARY = '0'
 
     $env:BALUN_WINDOWS_FAKE_ZERO_BINARY = '1'
     Invoke-TestHelper -Arguments @()
     Assert-ExpectedStatus 1
     Assert-ExpectedOutput 'is not a nonempty regular, non-reparse-point file'
-    Assert-ExpectedLog (
-        'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
-        '<--target> <x86_64-pc-windows-msvc>'
-    )
+    Assert-ExpectedLog $DesktopBuildCommand
     $env:BALUN_WINDOWS_FAKE_ZERO_BINARY = '0'
+
+    $env:BALUN_WINDOWS_FAKE_DIRECTORY_BINARY = '1'
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'is not a nonempty regular, non-reparse-point file'
+    Assert-ExpectedLog $DesktopBuildCommand
+    $env:BALUN_WINDOWS_FAKE_DIRECTORY_BINARY = '0'
 
     foreach ($InvalidTarget in @(
         '..\unsafe-windows-target',
@@ -352,17 +608,63 @@ exit $global:LASTEXITCODE
         (('x' * 116) + '-windows-msvc')
     )) {
         $env:RUST_TARGET = $InvalidTarget
-        Invoke-TestHelper -Arguments @('-Check')
+        Invoke-TestHelper -Arguments @('-Diagnostic', '-Check')
         Assert-ExpectedStatus 2
         Assert-ExpectedOutput 'RUST_TARGET must name one bounded Windows Rust target'
-        Assert-EmptyLog
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
     }
+
     $env:RUST_TARGET = 'x86_64-pc-windows-msvc'
+    Invoke-TestHelper -Arguments @('-Check')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput "requires RUST_TARGET=$DesktopTarget"
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-Diagnostic', '-Check')
+    Assert-ExpectedStatus 0
+    Assert-ExpectedLog (
+        'cargo <check> <--all-targets> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <x86_64-pc-windows-msvc>"
+    )
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+    $env:RUST_TARGET = $DesktopTarget
+
+    $env:MSYS2_ROOT = ''
+    $env:BALUN_WINDOWS_TEST_RESTRICTED_PATH = $FakeMsysBin
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 0
+    Assert-ExpectedOutput "Using MSYS2 CLANG64 at $FakeMsysPrefix"
+    Assert-ExpectedLog $DesktopBuildCommand
+    Assert-ExpectedPkgConfigProbeSet
+    $env:BALUN_WINDOWS_TEST_RESTRICTED_PATH = $RestrictedPath
+    $env:MSYS2_ROOT = $FakeMsysRoot
+
+    if ($WindowsHost) {
+        $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = Join-Path $env:SystemRoot 'System32\whoami.exe'
+        Invoke-TestHelper -Arguments @('-Run')
+        Assert-ExpectedStatus 0
+        Assert-ExpectedOutput 'Launching'
+        Assert-ExpectedLog $DesktopBuildCommand
+        Assert-ExpectedPkgConfigProbeSet
+        $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = ''
+    }
+    else {
+        Invoke-TestHelper -Arguments @('-Run')
+        Assert-ExpectedStatus 2
+        Assert-ExpectedOutput '-Run can launch the Windows desktop application only from Windows'
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+    }
 
     $HelperText = [System.IO.File]::ReadAllText($HelperUnderTest)
     foreach ($RequiredText in @(
         'A lightweight cross-platform HDHomeRun live TV viewer',
-        'io.github.jm2.Balun'
+        'io.github.jm2.Balun',
+        "'--features',",
+        "'desktop',",
+        '& $BinaryItem.FullName'
     )) {
         if (-not $HelperText.Contains($RequiredText)) {
             Assert-RoutingTestFailure "helper is missing required text: $RequiredText"
@@ -370,10 +672,10 @@ exit $global:LASTEXITCODE
     }
     if ($HelperText -match '(?im)^\s*(cargo\s+install|rustup\s+(target|component)\s+add|winget|choco|pacman)(\s|$)' -or
         $HelperText -match '(?i)\b(Copy-Item|Compress-Archive|Expand-Archive|Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|Start-Process|curl|wget|git)\b') {
-        Assert-RoutingTestFailure 'helper contains installer, downloader, archive, or runtime-copy logic'
+        Assert-RoutingTestFailure 'helper contains installer, downloader, archive, runtime-copy, or detached-launch logic'
     }
 
-    Write-Output 'build-windows command-routing tests passed'
+    Write-Output 'build-windows desktop command-routing tests passed'
 }
 finally {
     foreach ($Name in $EnvironmentNames) {

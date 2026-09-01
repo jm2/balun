@@ -562,7 +562,12 @@ libadwaita 1.6 as its API floors. The feature-gated binary is compiled and
 linted in a Fedora desktop job while default library and diagnostic builds
 remain GTK-free. Native macOS arm64 and Windows x86_64 CI lanes also link the
 shell against their GTK/libadwaita SDKs while continuing to prove the headless
-core. A local Linux GTK 4 Broadway smoke has verified display initialization
+core. The Windows developer helper now auto-detects an installed MSYS2 CLANG64
+environment and makes a locked, build-only release desktop build its no-flag
+operation; `-Run` explicitly builds and launches, while `-Diagnostic` retains
+the GTK-free path. This removes manual compiler, `pkg-config`, Rust-target, and
+Cargo-output path handling without making a portable bundle or installer
+claim. A local Linux GTK 4 Broadway smoke has verified display initialization
 and event-loop entry. Automated display-backed clean-shutdown smoke tests
 remain pending on every platform.
 
@@ -871,6 +876,8 @@ tests. Sanitized observations from completed rows are maintained in
 - Linux debug and release tests.
 - Linux GTK desktop compile and strict-lint checks.
 - macOS and Windows headless compile plus native desktop link smoke tests.
+- Windows desktop linking through the same no-flag PowerShell helper used by
+  developers, with the headless diagnostic selected explicitly.
 - Concurrency cancellation for superseded branch runs.
 
 Add full packaging jobs, coverage ratchets, weekly fuzzing, and expensive GUI

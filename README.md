@@ -153,8 +153,8 @@ Press `Ctrl+C` to cancel discovery.
 ## Try the desktop shell
 
 The first desktop slice requires GTK 4.16 or newer and libadwaita 1.6 or
-newer. With those development libraries and `pkg-config` available, launch it
-with:
+newer. On Linux or macOS, with those development libraries and `pkg-config`
+available, launch it with:
 
 ```bash
 cargo run --locked --features desktop --bin balun
@@ -163,6 +163,31 @@ cargo run --locked --features desktop --bin balun
 This opens Balun's adaptive device, channel, and live-TV panes. The empty
 states are intentional: this slice does not start discovery, allocate a tuner,
 or construct a media pipeline.
+
+On Windows, install Rust with the
+`x86_64-pc-windows-gnullvm` target and an MSYS2 CLANG64 environment containing
+`mingw-w64-clang-x86_64-gtk4`,
+`mingw-w64-clang-x86_64-libadwaita`,
+`mingw-w64-clang-x86_64-pkg-config`, and
+`mingw-w64-clang-x86_64-toolchain`. Then build the release desktop shell from
+an ordinary PowerShell terminal with one command:
+
+```powershell
+pwsh -NoProfile -File scripts/build-windows.ps1
+```
+
+The helper detects a standard MSYS2 installation and manages the CLANG64
+compiler, `pkg-config`, target, and output paths. It builds only by default. To
+build and launch the exact validated output, use the existing Tributary-style
+run flag:
+
+```powershell
+pwsh -NoProfile -File scripts/build-windows.ps1 -Run
+```
+
+Pass `-Msys2Root C:\path\to\msys64` only if MSYS2 is installed in a location
+the helper cannot detect. This is a developer build using the installed MSYS2
+runtime, not a portable bundle or installer.
 
 ## Development
 
@@ -200,10 +225,10 @@ The helper never installs tools or packages. Cargo can still fetch the locked
 dependency graph when it is not cached, and a rustup-managed invocation can
 fetch the selected Rust toolchain.
 
-The same-named Tributary macOS and Windows helpers are also present in
-headless-only form. On macOS, a default run builds the native diagnostic,
-loads the checksum-pinned component policy through system inspection tools,
-and validates the resulting Mach-O without creating an app bundle or DMG:
+The same-named Tributary macOS and Windows helpers are also present. On macOS,
+a default run builds the native diagnostic, loads the checksum-pinned component
+policy through system inspection tools, and validates the resulting Mach-O
+without creating an app bundle or DMG:
 
 ```bash
 scripts/test-build-macos-policy.sh
@@ -215,13 +240,19 @@ On Windows:
 
 ```powershell
 pwsh -NoProfile -File scripts/test-build-windows-routing.ps1
+pwsh -NoProfile -File scripts/build-windows.ps1
+pwsh -NoProfile -File scripts/build-windows.ps1 -Run
+pwsh -NoProfile -File scripts/build-windows.ps1 -Diagnostic
 pwsh -NoProfile -File scripts/build-windows.ps1 -Check
 ```
 
-Its bundle, ZIP, Inno Setup, dependency-update, and launch switches fail before
-external work. A default build checks only that Cargo's expected diagnostic
-output path is a nonempty regular, non-reparse file; it does not yet claim PE
-or package validation.
+The default and `-Run` modes build the release desktop shell through an
+automatically detected MSYS2 CLANG64 environment; only `-Run` launches it.
+`-Diagnostic` preserves the GTK-free diagnostic route, and can be combined
+with quick modes such as `-Check`. Bundle, ZIP, Inno Setup, and dependency-
+update switches remain fail-closed before external work. The helper validates
+the expected Cargo output as a nonempty regular, non-reparse file, but does not
+claim PE validation, a portable runtime closure, or package validation.
 
 `build-aux/toolchain/rust-toolchain.toml` is the Dependabot proposal source for
 the compiler floor. Its deliberately nested location prevents it from acting as
