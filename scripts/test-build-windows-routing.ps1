@@ -132,8 +132,8 @@ function Assert-EmptyLog {
 function Assert-ExpectedPkgConfigProbeSet {
     $Lines = @([System.IO.File]::ReadAllLines($PkgConfigLog))
     if ($Lines.Count -ne 2 -or
-        $Lines[0] -cne 'pkg-config <--atleast-version=4.16> <gtk4>' -or
-        $Lines[1] -cne 'pkg-config <--atleast-version=1.6> <libadwaita-1>') {
+        $Lines[0] -cne 'pkg-config <--atleast-version> <4.16> <gtk4>' -or
+        $Lines[1] -cne 'pkg-config <--atleast-version> <1.6> <libadwaita-1>') {
         Assert-RoutingTestFailure 'unexpected pkg-config probes'
     }
 }
@@ -182,8 +182,8 @@ try {
         $FakePkgConfigCommand = Join-Path $FakeMsysBin 'pkg-config.cmd'
         $PkgConfigSource = @'
 @echo off
->>"%BALUN_WINDOWS_TEST_PKG_LOG%" echo pkg-config ^<%1^> ^<%2^>
-if not "%BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE%"=="" if /I not "%~2"=="%BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE%" exit /b 0
+>>"%BALUN_WINDOWS_TEST_PKG_LOG%" echo pkg-config ^<%1^> ^<%2^> ^<%3^>
+if not "%BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE%"=="" if /I not "%~3"=="%BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE%" exit /b 0
 exit /b %BALUN_WINDOWS_FAKE_PKG_STATUS%
 '@
         [System.IO.File]::WriteAllText(
@@ -196,8 +196,8 @@ exit /b %BALUN_WINDOWS_FAKE_PKG_STATUS%
         $FakePkgConfigCommand = Join-Path $FakeMsysBin 'pkg-config'
         $PkgConfigSource = @'
 #!/bin/sh
-printf 'pkg-config <%s> <%s>\n' "$1" "$2" >> "$BALUN_WINDOWS_TEST_PKG_LOG"
-if [ -n "$BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE" ] && [ "$2" != "$BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE" ]; then
+printf 'pkg-config <%s> <%s> <%s>\n' "$1" "$2" "$3" >> "$BALUN_WINDOWS_TEST_PKG_LOG"
+if [ -n "$BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE" ] && [ "$3" != "$BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE" ]; then
     exit 0
 fi
 exit "$BALUN_WINDOWS_FAKE_PKG_STATUS"

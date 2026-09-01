@@ -530,7 +530,7 @@ function Assert-PkgConfigFloor {
     )
 
     $global:LASTEXITCODE = 0
-    & $Layout.PkgConfig "--atleast-version=$MinimumVersion" $Package
+    & $Layout.PkgConfig '--atleast-version' $MinimumVersion $Package
     if ($LASTEXITCODE -ne 0) {
         Exit-WithError (
             "$Package >= $MinimumVersion was not found in $($Layout.Prefix). " +
