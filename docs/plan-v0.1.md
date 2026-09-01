@@ -633,7 +633,10 @@ It performs no network or playback work. The GTK-free library now includes
 bounded immutable device and selected-lineup projections with independent
 operation generations and strict no-merge validation. A shared inspection
 service also owns identity-checked preferred-locator fallback without exposing
-stream URLs. The default library and diagnostic remain GTK-free, Linux
+stream URLs. A separate selected-device resolver freezes the registry's
+preferred-first locator order and can return one complete identity-checked
+snapshot to core code under a single deadline, while its issues and debug
+output retain no addresses or stream URLs. The default library and diagnostic remain GTK-free, Linux
 desktop/MSRV compilation is enforced in CI, and native macOS and Windows
 desktop link checks are also enforced. The bounded Tokio/GLib bridge,
 settings, documentation templates, and runtime smoke tests are still required

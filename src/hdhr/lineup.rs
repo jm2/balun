@@ -16,7 +16,7 @@ pub const MAX_TAG_COUNT: usize = 16;
 pub const MAX_TAG_BYTES: usize = 32;
 
 /// One validated channel row from a device-scoped lineup.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct LineupChannel {
     key: ChannelKey,
     name: String,
@@ -62,8 +62,20 @@ impl LineupChannel {
     }
 }
 
+impl fmt::Debug for LineupChannel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LineupChannel")
+            .field("key", &self.key)
+            .field("name", &self.name)
+            .field("tags", &self.tags)
+            .field("stream_url", &"<redacted>")
+            .finish()
+    }
+}
+
 /// Complete last-known-good lineup for exactly one DeviceID.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct DeviceLineup {
     device_id: DeviceId,
     channels: Vec<LineupChannel>,
@@ -72,7 +84,7 @@ pub struct DeviceLineup {
 /// Identity-verified metadata and lineup fetched from one pinned device
 /// endpoint. Keeping this operation combined prevents callers from stamping a
 /// lineup with an identity that was never validated against `/discover.json`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct DeviceSnapshot {
     info: DeviceInfo,
     lineup: DeviceLineup,
@@ -88,6 +100,37 @@ impl DeviceSnapshot {
     pub const fn lineup(&self) -> &DeviceLineup {
         &self.lineup
     }
+
+    #[cfg(test)]
+    pub(super) fn debug_redaction_fixture(device_id: DeviceId) -> Self {
+        let endpoint = DeviceEndpoint::from_discovery(
+            "127.0.0.1:65001".parse().unwrap(),
+            Some("http://127.0.0.1/"),
+            None,
+        )
+        .unwrap();
+        let lineup = parse_lineup(
+            br#"[{"GuideNumber":"5.1","GuideName":"private channel","URL":"http://127.0.0.1:5004/auto/v5.1"}]"#,
+            device_id,
+            &endpoint,
+            1,
+        )
+        .unwrap();
+        Self {
+            info: DeviceInfo::debug_redaction_fixture(device_id),
+            lineup,
+        }
+    }
+}
+
+impl fmt::Debug for DeviceSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DeviceSnapshot")
+            .field("device_id", &self.info.device_id())
+            .field("channel_count", &self.lineup.channels().len())
+            .finish()
+    }
 }
 
 impl DeviceLineup {
@@ -99,6 +142,16 @@ impl DeviceLineup {
     #[must_use]
     pub fn channels(&self) -> &[LineupChannel] {
         &self.channels
+    }
+}
+
+impl fmt::Debug for DeviceLineup {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DeviceLineup")
+            .field("device_id", &self.device_id)
+            .field("channel_count", &self.channels.len())
+            .finish()
     }
 }
 

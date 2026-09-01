@@ -12,6 +12,7 @@ use thiserror::Error;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use super::fallback::preferred_first_locators;
 use super::{
     DeviceEndpoint, DeviceHttpClient, DeviceHttpError, DeviceSnapshotError, LineupFetchError,
     MAX_ADVERTISED_URL_BYTES,
@@ -352,12 +353,7 @@ async fn inspect_discovery_report<I: SnapshotInspector>(
             return Err(DeviceInspectionError::Cancelled);
         }
 
-        let preferred_source = device.preferred_locator().map(|locator| locator.source());
-        let mut locators = device.locators().collect::<Vec<_>>();
-        locators
-            .sort_by_key(|locator| (Some(locator.source()) != preferred_source, locator.source()));
-
-        let candidates = locators
+        let candidates = preferred_first_locators(device)
             .into_iter()
             .map(|locator| match DeviceEndpoint::from_locator(locator) {
                 Ok(endpoint) => InspectionCandidate::Supported(Box::new(endpoint)),

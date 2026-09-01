@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service used by `balun-discover --inspect`; it summarizes devices and
   channels without returning stream URLs, opening a stream, or allocating a
   tuner.
+- **Selected-device snapshot resolution** — Add a separate identity-checked
+  resolver for one registry device, with a frozen preferred-first locator
+  order, one monotonic deadline across deterministic fallback, terminal
+  cancellation, bounded fixed-category issues, and URL-redacted snapshot and
+  lineup debug output. Complete stream-bearing rows remain inside the
+  HDHomeRun core boundary for later controller-owned playback.
 - **Controller snapshot boundary** — Add bounded, immutable, GTK-free device
   and selected-lineup projections with independent discovery and selection
   generations, URL-free channel rows, deterministic ordering, and validation

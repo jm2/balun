@@ -1,9 +1,11 @@
 //! HDHomeRun protocol support.
 
+mod fallback;
 mod http;
 mod inspection;
 mod lineup;
 pub mod protocol;
+mod resolver;
 #[cfg(test)]
 mod test_support;
 
@@ -20,4 +22,10 @@ pub use inspection::{
 pub use lineup::{
     DeviceLineup, DeviceSnapshot, DeviceSnapshotError, LineupChannel, LineupError,
     LineupFetchError, MAX_GUIDE_NAME_BYTES, MAX_TAG_BYTES, MAX_TAG_COUNT, MAX_TAGS_BYTES,
+};
+pub use resolver::{
+    DEFAULT_DEVICE_SNAPSHOT_DEADLINE, DeviceSnapshotIssue, DeviceSnapshotIssueKind,
+    DeviceSnapshotResolutionError, DeviceSnapshotResolver, DeviceSnapshotTarget,
+    DeviceSnapshotTargetError, DeviceSnapshotUnavailable, MAX_DEVICE_SNAPSHOT_ISSUES,
+    MAX_DEVICE_SNAPSHOT_LOCATORS, ResolvedDeviceSnapshot,
 };

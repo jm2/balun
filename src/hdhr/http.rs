@@ -480,6 +480,18 @@ impl DeviceInfo {
     pub const fn tuner_count(&self) -> Option<u8> {
         self.tuner_count
     }
+
+    #[cfg(test)]
+    pub(super) fn debug_redaction_fixture(device_id: DeviceId) -> Self {
+        Self {
+            device_id,
+            friendly_name: Some("private fixture name".to_owned()),
+            model_number: None,
+            firmware_name: None,
+            firmware_version: None,
+            tuner_count: Some(1),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -36,6 +36,10 @@ available program information, and a live-video area.
 - A reusable, cancellation-aware inspection service that tries the preferred
   locator first, falls back deterministically within one report deadline, and
   publishes only bounded metadata and counts—never lineup rows or stream URLs.
+- A separate selected-device resolver that freezes the registry's
+  preferred-first locator order, applies one overall deadline across fallback,
+  verifies identity before accepting a complete lineup, and keeps every
+  address and stream URL out of its status, error, and debug output.
 - Device-scoped natural channel identities and compatibility with both the
   documented lineup `Tags` field and current `Favorite`, `DRM`, and `HD`
   fields.
