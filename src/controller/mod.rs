@@ -6,11 +6,12 @@ mod state;
 pub use runtime::{
     CONTROLLER_THREAD_NAME, ControllerCommand, ControllerCommandError, ControllerHandle,
     ControllerJoinError, ControllerRuntime, ControllerRuntimeError, ControllerStartError,
-    DEFAULT_COMMAND_CAPACITY, LocalDiscoveryFuture, LocalDiscoveryService, MAX_COMMAND_CAPACITY,
+    DEFAULT_COMMAND_CAPACITY, DiscoveryFuture, DiscoveryService, MAX_COMMAND_CAPACITY,
+    MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION,
 };
 pub use state::{
-    ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryState,
-    DiscoveryStatus, LineupFailure, MAX_CHANNEL_NAME_BYTES, MAX_DEVICE_LOCATORS,
+    ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryKind,
+    DiscoveryState, DiscoveryStatus, LineupFailure, MAX_CHANNEL_NAME_BYTES, MAX_DEVICE_LOCATORS,
     MAX_DEVICE_SUMMARIES, MAX_DEVICE_TEXT_BYTES, MAX_SELECTED_CHANNELS, OperationGeneration,
     SelectedLineupState, SelectedLineupStatus, SnapshotRevision, StateError,
 };

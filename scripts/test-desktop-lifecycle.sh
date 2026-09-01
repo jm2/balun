@@ -2,7 +2,7 @@
 # Run Balun's real GTK/libadwaita window lifecycle under an isolated headless
 # X server and session bus. The Rust smoke closes the window through its normal
 # close-request path, requires a successful controller join, and proves that
-# activation and shutdown never invoke local discovery.
+# activation and shutdown never invoke discovery.
 
 set -euo pipefail
 

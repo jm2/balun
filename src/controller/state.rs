@@ -208,7 +208,15 @@ impl ChannelSummary {
 pub enum DiscoveryFailure {
     InterfaceEnumeration,
     Network,
+    ExactTargetLimitReached,
     Internal,
+}
+
+/// Address-free kind of discovery operation represented by a state update.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiscoveryKind {
+    Local,
+    Exact,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -216,13 +224,15 @@ pub enum DiscoveryStatus {
     Idle,
     Refreshing,
     Ready,
+    NoResponse,
     Failed(DiscoveryFailure),
 }
 
-/// Bounded, topology-free status for the local-discovery lane.
+/// Bounded, topology-free status for the discovery lane.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DiscoveryState {
     generation: OperationGeneration,
+    kind: DiscoveryKind,
     status: DiscoveryStatus,
     issue_count: u16,
 }
@@ -230,8 +240,14 @@ pub struct DiscoveryState {
 impl DiscoveryState {
     #[must_use]
     pub const fn idle(generation: OperationGeneration) -> Self {
+        Self::idle_for(generation, DiscoveryKind::Local)
+    }
+
+    #[must_use]
+    pub const fn idle_for(generation: OperationGeneration, kind: DiscoveryKind) -> Self {
         Self {
             generation,
+            kind,
             status: DiscoveryStatus::Idle,
             issue_count: 0,
         }
@@ -239,8 +255,14 @@ impl DiscoveryState {
 
     #[must_use]
     pub const fn refreshing(generation: OperationGeneration) -> Self {
+        Self::refreshing_for(generation, DiscoveryKind::Local)
+    }
+
+    #[must_use]
+    pub const fn refreshing_for(generation: OperationGeneration, kind: DiscoveryKind) -> Self {
         Self {
             generation,
+            kind,
             status: DiscoveryStatus::Refreshing,
             issue_count: 0,
         }
@@ -248,17 +270,48 @@ impl DiscoveryState {
 
     #[must_use]
     pub const fn ready(generation: OperationGeneration, issue_count: u16) -> Self {
+        Self::ready_for(generation, DiscoveryKind::Local, issue_count)
+    }
+
+    #[must_use]
+    pub const fn ready_for(
+        generation: OperationGeneration,
+        kind: DiscoveryKind,
+        issue_count: u16,
+    ) -> Self {
         Self {
             generation,
+            kind,
             status: DiscoveryStatus::Ready,
+            issue_count,
+        }
+    }
+
+    /// Complete an exact-address probe that received no valid device reply.
+    #[must_use]
+    pub const fn exact_no_response(generation: OperationGeneration, issue_count: u16) -> Self {
+        Self {
+            generation,
+            kind: DiscoveryKind::Exact,
+            status: DiscoveryStatus::NoResponse,
             issue_count,
         }
     }
 
     #[must_use]
     pub const fn failed(generation: OperationGeneration, failure: DiscoveryFailure) -> Self {
+        Self::failed_for(generation, DiscoveryKind::Local, failure)
+    }
+
+    #[must_use]
+    pub const fn failed_for(
+        generation: OperationGeneration,
+        kind: DiscoveryKind,
+        failure: DiscoveryFailure,
+    ) -> Self {
         Self {
             generation,
+            kind,
             status: DiscoveryStatus::Failed(failure),
             issue_count: 0,
         }
@@ -267,6 +320,11 @@ impl DiscoveryState {
     #[must_use]
     pub const fn generation(self) -> OperationGeneration {
         self.generation
+    }
+
+    #[must_use]
+    pub const fn kind(self) -> DiscoveryKind {
+        self.kind
     }
 
     #[must_use]
@@ -543,15 +601,19 @@ impl ApplicationSnapshot {
         }
 
         let discovery_is_safe = self.discovery_generation > previous.discovery_generation
-            || match (previous.discovery.status, self.discovery.status) {
-                (
-                    DiscoveryStatus::Refreshing,
-                    DiscoveryStatus::Ready | DiscoveryStatus::Failed(_),
-                ) => true,
-                _ => {
-                    self.discovery == previous.discovery && self.has_same_discovery_scope(previous)
-                }
-            };
+            || self.discovery.kind == previous.discovery.kind
+                && match (previous.discovery.status, self.discovery.status) {
+                    (
+                        DiscoveryStatus::Refreshing,
+                        DiscoveryStatus::Ready
+                        | DiscoveryStatus::NoResponse
+                        | DiscoveryStatus::Failed(_),
+                    ) => true,
+                    _ => {
+                        self.discovery == previous.discovery
+                            && self.has_same_discovery_scope(previous)
+                    }
+                };
         let selection_is_safe = self.selection_generation > previous.selection_generation
             || self.selected_device == previous.selected_device
                 && match (previous.selected_lineup.status, self.selected_lineup.status) {
@@ -760,6 +822,61 @@ mod tests {
         assert_eq!(
             snapshot.selection_generation(),
             snapshot.selected_lineup().generation()
+        );
+    }
+
+    #[test]
+    fn reducer_keeps_discovery_kind_fixed_within_one_generation() {
+        let generation = OperationGeneration::new(1);
+        let selection_generation = OperationGeneration::INITIAL;
+        let local_refreshing = ApplicationSnapshot::new(
+            SnapshotRevision::new(1),
+            generation,
+            selection_generation,
+            DiscoveryState::refreshing_for(generation, DiscoveryKind::Local),
+            [],
+            None,
+            SelectedLineupState::unselected(selection_generation),
+        )
+        .unwrap();
+        let exact_terminal = ApplicationSnapshot::new(
+            SnapshotRevision::new(2),
+            generation,
+            selection_generation,
+            DiscoveryState::ready_for(generation, DiscoveryKind::Exact, 0),
+            [],
+            None,
+            SelectedLineupState::unselected(selection_generation),
+        )
+        .unwrap();
+        let exact_refreshing = ApplicationSnapshot::new(
+            SnapshotRevision::new(3),
+            generation,
+            selection_generation,
+            DiscoveryState::refreshing_for(generation, DiscoveryKind::Exact),
+            [],
+            None,
+            SelectedLineupState::unselected(selection_generation),
+        )
+        .unwrap();
+        let exact_no_response = ApplicationSnapshot::new(
+            SnapshotRevision::new(4),
+            generation,
+            selection_generation,
+            DiscoveryState::exact_no_response(generation, 0),
+            [],
+            None,
+            SelectedLineupState::unselected(selection_generation),
+        )
+        .unwrap();
+
+        assert!(!exact_terminal.can_replace(&local_refreshing));
+        assert!(!exact_refreshing.can_replace(&local_refreshing));
+        assert!(exact_no_response.can_replace(&exact_refreshing));
+        assert_eq!(exact_no_response.discovery().kind(), DiscoveryKind::Exact);
+        assert_eq!(
+            exact_no_response.discovery().status(),
+            DiscoveryStatus::NoResponse
         );
     }
 

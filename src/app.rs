@@ -77,8 +77,9 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use balun::controller::{DiscoveryFailure, LocalDiscoveryFuture, LocalDiscoveryService};
-    use balun::discovery::DiscoveryReport;
+    use balun::controller::{DiscoveryFailure, DiscoveryFuture, DiscoveryService};
+    use balun::discovery::{DiscoveryReport, ExactDiscoveryTarget};
+    use balun::domain::DeviceId;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -88,8 +89,18 @@ mod tests {
         calls: Arc<AtomicUsize>,
     }
 
-    impl LocalDiscoveryService for CountingDiscovery {
-        fn discover_local(&self, _cancellation: CancellationToken) -> LocalDiscoveryFuture {
+    impl DiscoveryService for CountingDiscovery {
+        fn discover_local(&self, _cancellation: CancellationToken) -> DiscoveryFuture {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok::<_, DiscoveryFailure>(DiscoveryReport::default()) })
+        }
+
+        fn discover_exact(
+            &self,
+            _target: ExactDiscoveryTarget,
+            _expected_device: Option<DeviceId>,
+            _cancellation: CancellationToken,
+        ) -> DiscoveryFuture {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok::<_, DiscoveryFailure>(DiscoveryReport::default()) })
         }

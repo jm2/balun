@@ -1,11 +1,12 @@
 //! Packet-free controller-thread ownership and command admission.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::sync::{Arc, mpsc as std_mpsc};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 use tokio::runtime::Builder;
@@ -14,14 +15,16 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryState,
-    DiscoveryStatus, LineupFailure, OperationGeneration, SelectedLineupState, SelectedLineupStatus,
-    SnapshotRevision, StateError,
+    ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryKind,
+    DiscoveryState, DiscoveryStatus, LineupFailure, OperationGeneration, SelectedLineupState,
+    SelectedLineupStatus, SnapshotRevision, StateError,
 };
 use crate::discovery::{
-    DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryReport, RegistryInstant,
+    DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryMethod, DiscoveryObservation,
+    DiscoveryReport, ExactDiscoveryTarget, ProbeConfig, RegistryInstant,
 };
 use crate::domain::DeviceId;
+use crate::hdhr::protocol::DISCOVERY_UDP_PORT;
 use crate::hdhr::{
     DeviceSnapshotIssueKind, DeviceSnapshotResolutionError, DeviceSnapshotResolver,
     DeviceSnapshotTarget, DeviceSnapshotTargetError, ResolvedDeviceSnapshot,
@@ -33,19 +36,51 @@ pub const CONTROLLER_THREAD_NAME: &str = "balun-controller";
 pub const DEFAULT_COMMAND_CAPACITY: usize = 8;
 /// Largest command queue accepted by the controller constructor.
 pub const MAX_COMMAND_CAPACITY: usize = 1_024;
+/// Maximum distinct exact addresses admitted during one controller session.
+pub const MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION: usize = 32;
 
-/// Owned, `'static` future returned by an injected local-discovery service.
-pub type LocalDiscoveryFuture =
+const EXACT_DISCOVERY_ATTEMPTS: u8 = 2;
+const EXACT_DISCOVERY_RESPONSE_WINDOW: Duration = Duration::from_millis(200);
+const EXACT_DISCOVERY_MAX_RECEIVED_DATAGRAMS: usize = 16;
+const EXACT_DISCOVERY_MAX_UNIQUE_DEVICES: usize = 1;
+const MAX_RETAINED_LOCAL_OBSERVATIONS: usize = match DeviceRegistry::DEFAULT_MAX_DEVICES
+    .checked_mul(DeviceRegistry::DEFAULT_MAX_LOCATORS_PER_DEVICE)
+{
+    Some(limit) => limit,
+    None => panic!("default discovery registry limits must have a representable product"),
+};
+const MAX_RETAINED_EXACT_OBSERVATIONS: usize = 1;
+
+/// Owned, `'static` future returned by an injected discovery service.
+pub type DiscoveryFuture =
     Pin<Box<dyn Future<Output = Result<DiscoveryReport, DiscoveryFailure>> + Send + 'static>>;
 
-/// Async local discovery behind a packet-free controller boundary.
+/// Async discovery behind a packet-free controller boundary.
 ///
-/// The controller invokes this service only after admitting an explicit
-/// [`ControllerCommand::RefreshLocalDiscovery`] command. Implementations must
-/// observe `cancellation` promptly. In particular, constructing the service or
-/// controller must not enumerate interfaces, open sockets, or send packets.
-pub trait LocalDiscoveryService: Send + Sync + 'static {
-    fn discover_local(&self, cancellation: CancellationToken) -> LocalDiscoveryFuture;
+/// The controller invokes this service only after admitting an explicit local
+/// or exact-address command. Implementations must observe `cancellation`
+/// promptly. In particular, constructing the service or controller must not
+/// enumerate interfaces, open sockets, or send packets. A production
+/// implementation is also the trusted traffic boundary: one exact operation
+/// must send no more than two request datagrams, use response windows no longer
+/// than 200 ms each, inspect no more than 16 received datagrams, and accept no
+/// more than one device identity.
+pub trait DiscoveryService: Send + Sync + 'static {
+    fn discover_local(&self, cancellation: CancellationToken) -> DiscoveryFuture;
+
+    /// Probe one already-validated exact address.
+    ///
+    /// Implementations must apply `expected_device` during discovery when it
+    /// is present. The returned report may contain zero or one observation. An
+    /// observation must be a direct targeted reply from `target` on the
+    /// HDHomeRun discovery port, with no interface annotation; the controller
+    /// independently checks those properties before retention.
+    fn discover_exact(
+        &self,
+        target: ExactDiscoveryTarget,
+        expected_device: Option<DeviceId>,
+        cancellation: CancellationToken,
+    ) -> DiscoveryFuture;
 }
 
 type SelectedDeviceFuture = Pin<
@@ -78,8 +113,8 @@ impl SelectedDeviceService for DeviceSnapshotResolver {
     }
 }
 
-impl LocalDiscoveryService for DiscoveryClient {
-    fn discover_local(&self, cancellation: CancellationToken) -> LocalDiscoveryFuture {
+impl DiscoveryService for DiscoveryClient {
+    fn discover_local(&self, cancellation: CancellationToken) -> DiscoveryFuture {
         let client = self.clone();
         Box::pin(async move {
             DiscoveryClient::discover_local(&client, &cancellation)
@@ -87,6 +122,35 @@ impl LocalDiscoveryService for DiscoveryClient {
                 .map_err(discovery_failure)
         })
     }
+
+    fn discover_exact(
+        &self,
+        target: ExactDiscoveryTarget,
+        expected_device: Option<DeviceId>,
+        cancellation: CancellationToken,
+    ) -> DiscoveryFuture {
+        let client = DiscoveryClient::new(exact_probe_config());
+        Box::pin(async move {
+            DiscoveryClient::discover_target(
+                &client,
+                target.socket_addr(),
+                expected_device,
+                &cancellation,
+            )
+            .await
+            .map_err(discovery_failure)
+        })
+    }
+}
+
+fn exact_probe_config() -> ProbeConfig {
+    ProbeConfig::new(
+        EXACT_DISCOVERY_ATTEMPTS,
+        EXACT_DISCOVERY_RESPONSE_WINDOW,
+        EXACT_DISCOVERY_MAX_RECEIVED_DATAGRAMS,
+        EXACT_DISCOVERY_MAX_UNIQUE_DEVICES,
+    )
+    .expect("fixed exact-discovery probe budget must be valid")
 }
 
 fn discovery_failure(error: DiscoveryError) -> DiscoveryFailure {
@@ -105,10 +169,12 @@ fn discovery_failure(error: DiscoveryError) -> DiscoveryFailure {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ControllerCommand {
-    /// Supersede any current local refresh and run ordinary local discovery.
+    /// Supersede any current discovery operation and run ordinary local discovery.
     RefreshLocalDiscovery,
-    /// Cancel a current local refresh without discarding last-good devices.
-    CancelLocalDiscovery,
+    /// Supersede any current discovery operation and probe one exact address.
+    DiscoverExact(ExactDiscoveryTarget),
+    /// Cancel the current discovery operation without discarding last-good devices.
+    CancelDiscovery,
     /// Resolve and retain exactly this registered device's lineup.
     SelectDevice(DeviceId),
     /// Cancel selected-device work and discard its retained snapshot.
@@ -144,7 +210,7 @@ pub enum ControllerStartError {
 pub enum ControllerRuntimeError {
     #[error("application snapshot revision is exhausted")]
     SnapshotRevisionExhausted,
-    #[error("local-discovery generation is exhausted")]
+    #[error("discovery generation is exhausted")]
     DiscoveryGenerationExhausted,
     #[error("selected-device generation is exhausted")]
     SelectionGenerationExhausted,
@@ -184,27 +250,35 @@ pub struct ControllerRuntime {
 }
 
 impl ControllerRuntime {
-    /// Start an inert controller with Balun's production local-discovery
-    /// client. No discovery work begins until an explicit refresh command.
+    /// Start an inert controller with Balun's production discovery client.
+    /// No network work begins until an explicit local or exact command.
     pub fn start_default() -> Result<Self, ControllerStartError> {
         Self::start(DiscoveryClient::default())
     }
 
     /// Start an inert controller with the default bounded command capacity.
+    ///
+    /// When `service` is a [`DiscoveryClient`], its configured probe budget is
+    /// used for local discovery. Exact-address work deliberately uses Balun's
+    /// stricter fixed traffic budget instead.
     pub fn start<S>(service: S) -> Result<Self, ControllerStartError>
     where
-        S: LocalDiscoveryService,
+        S: DiscoveryService,
     {
         Self::start_with_capacity(service, DEFAULT_COMMAND_CAPACITY)
     }
 
     /// Start an inert controller with an explicit bounded command capacity.
+    ///
+    /// When `service` is a [`DiscoveryClient`], its configured probe budget is
+    /// used for local discovery. Exact-address work deliberately uses Balun's
+    /// stricter fixed traffic budget instead.
     pub fn start_with_capacity<S>(
         service: S,
         command_capacity: usize,
     ) -> Result<Self, ControllerStartError>
     where
-        S: LocalDiscoveryService,
+        S: DiscoveryService,
     {
         Self::start_with_services_and_capacity(
             service,
@@ -219,7 +293,7 @@ impl ControllerRuntime {
         command_capacity: usize,
     ) -> Result<Self, ControllerStartError>
     where
-        D: LocalDiscoveryService,
+        D: DiscoveryService,
         S: SelectedDeviceService,
     {
         if !(1..=MAX_COMMAND_CAPACITY).contains(&command_capacity) {
@@ -229,7 +303,7 @@ impl ControllerRuntime {
             });
         }
 
-        let discovery_service: Arc<dyn LocalDiscoveryService> = Arc::new(discovery_service);
+        let discovery_service: Arc<dyn DiscoveryService> = Arc::new(discovery_service);
         let selection_service: Arc<dyn SelectedDeviceService> = Arc::new(selection_service);
         let (command_sender, command_receiver) = mpsc::channel(command_capacity);
         let shutdown = CancellationToken::new();
@@ -288,7 +362,7 @@ impl ControllerRuntime {
         selection_service: S,
     ) -> Result<Self, ControllerStartError>
     where
-        D: LocalDiscoveryService,
+        D: DiscoveryService,
         S: SelectedDeviceService,
     {
         Self::start_with_services_and_capacity(
@@ -372,13 +446,16 @@ impl ControllerHandle {
 }
 
 struct ControllerActor {
-    discovery_service: Arc<dyn LocalDiscoveryService>,
+    discovery_service: Arc<dyn DiscoveryService>,
     selection_service: Arc<dyn SelectedDeviceService>,
     commands: mpsc::Receiver<ControllerCommand>,
     shutdown: CancellationToken,
     snapshots: watch::Sender<Arc<ApplicationSnapshot>>,
     registry: DeviceRegistry,
     registry_epoch: Instant,
+    local_batch: Option<RetainedDiscoveryBatch>,
+    attempted_exact_targets: BTreeSet<ExactDiscoveryTarget>,
+    exact_sources: BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
     revision: SnapshotRevision,
     discovery_generation: OperationGeneration,
     selection_generation: OperationGeneration,
@@ -393,7 +470,7 @@ struct ControllerActor {
 
 impl ControllerActor {
     fn new(
-        discovery_service: Arc<dyn LocalDiscoveryService>,
+        discovery_service: Arc<dyn DiscoveryService>,
         selection_service: Arc<dyn SelectedDeviceService>,
         commands: mpsc::Receiver<ControllerCommand>,
         shutdown: CancellationToken,
@@ -407,6 +484,9 @@ impl ControllerActor {
             snapshots,
             registry: DeviceRegistry::default(),
             registry_epoch: Instant::now(),
+            local_batch: None,
+            attempted_exact_targets: BTreeSet::new(),
+            exact_sources: BTreeMap::new(),
             revision: SnapshotRevision::INITIAL,
             discovery_generation: OperationGeneration::INITIAL,
             selection_generation: OperationGeneration::INITIAL,
@@ -466,10 +546,13 @@ impl ControllerActor {
                     return Ok(());
                 }
                 ActorEvent::Command(Some(ControllerCommand::RefreshLocalDiscovery)) => {
-                    self.start_local_refresh().await?;
+                    self.start_discovery(DiscoveryScope::Local).await?;
                 }
-                ActorEvent::Command(Some(ControllerCommand::CancelLocalDiscovery)) => {
-                    self.cancel_local_refresh().await?;
+                ActorEvent::Command(Some(ControllerCommand::DiscoverExact(target))) => {
+                    self.start_discovery(DiscoveryScope::Exact(target)).await?;
+                }
+                ActorEvent::Command(Some(ControllerCommand::CancelDiscovery)) => {
+                    self.cancel_discovery().await?;
                 }
                 ActorEvent::Command(Some(ControllerCommand::SelectDevice(device_id))) => {
                     self.select_device(device_id).await?;
@@ -478,7 +561,7 @@ impl ControllerActor {
                     self.clear_selection().await?;
                 }
                 ActorEvent::Discovery(completion) => {
-                    self.finish_local_refresh(completion).await?;
+                    self.finish_discovery(completion).await?;
                 }
                 ActorEvent::Selection(completion) => {
                     self.finish_selection(completion)?;
@@ -487,13 +570,38 @@ impl ControllerActor {
         }
     }
 
-    async fn start_local_refresh(&mut self) -> Result<(), ControllerRuntimeError> {
+    async fn start_discovery(
+        &mut self,
+        scope: DiscoveryScope,
+    ) -> Result<(), ControllerRuntimeError> {
+        let exact_target_limit_reached = matches!(scope, DiscoveryScope::Exact(target)
+            if !self.attempted_exact_targets.contains(&target)
+                && self.attempted_exact_targets.len()
+                    >= MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION);
+
         self.cancel_active_discovery().await;
         if self.shutdown.is_cancelled() {
             return Ok(());
         }
         let generation = self.next_discovery_generation()?;
-        self.discovery = DiscoveryState::refreshing(generation);
+        if exact_target_limit_reached {
+            self.discovery = DiscoveryState::failed_for(
+                generation,
+                DiscoveryKind::Exact,
+                DiscoveryFailure::ExactTargetLimitReached,
+            );
+            self.publish()?;
+            return Ok(());
+        }
+        if let DiscoveryScope::Exact(target) = scope {
+            self.attempted_exact_targets.insert(target);
+        }
+
+        let expected_device = match scope {
+            DiscoveryScope::Local => None,
+            DiscoveryScope::Exact(target) => self.expected_device_for_exact_target(target),
+        };
+        self.discovery = DiscoveryState::refreshing_for(generation, scope.kind());
         self.publish()?;
 
         let cancellation = self.shutdown.child_token();
@@ -503,25 +611,41 @@ impl ControllerActor {
             let result = if task_cancellation.is_cancelled() {
                 Err(DiscoveryFailure::Internal)
             } else {
-                service.discover_local(task_cancellation).await
+                match scope {
+                    DiscoveryScope::Local => service.discover_local(task_cancellation).await,
+                    DiscoveryScope::Exact(target) => {
+                        service
+                            .discover_exact(target, expected_device, task_cancellation)
+                            .await
+                    }
+                }
             };
-            DiscoveryCompletion { generation, result }
+            DiscoveryCompletion {
+                generation,
+                scope,
+                result,
+            }
         });
         self.active_discovery = Some(ActiveDiscovery {
             generation,
+            scope,
             cancellation,
             task,
         });
         Ok(())
     }
 
-    async fn cancel_local_refresh(&mut self) -> Result<(), ControllerRuntimeError> {
-        if self.active_discovery.is_none() {
+    async fn cancel_discovery(&mut self) -> Result<(), ControllerRuntimeError> {
+        let Some(kind) = self
+            .active_discovery
+            .as_ref()
+            .map(|active| active.scope.kind())
+        else {
             return Ok(());
-        }
+        };
         self.cancel_active_discovery().await;
         let generation = self.next_discovery_generation()?;
-        self.discovery = DiscoveryState::idle(generation);
+        self.discovery = DiscoveryState::idle_for(generation, kind);
         self.publish()
     }
 
@@ -565,7 +689,7 @@ impl ControllerActor {
         }
     }
 
-    async fn finish_local_refresh(
+    async fn finish_discovery(
         &mut self,
         completion: Result<DiscoveryCompletion, tokio::task::JoinError>,
     ) -> Result<(), ControllerRuntimeError> {
@@ -573,9 +697,15 @@ impl ControllerActor {
             return Ok(());
         };
         let completion = match completion {
-            Ok(completion) => completion,
-            Err(_) => DiscoveryCompletion {
+            Ok(completion)
+                if completion.generation == active.generation
+                    && completion.scope == active.scope =>
+            {
+                completion
+            }
+            Ok(_) | Err(_) => DiscoveryCompletion {
                 generation: active.generation,
+                scope: active.scope,
                 result: Err(DiscoveryFailure::Internal),
             },
         };
@@ -589,6 +719,7 @@ impl ControllerActor {
     ) -> Result<bool, ControllerRuntimeError> {
         if completion.generation != self.discovery_generation
             || self.discovery.status() != DiscoveryStatus::Refreshing
+            || self.discovery.kind() != completion.scope.kind()
         {
             return Ok(false);
         }
@@ -596,64 +727,167 @@ impl ControllerActor {
         match completion.result {
             Ok(report) => {
                 let issue_count = u16::try_from(report.issues.len()).unwrap_or(u16::MAX);
-                match self.build_discovery_projection(report) {
-                    Ok((registry, devices)) => {
-                        let selected_device = self.selected_device;
-                        if selected_device.is_some() {
-                            self.cancel_active_selection().await;
-                            if self.shutdown.is_cancelled() {
-                                return Ok(false);
+                let no_response = report.observations.is_empty();
+                match self.build_discovery_update(completion.scope, report) {
+                    Ok(mut update) => match completion.scope {
+                        DiscoveryScope::Local => {
+                            let selected_device = self.selected_device;
+                            if selected_device.is_some() {
+                                self.cancel_active_selection().await;
+                                if self.shutdown.is_cancelled() {
+                                    return Ok(false);
+                                }
                             }
-                        }
 
-                        self.registry = registry;
-                        self.devices = devices;
-                        self.discovery =
-                            DiscoveryState::ready(self.discovery_generation, issue_count);
-                        let pending_selection = if let Some(device_id) = selected_device {
-                            let generation = self.next_selection_generation()?;
-                            self.prepare_selection(device_id, generation)
-                        } else {
-                            None
-                        };
-                        self.publish()?;
-                        self.spawn_selection(pending_selection);
-                        return Ok(true);
-                    }
+                            self.commit_discovery_update(update);
+                            self.discovery = DiscoveryState::ready_for(
+                                self.discovery_generation,
+                                DiscoveryKind::Local,
+                                issue_count,
+                            );
+                            let pending_selection = if let Some(device_id) = selected_device {
+                                let generation = self.next_selection_generation()?;
+                                self.prepare_selection(device_id, generation)
+                            } else {
+                                None
+                            };
+                            self.publish()?;
+                            self.spawn_selection(pending_selection);
+                            return Ok(true);
+                        }
+                        DiscoveryScope::Exact(_) => {
+                            let selected_changed = self.selected_device.is_some_and(|device_id| {
+                                self.registry.get(device_id) != update.registry.get(device_id)
+                            });
+                            if selected_changed {
+                                self.cancel_active_selection().await;
+                                if self.shutdown.is_cancelled() {
+                                    return Ok(false);
+                                }
+                            } else if let Some(device_id) = self.selected_device {
+                                preserve_device_summary(
+                                    &self.devices,
+                                    &mut update.devices,
+                                    device_id,
+                                )?;
+                            }
+
+                            self.commit_discovery_update(update);
+                            self.discovery = if no_response {
+                                DiscoveryState::exact_no_response(
+                                    self.discovery_generation,
+                                    issue_count,
+                                )
+                            } else {
+                                DiscoveryState::ready_for(
+                                    self.discovery_generation,
+                                    DiscoveryKind::Exact,
+                                    issue_count,
+                                )
+                            };
+                            if selected_changed {
+                                let generation = self.next_selection_generation()?;
+                                self.selected_device = None;
+                                self.selected_lineup = SelectedLineupState::unselected(generation);
+                                self.selected_snapshot = None;
+                            }
+                            self.publish()?;
+                            return Ok(true);
+                        }
+                    },
                     Err(()) => {
-                        self.discovery = DiscoveryState::failed(
+                        self.discovery = DiscoveryState::failed_for(
                             self.discovery_generation,
+                            completion.scope.kind(),
                             DiscoveryFailure::Internal,
                         );
                     }
                 }
             }
             Err(failure) => {
-                self.discovery = DiscoveryState::failed(self.discovery_generation, failure);
+                self.discovery = DiscoveryState::failed_for(
+                    self.discovery_generation,
+                    completion.scope.kind(),
+                    failure,
+                );
             }
         }
         self.publish()?;
         Ok(true)
     }
 
-    fn build_discovery_projection(
+    fn build_discovery_update(
         &self,
-        mut report: DiscoveryReport,
-    ) -> Result<(DeviceRegistry, Vec<DeviceSummary>), ()> {
-        report
-            .observations
-            .sort_by_key(|observation| (observation.device_id, observation.source));
-        // A completed local scan is the new authoritative local-discovery
-        // view. Build it atomically so absent devices disappear on success,
-        // while any malformed/conflicting report leaves the last-good
-        // registry untouched.
-        let mut candidate = DeviceRegistry::default();
-        let seen_at = RegistryInstant::from_duration(self.registry_epoch.elapsed());
-        for observation in report.observations {
-            candidate.observe(observation, seen_at).map_err(|_| ())?;
+        scope: DiscoveryScope,
+        report: DiscoveryReport,
+    ) -> Result<DiscoveryUpdate, ()> {
+        let observation_limit = match scope {
+            DiscoveryScope::Local => MAX_RETAINED_LOCAL_OBSERVATIONS,
+            DiscoveryScope::Exact(_) => MAX_RETAINED_EXACT_OBSERVATIONS,
+        };
+        if report.observations.len() > observation_limit {
+            return Err(());
         }
-        let projection = project_devices(&candidate)?;
-        Ok((candidate, projection))
+
+        let seen_at = RegistryInstant::from_duration(self.registry_epoch.elapsed());
+        let batch = RetainedDiscoveryBatch::new(seen_at, report.observations);
+        let mut local_batch = self.local_batch.clone();
+        let mut exact_sources = self.exact_sources.clone();
+        match scope {
+            DiscoveryScope::Local => local_batch = batch,
+            DiscoveryScope::Exact(target) => match batch {
+                Some(batch) => {
+                    if !exact_sources.contains_key(&target)
+                        && exact_sources.len() >= MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION
+                    {
+                        return Err(());
+                    }
+                    exact_sources
+                        .entry(target)
+                        .or_default()
+                        .replace_batch(target, Some(batch))?;
+                }
+                None => {
+                    if let Some(source) = exact_sources.get_mut(&target) {
+                        source.replace_batch(target, None)?;
+                    }
+                }
+            },
+        }
+
+        let registry = rebuild_registry(local_batch.as_ref(), &exact_sources)?;
+        let devices = project_devices(&registry)?;
+        Ok(DiscoveryUpdate {
+            local_batch,
+            exact_sources,
+            registry,
+            devices,
+        })
+    }
+
+    fn commit_discovery_update(&mut self, update: DiscoveryUpdate) {
+        self.local_batch = update.local_batch;
+        self.exact_sources = update.exact_sources;
+        self.registry = update.registry;
+        self.devices = update.devices;
+    }
+
+    fn expected_device_for_exact_target(&self, target: ExactDiscoveryTarget) -> Option<DeviceId> {
+        self.exact_sources
+            .get(&target)
+            .and_then(|source| source.bound_device)
+            .or_else(|| self.registry_owner_for_exact_target(target))
+    }
+
+    fn registry_owner_for_exact_target(&self, target: ExactDiscoveryTarget) -> Option<DeviceId> {
+        let mut expected_source = target.socket_addr();
+        expected_source.set_port(DISCOVERY_UDP_PORT);
+        self.registry.devices().find_map(|device| {
+            device
+                .locators()
+                .any(|locator| locator.source() == expected_source)
+                .then_some(device.device_id())
+        })
     }
 
     async fn select_device(&mut self, device_id: DeviceId) -> Result<(), ControllerRuntimeError> {
@@ -946,6 +1180,52 @@ impl ControllerActor {
     }
 }
 
+fn preserve_device_summary(
+    previous: &[DeviceSummary],
+    candidate: &mut [DeviceSummary],
+    device_id: DeviceId,
+) -> Result<(), ControllerRuntimeError> {
+    let previous = previous
+        .binary_search_by_key(&device_id, DeviceSummary::device_id)
+        .ok()
+        .and_then(|index| previous.get(index))
+        .ok_or(ControllerRuntimeError::SelectionSnapshotInvariant)?;
+    let candidate = candidate
+        .binary_search_by_key(&device_id, DeviceSummary::device_id)
+        .ok()
+        .and_then(|index| candidate.get_mut(index))
+        .ok_or(ControllerRuntimeError::SelectionSnapshotInvariant)?;
+    *candidate = previous.clone();
+    Ok(())
+}
+
+fn rebuild_registry(
+    local_batch: Option<&RetainedDiscoveryBatch>,
+    exact_sources: &BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
+) -> Result<DeviceRegistry, ()> {
+    let mut batches = Vec::with_capacity(1 + exact_sources.len());
+    if let Some(batch) = local_batch {
+        batches.push((batch.seen_at, DiscoveryScope::Local, batch));
+    }
+    batches.extend(exact_sources.iter().filter_map(|(target, source)| {
+        source
+            .batch
+            .as_ref()
+            .map(|batch| (batch.seen_at, DiscoveryScope::Exact(*target), batch))
+    }));
+    batches.sort_by_key(|(seen_at, scope, _)| (*seen_at, *scope));
+
+    let mut registry = DeviceRegistry::default();
+    for (seen_at, _, batch) in batches {
+        for observation in &batch.observations {
+            registry
+                .observe(observation.clone(), seen_at)
+                .map_err(|_| ())?;
+        }
+    }
+    Ok(registry)
+}
+
 fn project_devices(registry: &DeviceRegistry) -> Result<Vec<DeviceSummary>, ()> {
     registry
         .devices()
@@ -1018,14 +1298,101 @@ enum ActorEvent {
     Selection(Result<SelectionCompletion, tokio::task::JoinError>),
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum DiscoveryScope {
+    Local,
+    Exact(ExactDiscoveryTarget),
+}
+
+impl DiscoveryScope {
+    const fn kind(self) -> DiscoveryKind {
+        match self {
+            Self::Local => DiscoveryKind::Local,
+            Self::Exact(_) => DiscoveryKind::Exact,
+        }
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct RetainedDiscoveryBatch {
+    seen_at: RegistryInstant,
+    observations: Vec<DiscoveryObservation>,
+}
+
+impl RetainedDiscoveryBatch {
+    fn new(seen_at: RegistryInstant, mut observations: Vec<DiscoveryObservation>) -> Option<Self> {
+        if observations.is_empty() {
+            return None;
+        }
+        observations.sort_by(|left, right| {
+            left.device_id
+                .cmp(&right.device_id)
+                .then_with(|| left.source.cmp(&right.source))
+                .then_with(|| left.method.cmp(&right.method))
+                .then_with(|| left.interface.cmp(&right.interface))
+                .then_with(|| left.device_types.cmp(&right.device_types))
+                .then_with(|| left.tuner_count.cmp(&right.tuner_count))
+                .then_with(|| left.advertised_base_url.cmp(&right.advertised_base_url))
+                .then_with(|| left.advertised_lineup_url.cmp(&right.advertised_lineup_url))
+        });
+        Some(Self {
+            seen_at,
+            observations,
+        })
+    }
+}
+
+#[derive(Clone, Default, Eq, PartialEq)]
+struct RetainedExactSource {
+    bound_device: Option<DeviceId>,
+    batch: Option<RetainedDiscoveryBatch>,
+}
+
+impl RetainedExactSource {
+    fn replace_batch(
+        &mut self,
+        target: ExactDiscoveryTarget,
+        batch: Option<RetainedDiscoveryBatch>,
+    ) -> Result<(), ()> {
+        if let Some(batch) = &batch {
+            let device_id = batch.observations.first().ok_or(())?.device_id;
+            let mut expected_source = target.socket_addr();
+            expected_source.set_port(DISCOVERY_UDP_PORT);
+            if batch.observations.iter().any(|observation| {
+                observation.device_id != device_id
+                    || observation.method != DiscoveryMethod::Targeted
+                    || observation.interface.is_some()
+                    || observation.source != expected_source
+            }) || self
+                .bound_device
+                .is_some_and(|expected| expected != device_id)
+            {
+                return Err(());
+            }
+            self.bound_device = Some(device_id);
+        }
+        self.batch = batch;
+        Ok(())
+    }
+}
+
+struct DiscoveryUpdate {
+    local_batch: Option<RetainedDiscoveryBatch>,
+    exact_sources: BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
+    registry: DeviceRegistry,
+    devices: Vec<DeviceSummary>,
+}
+
 struct ActiveDiscovery {
     generation: OperationGeneration,
+    scope: DiscoveryScope,
     cancellation: CancellationToken,
     task: JoinHandle<DiscoveryCompletion>,
 }
 
 struct DiscoveryCompletion {
     generation: OperationGeneration,
+    scope: DiscoveryScope,
     result: Result<DiscoveryReport, DiscoveryFailure>,
 }
 
@@ -1061,7 +1428,7 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::discovery::{DiscoveryMethod, DiscoveryObservation};
+    use crate::discovery::{DiscoveryMethod, DiscoveryObservation, LocatorOrigin};
 
     const WAIT: Duration = Duration::from_secs(3);
 
@@ -1080,8 +1447,18 @@ mod tests {
 
     struct ServiceStart {
         call: usize,
+        request: DiscoveryRequest,
         thread_name: Option<String>,
         runtime_flavor: RuntimeFlavor,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum DiscoveryRequest {
+        Local,
+        Exact {
+            target: ExactDiscoveryTarget,
+            expected_device: Option<DeviceId>,
+        },
     }
 
     #[derive(Clone)]
@@ -1162,8 +1539,33 @@ mod tests {
         }
     }
 
-    impl LocalDiscoveryService for ScriptedService {
-        fn discover_local(&self, cancellation: CancellationToken) -> LocalDiscoveryFuture {
+    impl DiscoveryService for ScriptedService {
+        fn discover_local(&self, cancellation: CancellationToken) -> DiscoveryFuture {
+            self.start(DiscoveryRequest::Local, cancellation)
+        }
+
+        fn discover_exact(
+            &self,
+            target: ExactDiscoveryTarget,
+            expected_device: Option<DeviceId>,
+            cancellation: CancellationToken,
+        ) -> DiscoveryFuture {
+            self.start(
+                DiscoveryRequest::Exact {
+                    target,
+                    expected_device,
+                },
+                cancellation,
+            )
+        }
+    }
+
+    impl ScriptedService {
+        fn start(
+            &self,
+            request: DiscoveryRequest,
+            cancellation: CancellationToken,
+        ) -> DiscoveryFuture {
             let state = Arc::clone(&self.shared);
             let step = state
                 .steps
@@ -1178,6 +1580,7 @@ mod tests {
                 .started
                 .send(ServiceStart {
                     call,
+                    request,
                     thread_name: thread::current().name().map(str::to_owned),
                     runtime_flavor: tokio::runtime::Handle::current().runtime_flavor(),
                 })
@@ -1315,6 +1718,25 @@ mod tests {
         DeviceId::new(0x105A_1243).unwrap()
     }
 
+    fn exact_target(last_octet: u8) -> ExactDiscoveryTarget {
+        ExactDiscoveryTarget::parse(&format!("198.51.100.{last_octet}")).unwrap()
+    }
+
+    fn test_actor() -> ControllerActor {
+        let (service, _) = ScriptedService::new([]);
+        let (selection, _) = ScriptedSelectionService::new([]);
+        let (_commands, receiver) = mpsc::channel(1);
+        let (snapshots, _snapshot_receiver) =
+            watch::channel(Arc::new(ApplicationSnapshot::initial()));
+        ControllerActor::new(
+            Arc::new(service),
+            Arc::new(selection),
+            receiver,
+            CancellationToken::new(),
+            snapshots,
+        )
+    }
+
     fn report(device_id: DeviceId, source: &str, tuner_count: u8) -> DiscoveryReport {
         DiscoveryReport {
             observations: vec![DiscoveryObservation {
@@ -1329,6 +1751,19 @@ mod tests {
             }],
             ..DiscoveryReport::default()
         }
+    }
+
+    fn exact_report(
+        target: ExactDiscoveryTarget,
+        device_id: DeviceId,
+        tuner_count: u8,
+    ) -> DiscoveryReport {
+        let mut report = report(device_id, "192.0.2.1:65001", tuner_count);
+        let mut source = target.socket_addr();
+        source.set_port(DISCOVERY_UDP_PORT);
+        report.observations[0].source = source;
+        report.observations[0].interface = None;
+        report
     }
 
     fn unsupported_report(device_id: DeviceId, source: &str) -> DiscoveryReport {
@@ -1393,6 +1828,223 @@ mod tests {
         assert_eq!(service.calls(), 0);
         assert_eq!(*handle.snapshot(), ApplicationSnapshot::initial());
         controller.shutdown().unwrap();
+    }
+
+    #[test]
+    fn exact_probe_budget_is_fixed_and_neighbor_friendly() {
+        let config = exact_probe_config();
+
+        assert_eq!(config.attempts(), EXACT_DISCOVERY_ATTEMPTS);
+        assert_eq!(config.response_window(), EXACT_DISCOVERY_RESPONSE_WINDOW);
+        assert_eq!(
+            config.max_received_datagrams(),
+            EXACT_DISCOVERY_MAX_RECEIVED_DATAGRAMS
+        );
+        assert_eq!(
+            config.max_unique_devices(),
+            EXACT_DISCOVERY_MAX_UNIQUE_DEVICES
+        );
+    }
+
+    #[test]
+    fn retained_report_bounds_match_registry_capacity_and_exact_cardinality() {
+        let actor = test_actor();
+        let observation = report(first_id(), "192.0.2.10:65001", 4)
+            .observations
+            .pop()
+            .unwrap();
+        let at_local_limit = DiscoveryReport {
+            observations: vec![observation.clone(); MAX_RETAINED_LOCAL_OBSERVATIONS],
+            ..DiscoveryReport::default()
+        };
+        assert!(
+            actor
+                .build_discovery_update(DiscoveryScope::Local, at_local_limit)
+                .is_ok()
+        );
+
+        let over_local_limit = DiscoveryReport {
+            observations: vec![observation.clone(); MAX_RETAINED_LOCAL_OBSERVATIONS + 1],
+            ..DiscoveryReport::default()
+        };
+        assert!(
+            actor
+                .build_discovery_update(DiscoveryScope::Local, over_local_limit)
+                .is_err()
+        );
+
+        let target = exact_target(1);
+        let exact_observation = exact_report(target, first_id(), 4)
+            .observations
+            .pop()
+            .unwrap();
+        let exact_one = DiscoveryReport {
+            observations: vec![exact_observation.clone()],
+            ..DiscoveryReport::default()
+        };
+        assert!(
+            actor
+                .build_discovery_update(DiscoveryScope::Exact(target), exact_one)
+                .is_ok()
+        );
+
+        let exact_two = DiscoveryReport {
+            observations: vec![exact_observation; MAX_RETAINED_EXACT_OBSERVATIONS + 1],
+            ..DiscoveryReport::default()
+        };
+        assert!(
+            actor
+                .build_discovery_update(DiscoveryScope::Exact(target), exact_two)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn exact_retention_revalidates_source_port_and_provenance() {
+        let mut actor = test_actor();
+        let target = exact_target(2);
+        let valid = actor
+            .build_discovery_update(
+                DiscoveryScope::Exact(target),
+                exact_report(target, first_id(), 4),
+            )
+            .unwrap();
+        actor.commit_discovery_update(valid);
+        let ipv6_target = ExactDiscoveryTarget::parse("2001:db8::2").unwrap();
+        let valid_ipv6 = actor
+            .build_discovery_update(
+                DiscoveryScope::Exact(ipv6_target),
+                exact_report(ipv6_target, first_id(), 4),
+            )
+            .unwrap();
+        actor.commit_discovery_update(valid_ipv6);
+        let prior_registry = actor.registry.clone();
+        let prior_devices = actor.devices.clone();
+        let prior_sources = actor.exact_sources.clone();
+
+        let mut wrong_address = exact_report(target, first_id(), 4);
+        wrong_address.observations[0].source = "198.51.100.3:65001".parse().unwrap();
+        let mut wrong_port = exact_report(target, first_id(), 4);
+        wrong_port.observations[0].source.set_port(65_000);
+        let mut wrong_method = exact_report(target, first_id(), 4);
+        wrong_method.observations[0].method = DiscoveryMethod::RoutedTargeted;
+        let mut wrong_interface = exact_report(target, first_id(), 4);
+        wrong_interface.observations[0].interface = Some("synthetic0".to_owned());
+
+        for report in [wrong_address, wrong_port, wrong_method, wrong_interface] {
+            assert!(
+                actor
+                    .build_discovery_update(DiscoveryScope::Exact(target), report)
+                    .is_err()
+            );
+            assert!(actor.registry == prior_registry);
+            assert!(actor.devices == prior_devices);
+            assert!(actor.exact_sources == prior_sources);
+            assert_eq!(
+                actor.expected_device_for_exact_target(target),
+                Some(first_id())
+            );
+        }
+
+        let mut scoped_ipv6 = exact_report(ipv6_target, first_id(), 4);
+        let std::net::SocketAddr::V6(source) = &mut scoped_ipv6.observations[0].source else {
+            panic!("test target must be IPv6");
+        };
+        source.set_scope_id(7);
+        assert!(
+            actor
+                .build_discovery_update(DiscoveryScope::Exact(ipv6_target), scoped_ipv6)
+                .is_err()
+        );
+        assert!(actor.registry == prior_registry);
+        assert!(actor.devices == prior_devices);
+        assert!(actor.exact_sources == prior_sources);
+        assert_eq!(
+            actor.expected_device_for_exact_target(ipv6_target),
+            Some(first_id())
+        );
+    }
+
+    #[test]
+    fn retained_batches_replay_by_time_and_local_precedes_exact_on_a_tie() {
+        let tied_target = exact_target(3);
+        let older_target = exact_target(4);
+        let newer_target = exact_target(5);
+        let tied_at = RegistryInstant::from_duration(Duration::from_secs(20));
+        let older_at = RegistryInstant::from_duration(Duration::from_secs(10));
+        let newer_at = RegistryInstant::from_duration(Duration::from_secs(30));
+
+        let mut local_observation = exact_report(tied_target, first_id(), 2)
+            .observations
+            .pop()
+            .unwrap();
+        local_observation.method = DiscoveryMethod::Ipv4Broadcast;
+        local_observation.interface = Some("synthetic0".to_owned());
+        let local_batch = RetainedDiscoveryBatch::new(tied_at, vec![local_observation]).unwrap();
+        let tied_exact = RetainedDiscoveryBatch::new(
+            tied_at,
+            exact_report(tied_target, first_id(), 4).observations,
+        )
+        .unwrap();
+        let older_exact = RetainedDiscoveryBatch::new(
+            older_at,
+            exact_report(older_target, first_id(), 1).observations,
+        )
+        .unwrap();
+        let newer_exact = RetainedDiscoveryBatch::new(
+            newer_at,
+            exact_report(newer_target, first_id(), 8).observations,
+        )
+        .unwrap();
+        let exact_sources = BTreeMap::from([
+            (
+                tied_target,
+                RetainedExactSource {
+                    bound_device: Some(first_id()),
+                    batch: Some(tied_exact),
+                },
+            ),
+            (
+                older_target,
+                RetainedExactSource {
+                    bound_device: Some(first_id()),
+                    batch: Some(older_exact),
+                },
+            ),
+            (
+                newer_target,
+                RetainedExactSource {
+                    bound_device: Some(first_id()),
+                    batch: Some(newer_exact),
+                },
+            ),
+        ]);
+
+        let registry = rebuild_registry(Some(&local_batch), &exact_sources).unwrap();
+        assert_eq!(registry.clock(), Some(newer_at));
+        let device = registry.get(first_id()).unwrap();
+        let tied_source = exact_report(tied_target, first_id(), 4).observations[0].source;
+        let tied_claim = device
+            .locators()
+            .find(|claim| claim.source() == tied_source)
+            .unwrap();
+        assert_eq!(tied_claim.tuner_count(), Some(4));
+        let local_origin = LocatorOrigin {
+            method: DiscoveryMethod::Ipv4Broadcast,
+            interface: Some("synthetic0".to_owned()),
+        };
+        let exact_origin = LocatorOrigin {
+            method: DiscoveryMethod::Targeted,
+            interface: None,
+        };
+        assert_eq!(tied_claim.origin_first_seen(&local_origin), Some(tied_at));
+        assert_eq!(tied_claim.origin_last_seen(&local_origin), Some(tied_at));
+        assert_eq!(tied_claim.origin_first_seen(&exact_origin), Some(tied_at));
+        assert_eq!(tied_claim.origin_last_seen(&exact_origin), Some(tied_at));
+        assert_eq!(
+            device.preferred_locator().map(|claim| claim.source()),
+            Some(exact_report(newer_target, first_id(), 8).observations[0].source)
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1683,7 +2335,7 @@ mod tests {
             .try_send(ControllerCommand::RefreshLocalDiscovery)
             .unwrap();
         assert_eq!(
-            controller.try_send(ControllerCommand::CancelLocalDiscovery),
+            controller.try_send(ControllerCommand::CancelDiscovery),
             Err(ControllerCommandError::Full)
         );
         shutdown.cancel();
@@ -1734,6 +2386,619 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn exact_discovery_binds_identity_and_rejects_a_mismatched_completion() {
+        let target = exact_target(7);
+        let (service, starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(exact_report(target, first_id(), 4))),
+            ServiceStep::Immediate(Ok(exact_report(target, second_id(), 2))),
+        ]);
+        let controller = ControllerRuntime::start(service).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        assert_eq!(
+            recv_start(&starts).request,
+            DiscoveryRequest::Exact {
+                target,
+                expected_device: None,
+            }
+        );
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(1)
+                && snapshot.discovery().kind() == DiscoveryKind::Exact
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(ready.devices().len(), 1);
+        assert_eq!(ready.devices()[0].device_id(), first_id());
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        assert_eq!(
+            recv_start(&starts).request,
+            DiscoveryRequest::Exact {
+                target,
+                expected_device: Some(first_id()),
+            }
+        );
+        let failed = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().kind() == DiscoveryKind::Exact
+                && snapshot.discovery().status()
+                    == DiscoveryStatus::Failed(DiscoveryFailure::Internal)
+        })
+        .await;
+
+        assert_eq!(failed.devices().len(), 1);
+        assert_eq!(failed.devices()[0].device_id(), first_id());
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn exact_expected_identity_uses_registry_owner_and_survives_no_response() {
+        let target = exact_target(8);
+        let exact_source = exact_report(target, first_id(), 4).observations[0].source;
+        let (service, starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(report(first_id(), &exact_source.to_string(), 4))),
+            ServiceStep::Immediate(Ok(exact_report(target, first_id(), 4))),
+            ServiceStep::Immediate(Ok(DiscoveryReport::default())),
+            ServiceStep::Immediate(Ok(DiscoveryReport::default())),
+            ServiceStep::Immediate(Ok(DiscoveryReport::default())),
+        ]);
+        let controller = ControllerRuntime::start(service).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(1)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        assert_eq!(
+            recv_start(&starts).request,
+            DiscoveryRequest::Exact {
+                target,
+                expected_device: Some(first_id()),
+            }
+        );
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(3)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        recv_start(&starts);
+        let cleared = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(4)
+                && snapshot.discovery().status() == DiscoveryStatus::NoResponse
+        })
+        .await;
+        assert!(cleared.devices().is_empty());
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        assert_eq!(
+            recv_start(&starts).request,
+            DiscoveryRequest::Exact {
+                target,
+                expected_device: Some(first_id()),
+            }
+        );
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(5)
+                && snapshot.discovery().status() == DiscoveryStatus::NoResponse
+        })
+        .await;
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn authoritative_source_batches_union_replace_and_clear_independently() {
+        let first_target = exact_target(10);
+        let second_target = exact_target(11);
+        let (service, starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(report(first_id(), "192.0.2.10:65001", 4))),
+            ServiceStep::Immediate(Ok(exact_report(first_target, second_id(), 2))),
+            ServiceStep::Immediate(Ok(exact_report(first_target, second_id(), 4))),
+            ServiceStep::Immediate(Ok(exact_report(second_target, first_id(), 4))),
+            ServiceStep::Immediate(Err(DiscoveryFailure::Network)),
+            ServiceStep::Immediate(Ok(DiscoveryReport::default())),
+            ServiceStep::Immediate(Ok(DiscoveryReport::default())),
+        ]);
+        let controller = ControllerRuntime::start(service).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        assert_eq!(recv_start(&starts).request, DiscoveryRequest::Local);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(1)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(first_target))
+            .unwrap();
+        assert_eq!(
+            recv_start(&starts).request,
+            DiscoveryRequest::Exact {
+                target: first_target,
+                expected_device: None,
+            }
+        );
+        let union = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(
+            union
+                .devices()
+                .iter()
+                .map(DeviceSummary::device_id)
+                .collect::<Vec<_>>(),
+            vec![first_id(), second_id()]
+        );
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(first_target))
+            .unwrap();
+        assert_eq!(
+            recv_start(&starts).request,
+            DiscoveryRequest::Exact {
+                target: first_target,
+                expected_device: Some(second_id()),
+            }
+        );
+        let replaced = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(3)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(
+            replaced
+                .devices()
+                .iter()
+                .find(|device| device.device_id() == second_id())
+                .and_then(DeviceSummary::tuner_count),
+            Some(4)
+        );
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(second_target))
+            .unwrap();
+        recv_start(&starts);
+        let two_origins = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(4)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(two_origins.devices()[0].device_id(), first_id());
+        assert_eq!(two_origins.devices()[0].locator_count(), 2);
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(first_target))
+            .unwrap();
+        recv_start(&starts);
+        let failed = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(5)
+                && snapshot.discovery().status()
+                    == DiscoveryStatus::Failed(DiscoveryFailure::Network)
+        })
+        .await;
+        assert_eq!(failed.devices(), two_origins.devices());
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(first_target))
+            .unwrap();
+        recv_start(&starts);
+        let no_response = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(6)
+                && snapshot.discovery().kind() == DiscoveryKind::Exact
+                && snapshot.discovery().status() == DiscoveryStatus::NoResponse
+        })
+        .await;
+        assert_eq!(no_response.devices().len(), 1);
+        assert_eq!(no_response.devices()[0].device_id(), first_id());
+        assert_eq!(no_response.devices()[0].locator_count(), 2);
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        let exact_only = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(7)
+                && snapshot.discovery().kind() == DiscoveryKind::Local
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(exact_only.devices().len(), 1);
+        assert_eq!(exact_only.devices()[0].device_id(), first_id());
+        assert_eq!(exact_only.devices()[0].locator_count(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn exact_target_attempt_cap_precedes_io_and_allows_bounded_retries() {
+        let steps = (0..MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION)
+            .map(|_| ServiceStep::Immediate(Ok(DiscoveryReport::default())))
+            .chain([
+                ServiceStep::Immediate(Err(DiscoveryFailure::Network)),
+                ServiceStep::Immediate(Ok(DiscoveryReport::default())),
+            ]);
+        let (service, starts) = ScriptedService::new(steps);
+        let observed_service = service.clone();
+        let controller = ControllerRuntime::start(service).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        for index in 1..=MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION {
+            let target = exact_target(u8::try_from(index).unwrap());
+            handle
+                .try_send(ControllerCommand::DiscoverExact(target))
+                .unwrap();
+            assert_eq!(
+                recv_start(&starts).request,
+                DiscoveryRequest::Exact {
+                    target,
+                    expected_device: None,
+                }
+            );
+            wait_for_snapshot(&mut snapshots, |snapshot| {
+                snapshot.discovery_generation()
+                    == OperationGeneration::new(u64::try_from(index).unwrap())
+                    && snapshot.discovery().status() == DiscoveryStatus::NoResponse
+            })
+            .await;
+        }
+
+        let rejected = exact_target(33);
+        handle
+            .try_send(ControllerCommand::DiscoverExact(rejected))
+            .unwrap();
+        let capped = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(33)
+                && snapshot.discovery().kind() == DiscoveryKind::Exact
+                && snapshot.discovery().status()
+                    == DiscoveryStatus::Failed(DiscoveryFailure::ExactTargetLimitReached)
+        })
+        .await;
+        assert!(capped.devices().is_empty());
+        assert_eq!(observed_service.calls(), 32);
+        assert!(starts.try_recv().is_err());
+
+        let repeated = exact_target(1);
+        handle
+            .try_send(ControllerCommand::DiscoverExact(repeated))
+            .unwrap();
+        assert_eq!(
+            recv_start(&starts).request,
+            DiscoveryRequest::Exact {
+                target: repeated,
+                expected_device: None,
+            }
+        );
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(34)
+                && snapshot.discovery().status()
+                    == DiscoveryStatus::Failed(DiscoveryFailure::Network)
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(repeated))
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(35)
+                && snapshot.discovery().status() == DiscoveryStatus::NoResponse
+        })
+        .await;
+        assert_eq!(observed_service.calls(), 34);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn over_cap_exact_command_cancels_and_joins_active_lane_without_replacement_io() {
+        let (cancellation_observed, cancellation_observed_rx) = std_mpsc::channel();
+        let (finish_cancellation, finish_cancellation_rx) = oneshot::channel();
+        let steps = (0..MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION)
+            .map(|_| ServiceStep::Immediate(Ok(DiscoveryReport::default())))
+            .chain([ServiceStep::CancellationBarrier {
+                cancellation_observed,
+                finish_cancellation: finish_cancellation_rx,
+                cancellation_result: Err(DiscoveryFailure::Internal),
+            }]);
+        let (service, starts) = ScriptedService::new(steps);
+        let observed_service = service.clone();
+        let controller = ControllerRuntime::start(service).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        for index in 1..=MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION {
+            handle
+                .try_send(ControllerCommand::DiscoverExact(exact_target(
+                    u8::try_from(index).unwrap(),
+                )))
+                .unwrap();
+            recv_start(&starts);
+            wait_for_snapshot(&mut snapshots, |snapshot| {
+                snapshot.discovery_generation()
+                    == OperationGeneration::new(u64::try_from(index).unwrap())
+                    && snapshot.discovery().status() == DiscoveryStatus::NoResponse
+            })
+            .await;
+        }
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(exact_target(1)))
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(33)
+                && snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::DiscoverExact(exact_target(33)))
+            .unwrap();
+        cancellation_observed_rx
+            .recv_timeout(WAIT)
+            .expect("over-cap supersession must cancel the active discovery");
+        assert_eq!(
+            handle.snapshot().discovery().status(),
+            DiscoveryStatus::Refreshing
+        );
+        assert_eq!(observed_service.calls(), 33);
+        assert!(starts.try_recv().is_err());
+
+        finish_cancellation.send(()).unwrap();
+        let capped = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(34)
+                && snapshot.discovery().status()
+                    == DiscoveryStatus::Failed(DiscoveryFailure::ExactTargetLimitReached)
+        })
+        .await;
+        assert!(capped.devices().is_empty());
+        assert_eq!(observed_service.calls(), 33);
+        assert!(starts.try_recv().is_err());
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn exact_success_never_auto_selects_or_starts_http_resolution() {
+        let target = exact_target(20);
+        let (discovery, discovery_starts) = ScriptedService::new([ServiceStep::Immediate(Ok(
+            exact_report(target, first_id(), 4),
+        ))]);
+        let (selection, _selection_starts) = ScriptedSelectionService::new([]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        recv_start(&discovery_starts);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().kind() == DiscoveryKind::Exact
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        assert_eq!(ready.selected_device(), None);
+        assert_eq!(
+            ready.selected_lineup().status(),
+            SelectedLineupStatus::Unselected
+        );
+        assert_eq!(observed_selection.calls(), 0);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unrelated_exact_success_preserves_ready_selection_without_http() {
+        let target = exact_target(21);
+        let (discovery, discovery_starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(report(first_id(), "192.0.2.10:65001", 4))),
+            ServiceStep::Immediate(Ok(exact_report(target, second_id(), 4))),
+        ]);
+        let (selection, selection_starts) =
+            ScriptedSelectionService::new([SelectionStep::Immediate(Ok(
+                ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
+            ))]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        let selected = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+        assert_eq!(selected.selection_generation(), OperationGeneration::new(1));
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        recv_start(&discovery_starts);
+        let exact_ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().kind() == DiscoveryKind::Exact
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        assert_eq!(exact_ready.selected_device(), Some(first_id()));
+        assert_eq!(
+            exact_ready.selected_lineup().status(),
+            SelectedLineupStatus::Ready
+        );
+        assert_eq!(
+            exact_ready.selection_generation(),
+            OperationGeneration::new(1)
+        );
+        assert_eq!(
+            exact_ready.devices()[0].friendly_name(),
+            Some("private fixture name")
+        );
+        assert_eq!(observed_selection.calls(), 1);
+        assert!(selection_starts.try_recv().is_err());
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn exact_mutation_of_selected_evidence_clears_without_http() {
+        let target = exact_target(22);
+        let (discovery, discovery_starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(report(first_id(), "192.0.2.10:65001", 4))),
+            ServiceStep::Immediate(Ok(exact_report(target, first_id(), 4))),
+        ]);
+        let (selection, selection_starts) =
+            ScriptedSelectionService::new([SelectionStep::Immediate(Ok(
+                ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
+            ))]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        recv_start(&discovery_starts);
+        let cleared = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+                && snapshot.selection_generation() == OperationGeneration::new(2)
+        })
+        .await;
+
+        assert_eq!(cleared.selected_device(), None);
+        assert_eq!(
+            cleared.selected_lineup().status(),
+            SelectedLineupStatus::Unselected
+        );
+        assert_eq!(observed_selection.calls(), 1);
+        assert!(selection_starts.try_recv().is_err());
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn exact_no_response_removes_selected_evidence_and_clears_without_http() {
+        let target = exact_target(23);
+        let (discovery, discovery_starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(exact_report(target, first_id(), 4))),
+            ServiceStep::Immediate(Ok(DiscoveryReport::default())),
+        ]);
+        let (selection, selection_starts) =
+            ScriptedSelectionService::new([SelectionStep::Immediate(Ok(
+                ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
+            ))]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        assert_eq!(
+            recv_start(&discovery_starts).request,
+            DiscoveryRequest::Exact {
+                target,
+                expected_device: Some(first_id()),
+            }
+        );
+        let cleared = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().status() == DiscoveryStatus::NoResponse
+                && snapshot.selection_generation() == OperationGeneration::new(2)
+        })
+        .await;
+
+        assert!(cleared.devices().is_empty());
+        assert_eq!(cleared.selected_device(), None);
+        assert_eq!(observed_selection.calls(), 1);
+        assert!(selection_starts.try_recv().is_err());
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn refresh_supersession_cancels_and_joins_before_starting_replacement() {
         let (first_release, _first_receiver) = oneshot::channel();
         let (first_cancelled, first_cancelled_rx) = std_mpsc::channel();
@@ -1775,6 +3040,54 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn local_and_exact_operations_share_one_joined_superseding_lane() {
+        let target = exact_target(24);
+        let (cancellation_observed, cancellation_observed_rx) = std_mpsc::channel();
+        let (finish_cancellation, finish_cancellation_rx) = oneshot::channel();
+        let (service, starts) = ScriptedService::new([
+            ServiceStep::CancellationBarrier {
+                cancellation_observed,
+                finish_cancellation: finish_cancellation_rx,
+                cancellation_result: Err(DiscoveryFailure::Internal),
+            },
+            ServiceStep::Immediate(Ok(exact_report(target, first_id(), 4))),
+        ]);
+        let observed_service = service.clone();
+        let controller = ControllerRuntime::start(service).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        assert_eq!(recv_start(&starts).request, DiscoveryRequest::Local);
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        cancellation_observed_rx
+            .recv_timeout(WAIT)
+            .expect("exact discovery must cancel the active local operation");
+        assert!(starts.try_recv().is_err());
+        finish_cancellation.send(()).unwrap();
+        assert_eq!(
+            recv_start(&starts).request,
+            DiscoveryRequest::Exact {
+                target,
+                expected_device: None,
+            }
+        );
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().kind() == DiscoveryKind::Exact
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        assert_eq!(observed_service.maximum_active(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn explicit_cancel_is_idle_in_a_new_generation_and_retains_devices() {
         let (_release, release_rx) = oneshot::channel();
         let (cancelled, cancelled_rx) = std_mpsc::channel();
@@ -1801,9 +3114,7 @@ mod tests {
             .try_send(ControllerCommand::RefreshLocalDiscovery)
             .unwrap();
         recv_start(&starts);
-        handle
-            .try_send(ControllerCommand::CancelLocalDiscovery)
-            .unwrap();
+        handle.try_send(ControllerCommand::CancelDiscovery).unwrap();
         cancelled_rx
             .recv_timeout(WAIT)
             .expect("explicit cancel should synchronously reach the service token");
@@ -2112,6 +3423,7 @@ mod tests {
             !actor
                 .apply_discovery_completion(DiscoveryCompletion {
                     generation: OperationGeneration::new(1),
+                    scope: DiscoveryScope::Local,
                     result: Ok(report(first_id(), "192.0.2.10:65001", 4)),
                 })
                 .await
@@ -2199,7 +3511,7 @@ mod tests {
 
         controller.begin_shutdown();
         assert_eq!(
-            handle.try_send(ControllerCommand::CancelLocalDiscovery),
+            handle.try_send(ControllerCommand::CancelDiscovery),
             Err(ControllerCommandError::ShuttingDown)
         );
         controller.shutdown().unwrap();

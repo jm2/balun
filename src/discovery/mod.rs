@@ -3,6 +3,7 @@
 pub(crate) mod approval;
 mod client;
 mod local;
+mod manual;
 mod registry;
 mod routed;
 mod routes;
@@ -13,6 +14,9 @@ pub use client::{
     InvalidProbeConfig, ProbeConfig, ProbeIssue,
 };
 pub use local::local_probe_endpoints;
+pub use manual::{
+    ExactDiscoveryTarget, InvalidExactDiscoveryTarget, MAX_EXACT_DISCOVERY_TARGET_TEXT_BYTES,
+};
 pub use registry::{
     DeviceRegistry, ExpirationOutcome, LocatorClaim, LocatorOrigin, ObservationOutcome,
     RegisteredDevice, RegistryError, RegistryInstant,

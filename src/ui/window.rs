@@ -10,7 +10,7 @@ use balun::controller::{
 };
 
 use super::objects::DeviceRowObject;
-use super::{channel_sidebar, device_sidebar, player_view};
+use super::{channel_sidebar, device_sidebar, exact_discovery_dialog, player_view};
 
 const DEFAULT_WIDTH: i32 = 1_200;
 const DEFAULT_HEIGHT: i32 = 720;
@@ -88,6 +88,8 @@ pub(crate) fn build(
     let accepted = Rc::new(RefCell::new(initial));
 
     connect_refresh(&device_sidebar, &handle);
+    connect_exact_discovery(&window, &device_sidebar, &handle);
+    connect_cancel_discovery(&device_sidebar, &handle);
     connect_device_selection(&device_sidebar, &handle, &accepted);
     spawn_snapshot_reducer(
         snapshots,
@@ -103,17 +105,93 @@ pub(crate) fn build(
 
 fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &ControllerHandle) {
     let controller = controller.clone();
+    let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
+    let exact_discovery_button = sidebar.exact_discovery_button().clone();
     sidebar.refresh_button().connect_clicked(move |button| {
         // Close the tiny interval before the Refreshing snapshot arrives so a
         // fast double-click cannot enqueue redundant supersessions.
         button.set_sensitive(false);
-        if controller
-            .try_send(ControllerCommand::RefreshLocalDiscovery)
-            .is_err()
-        {
-            button.set_sensitive(true);
+        exact_discovery_button.set_sensitive(false);
+        match controller.try_send(ControllerCommand::RefreshLocalDiscovery) {
+            Ok(()) => {
+                cancel_discovery_button.set_visible(true);
+                cancel_discovery_button.set_sensitive(true);
+            }
+            Err(_) => {
+                button.set_sensitive(true);
+                exact_discovery_button.set_sensitive(true);
+            }
         }
     });
+}
+
+fn connect_exact_discovery(
+    window: &adw::ApplicationWindow,
+    sidebar: &device_sidebar::DeviceSidebar,
+    controller: &ControllerHandle,
+) {
+    let controller = controller.clone();
+    let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
+    let dialog_open = Rc::new(Cell::new(false));
+    let refresh_button = sidebar.refresh_button().clone();
+    let window = window.downgrade();
+
+    sidebar
+        .exact_discovery_button()
+        .connect_clicked(move |button| {
+            if dialog_open.replace(true) {
+                return;
+            }
+            let Some(window) = window.upgrade() else {
+                dialog_open.set(false);
+                return;
+            };
+
+            let admitted_controller = controller.clone();
+            let admitted_cancel_button = cancel_discovery_button.clone();
+            let admitted_exact_button = button.clone();
+            let admitted_refresh_button = refresh_button.clone();
+            let closed_dialog_open = Rc::clone(&dialog_open);
+            exact_discovery_dialog::present(
+                &window,
+                move |target| {
+                    // Exact and local discovery share one supersedable lane.
+                    // Disable both actions before the Refreshing publication
+                    // closes the small re-admission interval.
+                    admitted_exact_button.set_sensitive(false);
+                    admitted_refresh_button.set_sensitive(false);
+                    match admitted_controller.try_send(ControllerCommand::DiscoverExact(target)) {
+                        Ok(()) => {
+                            admitted_cancel_button.set_visible(true);
+                            admitted_cancel_button.set_sensitive(true);
+                        }
+                        Err(_) => {
+                            admitted_exact_button.set_sensitive(true);
+                            admitted_refresh_button.set_sensitive(true);
+                        }
+                    }
+                },
+                move || closed_dialog_open.set(false),
+            );
+        });
+}
+
+fn connect_cancel_discovery(
+    sidebar: &device_sidebar::DeviceSidebar,
+    controller: &ControllerHandle,
+) {
+    let controller = controller.clone();
+    sidebar
+        .cancel_discovery_button()
+        .connect_clicked(move |button| {
+            button.set_sensitive(false);
+            if controller
+                .try_send(ControllerCommand::CancelDiscovery)
+                .is_err()
+            {
+                button.set_sensitive(true);
+            }
+        });
 }
 
 fn connect_device_selection(
