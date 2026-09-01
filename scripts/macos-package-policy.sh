@@ -73,6 +73,8 @@ macos_package_policy_ascii_lower() {
 
 macos_package_policy_trim_ascii_space() {
   local value="$1"
+  local LC_ALL=C
+  export LC_ALL
 
   while [[ "$value" == [[:space:]]* ]]; do
     value="${value#?}"
@@ -283,8 +285,14 @@ macos_package_policy_load() {
     macos_package_policy_setup_error "could not snapshot policy: ${policy_file}"
     return 2
   fi
-  if ! policy_bytes="$(wc -c < "$policy_snapshot")" \
-      || [[ ! "$policy_bytes" =~ ^[0-9]+$ ]]; then
+  if ! policy_bytes="$(wc -c < "$policy_snapshot")"; then
+    rm -f "$policy_snapshot"
+    macos_package_policy_setup_error "could not measure policy: ${policy_file}"
+    return 2
+  fi
+  macos_package_policy_trim_ascii_space "$policy_bytes"
+  policy_bytes="$MACOS_PACKAGE_POLICY_TRIMMED"
+  if [[ ! "$policy_bytes" =~ ^[0-9]+$ ]]; then
     rm -f "$policy_snapshot"
     macos_package_policy_setup_error "could not measure policy: ${policy_file}"
     return 2
@@ -404,8 +412,14 @@ macos_package_policy_check_output() {
   local output_file="$2"
   local output_bytes
 
-  if ! output_bytes="$(wc -c < "$output_file")" \
-      || [[ ! "$output_bytes" =~ ^[0-9]+$ ]]; then
+  if ! output_bytes="$(wc -c < "$output_file")"; then
+    MACOS_PACKAGE_POLICY_REASON="could not measure ${label}"
+    MACOS_PACKAGE_POLICY_RESULT="uninspectable"
+    return 2
+  fi
+  macos_package_policy_trim_ascii_space "$output_bytes"
+  output_bytes="$MACOS_PACKAGE_POLICY_TRIMMED"
+  if [[ ! "$output_bytes" =~ ^[0-9]+$ ]]; then
     MACOS_PACKAGE_POLICY_REASON="could not measure ${label}"
     MACOS_PACKAGE_POLICY_RESULT="uninspectable"
     return 2
@@ -487,8 +501,14 @@ macos_package_policy_capture_output() {
     ' -- "$max_seconds" "$@"
   ) > "$output_file" 2>/dev/null || command_status=$?
 
-  if ! output_bytes="$(wc -c < "$output_file")" \
-      || [[ ! "$output_bytes" =~ ^[0-9]+$ ]]; then
+  if ! output_bytes="$(wc -c < "$output_file")"; then
+    MACOS_PACKAGE_POLICY_REASON="could not measure ${label}"
+    MACOS_PACKAGE_POLICY_RESULT="uninspectable"
+    return 2
+  fi
+  macos_package_policy_trim_ascii_space "$output_bytes"
+  output_bytes="$MACOS_PACKAGE_POLICY_TRIMMED"
+  if [[ ! "$output_bytes" =~ ^[0-9]+$ ]]; then
     MACOS_PACKAGE_POLICY_REASON="could not measure ${label}"
     MACOS_PACKAGE_POLICY_RESULT="uninspectable"
     return 2
@@ -1109,7 +1129,14 @@ macos_package_policy_check_manifest_shape() {
     MACOS_PACKAGE_POLICY_RESULT="uninspectable"
     return 2
   fi
-  if ! bytes="$(wc -c < "$manifest")" || [[ ! "$bytes" =~ ^[0-9]+$ ]]; then
+  if ! bytes="$(wc -c < "$manifest")"; then
+    MACOS_PACKAGE_POLICY_REASON="could not measure ${label}"
+    MACOS_PACKAGE_POLICY_RESULT="uninspectable"
+    return 2
+  fi
+  macos_package_policy_trim_ascii_space "$bytes"
+  bytes="$MACOS_PACKAGE_POLICY_TRIMMED"
+  if [[ ! "$bytes" =~ ^[0-9]+$ ]]; then
     MACOS_PACKAGE_POLICY_REASON="could not measure ${label}"
     MACOS_PACKAGE_POLICY_RESULT="uninspectable"
     return 2

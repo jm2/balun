@@ -27,7 +27,7 @@ assert_status() {
   local actual=0
   "$@" || actual=$?
   [[ "$actual" -eq "$expected" ]] \
-    || fail "expected status ${expected}, got ${actual}: $*"
+    || fail "expected status ${expected}, got ${actual}: $*; result=${MACOS_PACKAGE_POLICY_RESULT-<unset>}; reason=${MACOS_PACKAGE_POLICY_REASON-<unset>}"
 }
 
 assert_reason_contains() {
@@ -72,6 +72,27 @@ assert_status 0 macos_package_policy_load "$POLICY_FILE"
 DENIED_TOKEN="${MACOS_FORBIDDEN_COMPONENT_TOKENS[0]}"
 DENIED_UPPER="$(printf '%s' "$DENIED_TOKEN" | tr '[:lower:]' '[:upper:]')"
 assert_no_policy_temporaries
+
+# BSD wc pads redirected scalar counts with leading spaces. Keep this wrapper
+# active for the rest of the suite so policy, tool-output, capture, and manifest
+# measurements all exercise strict trimming of otherwise valid numeric output.
+PADDED_WC_DIR="${TEST_ROOT}/padded-wc"
+mkdir -p "$PADDED_WC_DIR"
+TEST_REAL_WC="$(command -v wc)"
+cat > "$PADDED_WC_DIR/wc" <<'PADDED_WC_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+count="$($TEST_REAL_WC "$@")"
+printf '   %s   \n' "$count"
+PADDED_WC_SCRIPT
+chmod +x "$PADDED_WC_DIR/wc"
+TEST_REAL_WC="$TEST_REAL_WC"
+export TEST_REAL_WC
+PATH="${PADDED_WC_DIR}:${PATH}"
+export PATH
+assert_status 0 macos_package_policy_load "$POLICY_FILE"
+[[ "$MACOS_PACKAGE_POLICY_RESULT" == loaded ]] \
+  || fail 'padded wc output prevented the reviewed policy from loading'
 
 # Every negative fixture below is harmless synthetic text or is derived from
 # the reviewed policy at runtime. No denied component name is duplicated in

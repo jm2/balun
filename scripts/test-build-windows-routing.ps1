@@ -387,3 +387,8 @@ finally {
         Remove-Item -LiteralPath $TemporaryRoot -Recurse -Force
     }
 }
+
+# GitHub Actions dot-sources PowerShell run blocks. Failed child-process probes
+# intentionally leave LASTEXITCODE nonzero even after every assertion passes;
+# clear it so the hosting shell receives the test suite's actual success.
+$global:LASTEXITCODE = 0
