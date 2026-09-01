@@ -25,6 +25,12 @@ use tokio_util::sync::CancellationToken;
 
 use super::watch::StoreInvalidationSink;
 
+mod activation;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+mod store;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ObserverSource {
     Route,
@@ -413,23 +419,12 @@ impl RoutedObserverIncarnation {
 
     /// Consume both exact current source baselines and atomically install the
     /// only epoch which routed admission may register.
-    pub(crate) fn activate(
+    fn activate(
         &self,
         route: RouteBaselineToken,
         store: StoreBaselineToken,
     ) -> Result<HealthyRoutedEpoch, ObserverCoordinatorError> {
-        if !route.coordinator.ptr_eq(&self.coordinator)
-            || !store.coordinator.ptr_eq(&self.coordinator)
-            || route.incarnation != self.incarnation
-            || store.incarnation != self.incarnation
-            || !route.sink.ptr_eq(&self.route_identity)
-            || !store.sink.ptr_eq(&self.store_identity)
-        {
-            return Err(ObserverCoordinatorError::StaleBaseline);
-        }
-        if route.sink.upgrade().is_none() || store.sink.upgrade().is_none() {
-            return Err(ObserverCoordinatorError::SinkUnavailable);
-        }
+        self.validate_baseline_ownership(&route, &store)?;
 
         let coordinator = self
             .coordinator
@@ -467,6 +462,91 @@ impl RoutedObserverIncarnation {
             coordinator: Arc::downgrade(&coordinator),
             identity,
         })
+    }
+
+    fn validate_baseline_ownership(
+        &self,
+        route: &RouteBaselineToken,
+        store: &StoreBaselineToken,
+    ) -> Result<(), ObserverCoordinatorError> {
+        self.validate_route_baseline_ownership(route)?;
+        self.validate_store_baseline_ownership(store)
+    }
+
+    fn validate_route_baseline_ownership(
+        &self,
+        route: &RouteBaselineToken,
+    ) -> Result<(), ObserverCoordinatorError> {
+        if !route.coordinator.ptr_eq(&self.coordinator)
+            || route.incarnation != self.incarnation
+            || !route.sink.ptr_eq(&self.route_identity)
+        {
+            return Err(ObserverCoordinatorError::StaleBaseline);
+        }
+        if route.sink.upgrade().is_none() {
+            return Err(ObserverCoordinatorError::SinkUnavailable);
+        }
+        Ok(())
+    }
+
+    fn validate_store_baseline_ownership(
+        &self,
+        store: &StoreBaselineToken,
+    ) -> Result<(), ObserverCoordinatorError> {
+        if !store.coordinator.ptr_eq(&self.coordinator)
+            || store.incarnation != self.incarnation
+            || !store.sink.ptr_eq(&self.store_identity)
+        {
+            return Err(ObserverCoordinatorError::StaleBaseline);
+        }
+        if store.sink.upgrade().is_none() {
+            return Err(ObserverCoordinatorError::SinkUnavailable);
+        }
+        Ok(())
+    }
+
+    fn validate_route_baseline_current(
+        &self,
+        route: &RouteBaselineToken,
+    ) -> Result<(), ObserverCoordinatorError> {
+        self.validate_route_baseline_ownership(route)?;
+        let coordinator = self
+            .coordinator
+            .upgrade()
+            .ok_or(ObserverCoordinatorError::FailedClosed)?;
+        let state = coordinator.lock()?;
+        if state.current_incarnation != Some(self.incarnation) {
+            return Err(ObserverCoordinatorError::StaleIncarnation);
+        }
+        if state.route_poisoned || state.store_poisoned {
+            return Err(ObserverCoordinatorError::SourcePoisoned);
+        }
+        if route.generation != state.route_generation {
+            return Err(ObserverCoordinatorError::StaleBaseline);
+        }
+        Ok(())
+    }
+
+    fn validate_store_baseline_current(
+        &self,
+        store: &StoreBaselineToken,
+    ) -> Result<(), ObserverCoordinatorError> {
+        self.validate_store_baseline_ownership(store)?;
+        let coordinator = self
+            .coordinator
+            .upgrade()
+            .ok_or(ObserverCoordinatorError::FailedClosed)?;
+        let state = coordinator.lock()?;
+        if state.current_incarnation != Some(self.incarnation) {
+            return Err(ObserverCoordinatorError::StaleIncarnation);
+        }
+        if state.route_poisoned || state.store_poisoned {
+            return Err(ObserverCoordinatorError::SourcePoisoned);
+        }
+        if store.generation != state.store_generation {
+            return Err(ObserverCoordinatorError::StaleBaseline);
+        }
+        Ok(())
     }
 
     fn begin_source_baseline(

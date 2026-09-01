@@ -13,6 +13,12 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxRouteProvider;
 
+#[cfg(target_os = "linux")]
+pub(in crate::discovery) use linux::{
+    LinuxRouteEventMonitor, LinuxRouteMonitorError, RouteMonitorObserver,
+    RouteReconciliationRequired,
+};
+
 /// An operating-system interface identifier, normalized to fit Linux and
 /// macOS interface indexes as well as Windows interface LUIDs.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

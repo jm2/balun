@@ -28,6 +28,11 @@ use super::{
 
 mod monitor;
 
+pub(in crate::discovery) use monitor::{
+    LinuxRouteEventMonitor, LinuxRouteMonitorError, RouteMonitorObserver,
+    RouteReconciliationRequired,
+};
+
 const MAIN_TABLE: u32 = 254;
 const LOCAL_TABLE: u32 = 255;
 const DEFAULT_TABLE: u32 = 253;

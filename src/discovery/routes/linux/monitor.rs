@@ -59,14 +59,14 @@ const RECONCILIATION_CAPACITY: usize = 1;
 /// Both methods must be idempotent and must not panic. `poison` must prevent a
 /// later stale observer from publishing a healthy epoch. Dropping the monitor
 /// calls `poison`, including when its task is aborted.
-pub(super) trait RouteMonitorObserver: Send + Sync {
+pub(in crate::discovery) trait RouteMonitorObserver: Send + Sync {
     fn invalidate(&self);
     fn poison(&self);
 }
 
 /// A coalesced request for the controller to debounce and rebuild its baseline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct RouteReconciliationRequired;
+pub(in crate::discovery) struct RouteReconciliationRequired;
 
 /// Result of draining all notifications queued after a route snapshot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,7 +79,7 @@ pub(super) enum PostSnapshotBarrier {
 
 /// A topology-redacted terminal monitor failure.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub(super) enum LinuxRouteMonitorError {
+pub(in crate::discovery) enum LinuxRouteMonitorError {
     #[error("the Linux route-event socket could not be opened")]
     SocketUnavailable,
     #[error("the Linux route-event receive buffer could not be bounded")]
@@ -119,7 +119,7 @@ pub(super) enum LinuxRouteMonitorError {
 /// Construction must occur on a Tokio runtime with I/O enabled. Successful
 /// construction is the subscription point: callers take their route snapshot
 /// only after this value has been returned.
-pub(super) struct LinuxRouteEventMonitor {
+pub(in crate::discovery) struct LinuxRouteEventMonitor {
     socket: AsyncFd<NlSocket>,
     core: MonitorCore,
     receive_buffer: Box<[u8]>,
@@ -129,7 +129,7 @@ pub(super) struct LinuxRouteEventMonitor {
 impl LinuxRouteEventMonitor {
     /// Subscribe to every kernel source which can alter Balun's Linux route
     /// fingerprint, returning a capacity-one reconciliation receiver.
-    pub(super) fn subscribe(
+    pub(in crate::discovery) fn subscribe(
         observer: Arc<dyn RouteMonitorObserver>,
     ) -> Result<(Self, mpsc::Receiver<RouteReconciliationRequired>), LinuxRouteMonitorError> {
         // AsyncFd's public constructors panic without a current reactor. Check
@@ -189,7 +189,7 @@ impl LinuxRouteEventMonitor {
     /// the healthy epoch derived from that snapshot. The future then owns and
     /// continuously polls this monitor; cancellation, a rejected activation,
     /// or a changed barrier drops the monitor and poisons its incarnation.
-    pub(super) async fn run_continuously<F>(
+    pub(in crate::discovery) async fn run_continuously<F>(
         mut self,
         activate: F,
     ) -> Result<(), LinuxRouteMonitorError>
