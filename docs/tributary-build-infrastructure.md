@@ -43,9 +43,11 @@ library assumptions.
 | `packaging/forbidden-bundled-components.txt` | Keep Balun's stricter policy; never overwrite |
 
 The artifact validators above are scaffolding, not evidence that a Balun package
-exists. Before a real package invokes them, add bounded archive and tree work,
-extraction containment, unsafe-link rejection, stable before/after snapshots,
-and final artifact reopening for that format.
+exists. Linux completed-tree inspection is bounded, rejects unsafe links and
+unsupported entry types, and compares hidden-inclusive metadata-and-content
+snapshots. Before a real package invokes it, add archive-member preflight,
+source snapshotting and resource budgets, extractor-specific containment, and
+final artifact reopening for that format.
 
 ## Scripts port ledger
 

@@ -80,8 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Artifact-policy scaffolding** — Load the same checksum-pinned deny policy in
   preparatory Linux tree/archive and Flatpak-commit validators, fail closed on
   missing or mutated policy data, and derive negative fixtures without adding
-  prohibited component names to test source. Real packages still require
-  bounded extraction, containment, stable-tree, and reopened-artifact gates.
+  prohibited component names to test source. Linux tree inspection now applies
+  bounded, hidden-inclusive before/after content manifests and rejects unsafe
+  links; real packages still require archive preflight, source/resource bounds,
+  extraction containment, and reopened-artifact gates.
 - **Bounded routed discovery** — Require an explicit RFC 1918 range no wider
   than `/24`, cap candidates and concurrency, rate-limit targeted starts, and
   keep point-to-point interfaces out of automatic local enumeration. Native

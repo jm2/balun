@@ -28,6 +28,28 @@ expect_status()
     }
 }
 
+read_validator_limit()
+{
+    awk -F= -v key="$1" '$1 == key { print $2; found = 1; exit }
+        END { if (!found) exit 1 }' "$validator"
+}
+
+tree_entry_limit=$(read_validator_limit max_tree_entries)
+tree_regular_bytes_limit=$(read_validator_limit max_tree_regular_bytes)
+tree_file_bytes_limit=$(read_validator_limit max_tree_file_bytes)
+tree_path_bytes_limit=$(read_validator_limit max_tree_path_bytes)
+for limit in \
+    "$tree_entry_limit" \
+    "$tree_regular_bytes_limit" \
+    "$tree_file_bytes_limit" \
+    "$tree_path_bytes_limit"
+do
+    [[ "$limit" =~ ^[1-9][0-9]*$ ]] || {
+        echo "Linux package validator has an invalid tree resource limit" >&2
+        exit 1
+    }
+done
+
 first_token=$(awk '
     /^[[:space:]]*#/ { next }
     /^[[:space:]]*$/ { next }
@@ -46,9 +68,68 @@ touch "$temp_dir/allowed/lib/libavcodec.so.62"
 touch "$temp_dir/allowed/lib/libcrypto.so.3"
 touch "$temp_dir/allowed/lib/libblurhash.so"
 touch "$temp_dir/allowed/lib/libbluray.so.2"
+ln -s libgstlibav.so "$temp_dir/allowed/lib/gstreamer-1.0/codec-alias.so"
 "$validator" --tree "$temp_dir/allowed"
 ln -s "$temp_dir/allowed" "$temp_dir/allowed-tree-link"
 expect_status 2 "$validator" --tree "$temp_dir/allowed-tree-link"
+expect_status 2 "$validator" --tree "$temp_dir/allowed-tree-link/"
+expect_status 2 "$validator" --tree "$temp_dir/allowed-tree-link/."
+
+# Payload symlinks must remain lexically confined to the inspected root. An
+# absolute target and a relative target that climbs above the root both fail,
+# even when the referenced basename would otherwise be allowed.
+mkdir -p "$temp_dir/symlink-escape/nested"
+ln -s /usr/lib/libgstreamer-1.0.so.0 \
+    "$temp_dir/symlink-escape/absolute-link.so"
+expect_status 1 "$validator" --tree "$temp_dir/symlink-escape"
+rm -f "$temp_dir/symlink-escape/absolute-link.so"
+ln -s ../../../outside/libgstreamer-1.0.so.0 \
+    "$temp_dir/symlink-escape/nested/relative-link.so"
+expect_status 1 "$validator" --tree "$temp_dir/symlink-escape"
+rm -f "$temp_dir/symlink-escape/nested/relative-link.so"
+
+# Each tree budget fails before policy inspection. Sparse files exercise byte
+# accounting without consuming the corresponding amount of storage.
+mkdir -p "$temp_dir/file-limit"
+truncate -s "$((tree_file_bytes_limit + 1))" \
+    "$temp_dir/file-limit/oversized.bin"
+expect_status 1 "$validator" --tree "$temp_dir/file-limit"
+
+mkdir -p "$temp_dir/aggregate-limit"
+aggregate_count=$((tree_regular_bytes_limit / tree_file_bytes_limit + 1))
+aggregate_index=0
+while [ "$aggregate_index" -lt "$aggregate_count" ]; do
+    truncate -s "$tree_file_bytes_limit" \
+        "$temp_dir/aggregate-limit/file-$aggregate_index.bin"
+    aggregate_index=$((aggregate_index + 1))
+done
+expect_status 1 "$validator" --tree "$temp_dir/aggregate-limit"
+
+mkdir -p "$temp_dir/path-limit"
+long_component=$(printf '%0200d' 0 | tr 0 p)
+long_path="$temp_dir/path-limit"
+long_relative=
+while [ "${#long_relative}" -le "$tree_path_bytes_limit" ]; do
+    long_path="$long_path/$long_component"
+    long_relative=${long_relative:+$long_relative/}$long_component
+    mkdir "$long_path"
+done
+expect_status 1 "$validator" --tree "$temp_dir/path-limit"
+
+mkdir -p "$temp_dir/entry-limit" "$temp_dir/entry-limit-tools"
+touch "$temp_dir/entry-limit/entry"
+printf '%s\n' \
+    '#!/bin/sh' \
+    'index=0' \
+    'while [ "$index" -lt "$TEST_ENTRY_LIMIT_COUNT" ]; do' \
+    '  printf "%s\000" ./entry' \
+    '  index=$((index + 1))' \
+    'done' \
+    > "$temp_dir/entry-limit-tools/find"
+chmod +x "$temp_dir/entry-limit-tools/find"
+expect_status 1 env PATH="$temp_dir/entry-limit-tools:$PATH" \
+    TEST_ENTRY_LIMIT_COUNT="$((tree_entry_limit + 1))" \
+    "$validator" --tree "$temp_dir/entry-limit"
 
 mkdir -p "$temp_dir/rejected"
 while IFS= read -r line || [ -n "$line" ]; do
@@ -98,6 +179,64 @@ printf '%s\n' \
     > "$temp_dir/od-tools/od"
 chmod +x "$temp_dir/od-tools/od"
 expect_status 1 env PATH="$temp_dir/od-tools:$PATH" \
+    "$validator" --tree "$temp_dir/allowed"
+
+# A replacement of the pathname naming the pinned root must not redirect the
+# scan. Replace an otherwise empty root between enumeration and manifesting;
+# inode binding, rather than child differences, is what rejects this case.
+real_sort=$(command -v sort)
+mkdir -p \
+    "$temp_dir/root-replacement" \
+    "$temp_dir/root-replacement-tools"
+printf '%s\n' \
+    '#!/bin/sh' \
+    'count=0' \
+    'if [ -f "$TEST_SORT_STATE" ]; then read -r count < "$TEST_SORT_STATE"; fi' \
+    'count=$((count + 1))' \
+    'printf "%s\n" "$count" > "$TEST_SORT_STATE"' \
+    'if [ "$count" -eq 2 ]; then' \
+    '  mv "$TEST_REPLACED_ROOT" "$TEST_REPLACED_ROOT.old"' \
+    '  mkdir "$TEST_REPLACED_ROOT"' \
+    'fi' \
+    'exec "$TEST_REAL_SORT" "$@"' \
+    > "$temp_dir/root-replacement-tools/sort"
+chmod +x "$temp_dir/root-replacement-tools/sort"
+expect_status 1 env PATH="$temp_dir/root-replacement-tools:$PATH" \
+    TEST_REAL_SORT="$real_sort" \
+    TEST_REPLACED_ROOT="$temp_dir/root-replacement" \
+    TEST_SORT_STATE="$temp_dir/root-replacement-sort-state" \
+    "$validator" --tree "$temp_dir/root-replacement"
+
+# Hashing dotfiles in both manifests makes a hidden mutation observable. The
+# wrapper changes the fixture only on its second tree-specific hash; policy
+# hashing and all component names remain derived from normal inputs.
+real_sha256sum=$(command -v sha256sum)
+mkdir -p "$temp_dir/hidden-mutation" "$temp_dir/sha-tools"
+printf 'stable\n' > "$temp_dir/hidden-mutation/.state"
+printf '%s\n' \
+    '#!/bin/sh' \
+    'if [ "$#" -eq 0 ]; then' \
+    '  count=0' \
+    '  if [ -f "$TEST_SHA_STATE" ]; then read -r count < "$TEST_SHA_STATE"; fi' \
+    '  count=$((count + 1))' \
+    '  printf "%s\n" "$count" > "$TEST_SHA_STATE"' \
+    '  if [ "$count" -eq 2 ]; then printf x >> "$TEST_MUTATION_TARGET"; fi' \
+    'fi' \
+    'exec "$TEST_REAL_SHA256SUM" "$@"' \
+    > "$temp_dir/sha-tools/sha256sum"
+chmod +x "$temp_dir/sha-tools/sha256sum"
+expect_status 1 env PATH="$temp_dir/sha-tools:$PATH" \
+    TEST_REAL_SHA256SUM="$real_sha256sum" \
+    TEST_MUTATION_TARGET=./.state \
+    TEST_SHA_STATE="$temp_dir/hidden-mutation-sha-state" \
+    "$validator" --tree "$temp_dir/hidden-mutation"
+
+# A comparison I/O failure is a policy failure, never evidence that two
+# snapshots match.
+mkdir -p "$temp_dir/cmp-tools"
+printf '%s\n' '#!/bin/sh' 'exit 2' > "$temp_dir/cmp-tools/cmp"
+chmod +x "$temp_dir/cmp-tools/cmp"
+expect_status 1 env PATH="$temp_dir/cmp-tools:$PATH" \
     "$validator" --tree "$temp_dir/allowed"
 
 printf 'depends = gstreamer1.0-plugins-good\n' > "$temp_dir/allowed-metadata"

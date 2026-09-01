@@ -5,9 +5,12 @@
 # independent package layouts and validation.
 #
 # This v0.1 port is a trusted-build-output gate with deterministic synthetic
-# coverage. Before release jobs accept externally supplied archives, add fixed
-# archive/tree count and byte budgets, stable artifact snapshot/reopen checks,
-# and explicit extraction containment/root-escape enforcement.
+# coverage. Extracted trees are bounded and must produce matching metadata-and-
+# content snapshots around inspection. Native package extractors still own
+# archive-path interpretation, however: archive source replacement, resource
+# amplification, and extraction containment are not bounded before this tree
+# gate runs. Release jobs must accept only locally produced artifacts until
+# archive-member preflight and extractor-specific containment land separately.
 
 set -euo pipefail
 set -f
@@ -20,6 +23,10 @@ policy_file="$repository_root/build-aux/packaging/forbidden-bundled-components.t
 expected_policy_sha256=844f3ab37329b0785cf82ae8c29c6665f5052998ea3def790630b239408c8bed
 max_policy_bytes=65536
 max_policy_lines=1024
+max_tree_entries=8192
+max_tree_regular_bytes=1073741824
+max_tree_file_bytes=268435456
+max_tree_path_bytes=2048
 policy_snapshot=
 policy_tokens=()
 
@@ -263,33 +270,301 @@ check_entry()
     entry=$1
     check_component "$entry"
     if [ -L "$entry" ]; then
-        target=$(readlink -- "$entry") || fail "could not inspect symlink: $entry"
-        check_path_components "$target"
+        # The internal standalone-entry mode has no payload root against
+        # which a relative target can be proven confined.
+        fail "standalone symlink inspection cannot establish payload confinement: $entry"
     elif [ -f "$entry" ]; then
         check_elf "$entry" false
     fi
 }
 
+safe_relative_symlink_target()
+{
+    local relative target parent component depth
+    local -a components
+    relative=$1
+    target=$2
+
+    case "$target" in
+        /*) return 1 ;;
+    esac
+    [ "${#target}" -le "$max_tree_path_bytes" ] || return 1
+
+    parent=${relative%/*}
+    [ "$parent" != "$relative" ] || parent=
+    depth=0
+    if [ -n "$parent" ]; then
+        IFS=/ read -r -a components <<< "$parent"
+        for component in "${components[@]}"; do
+            [ -z "$component" ] || depth=$((depth + 1))
+        done
+    fi
+
+    IFS=/ read -r -a components <<< "$target"
+    for component in "${components[@]}"; do
+        case "$component" in
+            '' | .) ;;
+            ..)
+                [ "$depth" -gt 0 ] || return 1
+                depth=$((depth - 1))
+                ;;
+            *) depth=$((depth + 1)) ;;
+        esac
+    done
+    return 0
+}
+
+tree_relative_path()
+{
+    local root entry
+    root=$1
+    entry=$2
+    case "$entry" in
+        "$root"/*)
+            REPLY=${entry#"$root"/}
+            [ -n "$REPLY" ] || return 1
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+preflight_tree_entries()
+{
+    local root entries entry relative target size entry_count regular_bytes
+    root=$1
+    entries=$2
+    entry_count=0
+    regular_bytes=0
+
+    while IFS= read -r -d '' entry; do
+        entry_count=$((entry_count + 1))
+        [ "$entry_count" -le "$max_tree_entries" ] || \
+            fail "package payload exceeds the $max_tree_entries-entry limit"
+        tree_relative_path "$root" "$entry" || \
+            fail "package traversal returned an entry outside its root"
+        relative=$REPLY
+        [ "${#relative}" -le "$max_tree_path_bytes" ] || \
+            fail "package payload path exceeds the $max_tree_path_bytes-byte limit"
+
+        if [ -L "$entry" ]; then
+            target=$(readlink -- "$entry") || \
+                fail "could not inspect symlink: $entry"
+            safe_relative_symlink_target "$relative" "$target" || \
+                fail "symlink target is absolute, escapes the payload, or exceeds the path limit: $entry"
+        elif [ -f "$entry" ]; then
+            size=$(stat -Lc '%s' -- "$entry") || \
+                fail "could not measure regular file: $entry"
+            [[ "$size" =~ ^[0-9]+$ ]] || \
+                fail "regular file has an invalid size: $entry"
+            [ "$size" -le "$max_tree_file_bytes" ] || \
+                fail "regular file exceeds the $max_tree_file_bytes-byte limit: $entry"
+            [ "$regular_bytes" -le $((max_tree_regular_bytes - size)) ] || \
+                fail "package payload exceeds the $max_tree_regular_bytes-byte regular-file budget"
+            regular_bytes=$((regular_bytes + size))
+        elif [ -d "$entry" ]; then
+            :
+        else
+            fail "package payload contains an unsupported file type: $entry"
+        fi
+    done < "$entries"
+}
+
+append_manifest_entry()
+{
+    local root entry manifest relative kind target hash_output digest size size_after
+    root=$1
+    entry=$2
+    manifest=$3
+    tree_relative_path "$root" "$entry" || \
+        fail "package traversal returned an entry outside its root"
+    relative=$REPLY
+
+    if [ -L "$entry" ]; then
+        kind=symlink
+        target=$(readlink -- "$entry") || fail "could not inspect symlink: $entry"
+        safe_relative_symlink_target "$relative" "$target" || \
+            fail "symlink target is absolute, escapes the payload, or exceeds the path limit: $entry"
+        printf '%s\0%s\0' "$relative" "$kind" >> "$manifest" || \
+            fail "could not write package payload manifest"
+        stat --printf='%f\0%s\0%d\0%i\0%a\0%u\0%g\0%y\0%z\0' -- "$entry" \
+            >> "$manifest" || fail "could not stat symlink: $entry"
+        printf '%s\0' "$target" >> "$manifest" || \
+            fail "could not write package payload manifest"
+    elif [ -f "$entry" ]; then
+        kind=regular
+        size=$(stat -Lc '%s' -- "$entry") || \
+            fail "could not measure regular file: $entry"
+        [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -le "$max_tree_file_bytes" ] || \
+            fail "regular file changed size or exceeds its limit: $entry"
+        # Bound the content read even if a concurrent writer grows the file
+        # after preflight. The following stat must still report the exact size
+        # seen before hashing; the outer manifest comparison catches same-size
+        # content or metadata changes.
+        hash_output=$(head -c "$((max_tree_file_bytes + 1))" -- "$entry" | sha256sum) || \
+            fail "could not hash regular file: $entry"
+        hash_output=${hash_output#\\}
+        digest=${hash_output%% *}
+        [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || \
+            fail "regular file hash has an invalid format: $entry"
+        [ -f "$entry" ] && [ ! -L "$entry" ] || \
+            fail "regular file changed type while being hashed: $entry"
+        size_after=$(stat -Lc '%s' -- "$entry") || \
+            fail "could not remeasure regular file: $entry"
+        [ "$size_after" = "$size" ] || \
+            fail "regular file changed size while being hashed: $entry"
+        printf '%s\0%s\0' "$relative" "$kind" >> "$manifest" || \
+            fail "could not write package payload manifest"
+        stat -L --printf='%f\0%s\0%d\0%i\0%a\0%u\0%g\0%y\0%z\0' -- "$entry" \
+            >> "$manifest" || fail "could not stat regular file: $entry"
+        printf '%s\0' "$digest" >> "$manifest" || \
+            fail "could not write package payload manifest"
+    elif [ -d "$entry" ]; then
+        kind=directory
+        printf '%s\0%s\0' "$relative" "$kind" >> "$manifest" || \
+            fail "could not write package payload manifest"
+        stat -L --printf='%f\0%s\0%d\0%i\0%a\0%u\0%g\0%y\0%z\0' -- "$entry" \
+            >> "$manifest" || fail "could not stat directory: $entry"
+    else
+        fail "package payload entry changed to an unsupported file type: $entry"
+    fi
+}
+
+build_tree_manifest()
+{
+    local root manifest work_prefix unsorted entries entry
+    root=$1
+    manifest=$2
+    work_prefix=$3
+    unsorted="$work_prefix.unsorted"
+    entries="$work_prefix.entries"
+
+    : > "$manifest" || fail "could not initialize package payload manifest"
+    # Include the root record so replacement, permission changes, and even a
+    # transient create/remove cycle that restores the same children are not
+    # invisible to the before/after comparison.
+    printf '.\0directory\0' >> "$manifest" || \
+        fail "could not write package payload manifest"
+    stat -L --printf='%f\0%s\0%d\0%i\0%a\0%u\0%g\0%y\0%z\0' -- "$root" \
+        >> "$manifest" || fail "could not stat package payload root"
+
+    # Sorting NUL-delimited paths makes the snapshot independent of directory
+    # enumeration order and includes dotfiles without any special cases.
+    if ! find "$root" -mindepth 1 -print0 | \
+        TREE_ENTRY_LIMIT="$max_tree_entries" \
+        TREE_PATH_LIMIT="$max_tree_path_bytes" \
+        perl -0 -e '
+            use strict;
+            use warnings;
+            my $entry_limit = $ENV{TREE_ENTRY_LIMIT};
+            my $path_limit = $ENV{TREE_PATH_LIMIT};
+            my $count = 0;
+            while (defined(my $entry = <STDIN>)) {
+                chomp $entry;
+                ++$count;
+                die "entry limit\n" if $count > $entry_limit;
+                die "invalid rooted path\n"
+                    unless length($entry) > 2 && substr($entry, 0, 2) eq "./";
+                die "path limit\n" if length(substr($entry, 2)) > $path_limit;
+                print $entry, "\0" or die "snapshot write\n";
+            }
+            close STDOUT or die "snapshot close\n";
+        ' > "$unsorted"
+    then
+        fail "could not enumerate package payload tree within its entry and path limits: $root"
+    fi
+    if ! sort -z -- "$unsorted" > "$entries"; then
+        fail "could not sort package payload tree: $root"
+    fi
+    preflight_tree_entries "$root" "$entries"
+    while IFS= read -r -d '' entry; do
+        append_manifest_entry "$root" "$entry" "$manifest"
+    done < "$entries"
+}
+
+check_tree_entry()
+{
+    local root entry relative target
+    root=$1
+    entry=$2
+    tree_relative_path "$root" "$entry" || \
+        fail "package traversal returned an entry outside its root"
+    relative=$REPLY
+    check_component "$entry"
+    if [ -L "$entry" ]; then
+        target=$(readlink -- "$entry") || fail "could not inspect symlink: $entry"
+        safe_relative_symlink_target "$relative" "$target" || \
+            fail "symlink target is absolute, escapes the payload, or exceeds the path limit: $entry"
+        check_path_components "$target"
+    elif [ -f "$entry" ]; then
+        check_elf "$entry" false
+    elif [ ! -d "$entry" ]; then
+        fail "package payload contains an unsupported file type: $entry"
+    fi
+}
+
 check_tree()
 (
-    root=$1
-    [ -d "$root" ] && [ ! -L "$root" ] || {
-        echo "Linux package payload is missing or is not a directory: $root" >&2
+    input_root=$1
+    inspection_mode=${2:-payload}
+    root_argument=$input_root
+    while [ "$root_argument" != / ] && [ "${root_argument%/}" != "$root_argument" ]; do
+        root_argument=${root_argument%/}
+    done
+    while [ "$root_argument" != / ] && [ "${root_argument%/.}" != "$root_argument" ]; do
+        root_argument=${root_argument%/.}
+        while [ "$root_argument" != / ] && [ "${root_argument%/}" != "$root_argument" ]; do
+            root_argument=${root_argument%/}
+        done
+    done
+    [ -d "$input_root" ] && [ ! -L "$root_argument" ] || {
+        echo "Linux package payload is missing or is not a directory: $input_root" >&2
         exit 2
     }
+    display_root=$(CDPATH= cd -- "$input_root" 2>/dev/null && pwd -P) || {
+        echo "Linux package payload root cannot be resolved: $input_root" >&2
+        exit 2
+    }
+    [ "$display_root" != / ] || {
+        echo "Linux package payload root must not be the filesystem root" >&2
+        exit 2
+    }
+    [ -d "$display_root" ] && [ ! -L "$display_root" ] || \
+        fail "package payload root changed while it was being resolved"
+    cd -- "$display_root" || fail "could not pin package payload root"
+    root=.
+    root_identity=$(stat -Lc '%d:%i' -- "$root") || \
+        fail "could not identify package payload root"
+    display_identity=$(stat -Lc '%d:%i' -- "$display_root") || \
+        fail "package payload root disappeared while it was being pinned"
+    [ "$display_identity" = "$root_identity" ] || \
+        fail "package payload root was replaced while it was being pinned"
 
-    # Process substitution hides find's exit status from the parent shell.
-    # Enumerate first and inspect only after a complete, successful traversal
-    # so unreadable or disappearing payload paths can never yield a partial
-    # policy pass.
-    entries=$(mktemp)
-    trap 'rm -f "$entries"' EXIT HUP INT TERM
-    if ! find "$root" -mindepth 1 -print0 > "$entries"; then
-        fail "could not enumerate package payload tree: $root"
-    fi
+    scan_dir=$(mktemp -d) || setup_error "could not create a private tree snapshot directory"
+    trap 'rm -rf -- "$scan_dir"' EXIT HUP INT TERM
+    before="$scan_dir/before"
+    after="$scan_dir/after"
+    build_tree_manifest "$root" "$before" "$scan_dir/first"
+    display_identity=$(stat -Lc '%d:%i' -- "$display_root") || \
+        fail "package payload root disappeared during inspection"
+    [ "$display_identity" = "$root_identity" ] || \
+        fail "package payload root was replaced during inspection"
+
+    entries="$scan_dir/first.entries"
     while IFS= read -r -d '' entry; do
-        check_entry "$entry"
+        check_tree_entry "$root" "$entry"
+        if [ "$inspection_mode" = metadata ] && [ -f "$entry" ] && [ ! -L "$entry" ]; then
+            check_text_metadata_file "$entry"
+        fi
     done < "$entries"
+
+    build_tree_manifest "$root" "$after" "$scan_dir/second"
+    display_identity=$(stat -Lc '%d:%i' -- "$display_root") || \
+        fail "package payload root disappeared during inspection"
+    [ "$display_identity" = "$root_identity" ] || \
+        fail "package payload root was replaced during inspection"
+    if ! cmp -s -- "$before" "$after"; then
+        fail "package payload changed while it was being inspected: $display_root"
+    fi
 )
 
 check_text_metadata_file()
@@ -307,17 +582,9 @@ check_text_metadata_file()
 }
 
 check_text_metadata_tree()
-(
-    root=$1
-    entries=$(mktemp)
-    trap 'rm -f "$entries"' EXIT HUP INT TERM
-    if ! find "$root" -type f -print0 > "$entries"; then
-        fail "could not enumerate package control metadata: $root"
-    fi
-    while IFS= read -r -d '' entry; do
-        check_text_metadata_file "$entry"
-    done < "$entries"
-)
+{
+    check_tree "$1" metadata
+}
 
 extract_deb()
 (
@@ -327,7 +594,6 @@ extract_deb()
     trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
     dpkg-deb --control "$package" "$temp_dir/control" || \
         fail "could not extract Debian control metadata"
-    check_tree "$temp_dir/control"
     check_text_metadata_tree "$temp_dir/control"
     dpkg-deb --extract "$package" "$temp_dir/payload" || fail "could not extract Debian package"
     check_tree "$temp_dir/payload"
@@ -376,7 +642,7 @@ extract_arch()
     fi
 )
 
-for required_command in cp mktemp perl rm sed sha256sum wc; do
+for required_command in cmp cp find head mktemp perl readlink rm sed sha256sum sort stat wc; do
     require_command "$required_command"
 done
 perl -MEncode -e 'exit 0' >/dev/null 2>&1 || \

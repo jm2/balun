@@ -183,12 +183,15 @@ artifact inspection required when application packages are introduced.
 
 The repository now also carries Tributary-derived Linux archive/tree and
 Flatpak-commit validators with deterministic positive and negative fixtures.
-CI exercises them as preparatory packaging scaffolding only. They do not become
-an artifact claim until each real package adds bounded extraction and traversal,
-containment and symlink checks, stable completed-tree snapshots, and a final
-reopen-and-validate step. The vendored Flatpak Cargo generator is checksum- and
-provenance-pinned; its dependency snapshot must be regenerated from Balun's own
-`Cargo.lock`, never copied from Tributary.
+CI exercises them as preparatory packaging scaffolding only. Linux extracted
+trees now have strict entry, path, per-file, and aggregate-byte limits; reject
+escaping links and unsupported entry types; and must produce identical,
+hidden-inclusive metadata-and-content manifests before and after inspection.
+They do not become an artifact claim until each real format also preflights and
+contains untrusted extraction, bounds archive-source replacement and resource
+amplification, and reopens the completed package. The vendored Flatpak Cargo
+generator is checksum- and provenance-pinned; its dependency snapshot must be
+regenerated from Balun's own `Cargo.lock`, never copied from Tributary.
 The file-by-file decisions and atomic landing conditions are recorded in the
 [Tributary build-infrastructure port ledger](docs/tributary-build-infrastructure.md).
 
