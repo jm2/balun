@@ -15,8 +15,10 @@ available program information, and a live-video area.
 > shell plus the GTK-free discovery, device-registry, and lineup foundation.
 > The window can explicitly discover local tuners, probe one known numeric
 > device address, load the selected device's lineup, and report whether the
-> optional GStreamer playback foundation is available. Hostname entry, EPG,
-> stream handoff, decoding, and live-video rendering remain unimplemented.
+> optional GStreamer playback foundation is available. A process-isolated
+> Linux smoke also decodes and renders a checked-in synthetic MPEG-2 transport
+> stream. Hostname entry, EPG, private tuner-stream handoff, production
+> playback ownership, and live-device rendering remain unimplemented.
 
 ## Current foundation
 
@@ -110,6 +112,13 @@ available program information, and a live-video area.
   components disable playback readiness without disabling device discovery or
   lineup inspection; no pipeline, stream URL, audio sink, decoder, or tuner is
   owned yet.
+- A bounded, display-backed Linux acceptance test which feeds a deterministic,
+  video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
+  `gtk4paintablesink`, requires multiple rendered frames and paintable updates,
+  reaches EOS, and confirms teardown to `NULL`. The test fixture and its libav
+  decoder are development/CI inputs only; the test opens no network source or
+  tuner and establishes neither the production codec contract nor package
+  contents.
 - An opt-in GTK 4/libadwaita development shell with adaptive, separate device
   and channel sidebars plus a live-TV empty state. Construction remains inert;
   Refresh explicitly starts local discovery, the adjacent add action admits a
@@ -195,12 +204,16 @@ cargo run --locked --features desktop --bin balun
 
 At startup the player pane checks `playbin3`, `uridecodebin3`, `decodebin3`,
 `souphttpsrc`, `tsdemux`, `deinterlace`, and `gtk4paintablesink`. These are
-structural checks only: audio sinks, codecs, synthetic playback, stream handoff,
-and live tuning remain open. Fedora commonly supplies this development/runtime
-foundation through `gstreamer1-devel`, the base/good/bad-free plugin packages,
-and `gstreamer1-plugin-gtk4`; Homebrew uses `gstreamer`; MSYS2 CLANG64 uses its
-matching `gstreamer`, base/good/bad, and `gst-plugins-rs` packages. Package names
-vary, so the runtime factory snapshot is authoritative. See the
+structural checks only: the complete codec and audio-sink contract, private
+stream handoff, generation-owned playback, and live tuning remain open. Fedora
+commonly supplies this development/runtime foundation through
+`gstreamer1-devel`, the base/good/bad-free plugin packages, and
+`gstreamer1-plugin-gtk4`; its Linux-only synthetic CI smoke additionally uses
+`gstreamer1-plugin-libav` to decode the pinned MPEG-2 fixture. That libav
+package is a development/CI input, not a Balun package manifest or authority to
+stage a broad plugin set. Homebrew uses `gstreamer`; MSYS2 CLANG64 uses its
+matching `gstreamer`, base/good/bad, and `gst-plugins-rs` packages. Package
+names vary, so the runtime factory snapshot is authoritative. See the
 [playback foundation](docs/playback.md) for the precise boundary.
 
 This opens Balun's adaptive device, channel, and live-TV panes without starting
@@ -285,8 +298,12 @@ cargo test --release --all-targets --locked
 CI verifies the declared Rust 1.98 minimum across the desktop feature, runs
 strict Linux GTK-free debug and release checks, tests the optional GTK-free
 playback capability layer, compiles, links, and lints the Linux desktop shell,
-links that shell against native macOS and Windows toolkit SDKs, and keeps
-compile-checking the GTK-free default code on both platforms. CI also
+exercises its ordinary close/join lifecycle and an offline synthetic MPEG-2
+decode/render/EOS/`NULL` lifecycle under an isolated headless Wayland
+compositor, links that shell against native macOS and Windows toolkit SDKs, and
+keeps compile-checking the GTK-free default code on both platforms. The local
+smoke helper can fall back to an isolated Xvfb server when Wayland is
+unavailable; X11 is not the default or a Balun runtime requirement. CI also
 exercises each platform helper's no-option desktop route. The release candidate
 workflow accepts an existing annotated, v-prefixed Semantic Version tag,
 verifies it against `Cargo.toml` and `CHANGELOG.md`, and builds the exact tag
@@ -294,6 +311,14 @@ commit on all three platforms. It selects `--diagnostic` on Linux/macOS and
 `-Diagnostic` on Windows explicitly, producing internal diagnostic workflow
 artifacts only; application packages and public artifact publication begin
 with the playable GTK/GStreamer slice.
+
+On Linux, `scripts/test-desktop-lifecycle.sh` selects supported headless Weston
+plus `wayland-info` before considering Xvfb. In `auto` mode, a Weston instance
+which cannot start or pass its bounded readiness probe is unavailable and the
+helper reports that failure before using an installed Xvfb fallback. Set
+`BALUN_DESKTOP_TEST_BACKEND=wayland` to require that route or `x11` to exercise
+the explicit fallback; `auto` is the default. CI requires Wayland and does not
+install Xvfb, so a compositor regression cannot be hidden by fallback.
 
 The same-named Tributary-derived Linux, macOS, and Windows helpers use desktop
 defaults and are build-only with no options. Their check, Clippy, and coverage
@@ -395,7 +420,10 @@ staging, native-import traversal, completed-tree inspection, and reopened final
 artifact inspection before any package is published. Self-contained bundles
 will stage a capability-derived, reviewed GStreamer plugin closure rather than
 an entire plugin distribution; that claim does not extend to distro-provided or
-shared runtimes. Ordinary codecs, containers, TLS, and general-purpose
+shared runtimes. Installing `gstreamer1-plugin-libav` on the Linux development
+runner for a pinned synthetic MPEG-2 smoke does not add that package wholesale
+to a future bundle or relax the libdvdcss, optical-disc, DRM, or circumvention
+exclusions. Ordinary codecs, containers, TLS, and general-purpose
 cryptography are outside this narrow deny policy and receive their own
 compatibility and distribution review. See the [release component
 policy](docs/release-component-policy.md) for the exact current and future

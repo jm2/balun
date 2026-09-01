@@ -119,7 +119,7 @@ mod tests {
     /// Run through `scripts/test-desktop-lifecycle.sh`; the ordinary unit-test
     /// jobs deliberately compile but skip this display-dependent smoke.
     #[test]
-    #[ignore = "requires the isolated Xvfb and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
+    #[ignore = "requires the isolated display and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
     fn headless_window_close_joins_controller_without_discovery() {
         let calls = Arc::new(AtomicUsize::new(0));
         let controller = ControllerRuntime::start(CountingDiscovery {

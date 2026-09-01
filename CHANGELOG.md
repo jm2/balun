@@ -20,15 +20,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gtk4paintablesink`. Missing components produce a playback-unavailable player
   state without disabling discovery or lineup inspection. This foundation does
   not yet create a pipeline, hand off a stream URL, choose codecs or an audio
-  sink, render video, or complete the synthetic and packaged-runtime probes.
+  sink, render application video, or complete the packaged-runtime probes.
+- **Synthetic GTK playback acceptance** — Add a checked-in, deterministic,
+  video-only MPEG-2 transport-stream fixture and a process-isolated Linux smoke
+  which drives it through explicit `playbin3` and `gtk4paintablesink` in a real
+  presented `GtkPicture`. Require multiple rendered-frame and paintable-update
+  observations, negotiated 160-by-96 raw-video caps, EOS, detached bus handling,
+  and a bounded transition to `NULL`. Run the test under its own isolated
+  headless-Wayland session-bus process with fixed failure categories, sanitized
+  display/GStreamer overrides, and inner/outer deadlines; retain Xvfb only as
+  an optional local fallback when Weston is unavailable. The fixture, libav
+  development decoder, and fake audio sink open no network source or tuner and
+  do not establish the complete codec, cross-platform, or packaging contract;
+  existing libdvdcss, optical-disc, DRM, and circumvention exclusions remain
+  unchanged.
 - **GTK development shell** — Add an opt-in `balun` desktop binary using GTK 4
   and libadwaita at Tributary's proven API floors, with adaptive nested device,
   channel, and live-TV panes, truthful packet-free empty states, exact
   application identity, Linux desktop compile/link/lint coverage, and MSRV
   checking without adding GTK to the default library or diagnostic build. A
   local GTK 4 Broadway smoke verifies display initialization and event-loop
-  entry, while an isolated Xvfb/D-Bus smoke exercises the ordinary window
-  close path and requires a successful joined controller shutdown.
+  entry, while an isolated headless-Wayland/D-Bus smoke exercises the ordinary
+  window close path and requires a successful joined controller shutdown. The
+  helper uses Xvfb only as an optional local fallback.
 - **Cross-platform desktop link checks** — Compile and link the feature-gated
   shell against native Homebrew GTK/libadwaita/GStreamer on macOS arm64 and an
   MSYS2 CLANG64 GTK/libadwaita/GStreamer environment on Windows x86_64, without

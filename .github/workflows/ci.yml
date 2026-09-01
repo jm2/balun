@@ -103,9 +103,9 @@ jobs:
       - name: Install desktop build dependencies (Fedora)
         run: >-
           dnf install -y binutils dbus-daemon gcc gstreamer1-devel
-          gstreamer1-plugin-gtk4 gstreamer1-plugins-bad-free
+          gstreamer1-plugin-gtk4 gstreamer1-plugin-libav gstreamer1-plugins-bad-free
           gstreamer1-plugins-base gstreamer1-plugins-good gtk4-devel libadwaita-devel
-          pkgconf-pkg-config git curl xorg-x11-server-Xvfb
+          pkgconf-pkg-config git curl wayland-utils weston
 
       - uses: actions/checkout@v7
         with:
@@ -132,7 +132,9 @@ jobs:
           playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation
           -- --ignored --exact
 
-      - name: Smoke desktop lifecycle
+      - name: Smoke desktop and synthetic playback lifecycle
+        env:
+          BALUN_DESKTOP_TEST_BACKEND: wayland
         run: scripts/test-desktop-lifecycle.sh
 
       - name: Build and inspect desktop through default helper

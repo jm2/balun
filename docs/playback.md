@@ -18,11 +18,12 @@ loading, and the two sidebars remain usable. The native core library is still a
 dynamic dependency of a desktop build and must be present for that executable
 to start.
 
-This foundation does not create a pipeline, accept a stream URL, open an
-HDHomeRun HTTP stream, allocate a tuner, decode media, select an audio sink, or
-render a frame. In particular, it does not complete the synthetic playback
-experiment in M0.5, the full runtime/plugin contract in M0.10, or the stream
-handoff and player work in M2.5 and later.
+The production application does not yet create a pipeline, accept a stream URL,
+open an HDHomeRun HTTP stream, allocate a tuner, select an audio sink, or render
+a channel. M0.5 is now demonstrated separately by a process-isolated Linux test
+which decodes a pinned local fixture into a real GTK paintable. That bounded
+test does not complete the full runtime/plugin contract in M0.10 or the stream
+handoff and generation-owned player work in M2.5 and later.
 
 ## Feature and version boundary
 
@@ -91,13 +92,61 @@ The startup snapshot checks these seven exact registry names in stable order:
 These are structural readiness checks, not a promise that a channel is
 decodable or audible. They deliberately do not yet name MPEG-2, H.264, HEVC,
 AC-3, AAC, E-AC-3, or AC-4 parsers/decoders, nor a Linux, macOS, or Windows audio
-sink. M0.5 must still prove `playbin3` plus `gtk4paintablesink` with a bounded
-synthetic stream, and M0.10 must record the complete tested factory contract.
-M2.11 will turn that contract into development and packaged-runtime probes.
+sink. The M0.5 test proves one narrow MPEG-2 fixture path through `playbin3` and
+`gtk4paintablesink`; M0.10 must still record the complete tested factory
+contract, and M2.11 must turn that contract into fake-device, development, and
+packaged-runtime probes.
 
 Registry presence also does not prove that a factory can construct, negotiate,
 decode, render, reach EOS, or tear down cleanly. Those behaviors require the
 process-isolated synthetic and fake-device tests in the remaining milestones.
+
+## Synthetic display-backed acceptance
+
+M0.5 adds one ignored desktop integration test which is compiled by ordinary
+all-target test runs and invoked explicitly by
+`scripts/test-desktop-lifecycle.sh`. The test uses the checked-in
+`tests/fixtures/synthetic-mpeg2.ts`: a deterministic, video-only, 160-by-96,
+25 fps MPEG-2 transport stream containing 25 generated test-pattern frames.
+The 18,424-byte file is exactly 98 188-byte MPEG-TS packets. Its provenance,
+generation command, and SHA-256 digest are committed beside it; it contains no
+audio, external media, device data, or network-derived content and is not an
+application resource.
+
+Within an isolated Linux headless Wayland compositor and session bus, the test:
+
+- initializes GTK and the existing GStreamer owner on the default main
+  context;
+- feeds only the fixture's absolute local `file:` URI to explicit `playbin3`;
+- attaches explicit `gtk4paintablesink` output to a presented `GtkPicture` and
+  uses a non-output fake audio sink;
+- requires the window and top-level pipeline to reach their active states,
+  multiple decoded/rendered-frame observations and paintable invalidations,
+  negotiated 160-by-96 raw-video caps, and EOS; and
+- removes the bus watch and proves a bounded transition to `NULL` before
+  releasing ownership.
+
+Both an in-process watchdog and an outer process timeout bound native plugin
+work. The harness prefers a software-rendered headless Weston session and uses
+an isolated Xvfb server only as a local fallback when Weston is unavailable;
+X11 is not required by Balun or by the CI acceptance route. The harness removes
+inherited display selection plus GStreamer registry, plugin-path, window,
+debug, and tracer overrides, and the Rust test maps native failures to fixed
+categories rather than exposing plugin paths, debug strings, or the fixture
+URI. The test performs no discovery, DNS, HTTP, proxy, tuner, or other network
+work.
+
+The helper's `auto` mode selects a Weston installation with `wayland-info` and
+headless fake-seat support before considering Xvfb. If that selected compositor
+cannot start or pass its bounded protocol probe, `auto` reports the problem and
+uses an installed Xvfb fallback. The explicit `wayland` mode instead fails
+closed; CI uses that mode and does not install Xvfb. Explicit `x11` exists only
+to exercise the fallback on a developer host.
+
+This is a Linux development/CI acceptance record only. It does not prove native
+macOS or Windows rendering, audio, physical MPEG-TS variants, live-source
+behavior, channel switching, tuner release, or packaged-runtime relocation.
+Those claims remain in M0.6, M0.10, M1.10, and M2.5 through M2.12.
 
 ## Development runtime examples
 
@@ -108,7 +157,8 @@ bundle manifest:
 - Fedora uses `gstreamer1-devel` for the core build dependency. The seven
   structural factories are commonly supplied across `gstreamer1-plugins-base`,
   `gstreamer1-plugins-good`, `gstreamer1-plugins-bad-free`, and
-  `gstreamer1-plugin-gtk4`.
+  `gstreamer1-plugin-gtk4`. The Linux synthetic acceptance runner additionally
+  installs `gstreamer1-plugin-libav` for its MPEG-2 decoder.
 - Homebrew supplies the native development/runtime stack through its
   `gstreamer` formula.
 - MSYS2 CLANG64 uses `mingw-w64-clang-x86_64-gstreamer` for the core build
@@ -121,6 +171,11 @@ not install packages or claim a relocatable runtime. If a development machine
 has the core library but lacks one or more structural plugins, the desktop
 continues to support discovery and lineup inspection and reports playback as
 unavailable.
+
+The libav package used by the Linux smoke is a development/CI system dependency
+only. It is not part of the seven-factory startup snapshot, a package allowlist,
+or authority to copy a broad plugin distribution into Balun. Future packages
+must derive and inspect a minimal runtime closure after M0.10 and M2.11.
 
 ## Packaging and protected-content boundary
 
@@ -143,14 +198,11 @@ provenance, and distribution review.
 
 ## Next acceptance steps
 
-1. M0.5: run a bounded, display-backed synthetic MPEG-TS experiment through
-   explicit `playbin3` and `gtk4paintablesink`, observe real video progress, and
-   prove bounded teardown to `NULL`.
-2. M0.10: freeze the complete tested factory and platform package contract,
-   including codecs and audio sinks.
-3. M2.5: pass one revalidated stream URL privately from the controller actor
+1. M2.5: pass one revalidated stream URL privately from the controller actor
    without publishing or logging it through GTK-facing state.
-4. M2.6-M2.10: own one generation-scoped tune session, paintable, controls,
+2. M2.6-M2.10: own one generation-scoped tune session, paintable, controls,
    errors, and deterministic tuner release.
-5. M2.11-M2.12: run fake-device, development-runtime, packaged-runtime, and
+3. M0.10: freeze the complete tested factory and platform package contract,
+   including codecs and audio sinks.
+4. M2.11-M2.12: run fake-device, development-runtime, packaged-runtime, and
    native live-TV smoke coverage on Linux, macOS, and Windows.

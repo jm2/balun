@@ -23,7 +23,7 @@ outcomes belong in [`../CHANGELOG.md`](../CHANGELOG.md).
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **17/64 (26.6%)** implementation records complete. This is a
+Current status: **18/64 (28.1%)** implementation records complete. This is a
 dependency ledger, not an effort estimate; packaging and cross-platform
 playback records are substantially larger than most completed foundation work.
 
@@ -34,16 +34,17 @@ The current Windows correction uses per-interface limited IPv4 broadcast,
 omits unusable scoped-link-local-only results, and provides a fixed
 `-InspectLocal` diagnostic. It still needs the two physical Windows hosts to
 confirm the repair. The optional GStreamer foundation is also implemented: the
-desktop now owns one main-context runtime/capability snapshot, but no pipeline
-or stream handoff exists.
+desktop now owns one main-context runtime/capability snapshot. A separate,
+process-isolated Linux smoke proves a pinned local MPEG-2 fixture can decode,
+render multiple frames, update its GTK paintable, reach EOS, and tear down to
+`NULL`; no production pipeline or stream handoff exists.
 
 The shortest path to the first live-TV test is:
 
 1. Re-run Windows local discovery and selected-device lineup loading.
-2. Complete the bounded M0.5 synthetic `playbin3`/`gtk4paintablesink` experiment.
-3. Add the actor-private stream handoff and one generation-owned tune session.
-4. Render one unprotected ATSC 1.0 channel through `gtk4paintablesink`.
-5. Prove channel switch, Stop, device loss, and window close release the tuner.
+2. Add the actor-private stream handoff and one generation-owned tune session.
+3. Render one unprotected ATSC 1.0 channel through `gtk4paintablesink`.
+4. Prove channel switch, Stop, device loss, and window close release the tuner.
 
 The first playback target is a clear ATSC 1.0 channel on an accessible CONNECT
 or CONNECT 4K. ATSC 3.0 codec/audio support and protected PRIME channels are
@@ -70,9 +71,11 @@ compatibility/error-path work, not prerequisites for that first picture.
   characteristics without retaining topology, authentication, or real channel
   data.
 
-- [ ] **M0.5 — Complete a minimal playback experiment.** Demonstrate
-  `playbin3` plus `gtk4paintablesink` with a bounded synthetic stream before
-  connecting a physical tuner.
+- [x] **M0.5 — Complete a minimal playback experiment.** Feed a checked-in,
+  video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
+  `gtk4paintablesink` in an isolated Linux display process; require multiple
+  rendered frames and paintable updates, negotiated raw-video dimensions, EOS,
+  and a bounded transition to `NULL`, without discovery, HTTP, or tuner work.
 
 - [ ] **M0.6 — Record codec/container observations.** Cover MPEG-2, H.264,
   MPEG-TS, interlace, AC-3, and AAC on accessible ATSC 1.0 channels; record

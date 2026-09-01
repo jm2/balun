@@ -234,8 +234,10 @@ Implementation status: M2.4 introduces an optional, GTK-free `playback` Cargo
 feature and makes the desktop feature include it. Its default-main-context owner
 initializes GStreamer, enforces the native 1.20 runtime floor, and retains one
 path-free startup capability snapshot. The default library and diagnostic still
-exclude both GTK and GStreamer. No pipeline or stream handoff exists yet; see
-the detailed [playback foundation](playback.md).
+exclude both GTK and GStreamer. No production pipeline or stream handoff exists
+yet. M0.5 separately exercises a pinned local MPEG-2 fixture through a
+process-isolated Linux GTK pipeline; see the detailed
+[playback foundation](playback.md).
 
 ### 4.4 Domain identity
 
@@ -468,10 +470,14 @@ main-context-owned runtime checks the loaded native GStreamer version against a
 Initialization failures use fixed, path-free copy. Missing factories disable
 playback readiness but do not disable discovery, device selection, or lineup
 inspection. Registry presence alone does not prove construction, negotiation,
-decoding, rendering, EOS, or teardown, and the current foundation creates no
-pipeline, accepts no stream URL, and allocates no tuner. Audio sinks, parsers,
-decoders, the M0.5 synthetic experiment, the full M0.10 plugin contract, and
-M2.5 and later player work remain open. The detailed boundary is recorded in
+decoding, rendering, EOS, or teardown. The production foundation creates no
+pipeline, accepts no stream URL, and allocates no tuner. The completed M0.5
+experiment separately proves a bounded, display-backed Linux path from one
+checked-in video-only MPEG-2 transport stream through explicit `playbin3` and
+`gtk4paintablesink`, including multiple rendered frames and paintable updates,
+EOS, and teardown to `NULL`. It opens no network source or tuner. Audio sinks,
+parser/decoder set, the full M0.10 plugin contract, and M2.5 and later player
+work remain open. The detailed boundary is recorded in
 [`playback.md`](playback.md).
 
 The first player implementation will use:
@@ -635,8 +641,16 @@ route to an explicit validated Rust target and repository-local target tree.
 This removes manual compiler, `pkg-config`, Rust-target, and Cargo-output path
 handling without making a portable bundle or installer claim. A local Linux
 GTK 4 Broadway smoke has verified display initialization and event-loop entry,
-and an isolated Linux Xvfb/D-Bus smoke covers joined close. Native macOS and
-Windows runtime activation/close smokes remain pending.
+and isolated Linux headless-Wayland/D-Bus processes cover joined close plus the
+M0.5 local MPEG-2 decode/render/EOS/`NULL` lifecycle. The helper retains Xvfb
+only as an optional local fallback when a headless Wayland compositor is
+unavailable; X11 is not the default or a runtime requirement. Native macOS and
+Windows runtime activation/close/render smokes remain pending.
+
+The Fedora smoke installs `gstreamer1-plugin-libav` as a development/CI decoder
+for that pinned fixture only. It does not add libav broadly to a package
+allowlist, freeze the M0.10 runtime contract, or relax the libdvdcss,
+optical-disc, DRM, and circumvention exclusions in section 6.3.
 
 Every completed package must run an exact runtime probe for:
 
@@ -650,7 +664,8 @@ Every completed package must run an exact runtime probe for:
 
 The M2.4 startup snapshot covers only the seven structural factories listed in
 section 6.2. It is not this completed package probe: audio sinks and codecs are
-still unselected, and no synthetic frame path or packaged artifact exists.
+still unselected, and the Linux development fixture has not been relocated into
+or run from a packaged artifact.
 
 ## 10. Delivery milestones
 
@@ -710,8 +725,9 @@ selected snapshots only inside the actor, and publishes coalesced URL-free
 projections through a bounded watch boundary. A GLib reducer applies complete
 snapshots to virtualized device and channel models, preserves stable identity
 across replacement, and never merges lineups. The ordinary window close path
-cancels and joins the controller and is covered by an isolated Linux Xvfb/D-Bus
-smoke. The default library and diagnostic remain GTK-free, Linux desktop/MSRV
+cancels and joins the controller and is covered by an isolated Linux
+headless-Wayland/D-Bus smoke; Xvfb is only an optional local fallback. The
+default library and diagnostic remain GTK-free, Linux desktop/MSRV
 compilation is enforced in CI, and native macOS and Windows desktop link checks
 are also enforced. Versioned settings and native desktop runtime smoke remain
 required to complete this milestone; playback remains a Milestone 2 concern.
@@ -741,9 +757,11 @@ exact-address entry, the DeviceID registry, selected-device lineup loading, both
 virtualized sidebars, and the optional GStreamer initialization/capability
 foundation are implemented. The player pane retains its main-context owner and
 reports missing structural components without disabling discovery, but it does
-not create a pipeline or tune. Hostname admission, the actor-private stream
-handoff, generation-owned playback, controls, codecs/audio sinks, synthetic and
-packaged runtime probes, and live-platform validation remain open, so this
+not create a production pipeline or tune. A separate Linux-only M0.5 smoke
+proves bounded rendering and teardown for a checked-in synthetic MPEG-2
+transport stream. Hostname admission, the actor-private stream handoff,
+generation-owned playback, controls, the complete codec/audio-sink contract,
+packaged-runtime probes, and live-platform validation remain open, so this
 milestone is not yet complete. Initial Windows desktop trials exposed
 inconsistent IPv4 broadcast discovery and an unusable-only locator path; the
 local endpoint projection now follows Windows limited-broadcast behavior,
@@ -865,7 +883,9 @@ Exit criteria:
 - Duplicate multi-interface replies.
 - Slow, chunked, truncated, malformed, oversized, and redirected responses.
 - HTTP 404, 503, disconnect, and tune cancellation.
-- A local synthetic MPEG-TS fixture through playbin3 or fakesink.
+- The pinned local synthetic MPEG-TS fixture through explicit `playbin3` and
+  `gtk4paintablesink`, with multiple frame observations, EOS, and bounded
+  teardown.
 - Rapid channel switching and application shutdown.
 - A fake RouteProvider for every platform.
 - A routed-network fixture where broadcast cannot cross the boundary but a

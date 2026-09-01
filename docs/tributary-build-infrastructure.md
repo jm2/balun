@@ -76,8 +76,16 @@ final artifact reopening for that format.
 Balun additionally has deterministic command-routing tests for the Linux,
 macOS, and Windows desktop/diagnostic routes.
 Tributary has no equivalent scripts, so `test-build-linux-policy.sh`,
-`test-build-macos-policy.sh`, and `test-build-windows-routing.ps1` are new,
-narrow responsibilities rather than renamed upstream ports.
+`test-build-macos-policy.sh`, `test-build-windows-routing.ps1`, and
+`test-desktop-lifecycle.sh` are new, narrow responsibilities rather than
+renamed upstream ports. The lifecycle helper now runs the ordinary Linux
+close/join smoke and the M0.5 checked-in MPEG-2 render/EOS/`NULL` smoke in
+separate, bounded headless-Wayland/session-bus processes; Weston is the default
+CI route and Xvfb is only an optional local fallback. CI explicitly requires
+the Wayland route and does not install Xvfb; the helper's `auto`, `wayland`, and
+`x11` selector keeps local fallback intentional. That is application
+acceptance, not a packaging helper or a cross-platform runtime claim, and does
+not make X11 a Balun runtime dependency.
 
 All three helpers now make a locked, build-only desktop executable their route
 when invoked without options, and their compile-oriented quick modes select
@@ -96,6 +104,13 @@ a fresh artifact away from the path being inspected. Windows owns the compiler,
 claim. The release-candidate workflow selects all three diagnostic routes
 explicitly. These developer conveniences do not imply a bundle, installer,
 redistributable runtime closure, or package validation.
+
+The Fedora desktop CI image installs `gstreamer1-plugin-libav` solely to decode
+the pinned synthetic MPEG-2 test fixture. That host development dependency is
+not a runtime allowlist or permission to copy a broad plugin package into an
+artifact. Every future staged closure remains subject to completed-tree/import
+inspection and the shared libdvdcss, optical-disc, DRM, and circumvention deny
+policy.
 
 The compiler proposal manifest lives at
 `build-aux/toolchain/rust-toolchain.toml`. Dependabot supports a configured
