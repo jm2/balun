@@ -48,6 +48,8 @@ library assumptions.
 | `linux/validate-package-metadata.sh` | Incremental current-input list |
 | `flatpak/validate-bundle-compliance.sh` | Adapted preparatory app-commit validator |
 | `packaging/forbidden-bundled-components.txt` | Keep Balun's stricter policy; never overwrite |
+| `packaging/validate-release-components.sh` | New Balun-wide input classifier and checksum-pinned deny-policy validator; Tributary has no same-purpose helper |
+| `packaging/test-release-component-policy.sh` | New adversarial fixture suite for Balun's release-component input policy; Tributary has no same-purpose helper |
 
 The artifact validators above are scaffolding, not evidence that a Balun package
 exists. Linux completed-tree inspection is bounded, rejects unsafe links and

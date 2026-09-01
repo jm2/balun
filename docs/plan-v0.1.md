@@ -314,8 +314,14 @@ drain, synchronous activation callback, and continuous live loop, so callers
 cannot split the clean barrier from activation. A platform-neutral combined
 observer coordinator mints only one source-bound route-and-store health epoch;
 an event, failure, replacement, or drop from either source synchronously
-cancels all registrations. These observer pieces remain unwired foundations
-and cannot yet authorize traffic. The store-owned fresh-snapshot gate
+cancels all registrations. Its no-await rendezvous accepts each pre-read token
+only from that source's final clean callback, and dropping its sole owner
+revokes authority even while a callback is completing. Linux preparation and
+live-session bridges now own subscribe-before-read ordering, blocking snapshot
+or exact-reread work, coalesced reconciliation, cancellation, and joined actor
+shutdown for both sources. These pieces remain internal foundations: no
+production controller yet owns and replaces the pair, so they cannot authorize
+traffic. The store-owned fresh-snapshot gate
 requires the exact active fingerprint and run, rebuilds the complete proposal,
 permits only a transient interface-ID replacement, and caps work to the
 remaining lease. The Linux socket factory now performs one interface pin plus

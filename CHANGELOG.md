@@ -54,14 +54,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linux route-event monitor** — Add an unwired rtnetlink observer foundation
   with subscribe-before-snapshot barriers, strict work bounds, coalesced
   reconciliation, invalidate-before-notify behavior, and a consuming final-
-  drain-to-synchronous-activation handoff.
+  drain-to-synchronous-activation handoff; a prepared/live bridge carries the
+  exact pre-snapshot token and owns cancellation-safe actor shutdown.
 - **Linux approval-store observer** — Add an unwired inotify foundation bound
   to the store's exact pinned directory, with subscribe/read/drain baselines,
-  bounded event work, and fail-closed permanent-entry invalidation.
+  bounded event work, and fail-closed permanent-entry invalidation; its bridge
+  performs blocking subscription and exact rereads off-executor and owns the
+  live actor through joined shutdown.
 - **Combined routed observer authority** — Add an unwired, platform-neutral
   coordinator which mints only one non-cloneable route-and-store health epoch;
   either observer event, failure, replacement, or drop synchronously cancels
-  every registration and stale callbacks cannot revive a successor.
+  every registration, stale callbacks cannot revive a successor, and a
+  no-await paired callback rendezvous retains no authority after owner drop.
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.
@@ -70,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to Balun's application identity and exercised with synthetic archive, ELF,
   metadata, completed-commit, exact Flatpak-permission, cross-platform
   build-helper, and macOS icon/bundle fixtures.
+- **Tributary filename parity** — Retain the exact relative filename for every
+  equivalent `scripts/` and `build-aux/` port, and record each genuinely new,
+  split, or product-identity-specific filename in the port ledger.
 - **Rust floor synchronization** — Coordinate the Cargo, Dependabot proposal,
   exact MSRV CI, and README compiler declarations while leaving stable-channel
   jobs and immutable action-code pins independent; keep the proposal manifest
