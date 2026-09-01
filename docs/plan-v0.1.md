@@ -867,6 +867,11 @@ application-facing helpers must replace Tributary's identity and music-library
 assumptions with `balun`, `Balun`, `io.github.jm2.Balun`, network/video runtime
 needs, and the exact product tagline.
 
+An equivalent port keeps Tributary's filename. Balun uses a different filename
+only when a helper has a materially new or split responsibility, with that
+decision recorded in the port ledger. Product-named recipes replace only the
+Tributary identity portion of their filenames.
+
 The port lands in dependency order:
 
 1. Vendored tool provenance, source-generation helpers, and synthetic policy

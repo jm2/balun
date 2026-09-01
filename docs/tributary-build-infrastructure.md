@@ -9,6 +9,11 @@ Balun's narrower live-TV scope.
 This ledger prevents a deferred file from being forgotten and prevents a copied
 recipe from making a packaging claim before its referenced application exists.
 
+Equivalent ports keep the Tributary filename. A new filename is permitted only
+when Balun introduces or splits out a materially different responsibility; the
+ledger must record that distinction. Product-named package recipes and manifests
+replace only their Tributary identity segment with Balun's identity.
+
 ## Identity and product substitutions
 
 | Tributary value | Balun value |
@@ -36,6 +41,8 @@ library assumptions.
 | `flatpak/flatpak-cargo-generator.PROVENANCE` | Adapted provenance |
 | `flatpak/generator-requirements.txt` | Adapted comments; versions remain pinned |
 | `flatpak/cargo-sources.json` | Never copied or committed; regenerate from Balun's lockfile |
+| `flatpak/validate-permissions.sh` | Adapted exact Balun permission allowlist; requires an explicit manifest |
+| `flatpak/test-permissions.sh` | Adapted synthetic permission fixtures; makes no package claim |
 | `linux/validate-package-compliance.sh` | Adapted preparatory validator |
 | `linux/test-package-compliance.sh` | Adapted synthetic tests |
 | `linux/validate-package-metadata.sh` | Incremental current-input list |
@@ -53,16 +60,21 @@ final artifact reopening for that format.
 
 | Tributary file | Status and landing condition |
 | --- | --- |
-| `build-linux.sh` | Redesign with the GUI/runtime slice; omit deferred native distro-package modes |
+| `build-linux.sh` | Adapted for the current headless diagnostic; GUI and native/Flatpak package modes fail before build work until their complete gates land |
 | `build-macos.sh` | Redesign with `Balun.app`, runtime probe, exact plugin closure, and reopened DMG checks |
-| `build-windows.ps1` | Redesign with `balun.exe`, resources, exact plugin closure, and reopened ZIP/installer checks |
+| `build-windows.ps1` | Adapted for the current headless diagnostic; bundle, ZIP, Inno, update, and launch paths fail before external work until their complete gates land |
 | `macos-icon-bundle-policy.sh` | Adapted preparatory helper with Balun identity/temp names |
-| `macos-package-policy.sh` | Port reusable inspection core; remove broad copy-any-allowed-plugin staging API |
+| `macos-package-policy.sh` | Adapted inspection-only core with bounded Mach-O output and completed-tree checks; broad copy-any-allowed-plugin staging API removed |
 | `sync_rust_toolchain.py` | Port independently against Balun's actual MSRV declarations |
 | `sync_fuzz_lock.py` | Defer until Balun has a separate fuzz workspace and lockfile |
 | `test-macos-icon-bundle-policy.sh` | Adapted synthetic test for the icon helper |
-| `test-macos-package-policy.sh` | Land with the package helper; derive denied fixtures from the shared policy |
+| `test-macos-package-policy.sh` | Adapted synthetic test; denied fixtures are derived from the shared policy |
 | `test_dependency_update_policy.py` | Split by feature; land focused MSRV, fuzz, and automation tests with their owners |
+
+Balun additionally has deterministic command-routing tests for the current
+headless Linux and Windows helpers. Tributary has no equivalent scripts, so
+`test-build-linux-policy.sh` and `test-build-windows-routing.ps1` are new,
+narrow responsibilities rather than renamed upstream ports.
 
 The compiler proposal manifest lives at
 `build-aux/toolchain/rust-toolchain.toml`. Dependabot supports a configured
@@ -75,8 +87,8 @@ rustup override and GitHub's rejected attempt to update the original copy under
 | Tributary file | Status and landing condition |
 | --- | --- |
 | `flatpak/io.github.tributary.Tributary.yml` | Redesign as `io.github.jm2.Balun.yml` with GUI, assets, runtime probe, permissions, and package CI |
-| `flatpak/test-permissions.sh` | Redesign and land atomically with the Balun manifest |
-| `flatpak/validate-permissions.sh` | Redesign to Balun's exact permission allowlist |
+| `flatpak/test-permissions.sh` | Landed first against a synthetic manifest so the permission contract is reviewable before packaging |
+| `flatpak/validate-permissions.sh` | Adapted to Balun's exact permission allowlist; the real manifest must invoke it atomically when it lands |
 | `inno/tributary.iss` | Redesign as `balun.iss` with new GUID, resources, version mapping, and reopened-installer gate |
 | `arch/PKGBUILD` | Deferred with native distro packages |
 | `rpm/tributary.spec` | Deferred with native distro packages |
@@ -85,7 +97,11 @@ Balun's Flatpak baseline needs Wayland, fallback X11, IPC, PulseAudio, and
 network access for local HDHomeRun discovery/HTTP and explicit XMLTV URLs. It
 does not inherit blanket music/removable-media access, GVfs, Secret Service,
 Rhythmbox compatibility, audio-file associations, or Tributary's MPRIS name.
-A user-selected XMLTV file should use the file/document portal.
+A user-selected XMLTV file should use the file/document portal. The standard
+GPU/DRI permission is broader than render nodes alone, and the PulseAudio
+socket exposes more than Balun's intended output use; both are explicit,
+reviewed tradeoffs for practical accelerated video and audio playback, not
+narrower capability claims.
 
 ## Required real-package order
 

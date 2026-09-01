@@ -1,0 +1,7 @@
+# Keep repository text LF-only on every development host, including Windows.
+* text=auto eol=lf
+
+# The vendored Flatpak generator is verified byte-for-byte at build time.
+build-aux/flatpak/flatpak-cargo-generator.py text eol=lf
+build-aux/flatpak/*.sh text eol=lf
+build-aux/flatpak/*.sha256 text eol=lf

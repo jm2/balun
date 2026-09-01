@@ -63,7 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reusable packaging foundation** — Port Tributary's pinned Flatpak Cargo
   generator and preparatory Linux/Flatpak artifact-policy validators, adapted
   to Balun's application identity and exercised with synthetic archive, ELF,
-  metadata, completed-commit, and macOS icon/bundle fixtures.
+  metadata, completed-commit, exact Flatpak-permission, Linux build-helper,
+  Windows build-helper, and macOS icon/bundle fixtures.
 - **Rust floor synchronization** — Coordinate the Cargo, Dependabot proposal,
   exact MSRV CI, and README compiler declarations while leaving stable-channel
   jobs and immutable action-code pins independent; keep the proposal manifest
@@ -89,6 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bounded, hidden-inclusive before/after content manifests and rejects unsafe
   links; real packages still require archive preflight, source/resource bounds,
   extraction containment, and reopened-artifact gates.
+- **Preparatory desktop package boundaries** — Fix a minimal Flatpak permission
+  allowlist without host/media filesystem or broad device access, and adapt
+  Tributary's macOS package inspector without its copy-any-plugin staging API;
+  both remain synthetic gates until real Balun application packages land.
 - **Bounded routed discovery** — Require an explicit RFC 1918 range no wider
   than `/24`, cap candidates and concurrency, rate-limit targeted starts, and
   keep point-to-point interfaces out of automatic local enumeration. Native

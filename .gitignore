@@ -1,2 +1,4 @@
 /target/
 /build-aux/flatpak/cargo-sources.json
+__pycache__/
+*.py[cod]

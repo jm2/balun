@@ -143,6 +143,32 @@ tag commit on all three platforms. It intentionally produces internal
 diagnostic workflow artifacts only; application packages and public artifact
 publication begin with the playable GTK/GStreamer slice.
 
+The Tributary-derived Linux helper currently builds and inspects only the
+headless diagnostic. Its package switches fail before starting build or
+network work until their recipes and complete artifact gates exist:
+
+```bash
+scripts/test-build-linux-policy.sh
+scripts/build-linux.sh --check
+scripts/build-linux.sh
+```
+
+The helper never installs tools or packages. Cargo can still fetch the locked
+dependency graph when it is not cached, and a rustup-managed invocation can
+fetch the selected Rust toolchain.
+
+The same-named Tributary Windows helper is also present in headless-only form:
+
+```powershell
+pwsh -NoProfile -File scripts/test-build-windows-routing.ps1
+pwsh -NoProfile -File scripts/build-windows.ps1 -Check
+```
+
+Its bundle, ZIP, Inno Setup, dependency-update, and launch switches fail before
+external work. A default build checks only that Cargo's expected diagnostic
+output path is a nonempty regular, non-reparse file; it does not yet claim PE
+or package validation.
+
 `build-aux/toolchain/rust-toolchain.toml` is the Dependabot proposal source for
 the compiler floor. Its deliberately nested location prevents it from acting as
 a repository-wide rustup override. Keep its exact patch-zero release aligned
@@ -197,7 +223,17 @@ They do not become an artifact claim until each real format also preflights and
 contains untrusted extraction, bounds archive-source replacement and resource
 amplification, and reopens the completed package. The vendored Flatpak Cargo
 generator is checksum- and provenance-pinned; its dependency snapshot must be
-regenerated from Balun's own `Cargo.lock`, never copied from Tributary.
+regenerated from Balun's own `Cargo.lock`, never copied from Tributary. A
+separate synthetic Flatpak policy fixes the initial six-entry permission
+contract: Wayland, fallback X11 with IPC, the PulseAudio socket, network, and
+the standard GPU/DRI device grant. The PulseAudio socket exposes capabilities
+beyond Balun's intended audio-output use, and the DRI grant is broader than
+render nodes alone, but both remain the practical reviewed Flatpak boundary.
+It grants no host/media filesystem, `--device=all`, GVfs, secrets, MPRIS, or
+unreviewed bus access; the eventual real manifest must pass the same validator.
+The adapted macOS inspection core is likewise preparatory: it
+validates bounded Mach-O dependency output and stable completed bundle trees,
+but no `Balun.app` or DMG exists yet.
 The file-by-file decisions and atomic landing conditions are recorded in the
 [Tributary build-infrastructure port ledger](docs/tributary-build-infrastructure.md).
 
