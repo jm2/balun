@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   channel, and live-TV panes, truthful packet-free empty states, exact
   application identity, Linux desktop compile/link/lint coverage, and MSRV
   checking without adding GTK to the default library or diagnostic build.
+- **Cross-platform desktop link checks** — Compile and link the feature-gated
+  shell against native Homebrew GTK/libadwaita on macOS arm64 and an MSYS2
+  CLANG64 GTK/libadwaita environment on Windows x86_64, without claiming a
+  runnable bundle or package.
 - **Headless discovery foundation** — Add the initial Rust library and
   `balun-discover` diagnostic for ordinary local discovery, exact-address
   probes, and explicitly approved routed discovery.

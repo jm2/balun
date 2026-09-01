@@ -560,9 +560,9 @@ can do so without fragmenting the bundle and CI matrix.
 Implementation status: the first desktop shell declares GTK 4.16 and
 libadwaita 1.6 as its API floors. The feature-gated binary is compiled and
 linted in a Fedora desktop job while default library and diagnostic builds
-remain GTK-free. Native macOS and Windows desktop SDK compilation and runtime
-smoke tests remain pending; their current CI lanes continue to prove the
-headless core on those targets.
+remain GTK-free. Native macOS arm64 and Windows x86_64 CI lanes also link the
+shell against their GTK/libadwaita SDKs while continuing to prove the headless
+core. Display-backed runtime smoke tests remain pending on every platform.
 
 Every completed package must run an exact runtime probe for:
 
@@ -624,9 +624,9 @@ Implementation status: an opt-in thin desktop binary now constructs the exact
 Balun application identity and an adaptive nested device/channel/player shell.
 It performs no network or playback work. The GTK-free library and diagnostic
 remain the default build, and Linux desktop/MSRV compilation is enforced in
-CI. The bounded Tokio/GLib bridge, settings, documentation templates, native
-macOS/Windows desktop checks, and runtime smoke tests are still required to
-complete this milestone.
+CI. Native macOS and Windows desktop link checks are also enforced. The
+bounded Tokio/GLib bridge, settings, documentation templates, and runtime smoke
+tests are still required to complete this milestone.
 
 ### Milestone 2: Playable vertical slice
 
@@ -864,7 +864,7 @@ tests. Sanitized observations from completed rows are maintained in
 - Markdown, TOML, YAML, and GitHub Actions linting.
 - Linux debug and release tests.
 - Linux GTK desktop compile and strict-lint checks.
-- macOS and Windows compile smoke tests.
+- macOS and Windows headless compile plus native desktop link smoke tests.
 - Concurrency cancellation for superseded branch runs.
 
 Add full packaging jobs, coverage ratchets, weekly fuzzing, and expensive GUI

@@ -127,14 +127,17 @@ jobs:
   platform-smoke:
     name: ${{ matrix.name }} compile smoke
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: macOS
             runner: macos-15
+            desktop_target: aarch64-apple-darwin
           - name: Windows
             runner: windows-2025
+            desktop_target: x86_64-pc-windows-gnullvm
     steps:
       - uses: actions/checkout@v7
         with:
@@ -153,10 +156,33 @@ jobs:
         shell: pwsh
         run: ./scripts/test-build-windows-routing.ps1
 
+      - name: Install macOS desktop build dependencies
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: brew install gtk4 libadwaita pkgconf
+
+      - name: Set up Windows desktop build environment
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        env:
+          __SETUP_MSYS2_USE_MAIN_MIRROR_ONLY: 'true'
+        with:
+          msystem: CLANG64
+          path-type: inherit
+          update: true
+          cache: true
+          install: >-
+            mingw-w64-clang-x86_64-gtk4
+            mingw-w64-clang-x86_64-libadwaita
+            mingw-w64-clang-x86_64-pkg-config
+            mingw-w64-clang-x86_64-toolchain
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: stable
+          targets: ${{ matrix.desktop_target }}
 
       - name: Check all targets
         run: cargo check --all-targets --locked
@@ -169,3 +195,24 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/build-windows.ps1
+
+      - name: Verify and build macOS desktop shell
+        if: runner.os == 'macOS'
+        run: |
+          brew_prefix="$(brew --prefix)"
+          export PKG_CONFIG_PATH="$brew_prefix/lib/pkgconfig"
+          pkg-config --atleast-version=4.16 gtk4
+          pkg-config --atleast-version=1.6 libadwaita-1
+          cargo build --locked --features desktop --bin balun \
+            --target "${{ matrix.desktop_target }}"
+
+      - name: Verify and build Windows desktop shell
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          export PKG_CONFIG_ALLOW_CROSS=1
+          export PKG_CONFIG_PATH=/clang64/lib/pkgconfig
+          pkg-config --atleast-version=4.16 gtk4
+          pkg-config --atleast-version=1.6 libadwaita-1
+          cargo build --locked --features desktop --bin balun \
+            --target "${{ matrix.desktop_target }}"

@@ -172,8 +172,9 @@ cargo test --release --all-targets --locked
 
 CI verifies the declared Rust 1.94 minimum across the desktop feature, runs
 strict Linux headless debug and release checks, compiles, links, and lints the
-Linux desktop shell, and compile-checks the headless code on macOS and Windows.
-The release candidate workflow accepts an existing annotated, v-prefixed
+Linux desktop shell, links that shell against native macOS and Windows toolkit
+SDKs, and keeps compile-checking the headless code on both platforms. The
+release candidate workflow accepts an existing annotated, v-prefixed
 Semantic Version tag, verifies it against `Cargo.toml` and `CHANGELOG.md`, and
 builds the exact tag commit on all three platforms. It intentionally produces
 internal diagnostic workflow artifacts only; application packages and public
