@@ -562,7 +562,9 @@ libadwaita 1.6 as its API floors. The feature-gated binary is compiled and
 linted in a Fedora desktop job while default library and diagnostic builds
 remain GTK-free. Native macOS arm64 and Windows x86_64 CI lanes also link the
 shell against their GTK/libadwaita SDKs while continuing to prove the headless
-core. Display-backed runtime smoke tests remain pending on every platform.
+core. A local Linux GTK 4 Broadway smoke has verified display initialization
+and event-loop entry. Automated display-backed clean-shutdown smoke tests
+remain pending on every platform.
 
 Every completed package must run an exact runtime probe for:
 
@@ -622,11 +624,15 @@ Exit criteria:
 
 Implementation status: an opt-in thin desktop binary now constructs the exact
 Balun application identity and an adaptive nested device/channel/player shell.
-It performs no network or playback work. The GTK-free library and diagnostic
-remain the default build, and Linux desktop/MSRV compilation is enforced in
-CI. Native macOS and Windows desktop link checks are also enforced. The
-bounded Tokio/GLib bridge, settings, documentation templates, and runtime smoke
-tests are still required to complete this milestone.
+It performs no network or playback work. The GTK-free library now includes
+bounded immutable device and selected-lineup projections with independent
+operation generations and strict no-merge validation. A shared inspection
+service also owns identity-checked preferred-locator fallback without exposing
+stream URLs. The default library and diagnostic remain GTK-free, Linux
+desktop/MSRV compilation is enforced in CI, and native macOS and Windows
+desktop link checks are also enforced. The bounded Tokio/GLib bridge,
+settings, documentation templates, and runtime smoke tests are still required
+to complete this milestone.
 
 ### Milestone 2: Playable vertical slice
 

@@ -1,6 +1,7 @@
 //! HDHomeRun protocol support.
 
 mod http;
+mod inspection;
 mod lineup;
 pub mod protocol;
 #[cfg(test)]
@@ -10,6 +11,11 @@ pub use http::{
     DeviceEndpoint, DeviceHttpClient, DeviceHttpConfig, DeviceHttpError, DeviceInfo, EndpointError,
     InvalidHttpConfig, MAX_ADVERTISED_URL_BYTES, MAX_DEVICE_JSON_BYTES, MAX_LINEUP_CHANNELS,
     MAX_LINEUP_JSON_BYTES, UrlRole,
+};
+pub use inspection::{
+    DEFAULT_INSPECTION_DEADLINE, DeviceInspection, DeviceInspectionError, DeviceInspectionIssue,
+    DeviceInspectionIssueKind, DeviceInspectionReport, DeviceInspectionSummary, DeviceInspector,
+    MAX_INSPECTION_OBSERVATIONS,
 };
 pub use lineup::{
     DeviceLineup, DeviceSnapshot, DeviceSnapshotError, LineupChannel, LineupError,

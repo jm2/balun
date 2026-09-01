@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and libadwaita at Tributary's proven API floors, with adaptive nested device,
   channel, and live-TV panes, truthful packet-free empty states, exact
   application identity, Linux desktop compile/link/lint coverage, and MSRV
-  checking without adding GTK to the default library or diagnostic build.
+  checking without adding GTK to the default library or diagnostic build. A
+  local GTK 4 Broadway smoke also verifies display initialization and event-
+  loop entry; automated clean-shutdown runtime coverage remains pending.
 - **Cross-platform desktop link checks** — Compile and link the feature-gated
   shell against native Homebrew GTK/libadwaita on macOS arm64 and an MSYS2
   CLANG64 GTK/libadwaita environment on Windows x86_64, without claiming a
@@ -28,8 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   locators and discovery origins behind one validated DeviceID while keeping
   every channel key scoped to exactly one device.
 - **Bounded device inspection** — Add responder-pinned metadata and lineup
-  fetching plus `balun-discover --inspect`, which summarizes devices and
-  channels without opening a stream or allocating a tuner.
+  fetching plus a reusable, cancellation-aware preferred-locator fallback
+  service used by `balun-discover --inspect`; it summarizes devices and
+  channels without returning stream URLs, opening a stream, or allocating a
+  tuner.
+- **Controller snapshot boundary** — Add bounded, immutable, GTK-free device
+  and selected-lineup projections with independent discovery and selection
+  generations, URL-free channel rows, deterministic ordering, and validation
+  that prevents cross-device lineup merging or stale reducer replacement.
 - **Route candidate policy** — Add a platform-neutral route snapshot/provider
   boundary, a native Linux rtnetlink provider, and deterministic policy for
   exact or approved private tunnel candidates; native macOS and Windows

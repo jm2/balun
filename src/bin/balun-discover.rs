@@ -4,19 +4,15 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use balun::discovery::{
-    ApprovedIpv4Range, DeviceRegistry, DiscoveryClient, DiscoveryReport, RegistryError,
-    RegistryInstant, RoutedRangeError, RoutedScanConfig,
+    ApprovedIpv4Range, DiscoveryClient, DiscoveryReport, RegistryError, RoutedRangeError,
+    RoutedScanConfig,
 };
-use balun::domain::DeviceId;
 use balun::hdhr::{
-    DeviceEndpoint, DeviceHttpClient, DeviceHttpError, DeviceSnapshotError, LineupFetchError,
+    DeviceInspectionError, DeviceInspectionIssueKind, DeviceInspectionReport, DeviceInspector,
 };
 use ipnet::Ipv4Net;
 use thiserror::Error;
-use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
-
-const INSPECTION_REPORT_DEADLINE: Duration = Duration::from_secs(60);
 
 const USAGE: &str = "\
 Usage:
@@ -71,6 +67,13 @@ enum CliError {
     #[error("device inspection exceeded its {deadline:?} report deadline")]
     InspectionDeadline { deadline: Duration },
 
+    #[error("device inspection report has {actual} {field}; maximum is {maximum}")]
+    InspectionReportLimit {
+        field: &'static str,
+        actual: usize,
+        maximum: usize,
+    },
+
     #[error("inspection failed for {failed} of {attempted} discovered devices")]
     InspectionFailed { failed: usize, attempted: usize },
 }
@@ -82,6 +85,13 @@ struct InspectionOutcome {
 }
 
 impl InspectionOutcome {
+    fn from_report(report: &DeviceInspectionReport) -> Self {
+        Self {
+            attempted_devices: report.attempted_devices(),
+            failed_devices: report.failed_devices(),
+        }
+    }
+
     fn merge(&mut self, other: Self) {
         self.attempted_devices += other.attempted_devices;
         self.failed_devices += other.failed_devices;
@@ -98,72 +108,22 @@ impl InspectionOutcome {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct InspectionDetails {
-    friendly_name: String,
-    model_number: String,
-    firmware_version: String,
-    tuner_count: String,
-    channel_count: usize,
-    favorite_count: usize,
-    drm_count: usize,
-}
-
-#[derive(Debug)]
-enum InspectionAttemptError {
-    Cancelled,
-    Failed(String),
-}
-
-trait SnapshotInspector {
-    async fn fetch_snapshot_summary(
-        &self,
-        endpoint: &DeviceEndpoint,
-        expected_device_id: DeviceId,
-        cancellation: &CancellationToken,
-    ) -> Result<InspectionDetails, InspectionAttemptError>;
-}
-
-impl SnapshotInspector for DeviceHttpClient {
-    async fn fetch_snapshot_summary(
-        &self,
-        endpoint: &DeviceEndpoint,
-        expected_device_id: DeviceId,
-        cancellation: &CancellationToken,
-    ) -> Result<InspectionDetails, InspectionAttemptError> {
-        let snapshot = match self
-            .fetch_device_snapshot(endpoint, expected_device_id, cancellation)
-            .await
-        {
-            Ok(snapshot) => snapshot,
-            Err(DeviceSnapshotError::Metadata(DeviceHttpError::Cancelled))
-            | Err(DeviceSnapshotError::Lineup(LineupFetchError::Http(
-                DeviceHttpError::Cancelled,
-            ))) => return Err(InspectionAttemptError::Cancelled),
-            Err(error) => return Err(InspectionAttemptError::Failed(error.to_string())),
-        };
-        let info = snapshot.info();
-        let lineup = snapshot.lineup();
-
-        Ok(InspectionDetails {
-            friendly_name: info.friendly_name().unwrap_or("-").to_owned(),
-            model_number: info.model_number().unwrap_or("-").to_owned(),
-            firmware_version: info.firmware_version().unwrap_or("-").to_owned(),
-            tuner_count: info
-                .tuner_count()
-                .map_or_else(|| "unknown".to_owned(), |count| count.to_string()),
-            channel_count: lineup.channels().len(),
-            favorite_count: lineup
-                .channels()
-                .iter()
-                .filter(|channel| channel.is_favorite())
-                .count(),
-            drm_count: lineup
-                .channels()
-                .iter()
-                .filter(|channel| channel.is_drm())
-                .count(),
-        })
+impl From<DeviceInspectionError> for CliError {
+    fn from(error: DeviceInspectionError) -> Self {
+        match error {
+            DeviceInspectionError::Registry(error) => Self::InspectionRegistry(error),
+            DeviceInspectionError::Cancelled => Self::InspectionCancelled,
+            DeviceInspectionError::Deadline { deadline } => Self::InspectionDeadline { deadline },
+            DeviceInspectionError::ReportLimit {
+                field,
+                actual,
+                maximum,
+            } => Self::InspectionReportLimit {
+                field,
+                actual,
+                maximum,
+            },
+        }
     }
 }
 
@@ -183,7 +143,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let client = DiscoveryClient::default();
-    let http_client = DeviceHttpClient::default();
+    let inspector = DeviceInspector::default();
     let inspect = cli.inspect;
     let mut inspection = InspectionOutcome::default();
     for action in cli.actions {
@@ -205,15 +165,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         };
         print_report(&report);
         if inspect {
-            inspection.merge(
-                inspect_report_with_deadline(
-                    &http_client,
-                    &report,
-                    &cancellation,
-                    INSPECTION_REPORT_DEADLINE,
-                )
-                .await?,
-            );
+            let inspected = inspector
+                .inspect_discovery_report(&report, &cancellation)
+                .await
+                .map_err(CliError::from)?;
+            print_inspection_report(&inspected);
+            inspection.merge(InspectionOutcome::from_report(&inspected));
         }
     }
 
@@ -334,126 +291,57 @@ fn advertised_url_summary(_url: &str) -> &'static str {
     "present (untrusted value hidden)"
 }
 
-async fn inspect_report_with_deadline<I: SnapshotInspector>(
-    inspector: &I,
-    report: &DiscoveryReport,
-    cancellation: &CancellationToken,
-    deadline: Duration,
-) -> Result<InspectionOutcome, CliError> {
-    timeout(deadline, inspect_report(inspector, report, cancellation))
-        .await
-        .map_err(|_| CliError::InspectionDeadline { deadline })?
-}
-
-async fn inspect_report<I: SnapshotInspector>(
-    inspector: &I,
-    report: &DiscoveryReport,
-    cancellation: &CancellationToken,
-) -> Result<InspectionOutcome, CliError> {
-    if cancellation.is_cancelled() {
-        return Err(CliError::InspectionCancelled);
-    }
-
-    let mut registry = DeviceRegistry::default();
-    for observation in report.observations.iter().cloned() {
-        registry.observe(observation, RegistryInstant::default())?;
-    }
-
-    let mut outcome = InspectionOutcome::default();
-    for device in registry.devices() {
-        if cancellation.is_cancelled() {
-            return Err(CliError::InspectionCancelled);
-        }
-        outcome.attempted_devices += 1;
-
-        let preferred_source = device.preferred_locator().map(|locator| locator.source());
-        let mut locators = device.locators().collect::<Vec<_>>();
-        locators
-            .sort_by_key(|locator| (Some(locator.source()) != preferred_source, locator.source()));
-
-        let mut supported_locators = 0_usize;
-        let mut inspected = false;
-        for locator in locators {
-            if cancellation.is_cancelled() {
-                return Err(CliError::InspectionCancelled);
+fn print_inspection_report(report: &DeviceInspectionReport) {
+    for device in report.devices() {
+        for issue in device.issues() {
+            match issue.kind() {
+                DeviceInspectionIssueKind::UnsupportedEndpoint => eprintln!(
+                    "inspection route issue: {} source={} is unsupported: {}",
+                    device.device_id(),
+                    issue.source(),
+                    issue.message(),
+                ),
+                DeviceInspectionIssueKind::SnapshotFailed => eprintln!(
+                    "inspection route issue: {} source={} snapshot failed: {}",
+                    device.device_id(),
+                    issue.source(),
+                    issue.message(),
+                ),
             }
+        }
 
-            let endpoint = match DeviceEndpoint::from_locator(locator) {
-                Ok(endpoint) => endpoint,
-                Err(error) => {
-                    eprintln!(
-                        "inspection route issue: {} source={} is unsupported: {error}",
-                        device.device_id(),
-                        locator.source(),
-                    );
-                    continue;
-                }
-            };
-            supported_locators += 1;
-
-            let details = match inspector
-                .fetch_snapshot_summary(&endpoint, device.device_id(), cancellation)
-                .await
-            {
-                Ok(details) => details,
-                Err(InspectionAttemptError::Cancelled) => {
-                    return Err(CliError::InspectionCancelled);
-                }
-                Err(InspectionAttemptError::Failed(error)) => {
-                    eprintln!(
-                        "inspection route issue: {} source={} snapshot failed: {error}",
-                        device.device_id(),
-                        locator.source(),
-                    );
-                    continue;
-                }
-            };
-
+        if let Some(summary) = device.summary() {
             println!(
                 "inspection {} name={:?} model={:?} firmware={:?} tuners={} channels={} favorites={} drm={}",
-                device.device_id(),
-                details.friendly_name,
-                details.model_number,
-                details.firmware_version,
-                details.tuner_count,
-                details.channel_count,
-                details.favorite_count,
-                details.drm_count,
+                summary.device_id(),
+                summary.friendly_name().unwrap_or("-"),
+                summary.model_number().unwrap_or("-"),
+                summary.firmware_version().unwrap_or("-"),
+                summary
+                    .tuner_count()
+                    .map_or_else(|| "unknown".to_owned(), |count| count.to_string()),
+                summary.channel_count(),
+                summary.favorite_count(),
+                summary.drm_count(),
             );
-            inspected = true;
-            break;
-        }
-
-        if !inspected {
-            outcome.failed_devices += 1;
-            if supported_locators == 0 {
-                eprintln!(
-                    "inspection issue: {} has no currently supported HTTP locator",
-                    device.device_id()
-                );
-            } else {
-                eprintln!(
-                    "inspection issue: {} failed across all {supported_locators} supported HTTP locators",
-                    device.device_id(),
-                );
-            }
+        } else if device.supported_locator_count() == 0 {
+            eprintln!(
+                "inspection issue: {} has no currently supported HTTP locator",
+                device.device_id()
+            );
+        } else {
+            let supported = device.supported_locator_count();
+            eprintln!(
+                "inspection issue: {} failed across all {supported} supported HTTP locators",
+                device.device_id(),
+            );
         }
     }
-
-    if cancellation.is_cancelled() {
-        return Err(CliError::InspectionCancelled);
-    }
-    Ok(outcome)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::collections::VecDeque;
-    use std::sync::Mutex;
-
-    use balun::discovery::{DiscoveryMethod, DiscoveryObservation};
 
     fn parse(values: &[&str]) -> Result<Option<Cli>, CliError> {
         parse_cli(values.iter().map(|value| (*value).to_owned()))
@@ -537,147 +425,5 @@ mod tests {
                 attempted: 2
             }
         ));
-    }
-
-    #[tokio::test]
-    async fn inspection_retries_the_next_locator_as_a_complete_pair() {
-        let inspector = FakeInspector::new(vec![
-            Err(InspectionAttemptError::Failed("fixture failure".to_owned())),
-            Ok(InspectionDetails {
-                friendly_name: "Fallback tuner".to_owned(),
-                model_number: "-".to_owned(),
-                firmware_version: "-".to_owned(),
-                tuner_count: "4".to_owned(),
-                channel_count: 0,
-                favorite_count: 0,
-                drm_count: 0,
-            }),
-        ]);
-        let report = DiscoveryReport {
-            observations: vec![
-                observation(65_002, DiscoveryMethod::Targeted),
-                observation(65_001, DiscoveryMethod::Ipv4Broadcast),
-            ],
-            ..DiscoveryReport::default()
-        };
-
-        let outcome = inspect_report(&inspector, &report, &CancellationToken::new())
-            .await
-            .unwrap();
-
-        assert_eq!(
-            outcome,
-            InspectionOutcome {
-                attempted_devices: 1,
-                failed_devices: 0
-            }
-        );
-        assert_eq!(
-            inspector.attempts(),
-            vec![
-                "127.0.0.1:65002".parse().unwrap(),
-                "127.0.0.1:65001".parse().unwrap(),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn pre_cancelled_inspection_stops_before_http() {
-        let cancellation = CancellationToken::new();
-        cancellation.cancel();
-
-        let error = inspect_report(
-            &DeviceHttpClient::default(),
-            &DiscoveryReport::default(),
-            &cancellation,
-        )
-        .await
-        .unwrap_err();
-
-        assert!(matches!(error, CliError::InspectionCancelled));
-    }
-
-    #[tokio::test]
-    async fn inspection_report_deadline_bounds_all_locator_work() {
-        let report = DiscoveryReport {
-            observations: vec![observation(65_001, DiscoveryMethod::Targeted)],
-            ..DiscoveryReport::default()
-        };
-
-        let error = inspect_report_with_deadline(
-            &PendingInspector,
-            &report,
-            &CancellationToken::new(),
-            Duration::ZERO,
-        )
-        .await
-        .unwrap_err();
-
-        assert!(matches!(
-            error,
-            CliError::InspectionDeadline {
-                deadline: Duration::ZERO
-            }
-        ));
-    }
-
-    fn observation(source_port: u16, method: DiscoveryMethod) -> DiscoveryObservation {
-        DiscoveryObservation {
-            device_id: DeviceId::new(0x105A_1232).unwrap(),
-            source: SocketAddr::new("127.0.0.1".parse().unwrap(), source_port),
-            method,
-            interface: None,
-            device_types: vec![1],
-            tuner_count: Some(4),
-            advertised_base_url: Some("http://127.0.0.1/".to_owned()),
-            advertised_lineup_url: None,
-        }
-    }
-
-    struct FakeInspector {
-        attempts: Mutex<Vec<SocketAddr>>,
-        outcomes: Mutex<VecDeque<Result<InspectionDetails, InspectionAttemptError>>>,
-    }
-
-    impl FakeInspector {
-        fn new(outcomes: Vec<Result<InspectionDetails, InspectionAttemptError>>) -> Self {
-            Self {
-                attempts: Mutex::new(Vec::new()),
-                outcomes: Mutex::new(outcomes.into()),
-            }
-        }
-
-        fn attempts(&self) -> Vec<SocketAddr> {
-            self.attempts.lock().unwrap().clone()
-        }
-    }
-
-    impl SnapshotInspector for FakeInspector {
-        async fn fetch_snapshot_summary(
-            &self,
-            endpoint: &DeviceEndpoint,
-            _expected_device_id: DeviceId,
-            _cancellation: &CancellationToken,
-        ) -> Result<InspectionDetails, InspectionAttemptError> {
-            self.attempts.lock().unwrap().push(endpoint.source());
-            self.outcomes
-                .lock()
-                .unwrap()
-                .pop_front()
-                .expect("one fake outcome per expected attempt")
-        }
-    }
-
-    struct PendingInspector;
-
-    impl SnapshotInspector for PendingInspector {
-        async fn fetch_snapshot_summary(
-            &self,
-            _endpoint: &DeviceEndpoint,
-            _expected_device_id: DeviceId,
-            _cancellation: &CancellationToken,
-        ) -> Result<InspectionDetails, InspectionAttemptError> {
-            std::future::pending().await
-        }
     }
 }

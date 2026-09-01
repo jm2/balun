@@ -33,9 +33,15 @@ available program information, and a live-video area.
 - Responder-pinned, identity-checked `/discover.json` and `/lineup.json`
   fetching with strict time, body, row, string, origin, port, redirect, proxy,
   and credential-handling policy.
+- A reusable, cancellation-aware inspection service that tries the preferred
+  locator first, falls back deterministically within one report deadline, and
+  publishes only bounded metadata and counts—never lineup rows or stream URLs.
 - Device-scoped natural channel identities and compatibility with both the
   documented lineup `Tags` field and current `Favorite`, `DRM`, and `HD`
   fields.
+- Bounded immutable controller snapshots for device and selected-lineup state,
+  with independent operation generations, strict selected-device scoping, and
+  no URL-bearing values at the GTK boundary.
 - A cross-platform route snapshot and candidate policy with deterministic fake
   providers, plus a native Linux rtnetlink provider that recognizes WireGuard
   and other unambiguous tunnel links. Native macOS and Windows automatic
