@@ -55,11 +55,16 @@ program information, and a live-video area.
 - A fail-closed Linux rtnetlink event-monitor building block that subscribes
   before a route snapshot, authenticates kernel senders, applies strict
   drain/barrier budgets, coalesces reconciliation, and invalidates authority
-  before notification. It remains deliberately unwired.
+  before notification. Its consuming handoff performs a final drain and
+  synchronous activation without an await gap. It remains deliberately
+  unwired.
 - A separate fail-closed Linux approval-store observer building block that
   watches the exact directory descriptor used by the store, sandwiches each
   reread between complete inotify drains, and invalidates on permanent-entry
   mutation or observation loss. It also remains deliberately unwired.
+- A platform-neutral combined observer coordinator that exposes only one
+  route-and-store health epoch and synchronously cancels it when either source
+  changes or fails. No production actor owns the observer pair yet.
 - GTK-free library boundaries and deterministic fake-device tests.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
@@ -114,12 +119,13 @@ approval policy, durable private store, and immediate exact-route revalidation
 gate are present. A private Linux factory now seals a UDP socket to the exact
 fresh interface after name/index readback, and a packet-free admission boundary
 registers invalidation before reserve and carries one non-extending monotonic
-deadline. Neither capability exposes an automatic send path yet. Route-derived
-targets remain disconnected from the diagnostic until a live route-observer
-session and a separate approval-store observer session are coordinated into one
-incarnation, final pre-send revalidation is serialized, and a consuming runner
-has exact completion ownership. Installing the provider does not silently
-enumerate a network.
+deadline. A combined route/store epoch state machine and a gap-free route-
+monitor activation handoff are present, but neither capability exposes an
+automatic send path yet. Route-derived targets remain disconnected from the
+diagnostic until one production actor owns both live observer sessions,
+rebaselines after every store publication, serializes final pre-send
+revalidation, and gives a consuming runner exact completion ownership.
+Installing the provider does not silently enumerate a network.
 
 Press `Ctrl+C` to cancel discovery.
 

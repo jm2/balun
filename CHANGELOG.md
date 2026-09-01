@@ -53,10 +53,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authority under its crash-conservative reservation and cooldown.
 - **Linux route-event monitor** — Add an unwired rtnetlink observer foundation
   with subscribe-before-snapshot barriers, strict work bounds, coalesced
-  reconciliation, and invalidate-before-notify behavior.
+  reconciliation, invalidate-before-notify behavior, and a consuming final-
+  drain-to-synchronous-activation handoff.
 - **Linux approval-store observer** — Add an unwired inotify foundation bound
   to the store's exact pinned directory, with subscribe/read/drain baselines,
   bounded event work, and fail-closed permanent-entry invalidation.
+- **Combined routed observer authority** — Add an unwired, platform-neutral
+  coordinator which mints only one non-cloneable route-and-store health epoch;
+  either observer event, failure, replacement, or drop synchronously cancels
+  every registration and stale callbacks cannot revive a successor.
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.
@@ -102,11 +107,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fail-closed automatic authority** — Reject ambiguous tunnel origins,
   changed topology or traffic policy, stale and expired run completion,
   backward-clock shortcuts, uncertain durability, and revoked or replaced
-  active runs. The sealed Linux socket and packet-free admission foundations
-  are present, but automatic route-derived traffic remains disconnected until
-  route and store observer sessions are coordinated into one incarnation,
-  final pre-send revalidation is serialized, and consuming-runner completion
-  lands.
+  active runs. The sealed Linux socket, packet-free admission, observer
+  handoff, and combined-epoch foundations are present, but automatic route-
+  derived traffic remains disconnected until one production controller owns
+  both live observer actors, rebaselines after each store publication,
+  serializes final pre-send revalidation, and lands consuming-runner
+  completion.
 - **Authenticated route invalidation** — Accept Linux route notifications only
   from the kernel sender address, preflight every untrusted frame and attribute
   length without third-party payload logging, and poison authority on overflow,
