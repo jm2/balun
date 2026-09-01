@@ -37,12 +37,19 @@ program information, and a live-video area.
   fields.
 - A cross-platform route snapshot and candidate policy with deterministic fake
   providers, plus a native Linux rtnetlink provider that recognizes WireGuard
-  and other unambiguous tunnel links. Native macOS and Windows providers are
-  still pending.
+  and other unambiguous tunnel links. Native macOS and Windows automatic
+  providers remain intentionally unavailable until their route-domain and
+  safe-API requirements can be proved.
 - A GTK-free route-approval policy that fingerprints the exact private
   targets, tunnel identity, route scopes, and traffic budget with an
   installation key, fails closed on ambiguous paths or clock rollback, and
   reserves single-use scan authority before it can be released.
+- A private, bounded approval store with cross-process locking, atomic durable
+  reservations, strict quarantine, global run sequencing, exact and revoke-all
+  controls, and no persisted raw topology.
+- A packet-free fresh-route gate that consumes the stored authority, permits
+  only a transient interface-ID replacement, and caps work to the remaining
+  reservation lease. No automatic socket runner is connected yet.
 - GTK-free library boundaries and deterministic fake-device tests.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
@@ -92,11 +99,12 @@ is available.
 
 On Linux, Balun can now derive conservative candidates from a stable native
 route snapshot. It fails closed on policy routing, VRFs, ambiguous next hops,
-or route-table state that cannot be represented safely. The pure remembered
-approval, cooldown, and crash-reservation policy is present, but route-derived
-targets are not wired to the diagnostic until its durable store, immediate
-route revalidation, and interface-pinned egress gate land. Installing the
-provider does not silently enumerate a network.
+or route-table state that cannot be represented safely. The remembered
+approval policy, durable private store, and immediate exact-route revalidation
+gate are present. Route-derived targets remain disconnected from the
+diagnostic until the Linux runner can pin every UDP socket to the freshly
+validated interface and register cancellation before authority is consumed.
+Installing the provider does not silently enumerate a network.
 
 Press `Ctrl+C` to cancel discovery.
 
@@ -119,6 +127,34 @@ tag, verifies it against `Cargo.toml` and `CHANGELOG.md`, and builds the exact
 tag commit on all three platforms. It intentionally produces internal
 diagnostic workflow artifacts only; application packages and public artifact
 publication begin with the playable GTK/GStreamer slice.
+
+### Release component policy
+
+Balun does not implement optical-disc or protected-channel playback. A shared,
+fail-closed filename-token policy rejects dedicated optical-disc copy-control
+components and proprietary DRM modules from current release inputs. Future
+bundles are required to enforce the same exclusion over their staged and final
+contents. The current Linux-CI check pins the reviewed policy, then validates
+repository names, Rust and Cargo build inputs, executable helpers, workflows,
+and recognized native packaging/build inputs. The exact tag checkout runs the
+same pinned fixture suite in the release-candidate workflow.
+
+There is no GTK/GStreamer application package to inspect yet, so this is not an
+artifact-compliance claim. Packaging work must add platform-specific checks at
+staging, native-import traversal, completed-tree inspection, and reopened final
+artifact inspection before any package is published. Self-contained bundles
+will stage a capability-derived, reviewed GStreamer plugin closure rather than
+an entire plugin distribution; that claim does not extend to distro-provided or
+shared runtimes. Ordinary codecs, containers, TLS, and general-purpose
+cryptography are outside this narrow deny policy and receive their own
+compatibility and distribution review. See the [release component
+policy](docs/release-component-policy.md) for the exact current and future
+enforcement boundary.
+
+Every new build system, dependency source, or package recipe must extend the
+input classifier and its negative fixtures in the same change. Input checking
+does not replace the mandatory native-import, completed-tree, and reopened
+artifact inspection required when application packages are introduced.
 
 ## Scope
 

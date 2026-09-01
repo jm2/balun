@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   topology-redacted fingerprint of the exact targets, tunnel bindings, route
   scopes, and packet policy, then issue only single-use, crash-reserved scan
   authority with deterministic cooldown and backoff transitions.
+- **Durable routed authority** — Persist only keyed fingerprints and bounded
+  policy state behind a private installation key, strict cross-process lock,
+  atomic durability barriers, semantic quarantine, global run sequencing,
+  exact revocation, and a topology-free revoke-all path.
+- **Fresh route gate** — Consume a durably active permit only after rebuilding
+  the exact proposal from a fresh route snapshot; reject every stable topology
+  or policy change, use only a fresh nonzero interface identity, and cap the
+  scan budget to the remaining reservation lease.
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.
@@ -41,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Release component input policy** — Add a shared, fail-closed optical-disc
+  and proprietary-DRM token policy, a reviewed-policy checksum,
+  protected-television module names relevant to HDHomeRun deployments,
+  bounded UTF-8 source/build-input validation, and adversarial fixtures in CI
+  and immutable-tag release checks. Staging, native-import, completed-tree,
+  and reopened-artifact enforcement remains mandatory when the GTK/GStreamer
+  packages are introduced.
 - **Bounded routed discovery** — Require an explicit RFC 1918 range no wider
   than `/24`, cap candidates and concurrency, rate-limit targeted starts, and
   keep point-to-point interfaces out of automatic local enumeration. Native
@@ -48,10 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and route-table precedence it cannot model safely.
 - **Fail-closed automatic authority** — Reject ambiguous tunnel origins,
   changed topology or traffic policy, stale and expired run completion,
-  and backward-clock shortcuts, while staging permit release behind explicit
-  durable-commit confirmation. Automatic route-derived traffic remains
-  disconnected until durable storage, fresh route revalidation, and pinned
-  egress land.
+  backward-clock shortcuts, uncertain durability, and revoked or replaced
+  active runs. Automatic route-derived traffic remains disconnected until
+  interface-pinned egress and pre-consumption cancellation registration land.
 - **Bounded lineup parsing** — Enforce the channel-row limit while
   deserializing lineup JSON so oversized responses cannot allocate every raw
   row before rejection.
@@ -76,5 +90,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   response buffer after use.
 - **Topology-redacted approvals** — Keep route summaries ephemeral and redact
   keys, fingerprints, targets, interface names, and prefixes from default
-  debug output; the planned store will retain only keyed fingerprints and
+  debug output; the durable store retains only keyed fingerprints and bounded
   policy metadata rather than raw route topology.

@@ -303,15 +303,25 @@ Initial route providers:
 
 Implementation status: the platform-neutral candidate policy, bounded routed
 target runner, conservative Linux rtnetlink provider, and pure remembered
-approval policy are present. Approval fingerprints bind the exact targets,
-tunnel identity, route scopes, and traffic policy without exposing topology in
-default diagnostics; single-use authority is held behind a crash reservation,
-clock high-water, cooldown, and backoff state machine. Route-derived execution
-remains deliberately disconnected from the diagnostic until the strict
-durable store, immediate exact route revalidation, and interface-pinned egress
-gate are complete. Native macOS and Windows providers remain pending; Windows
-automatic route scans also remain disabled until a safe unicast-interface
-binding API is available under Balun's no-unsafe policy.
+approval policy are present. The strict durable store retains only keyed
+fingerprints and bounded policy metadata, with private key storage,
+cross-process locking, atomic durability barriers, global run sequencing,
+quarantine, and topology-free revocation. Its store-owned fresh-snapshot gate
+requires the exact active fingerprint and run, rebuilds the complete proposal,
+permits only a transient interface-ID replacement, and caps work to the
+remaining lease. Route-derived execution remains deliberately disconnected
+from the diagnostic until Linux interface-pinned egress and pre-consumption
+network-change/revocation cancellation are complete.
+
+Native macOS and Windows automatic providers are intentionally unavailable,
+not merely stubbed. macOS needs a separately audited safe wrapper for bounded
+raw route data plus a conservative answer for scoped and per-application route
+policy. Windows needs a safe owned route-table wrapper, a supported way to
+prove the socket routing compartment, and LUID-bound tunnel identity; a
+mutable adapter name or generic virtual-adapter type is insufficient. Exact
+address and explicitly supplied private-range discovery remain available on
+those platforms. Neither provider may broaden or silently fall back when these
+proof obligations are unmet.
 
 For wider routed sites, the supported solutions are an exact address,
 operator-provided DNS record, explicit smaller range, or a future
@@ -417,8 +427,12 @@ HEVC, E-AC-3, ATSC 3.0, AC-4, captions, and alternate audio tracks should be
 reported through runtime capabilities. They are not promised until real
 cross-platform probes pass.
 
-DRM-tagged channels remain visible but unavailable. Balun will not bundle
-optical-disc, protected-path, or DRM-circumvention components.
+DRM-tagged channels remain visible but unavailable. Balun's shared
+[release component policy](release-component-policy.md) excludes dedicated
+optical-disc copy-control and proprietary-DRM components that this application
+does not use. The current repository/input gate is in CI; it is not a completed
+package claim and does not broadly deny ordinary codecs, containers, TLS, or
+general-purpose cryptography.
 
 ## 7. Guide data
 
@@ -549,6 +563,8 @@ Deliverables:
 - Versioned settings foundation.
 - README, changelog, contributing, security, issue/PR templates, and release
   documentation.
+- Checksum-pinned shared release-component policy plus deterministic, bounded
+  repository and packaging-input validation.
 - Fast Linux CI and macOS/Windows compile smoke jobs.
 
 Exit criteria:
@@ -584,7 +600,9 @@ Deliverables:
 - Multiple locator claims per stable DeviceID.
 - Fully separate lineups and ChannelKeys for every device.
 - Cached exact-address rediscovery.
-- Platform RouteProvider implementations.
+- Safe native RouteProvider implementations where the platform proof
+  obligations can be met, with an explicit unavailable reason and no broader
+  fallback everywhere else.
 - Approved, bounded tunnel scans with progress, cancel, cooldown, and backoff.
 - Debounced network-change handling.
 - Useful device and discovery diagnostics.
@@ -594,7 +612,8 @@ Exit criteria:
 - Local and remote tuners coexist without merged channel state.
 - The same tuner discovered through multiple paths appears once.
 - Loss of one locator does not remove a device with another valid claim.
-- A routed test demonstrates discovery within the documented traffic budget.
+- A routed test on every enabled provider demonstrates discovery within the
+  documented traffic budget; Linux is required for v0.1.
 - Route exclusions, candidate caps, and cancellation have deterministic tests.
 
 ### Milestone 4: Guide and usability
@@ -624,6 +643,14 @@ Deliverables:
 - Windows x86_64 portable ZIP and installer.
 - macOS arm64 DMG.
 - Runtime dependency closure and packaged probes.
+- Capability-derived GStreamer staging for self-contained bundles: include
+  only the reviewed HTTP, MPEG-TS, parser/decoder, and platform sink plugin
+  closure instead of copying a whole plugin distribution. Distribution-owned
+  and shared runtimes remain documented external boundaries, not an allowlist
+  claim.
+- Per-platform denied-component checks before staging, throughout native-import
+  dependency closure, over each completed app tree, and after reopening every
+  final artifact.
 - Exact artifact inventory, checksums, SBOM, and provenance.
 - Draft-release automation and release-check command.
 - User-focused release notes and known limitations.
@@ -631,6 +658,8 @@ Deliverables:
 Exit criteria:
 
 - Every artifact is reopened and tested after packaging.
+- Every platform loads the shared denied-component policy and fails closed if
+  its staging, import, tree, or reopened-artifact inspector cannot complete.
 - Tag, Cargo, lockfile, changelog, AppStream, and package versions agree.
 - No release is publicly visible until every required artifact validates.
 - Only the final publication job has release-write permission.
@@ -772,6 +801,10 @@ tests. Sanitized observations from completed rows are maintained in
 - Locked checks and tests for all targets and relevant features.
 - Exact MSRV job.
 - Dependency audit and policy checks.
+- Shared release-component policy integrity and repository/packaging-input
+  validation. Every new input family extends the classifier and its negative
+  fixtures in the same change. This is the current pre-package enforcement
+  boundary.
 - Desktop entry and AppStream validation.
 - Markdown, TOML, YAML, and GitHub Actions linting.
 - Linux debug and release tests.
@@ -795,6 +828,10 @@ deployed and tested.
 - Require an exact expected artifact inventory with no missing, extra, or
   duplicate files.
 - Reopen and validate every completed package.
+- Apply the shared component policy before staging, during native-import
+  traversal, to the completed app-owned tree, and again to the reopened final
+  package. These gates become mandatory in the same change that adds each
+  platform package.
 - Generate checksums, SBOM, and build provenance.
 - Grant write permission only to a final publication job that checks out no
   project source.
