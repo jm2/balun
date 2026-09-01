@@ -15,6 +15,7 @@
 mod gate;
 mod run;
 mod store;
+mod watch;
 
 use std::collections::BTreeSet;
 use std::fmt;

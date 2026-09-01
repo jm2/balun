@@ -5,26 +5,46 @@
 //! exclusive lock on a permanent sibling lock file; the authority JSON itself
 //! is replaced atomically and is never used as the lock object.
 //!
-//! The injected directory is also the lock-generation boundary. It must not be
-//! deleted, renamed, or recreated while any Balun process can use the store;
-//! live authority removal goes through [`ApprovalStore::revoke_all`] instead.
+//! The injected directory is also the lock-generation boundary. Live authority
+//! removal goes through [`ApprovalStore::revoke_all`] instead of deleting it.
+//! On Unix, Balun validates and pins that directory once, then resolves every
+//! permanent entry, temporary file, publication, and directory durability
+//! barrier relative to the same descriptor. Renaming the injected pathname or
+//! mounting a different directory over it therefore cannot redirect a running
+//! store to another authority topology.
+//!
+//! Permanent Unix files must also have exactly one link before and after they
+//! are opened and read. This rejects persistent aliases, but inotify and file
+//! metadata cannot make storage linearizable against every action by a hostile
+//! same-UID process. In particular, a retained writable mapping or a retained
+//! descriptor used to recreate an external hard-link alias can bypass a
+//! directory-only watch after the baseline. Production wiring must retain the
+//! sibling watcher for the full authority epoch; hostile same-UID actors and
+//! privileged namespace replacement remain outside this cooperative boundary.
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::fs::{self, File, OpenOptions, TryLockError};
+#[cfg(not(unix))]
+use std::fs::OpenOptions;
+use std::fs::{self, File, TryLockError};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+#[cfg(not(unix))]
 use tempfile::NamedTempFile;
 use thiserror::Error;
 use zeroize::{Zeroize, Zeroizing};
 
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 #[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
 #[cfg(windows)]
@@ -41,9 +61,9 @@ use super::{
     RoutedRunId, RoutedScanOutcome, RoutedScanPermit, RoutedScanProposal, RoutedScanTrigger,
 };
 
-const STATE_FILE_NAME: &str = "routed-approvals.json";
-const KEY_FILE_NAME: &str = "routed-approvals.key";
-const LOCK_FILE_NAME: &str = "routed-approvals.lock";
+pub(super) const STATE_FILE_NAME: &str = "routed-approvals.json";
+pub(super) const KEY_FILE_NAME: &str = "routed-approvals.key";
+pub(super) const LOCK_FILE_NAME: &str = "routed-approvals.lock";
 const STATE_SCHEMA_VERSION: u32 = 1;
 const MAX_STATE_BYTES: usize = 64 * 1024;
 const MAX_APPROVALS: usize = 8;
@@ -90,6 +110,385 @@ impl fmt::Debug for StorePaths {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("StorePaths(<redacted>)")
     }
+}
+
+/// The exact private-directory identity used by one running store.
+///
+/// Unix operations never reconstruct a child pathname from `StorePaths` after
+/// this value is created. The descriptor also stays alive in the Linux watch
+/// anchor, so `/proc/self/fd/<n>/.` cannot be retargeted through descriptor
+/// reuse while inotify resolves it.
+struct StoreDirectory {
+    #[cfg(unix)]
+    descriptor: File,
+    #[cfg(not(unix))]
+    path: PathBuf,
+}
+
+impl fmt::Debug for StoreDirectory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("StoreDirectory(<redacted>)")
+    }
+}
+
+struct StoreParent {
+    #[cfg(unix)]
+    descriptor: File,
+    #[cfg(not(unix))]
+    _private: (),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StoreEntryKind {
+    File,
+    Symlink,
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StoreEntryMetadata {
+    kind: StoreEntryKind,
+    private_file: bool,
+    #[cfg(unix)]
+    device: i128,
+    #[cfg(unix)]
+    inode: i128,
+}
+
+impl StoreEntryMetadata {
+    const fn is_file(self) -> bool {
+        matches!(self.kind, StoreEntryKind::File)
+    }
+
+    const fn is_symlink(self) -> bool {
+        matches!(self.kind, StoreEntryKind::Symlink)
+    }
+
+    const fn same_file(self, other: Self) -> bool {
+        #[cfg(unix)]
+        {
+            self.device == other.device && self.inode == other.inode
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = other;
+            true
+        }
+    }
+}
+
+#[cfg(unix)]
+struct StoreTemporary {
+    file: File,
+    directory: Arc<StoreDirectory>,
+    name: String,
+    published: bool,
+}
+
+#[cfg(not(unix))]
+struct StoreTemporary {
+    named: NamedTempFile,
+}
+
+#[cfg(unix)]
+impl StoreTemporary {
+    fn as_file(&self) -> &File {
+        &self.file
+    }
+}
+
+#[cfg(not(unix))]
+impl StoreTemporary {
+    fn as_file(&self) -> &File {
+        self.named.as_file()
+    }
+}
+
+#[cfg(unix)]
+impl Write for StoreTemporary {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.file.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
+#[cfg(unix)]
+impl Drop for StoreTemporary {
+    fn drop(&mut self) {
+        if !self.published {
+            let _ = rustix::fs::unlinkat(
+                &self.directory.descriptor,
+                self.name.as_str(),
+                rustix::fs::AtFlags::empty(),
+            );
+        }
+    }
+}
+
+#[cfg(not(unix))]
+impl Write for StoreTemporary {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.named.write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.named.flush()
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+pub(super) struct StoreDirectoryWatchAnchor(Arc<StoreDirectory>);
+
+#[cfg(target_os = "linux")]
+impl StoreDirectoryWatchAnchor {
+    pub(super) fn proc_fd_path(&self) -> PathBuf {
+        PathBuf::from(format!("/proc/self/fd/{}/.", self.0.descriptor.as_raw_fd()))
+    }
+
+    pub(super) fn path_matches_pinned_identity(&self, path: &Path) -> bool {
+        let Ok(path_metadata) = fs::metadata(path) else {
+            return false;
+        };
+        let Ok(pinned_metadata) = self.0.descriptor.metadata() else {
+            return false;
+        };
+        path_metadata.is_dir()
+            && pinned_metadata.is_dir()
+            && path_metadata.dev() == pinned_metadata.dev()
+            && path_metadata.ino() == pinned_metadata.ino()
+    }
+}
+
+#[cfg(unix)]
+static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+impl StoreDirectory {
+    #[cfg(unix)]
+    fn entry_metadata(&self, name: &str) -> io::Result<StoreEntryMetadata> {
+        let metadata = rustix::fs::statat(
+            &self.descriptor,
+            name,
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .map_err(io::Error::from)?;
+        Ok(unix_entry_metadata(&metadata))
+    }
+
+    #[cfg(not(unix))]
+    fn entry_metadata(&self, name: &str) -> io::Result<StoreEntryMetadata> {
+        let metadata = fs::symlink_metadata(self.path.join(name))?;
+        Ok(portable_entry_metadata(&metadata))
+    }
+
+    #[cfg(unix)]
+    fn opened_metadata(file: &File) -> io::Result<StoreEntryMetadata> {
+        let metadata = rustix::fs::fstat(file).map_err(io::Error::from)?;
+        Ok(unix_entry_metadata(&metadata))
+    }
+
+    #[cfg(not(unix))]
+    fn opened_metadata(file: &File) -> io::Result<StoreEntryMetadata> {
+        file.metadata()
+            .map(|metadata| portable_entry_metadata(&metadata))
+    }
+
+    #[cfg(unix)]
+    fn open_read(&self, name: &str) -> io::Result<File> {
+        rustix::fs::openat(
+            &self.descriptor,
+            name,
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NOFOLLOW,
+            rustix::fs::Mode::empty(),
+        )
+        .map(File::from)
+        .map_err(io::Error::from)
+    }
+
+    #[cfg(not(unix))]
+    fn open_read(&self, name: &str) -> io::Result<File> {
+        File::open(self.path.join(name))
+    }
+
+    #[cfg(unix)]
+    fn open_lock(&self, name: &str, create_new: bool) -> io::Result<File> {
+        let mut flags =
+            rustix::fs::OFlags::RDWR | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NOFOLLOW;
+        if create_new {
+            flags |= rustix::fs::OFlags::CREATE | rustix::fs::OFlags::EXCL;
+        }
+        rustix::fs::openat(
+            &self.descriptor,
+            name,
+            flags,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .map(File::from)
+        .map_err(io::Error::from)
+    }
+
+    #[cfg(not(unix))]
+    fn open_lock(&self, name: &str, create_new: bool) -> io::Result<File> {
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create_new(create_new);
+        configure_lock_sharing(&mut options);
+        options.open(self.path.join(name))
+    }
+
+    #[cfg(unix)]
+    fn create_temporary(self: &Arc<Self>) -> io::Result<StoreTemporary> {
+        const MAX_TEMPORARY_ATTEMPTS: usize = 128;
+        for _ in 0..MAX_TEMPORARY_ATTEMPTS {
+            let sequence = TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let name = format!(".routed-approvals.tmp.{}.{}", std::process::id(), sequence);
+            match rustix::fs::openat(
+                &self.descriptor,
+                name.as_str(),
+                rustix::fs::OFlags::RDWR
+                    | rustix::fs::OFlags::CREATE
+                    | rustix::fs::OFlags::EXCL
+                    | rustix::fs::OFlags::CLOEXEC
+                    | rustix::fs::OFlags::NOFOLLOW,
+                rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+            ) {
+                Ok(descriptor) => {
+                    let file = File::from(descriptor);
+                    set_private_file_permissions(&file)?;
+                    return Ok(StoreTemporary {
+                        file,
+                        directory: Arc::clone(self),
+                        name,
+                        published: false,
+                    });
+                }
+                Err(rustix::io::Errno::EXIST) => {}
+                Err(error) => return Err(io::Error::from(error)),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "approval-store temporary namespace is exhausted",
+        ))
+    }
+
+    #[cfg(not(unix))]
+    fn create_temporary(self: &Arc<Self>) -> io::Result<StoreTemporary> {
+        NamedTempFile::new_in(&self.path).map(|named| StoreTemporary { named })
+    }
+
+    #[cfg(unix)]
+    fn publish_replace(&self, mut temporary: StoreTemporary, name: &str) -> io::Result<()> {
+        rustix::fs::renameat(
+            &self.descriptor,
+            temporary.name.as_str(),
+            &self.descriptor,
+            name,
+        )
+        .map_err(io::Error::from)?;
+        temporary.published = true;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn publish_replace(&self, temporary: StoreTemporary, name: &str) -> io::Result<()> {
+        temporary
+            .named
+            .persist(self.path.join(name))
+            .map(|_| ())
+            .map_err(|error| error.error)
+    }
+
+    #[cfg(unix)]
+    fn publish_noclobber(&self, mut temporary: StoreTemporary, name: &str) -> io::Result<()> {
+        publish_noclobber_unix(self, temporary.name.as_str(), name)?;
+        temporary.published = true;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn publish_noclobber(&self, temporary: StoreTemporary, name: &str) -> io::Result<()> {
+        temporary
+            .named
+            .persist_noclobber(self.path.join(name))
+            .map(|_| ())
+            .map_err(|error| error.error)
+    }
+}
+
+#[cfg(unix)]
+fn unix_entry_metadata(metadata: &rustix::fs::Stat) -> StoreEntryMetadata {
+    let kind = match rustix::fs::FileType::from_raw_mode(metadata.st_mode) {
+        rustix::fs::FileType::RegularFile => StoreEntryKind::File,
+        rustix::fs::FileType::Symlink => StoreEntryKind::Symlink,
+        _ => StoreEntryKind::Other,
+    };
+    StoreEntryMetadata {
+        kind,
+        private_file: metadata.st_uid == rustix::process::geteuid().as_raw()
+            && metadata.st_mode & 0o7777 == 0o600
+            && metadata.st_nlink == 1,
+        device: i128::from(metadata.st_dev),
+        inode: i128::from(metadata.st_ino),
+    }
+}
+
+#[cfg(not(unix))]
+fn portable_entry_metadata(metadata: &fs::Metadata) -> StoreEntryMetadata {
+    let kind = if metadata.file_type().is_symlink() {
+        StoreEntryKind::Symlink
+    } else if metadata.is_file() {
+        StoreEntryKind::File
+    } else {
+        StoreEntryKind::Other
+    };
+    StoreEntryMetadata {
+        kind,
+        private_file: secure_file_metadata(metadata),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+fn publish_noclobber_unix(
+    directory: &StoreDirectory,
+    temporary_name: &str,
+    final_name: &str,
+) -> io::Result<()> {
+    rustix::fs::renameat_with(
+        &directory.descriptor,
+        temporary_name,
+        &directory.descriptor,
+        final_name,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(io::Error::from)
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "linux", target_os = "android", target_vendor = "apple"))
+))]
+fn publish_noclobber_unix(
+    directory: &StoreDirectory,
+    temporary_name: &str,
+    final_name: &str,
+) -> io::Result<()> {
+    rustix::fs::linkat(
+        &directory.descriptor,
+        temporary_name,
+        &directory.descriptor,
+        final_name,
+        rustix::fs::AtFlags::empty(),
+    )
+    .map_err(io::Error::from)?;
+    rustix::fs::unlinkat(
+        &directory.descriptor,
+        temporary_name,
+        rustix::fs::AtFlags::empty(),
+    )
+    .map_err(io::Error::from)
 }
 
 /// A topology-free view of the persisted authority.
@@ -300,6 +699,7 @@ pub(crate) struct ApprovalStore {
     paths: StorePaths,
     lock_timeout: Duration,
     backend: Arc<dyn StoreBackend>,
+    directory: Mutex<Option<Arc<StoreDirectory>>>,
 }
 
 impl ApprovalStore {
@@ -308,6 +708,7 @@ impl ApprovalStore {
             paths,
             lock_timeout: DEFAULT_LOCK_TIMEOUT,
             backend: Arc::new(SystemBackend),
+            directory: Mutex::new(None),
         }
     }
 
@@ -321,6 +722,7 @@ impl ApprovalStore {
             paths,
             lock_timeout: lock_timeout.min(MAX_LOCK_TIMEOUT),
             backend,
+            directory: Mutex::new(None),
         }
     }
 
@@ -675,42 +1077,42 @@ impl ApprovalStore {
     }
 
     fn read_state_locked(&self) -> Result<StateLoad, StoreError> {
-        let path = self.paths.state();
-        let metadata = match fs::symlink_metadata(&path) {
+        let directory = self.pinned_directory()?;
+        let metadata = match directory.entry_metadata(STATE_FILE_NAME) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(StateLoad::Missing),
             Err(_) => return Ok(StateLoad::Quarantined(QuarantineReason::StateUnreadable)),
         };
-        if metadata.file_type().is_symlink() {
+        if metadata.is_symlink() {
             return Ok(StateLoad::Quarantined(QuarantineReason::StateSymlink));
         }
         if !metadata.is_file() {
             return Ok(StateLoad::Quarantined(QuarantineReason::StateNotRegular));
         }
-        if !secure_file_metadata(&metadata) {
+        if !metadata.private_file {
             return Ok(StateLoad::Quarantined(
                 QuarantineReason::UnsafeStatePermissions,
             ));
         }
-        let file = match File::open(&path) {
+        let file = match directory.open_read(STATE_FILE_NAME) {
             Ok(file) => file,
             Err(_) => return Ok(StateLoad::Quarantined(QuarantineReason::StateUnreadable)),
         };
-        let opened = match file.metadata() {
+        let opened = match StoreDirectory::opened_metadata(&file) {
             Ok(metadata) => metadata,
             Err(_) => return Ok(StateLoad::Quarantined(QuarantineReason::StateUnreadable)),
         };
-        if !opened.is_file() || !same_file(&metadata, &opened) {
+        if !opened.is_file() || !metadata.same_file(opened) {
             return Ok(StateLoad::Quarantined(QuarantineReason::StateNotRegular));
         }
-        if !secure_file_metadata(&opened) {
+        if !opened.private_file {
             return Ok(StateLoad::Quarantined(
                 QuarantineReason::UnsafeStatePermissions,
             ));
         }
 
         let mut bytes = Vec::with_capacity(MAX_STATE_BYTES + 1);
-        if file
+        if (&file)
             .take((MAX_STATE_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
             .is_err()
@@ -719,6 +1121,18 @@ impl ApprovalStore {
         }
         if bytes.len() > MAX_STATE_BYTES {
             return Ok(StateLoad::Quarantined(QuarantineReason::StateTooLarge));
+        }
+        let after_read = match StoreDirectory::opened_metadata(&file) {
+            Ok(metadata) => metadata,
+            Err(_) => return Ok(StateLoad::Quarantined(QuarantineReason::StateUnreadable)),
+        };
+        if !after_read.is_file() || !opened.same_file(after_read) {
+            return Ok(StateLoad::Quarantined(QuarantineReason::StateNotRegular));
+        }
+        if !after_read.private_file {
+            return Ok(StateLoad::Quarantined(
+                QuarantineReason::UnsafeStatePermissions,
+            ));
         }
         let stored: StoredEnvelopeV1 = match serde_json::from_slice(&bytes) {
             Ok(stored) => stored,
@@ -731,37 +1145,37 @@ impl ApprovalStore {
     }
 
     fn read_key_locked(&self) -> Result<KeyLoad, StoreError> {
-        let path = self.paths.key();
-        let metadata = match fs::symlink_metadata(&path) {
+        let directory = self.pinned_directory()?;
+        let metadata = match directory.entry_metadata(KEY_FILE_NAME) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(KeyLoad::Missing),
             Err(_) => return Ok(KeyLoad::Quarantined(QuarantineReason::KeyUnreadable)),
         };
-        if metadata.file_type().is_symlink() {
+        if metadata.is_symlink() {
             return Ok(KeyLoad::Quarantined(QuarantineReason::KeySymlink));
         }
         if !metadata.is_file() {
             return Ok(KeyLoad::Quarantined(QuarantineReason::KeyNotRegular));
         }
-        if !secure_file_metadata(&metadata) {
+        if !metadata.private_file {
             return Ok(KeyLoad::Quarantined(QuarantineReason::UnsafeKeyPermissions));
         }
-        let file = match File::open(&path) {
+        let file = match directory.open_read(KEY_FILE_NAME) {
             Ok(file) => file,
             Err(_) => return Ok(KeyLoad::Quarantined(QuarantineReason::KeyUnreadable)),
         };
-        let opened = match file.metadata() {
+        let opened = match StoreDirectory::opened_metadata(&file) {
             Ok(metadata) => metadata,
             Err(_) => return Ok(KeyLoad::Quarantined(QuarantineReason::KeyUnreadable)),
         };
-        if !opened.is_file() || !same_file(&metadata, &opened) {
+        if !opened.is_file() || !metadata.same_file(opened) {
             return Ok(KeyLoad::Quarantined(QuarantineReason::KeyNotRegular));
         }
-        if !secure_file_metadata(&opened) {
+        if !opened.private_file {
             return Ok(KeyLoad::Quarantined(QuarantineReason::UnsafeKeyPermissions));
         }
         let mut bytes = Zeroizing::new(Vec::with_capacity(KEY_BYTES + 1));
-        if file
+        if (&file)
             .take((KEY_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
             .is_err()
@@ -771,12 +1185,23 @@ impl ApprovalStore {
         if bytes.len() != KEY_BYTES {
             return Ok(KeyLoad::Quarantined(QuarantineReason::InvalidKeyLength));
         }
+        let after_read = match StoreDirectory::opened_metadata(&file) {
+            Ok(metadata) => metadata,
+            Err(_) => return Ok(KeyLoad::Quarantined(QuarantineReason::KeyUnreadable)),
+        };
+        if !after_read.is_file() || !opened.same_file(after_read) {
+            return Ok(KeyLoad::Quarantined(QuarantineReason::KeyNotRegular));
+        }
+        if !after_read.private_file {
+            return Ok(KeyLoad::Quarantined(QuarantineReason::UnsafeKeyPermissions));
+        }
         let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
         key.copy_from_slice(&bytes);
         Ok(KeyLoad::Ready(key))
     }
 
     fn create_key_locked(&self) -> Result<Zeroizing<[u8; KEY_BYTES]>, StoreError> {
+        let directory = self.pinned_directory()?;
         let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
         self.backend
             .fill_random(&mut *key)
@@ -785,7 +1210,8 @@ impl ApprovalStore {
         self.backend
             .checkpoint(WriteCheckpoint::BeforeCreate)
             .map_err(|error| before_publication(StoreOperation::CreateTemporary, error))?;
-        let mut temporary = NamedTempFile::new_in(&self.paths.directory)
+        let mut temporary = directory
+            .create_temporary()
             .map_err(|error| before_publication(StoreOperation::CreateTemporary, error))?;
         set_private_file_permissions(temporary.as_file())
             .map_err(|error| before_publication(StoreOperation::CreateTemporary, error))?;
@@ -810,15 +1236,15 @@ impl ApprovalStore {
             .checkpoint(WriteCheckpoint::BeforePublish)
             .map_err(|error| before_publication(StoreOperation::Publish, error))?;
 
-        match temporary.persist_noclobber(self.paths.key()) {
-            Ok(_file) => {
+        match directory.publish_noclobber(temporary, KEY_FILE_NAME) {
+            Ok(()) => {
                 // A post-publication failure cannot make key replacement safe
                 // to retry. The visible immutable key remains authoritative.
                 let _ = self.backend.checkpoint(WriteCheckpoint::AfterPublish);
-                let _ = self.backend.sync_directory(&self.paths.directory);
+                let _ = self.backend.sync_directory(&directory);
                 Ok(key)
             }
-            Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 key.zeroize();
                 match self.read_key_locked()? {
                     KeyLoad::Ready(existing) => Ok(existing),
@@ -829,7 +1255,7 @@ impl ApprovalStore {
                     KeyLoad::Quarantined(reason) => Err(StoreError::Quarantined(reason)),
                 }
             }
-            Err(error) => Err(before_publication(StoreOperation::Publish, error.error)),
+            Err(error) => Err(before_publication(StoreOperation::Publish, error)),
         }
     }
 
@@ -849,10 +1275,12 @@ impl ApprovalStore {
             return Err(StoreError::SerializedStateTooLarge);
         }
 
+        let directory = self.pinned_directory()?;
         self.backend
             .checkpoint(WriteCheckpoint::BeforeCreate)
             .map_err(|error| before_publication(StoreOperation::CreateTemporary, error))?;
-        let mut temporary = NamedTempFile::new_in(&self.paths.directory)
+        let mut temporary = directory
+            .create_temporary()
             .map_err(|error| before_publication(StoreOperation::CreateTemporary, error))?;
         set_private_file_permissions(temporary.as_file())
             .map_err(|error| before_publication(StoreOperation::CreateTemporary, error))?;
@@ -876,9 +1304,9 @@ impl ApprovalStore {
         self.backend
             .checkpoint(WriteCheckpoint::BeforePublish)
             .map_err(|error| before_publication(StoreOperation::Publish, error))?;
-        let _published = temporary
-            .persist(self.paths.state())
-            .map_err(|error| before_publication(StoreOperation::Publish, error.error))?;
+        directory
+            .publish_replace(temporary, STATE_FILE_NAME)
+            .map_err(|error| before_publication(StoreOperation::Publish, error))?;
 
         if self
             .backend
@@ -889,7 +1317,7 @@ impl ApprovalStore {
                 durability: CommitDurability::Uncertain,
             });
         }
-        let durability = match self.backend.sync_directory(&self.paths.directory) {
+        let durability = match self.backend.sync_directory(&directory) {
             Ok(DirectorySync::Confirmed) => CommitDurability::Confirmed,
             Ok(DirectorySync::Unsupported) => CommitDurability::Unsupported,
             Err(_) => CommitDurability::Uncertain,
@@ -898,12 +1326,32 @@ impl ApprovalStore {
     }
 
     fn acquire_lock(&self) -> Result<StoreLock, StoreError> {
-        self.ensure_directory()?;
+        let directory = self.pinned_directory()?;
         let file = self.open_lock_file()?;
         let started = self.backend.monotonic_now();
         loop {
             match file.try_lock() {
-                Ok(()) => return Ok(StoreLock { file }),
+                Ok(()) => {
+                    let opened = StoreDirectory::opened_metadata(&file)
+                        .map_err(|_| StoreError::UnsafeLockFile)?;
+                    // A Unix lock path can be renamed while this descriptor is
+                    // waiting without changing its link count. Re-resolve the
+                    // permanent name only after acquisition so a replacement
+                    // inode cannot create a split lock generation.
+                    let entry = directory
+                        .entry_metadata(LOCK_FILE_NAME)
+                        .map_err(|_| StoreError::UnsafeLockFile)?;
+                    if !opened.is_file()
+                        || !opened.private_file
+                        || !entry.is_file()
+                        || !entry.private_file
+                        || !opened.same_file(entry)
+                    {
+                        let _ = file.unlock();
+                        return Err(StoreError::UnsafeLockFile);
+                    }
+                    return Ok(StoreLock { file });
+                }
                 Err(TryLockError::WouldBlock) => {
                     if self
                         .backend
@@ -922,7 +1370,126 @@ impl ApprovalStore {
         }
     }
 
-    fn ensure_directory(&self) -> Result<(), StoreError> {
+    fn pinned_directory(&self) -> Result<Arc<StoreDirectory>, StoreError> {
+        let mut pinned = self
+            .directory
+            .lock()
+            .map_err(|_| StoreError::DirectoryUnavailable)?;
+        if let Some(directory) = pinned.as_ref() {
+            validate_pinned_directory(directory)?;
+            return Ok(Arc::clone(directory));
+        }
+        let directory = Arc::new(self.open_store_directory()?);
+        *pinned = Some(Arc::clone(&directory));
+        Ok(directory)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn watch_anchor(&self) -> Result<StoreDirectoryWatchAnchor, StoreError> {
+        self.pinned_directory().map(StoreDirectoryWatchAnchor)
+    }
+
+    #[cfg(unix)]
+    fn open_store_directory(&self) -> Result<StoreDirectory, StoreError> {
+        use std::path::Component;
+
+        let parent = self
+            .paths
+            .directory
+            .parent()
+            .ok_or(StoreError::DirectoryUnavailable)?;
+        let Some(Component::Normal(directory_name)) = self.paths.directory.components().next_back()
+        else {
+            return Err(StoreError::DirectoryUnavailable);
+        };
+        let parent_metadata =
+            fs::symlink_metadata(parent).map_err(|_| StoreError::DirectoryUnavailable)?;
+        if parent_metadata.file_type().is_symlink()
+            || !parent_metadata.is_dir()
+            || !secure_parent_directory_metadata(&parent_metadata)
+        {
+            return Err(StoreError::UnsafeParentDirectory);
+        }
+
+        let parent_descriptor = rustix::fs::open(
+            parent,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|_| StoreError::DirectoryUnavailable)?;
+        let parent_file = File::from(parent_descriptor);
+        let opened_parent = parent_file
+            .metadata()
+            .map_err(|_| StoreError::DirectoryUnavailable)?;
+        if !opened_parent.is_dir()
+            || !same_file(&parent_metadata, &opened_parent)
+            || !secure_parent_directory_metadata(&opened_parent)
+        {
+            return Err(StoreError::UnsafeParentDirectory);
+        }
+
+        let created =
+            match rustix::fs::mkdirat(&parent_file, directory_name, rustix::fs::Mode::RWXU) {
+                Ok(()) => true,
+                Err(rustix::io::Errno::EXIST) => false,
+                Err(_) => return Err(StoreError::DirectoryUnavailable),
+            };
+        let entry = rustix::fs::statat(
+            &parent_file,
+            directory_name,
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .map_err(|_| StoreError::DirectoryUnavailable)?;
+        if !rustix::fs::FileType::from_raw_mode(entry.st_mode).is_dir()
+            || !secure_unix_directory_stat(&entry)
+        {
+            return Err(StoreError::UnsafeDirectory);
+        }
+
+        let descriptor = rustix::fs::openat(
+            &parent_file,
+            directory_name,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|_| StoreError::DirectoryUnavailable)?;
+        let directory_file = File::from(descriptor);
+        if created {
+            rustix::fs::fchmod(&directory_file, rustix::fs::Mode::RWXU)
+                .map_err(|_| StoreError::DirectoryUnavailable)?;
+        }
+        let opened =
+            rustix::fs::fstat(&directory_file).map_err(|_| StoreError::DirectoryUnavailable)?;
+        if !rustix::fs::FileType::from_raw_mode(opened.st_mode).is_dir()
+            || !same_unix_stat(&entry, &opened)
+            || !secure_unix_directory_stat(&opened)
+        {
+            return Err(StoreError::UnsafeDirectory);
+        }
+
+        let store_parent = StoreParent {
+            descriptor: parent_file,
+        };
+        match self.backend.sync_store_parent(&store_parent) {
+            Ok(DirectorySync::Confirmed) => {}
+            Ok(DirectorySync::Unsupported) => {
+                return Err(StoreError::DirectoryDurabilityUncertain);
+            }
+            Err(_) => return Err(StoreError::DirectoryDurabilityUncertain),
+        }
+        Ok(StoreDirectory {
+            descriptor: directory_file,
+        })
+    }
+
+    #[cfg(not(unix))]
+    fn open_store_directory(&self) -> Result<StoreDirectory, StoreError> {
         let parent = self
             .paths
             .directory
@@ -937,18 +1504,9 @@ impl ApprovalStore {
             return Err(StoreError::UnsafeParentDirectory);
         }
 
-        let mut builder = fs::DirBuilder::new();
-        // Only the final private directory may be created here. The injected
-        // parent is a caller-owned, pre-existing durability boundary; creating
-        // an ancestor chain would require fsyncing every new parent.
-        builder.recursive(false);
-        #[cfg(unix)]
-        builder.mode(0o700);
-        match builder.create(&self.paths.directory) {
-            Ok(()) => {
-                set_private_directory_permissions(&self.paths.directory)
-                    .map_err(|_| StoreError::DirectoryUnavailable)?;
-            }
+        match fs::create_dir(&self.paths.directory) {
+            Ok(()) => set_private_directory_permissions(&self.paths.directory)
+                .map_err(|_| StoreError::DirectoryUnavailable)?,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(_) => return Err(StoreError::DirectoryUnavailable),
         }
@@ -960,57 +1518,44 @@ impl ApprovalStore {
         {
             return Err(StoreError::UnsafeDirectory);
         }
-        match self.backend.sync_store_parent(parent) {
-            Ok(DirectorySync::Confirmed) => {}
-            #[cfg(not(unix))]
-            Ok(DirectorySync::Unsupported) => {}
-            #[cfg(unix)]
-            Ok(DirectorySync::Unsupported) => {
-                return Err(StoreError::DirectoryDurabilityUncertain);
-            }
+        let store_parent = StoreParent { _private: () };
+        match self.backend.sync_store_parent(&store_parent) {
+            Ok(DirectorySync::Confirmed | DirectorySync::Unsupported) => {}
             Err(_) => return Err(StoreError::DirectoryDurabilityUncertain),
         }
-        Ok(())
+        Ok(StoreDirectory {
+            path: self.paths.directory.clone(),
+        })
     }
 
     fn open_lock_file(&self) -> Result<File, StoreError> {
-        let path = self.paths.lock();
+        let directory = self.pinned_directory()?;
         loop {
-            match fs::symlink_metadata(&path) {
+            match directory.entry_metadata(LOCK_FILE_NAME) {
                 Ok(metadata) => {
-                    if metadata.file_type().is_symlink()
-                        || !metadata.is_file()
-                        || !secure_file_metadata(&metadata)
-                    {
+                    if metadata.is_symlink() || !metadata.is_file() || !metadata.private_file {
                         return Err(StoreError::UnsafeLockFile);
                     }
-                    let mut options = OpenOptions::new();
-                    options.read(true).write(true);
-                    configure_lock_sharing(&mut options);
-                    let file = options
-                        .open(&path)
+                    let file = directory
+                        .open_lock(LOCK_FILE_NAME, false)
                         .map_err(|error| before_publication(StoreOperation::Lock, error))?;
-                    let opened = file
-                        .metadata()
+                    let opened = StoreDirectory::opened_metadata(&file)
                         .map_err(|error| before_publication(StoreOperation::Lock, error))?;
-                    if !opened.is_file()
-                        || !same_file(&metadata, &opened)
-                        || !secure_file_metadata(&opened)
-                    {
+                    if !opened.is_file() || !metadata.same_file(opened) || !opened.private_file {
                         return Err(StoreError::UnsafeLockFile);
                     }
                     return Ok(file);
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    let mut options = OpenOptions::new();
-                    options.read(true).write(true).create_new(true);
-                    #[cfg(unix)]
-                    options.mode(0o600);
-                    configure_lock_sharing(&mut options);
-                    match options.open(&path) {
+                    match directory.open_lock(LOCK_FILE_NAME, true) {
                         Ok(file) => {
                             set_private_file_permissions(&file)
                                 .map_err(|error| before_publication(StoreOperation::Lock, error))?;
+                            let opened = StoreDirectory::opened_metadata(&file)
+                                .map_err(|error| before_publication(StoreOperation::Lock, error))?;
+                            if !opened.is_file() || !opened.private_file {
+                                return Err(StoreError::UnsafeLockFile);
+                            }
                             return Ok(file);
                         }
                         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -1068,10 +1613,8 @@ trait StoreBackend: Send + Sync {
     fn checkpoint(&self, _checkpoint: WriteCheckpoint) -> io::Result<()> {
         Ok(())
     }
-    fn sync_directory(&self, directory: &Path) -> io::Result<DirectorySync>;
-    fn sync_store_parent(&self, parent: &Path) -> io::Result<DirectorySync> {
-        self.sync_directory(parent)
-    }
+    fn sync_directory(&self, directory: &StoreDirectory) -> io::Result<DirectorySync>;
+    fn sync_store_parent(&self, parent: &StoreParent) -> io::Result<DirectorySync>;
 }
 
 struct SystemBackend;
@@ -1090,16 +1633,27 @@ impl StoreBackend for SystemBackend {
     }
 
     #[cfg(unix)]
-    fn sync_directory(&self, directory: &Path) -> io::Result<DirectorySync> {
-        File::open(directory)?.sync_all()?;
+    fn sync_directory(&self, directory: &StoreDirectory) -> io::Result<DirectorySync> {
+        directory.descriptor.sync_all()?;
         Ok(DirectorySync::Confirmed)
     }
 
     #[cfg(not(unix))]
-    fn sync_directory(&self, _directory: &Path) -> io::Result<DirectorySync> {
+    fn sync_directory(&self, _directory: &StoreDirectory) -> io::Result<DirectorySync> {
         // std does not expose a reliable portable parent-directory flush on
         // Windows. Callers may observe state, but reserve never releases a
         // permit at this durability level.
+        Ok(DirectorySync::Unsupported)
+    }
+
+    #[cfg(unix)]
+    fn sync_store_parent(&self, parent: &StoreParent) -> io::Result<DirectorySync> {
+        parent.descriptor.sync_all()?;
+        Ok(DirectorySync::Confirmed)
+    }
+
+    #[cfg(not(unix))]
+    fn sync_store_parent(&self, _parent: &StoreParent) -> io::Result<DirectorySync> {
         Ok(DirectorySync::Unsupported)
     }
 }
@@ -1348,18 +1902,45 @@ fn has_unexpired_active(ledger: &mut ApprovalLedger, now: RoutedPolicyTime) -> b
 }
 
 #[cfg(unix)]
-fn secure_file_metadata(metadata: &fs::Metadata) -> bool {
-    metadata.uid() == rustix::process::geteuid().as_raw() && metadata.mode() & 0o7777 == 0o600
+fn validate_pinned_directory(directory: &StoreDirectory) -> Result<(), StoreError> {
+    let metadata =
+        rustix::fs::fstat(&directory.descriptor).map_err(|_| StoreError::DirectoryUnavailable)?;
+    if rustix::fs::FileType::from_raw_mode(metadata.st_mode).is_dir()
+        && secure_unix_directory_stat(&metadata)
+    {
+        Ok(())
+    } else {
+        Err(StoreError::UnsafeDirectory)
+    }
+}
+
+#[cfg(not(unix))]
+fn validate_pinned_directory(directory: &StoreDirectory) -> Result<(), StoreError> {
+    let metadata =
+        fs::symlink_metadata(&directory.path).map_err(|_| StoreError::DirectoryUnavailable)?;
+    if !metadata.file_type().is_symlink()
+        && metadata.is_dir()
+        && secure_directory_metadata(&metadata)
+    {
+        Ok(())
+    } else {
+        Err(StoreError::UnsafeDirectory)
+    }
+}
+
+#[cfg(unix)]
+fn secure_unix_directory_stat(metadata: &rustix::fs::Stat) -> bool {
+    metadata.st_uid == rustix::process::geteuid().as_raw() && metadata.st_mode & 0o7777 == 0o700
+}
+
+#[cfg(unix)]
+fn same_unix_stat(first: &rustix::fs::Stat, second: &rustix::fs::Stat) -> bool {
+    first.st_dev == second.st_dev && first.st_ino == second.st_ino
 }
 
 #[cfg(not(unix))]
 fn secure_file_metadata(_metadata: &fs::Metadata) -> bool {
     true
-}
-
-#[cfg(unix)]
-fn secure_directory_metadata(metadata: &fs::Metadata) -> bool {
-    metadata.uid() == rustix::process::geteuid().as_raw() && metadata.mode() & 0o7777 == 0o700
 }
 
 #[cfg(not(unix))]
@@ -1397,11 +1978,6 @@ fn set_private_file_permissions(_file: &File) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn set_private_directory_permissions(directory: &Path) -> io::Result<()> {
-    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-}
-
 #[cfg(not(unix))]
 fn set_private_directory_permissions(_directory: &Path) -> io::Result<()> {
     Ok(())
@@ -1414,14 +1990,21 @@ fn configure_lock_sharing(options: &mut OpenOptions) {
     options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(unix), not(windows)))]
 fn configure_lock_sharing(_options: &mut OpenOptions) {}
 
 #[cfg(test)]
 mod tests {
     use std::env;
+    use std::fs::OpenOptions;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
     use std::process::Command;
+    #[cfg(target_os = "linux")]
+    use std::sync::Barrier;
     use std::sync::Mutex;
+    #[cfg(target_os = "linux")]
+    use std::sync::atomic::AtomicBool;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use ipnet::IpNet;
@@ -1503,7 +2086,7 @@ mod tests {
             }
         }
 
-        fn sync_directory(&self, _directory: &Path) -> io::Result<DirectorySync> {
+        fn sync_directory(&self, _directory: &StoreDirectory) -> io::Result<DirectorySync> {
             match *self.directory_sync.lock().expect("test directory lock") {
                 TestDirectorySync::Confirmed => Ok(DirectorySync::Confirmed),
                 TestDirectorySync::Unsupported => Ok(DirectorySync::Unsupported),
@@ -1511,7 +2094,7 @@ mod tests {
             }
         }
 
-        fn sync_store_parent(&self, _parent: &Path) -> io::Result<DirectorySync> {
+        fn sync_store_parent(&self, _parent: &StoreParent) -> io::Result<DirectorySync> {
             match *self
                 .store_parent_sync
                 .lock()
@@ -1523,6 +2106,64 @@ mod tests {
                     Err(io::Error::other("injected store-parent sync failure"))
                 }
             }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    struct LockWaitBackend {
+        first_wait: AtomicBool,
+        waiter_entered: Barrier,
+        resume_waiter: Barrier,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl LockWaitBackend {
+        fn new() -> Self {
+            Self {
+                first_wait: AtomicBool::new(false),
+                waiter_entered: Barrier::new(2),
+                resume_waiter: Barrier::new(2),
+            }
+        }
+
+        fn wait_until_contended(&self) {
+            self.waiter_entered.wait();
+        }
+
+        fn resume(&self) {
+            self.resume_waiter.wait();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl StoreBackend for LockWaitBackend {
+        fn fill_random(&self, output: &mut [u8]) -> Result<(), ()> {
+            output.fill(0x5a);
+            Ok(())
+        }
+
+        fn monotonic_now(&self) -> Instant {
+            Instant::now()
+        }
+
+        fn sleep(&self, duration: Duration) {
+            if self
+                .first_wait
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                self.waiter_entered.wait();
+                self.resume_waiter.wait();
+            }
+            thread::sleep(duration);
+        }
+
+        fn sync_directory(&self, _directory: &StoreDirectory) -> io::Result<DirectorySync> {
+            Ok(DirectorySync::Confirmed)
+        }
+
+        fn sync_store_parent(&self, _parent: &StoreParent) -> io::Result<DirectorySync> {
+            Ok(DirectorySync::Confirmed)
         }
     }
 
@@ -2058,6 +2699,69 @@ mod tests {
         fs::remove_file(store.paths.state()).unwrap();
         fs::create_dir(store.paths.state()).unwrap();
         assert_quarantined(&store, QuarantineReason::StateNotRegular);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permanent_store_files_with_hard_link_aliases_are_refused() {
+        let (temporary, store, _backend) = test_store();
+        initialize_key(&store);
+
+        let state_alias = temporary.path().join("state-alias");
+        fs::hard_link(store.paths.state(), &state_alias).unwrap();
+        assert_quarantined(&store, QuarantineReason::UnsafeStatePermissions);
+        fs::remove_file(state_alias).unwrap();
+
+        let key_alias = temporary.path().join("key-alias");
+        fs::hard_link(store.paths.key(), &key_alias).unwrap();
+        assert_quarantined(&store, QuarantineReason::UnsafeKeyPermissions);
+        fs::remove_file(key_alias).unwrap();
+
+        let lock_alias = temporary.path().join("lock-alias");
+        fs::hard_link(store.paths.lock(), &lock_alias).unwrap();
+        assert_eq!(store.load().unwrap_err(), StoreError::UnsafeLockFile);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pathname_replacement_cannot_redirect_a_pinned_store() {
+        let (temporary, store, _backend) = test_store();
+        let first = proposal(&store, "172.31.90.8/30", 7);
+        assert!(approve(&store, &first, 10).is_confirmed());
+
+        let injected_path = store.paths.directory.clone();
+        let pinned_path = temporary.path().join("renamed-pinned-store");
+        fs::rename(&injected_path, &pinned_path).unwrap();
+        fs::create_dir(&injected_path).unwrap();
+        fs::set_permissions(&injected_path, fs::Permissions::from_mode(0o700)).unwrap();
+        write_private(&injected_path.join(KEY_FILE_NAME), &[0x33; KEY_BYTES]);
+        let replacement_state = b"{ replacement topology }";
+        write_private(&injected_path.join(STATE_FILE_NAME), replacement_state);
+
+        assert_eq!(
+            store.load().unwrap(),
+            ApprovalStoreStatus::Ready {
+                approval_count: 1,
+                has_active_reservation: false,
+            }
+        );
+        let second = proposal(&store, "172.31.91.8/30", 8);
+        assert!(approve(&store, &second, 20).is_confirmed());
+        assert_eq!(
+            store.load().unwrap(),
+            ApprovalStoreStatus::Ready {
+                approval_count: 2,
+                has_active_reservation: false,
+            }
+        );
+
+        // The replacement path is never opened, locked, or published through.
+        assert_eq!(
+            read(&injected_path.join(STATE_FILE_NAME)),
+            replacement_state
+        );
+        assert!(!injected_path.join(LOCK_FILE_NAME).exists());
+        assert_ne!(read(&pinned_path.join(STATE_FILE_NAME)), replacement_state);
     }
 
     #[test]
@@ -2677,6 +3381,45 @@ mod tests {
             store.load(),
             Ok(ApprovalStoreStatus::Missing { .. })
         ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn lock_replacement_while_waiting_is_refused_after_acquisition() {
+        let temporary = tempfile::tempdir().unwrap();
+        let backend = Arc::new(LockWaitBackend::new());
+        let store = Arc::new(ApprovalStore::with_backend(
+            StorePaths::new(temporary.path().join("private")),
+            Duration::from_secs(2),
+            backend.clone(),
+        ));
+        assert!(matches!(
+            store.load(),
+            Ok(ApprovalStoreStatus::Missing { .. })
+        ));
+
+        let lock_path = store.paths.lock();
+        let holder = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        holder.try_lock().unwrap();
+
+        let waiter_store = Arc::clone(&store);
+        let waiter = thread::spawn(move || waiter_store.load());
+        backend.wait_until_contended();
+
+        let displaced_lock = store.paths.directory.join("displaced-lock");
+        fs::rename(&lock_path, displaced_lock).unwrap();
+        write_private(&lock_path, b"");
+        drop(holder);
+        backend.resume();
+
+        assert_eq!(
+            waiter.join().expect("lock waiter thread").unwrap_err(),
+            StoreError::UnsafeLockFile
+        );
     }
 
     #[test]

@@ -306,7 +306,11 @@ target runner, conservative Linux rtnetlink provider, and pure remembered
 approval policy are present. The strict durable store retains only keyed
 fingerprints and bounded policy metadata, with private key storage,
 cross-process locking, atomic durability barriers, global run sequencing,
-quarantine, and topology-free revocation. Its store-owned fresh-snapshot gate
+quarantine, and topology-free revocation. Unix store operations are bound to
+one validated directory descriptor, while a separate Linux inotify observer
+uses that same identity and brackets exact store rereads with complete bounded
+drains. The observer remains an unwired foundation and cannot yet authorize
+traffic. The store-owned fresh-snapshot gate
 requires the exact active fingerprint and run, rebuilds the complete proposal,
 permits only a transient interface-ID replacement, and caps work to the
 remaining lease. The Linux socket factory now performs one interface pin plus
@@ -318,12 +322,13 @@ authority onto one non-extending monotonic deadline. Post-reserve failure or
 abandonment deliberately retains the crash-conservative durable reservation.
 
 Route-derived execution remains disconnected from the diagnostic. Production
-wiring still requires a non-cloneable live route-observer session, a separate
-cross-process approval-store observer, both healthy epochs retained through
-the run, final socket/route/deadline validation immediately before each send,
-and a consuming runner which stops all packet work before completing the exact
-durable run with a fresh paired clock sample. No partial implementation may
-fall back to an unpinned or unmonitored socket.
+wiring still requires one controller to own non-cloneable route and approval-
+store observer sessions, activate only a baseline proven by both observers,
+retain both healthy epochs through the run, perform final
+socket/route/deadline validation immediately before each send, and use a
+consuming runner which stops all packet work before completing the exact durable
+run with a fresh paired clock sample. No partial implementation may fall back
+to an unpinned or unmonitored socket.
 
 Native macOS and Windows automatic providers are intentionally unavailable,
 not merely stubbed. macOS needs a separately audited safe wrapper for bounded

@@ -46,7 +46,9 @@ program information, and a live-video area.
   reserves single-use scan authority before it can be released.
 - A private, bounded approval store with cross-process locking, atomic durable
   reservations, strict quarantine, global run sequencing, exact and revoke-all
-  controls, and no persisted raw topology.
+  controls, and no persisted raw topology. Unix processes pin one validated
+  directory descriptor for all store operations and reject persistent aliases
+  of permanent files.
 - A packet-free fresh-route gate that consumes the stored authority, permits
   only a transient interface-ID replacement, and caps work to the remaining
   reservation lease. No automatic socket runner is connected yet.
@@ -54,6 +56,10 @@ program information, and a live-video area.
   before a route snapshot, authenticates kernel senders, applies strict
   drain/barrier budgets, coalesces reconciliation, and invalidates authority
   before notification. It remains deliberately unwired.
+- A separate fail-closed Linux approval-store observer building block that
+  watches the exact directory descriptor used by the store, sandwiches each
+  reread between complete inotify drains, and invalidates on permanent-entry
+  mutation or observation loss. It also remains deliberately unwired.
 - GTK-free library boundaries and deterministic fake-device tests.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
@@ -110,10 +116,10 @@ fresh interface after name/index readback, and a packet-free admission boundary
 registers invalidation before reserve and carries one non-extending monotonic
 deadline. Neither capability exposes an automatic send path yet. Route-derived
 targets remain disconnected from the diagnostic until a live route-observer
-session owns the route-event monitor, a separate cross-process approval-store
-observer is complete, final pre-send revalidation is serialized, and a
-consuming runner has exact completion ownership. Installing the provider does
-not silently enumerate a network.
+session and a separate approval-store observer session are coordinated into one
+incarnation, final pre-send revalidation is serialized, and a consuming runner
+has exact completion ownership. Installing the provider does not silently
+enumerate a network.
 
 Press `Ctrl+C` to cancel discovery.
 

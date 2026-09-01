@@ -35,7 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Durable routed authority** — Persist only keyed fingerprints and bounded
   policy state behind a private installation key, strict cross-process lock,
   atomic durability barriers, semantic quarantine, global run sequencing,
-  exact revocation, and a topology-free revoke-all path.
+  exact revocation, and a topology-free revoke-all path; on Unix, pin all
+  operations to one validated directory descriptor and reject persistent
+  aliases of permanent entries.
 - **Fresh route gate** — Consume a durably active permit only after rebuilding
   the exact proposal from a fresh route snapshot; reject every stable topology
   or policy change, use only a fresh nonzero interface identity, and cap the
@@ -52,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linux route-event monitor** — Add an unwired rtnetlink observer foundation
   with subscribe-before-snapshot barriers, strict work bounds, coalesced
   reconciliation, and invalidate-before-notify behavior.
+- **Linux approval-store observer** — Add an unwired inotify foundation bound
+  to the store's exact pinned directory, with subscribe/read/drain baselines,
+  bounded event work, and fail-closed permanent-entry invalidation.
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.
@@ -94,8 +99,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backward-clock shortcuts, uncertain durability, and revoked or replaced
   active runs. The sealed Linux socket and packet-free admission foundations
   are present, but automatic route-derived traffic remains disconnected until
-  live observer-session provenance, cross-process store observation, final
-  pre-send revalidation, and consuming-runner completion land.
+  route and store observer sessions are coordinated into one incarnation,
+  final pre-send revalidation is serialized, and consuming-runner completion
+  lands.
 - **Authenticated route invalidation** — Accept Linux route notifications only
   from the kernel sender address, preflight every untrusted frame and attribute
   length without third-party payload logging, and poison authority on overflow,
