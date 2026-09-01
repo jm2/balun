@@ -283,7 +283,7 @@ expect_log 'cargo <clippy> <--all-targets> <--locked> <--> <-D> <warnings>'
 
 run_helper --coverage
 expect_status 0
-expect_log $'cargo <llvm-cov> <--version>\ncargo <llvm-cov> <--all-targets> <--all-features> <--locked> <--summary-only>'
+expect_log $'cargo <llvm-cov> <--version>\ncargo <llvm-cov> <--all-targets> <--no-default-features> <--locked> <--summary-only>'
 
 fake_coverage_version='cargo-llvm-cov 9.9.9'
 run_helper --coverage

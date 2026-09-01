@@ -557,6 +557,13 @@ Tributary's currently proven GTK 4.16/libadwaita 1.6 and platform bundle
 setup are the initial reference. Balun may lower that floor if its smaller UI
 can do so without fragmenting the bundle and CI matrix.
 
+Implementation status: the first desktop shell declares GTK 4.16 and
+libadwaita 1.6 as its API floors. The feature-gated binary is compiled and
+linted in a Fedora desktop job while default library and diagnostic builds
+remain GTK-free. Native macOS and Windows desktop SDK compilation and runtime
+smoke tests remain pending; their current CI lanes continue to prove the
+headless core on those targets.
+
 Every completed package must run an exact runtime probe for:
 
 - GTK and libadwaita initialization.
@@ -612,6 +619,14 @@ Exit criteria:
 - The application opens and shuts down cleanly on all targets.
 - Core modules can be unit-tested without GTK.
 - Formatting, strict linting, locked tests, metadata checks, and audit pass.
+
+Implementation status: an opt-in thin desktop binary now constructs the exact
+Balun application identity and an adaptive nested device/channel/player shell.
+It performs no network or playback work. The GTK-free library and diagnostic
+remain the default build, and Linux desktop/MSRV compilation is enforced in
+CI. The bounded Tokio/GLib bridge, settings, documentation templates, native
+macOS/Windows desktop checks, and runtime smoke tests are still required to
+complete this milestone.
 
 ### Milestone 2: Playable vertical slice
 
@@ -848,6 +863,7 @@ tests. Sanitized observations from completed rows are maintained in
 - Desktop entry and AppStream validation.
 - Markdown, TOML, YAML, and GitHub Actions linting.
 - Linux debug and release tests.
+- Linux GTK desktop compile and strict-lint checks.
 - macOS and Windows compile smoke tests.
 - Concurrency cancellation for superseded branch runs.
 

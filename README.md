@@ -7,13 +7,14 @@ A lightweight cross-platform HDHomeRun live TV viewer
 
 Balun is a greenfield Rust, GTK 4, libadwaita, and GStreamer application for
 watching unprotected live television from one or more HDHomeRun devices. Each
-device will keep its own channel lineup: the planned main window has a narrow
-device sidebar, a second sidebar for that device's channels and available
-program information, and a live-video area.
+device will keep its own channel lineup: the main window is structured with a
+narrow device sidebar, a second sidebar for that device's channels and
+available program information, and a live-video area.
 
-> **Pre-alpha status:** the repository currently contains the GTK-free
-> discovery, device-registry, and lineup foundation plus a diagnostic command.
-> It does not yet contain the desktop viewer, EPG, or playback implementation.
+> **Pre-alpha status:** the repository contains a runnable GTK development
+> shell plus the GTK-free discovery, device-registry, and lineup foundation.
+> Discovery is not connected to the window yet, and EPG and playback remain
+> unimplemented.
 
 ## Current foundation
 
@@ -76,6 +77,9 @@ program information, and a live-video area.
   both actors, coalesces replacement events, and retires synchronously before
   joining both actors. No production controller replaces that pair yet.
 - GTK-free library boundaries and deterministic fake-device tests.
+- An opt-in GTK 4/libadwaita development shell with adaptive, separate device
+  and channel sidebars plus a live-TV empty state. It starts no network or
+  playback work and keeps the core library and diagnostic GTK-free.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
 hardware-validation, packaging, and release boundaries, is in
@@ -140,10 +144,24 @@ Installing the provider does not silently enumerate a network.
 
 Press `Ctrl+C` to cancel discovery.
 
+## Try the desktop shell
+
+The first desktop slice requires GTK 4.16 or newer and libadwaita 1.6 or
+newer. With those development libraries and `pkg-config` available, launch it
+with:
+
+```bash
+cargo run --locked --features desktop --bin balun
+```
+
+This opens Balun's adaptive device, channel, and live-TV panes. The empty
+states are intentional: this slice does not start discovery, allocate a tuner,
+or construct a media pipeline.
+
 ## Development
 
-The headless foundation has no GTK or GStreamer build dependency yet. Run the
-same core checks used by CI with:
+The default feature set remains GTK- and GStreamer-free. Run the same core
+checks used by CI with:
 
 ```bash
 cargo fmt --all -- --check
@@ -152,13 +170,14 @@ cargo test --all-targets --locked
 cargo test --release --all-targets --locked
 ```
 
-CI verifies the declared Rust 1.94 minimum, runs strict Linux debug and release
-checks, and compile-checks the headless code on macOS and Windows. The release
-candidate workflow accepts an existing annotated, v-prefixed Semantic Version
-tag, verifies it against `Cargo.toml` and `CHANGELOG.md`, and builds the exact
-tag commit on all three platforms. It intentionally produces internal
-diagnostic workflow artifacts only; application packages and public artifact
-publication begin with the playable GTK/GStreamer slice.
+CI verifies the declared Rust 1.94 minimum across the desktop feature, runs
+strict Linux headless debug and release checks, compiles, links, and lints the
+Linux desktop shell, and compile-checks the headless code on macOS and Windows.
+The release candidate workflow accepts an existing annotated, v-prefixed
+Semantic Version tag, verifies it against `Cargo.toml` and `CHANGELOG.md`, and
+builds the exact tag commit on all three platforms. It intentionally produces
+internal diagnostic workflow artifacts only; application packages and public
+artifact publication begin with the playable GTK/GStreamer slice.
 
 The Tributary-derived Linux helper currently builds and inspects only the
 headless diagnostic. Its package switches fail before starting build or

@@ -2,8 +2,8 @@
 # Balun — Linux headless diagnostic build helper
 #
 # This intentionally stops at the current, reviewable Balun deliverable:
-# balun-discover. GUI and native/Flatpak package modes remain unavailable until
-# their recipes, assets, runtime closure, and artifact gates land together.
+# balun-discover. Native/Flatpak package modes remain unavailable until their
+# recipes, assets, runtime closure, and artifact gates land together.
 
 set -euo pipefail
 
@@ -30,7 +30,7 @@ Quick-exit modes (choose at most one):
   --fmt             Run cargo fmt across the workspace.
   --check           Check all targets with the locked dependency graph.
   --clippy          Lint all targets with warnings denied and dependencies locked.
-  --coverage        Print an all-target/all-feature coverage summary; requires
+  --coverage        Print a GTK-free all-target coverage summary; requires
                     cargo-llvm-cov 0.8.7 to be installed already.
 
 Unavailable until their complete recipes and policy gates land:
@@ -127,7 +127,7 @@ case "$mode" in
             fail "Coverage requires preinstalled $coverage_version exactly; this helper will not install or replace tools."
         fi
         info "Running informational coverage with $coverage_version..."
-        cargo llvm-cov --all-targets --all-features --locked --summary-only
+        cargo llvm-cov --all-targets --no-default-features --locked --summary-only
         exit 0
         ;;
     build)

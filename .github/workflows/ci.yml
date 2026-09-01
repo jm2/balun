@@ -74,7 +74,14 @@ jobs:
     # Cargo.toml's declared floor is rustc 1.94.
     name: MSRV
     runs-on: ubuntu-24.04
+    container:
+      image: fedora:44
     steps:
+      - name: Install desktop build dependencies (Fedora)
+        run: >-
+          dnf install -y gcc gtk4-devel libadwaita-devel
+          pkgconf-pkg-config git curl
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -84,8 +91,38 @@ jobs:
         with:
           toolchain: 1.94.0
 
-      - name: Check all targets with the declared minimum
-        run: cargo check --all-targets --locked
+      - name: Check all targets and features with the declared minimum
+        run: cargo check --all-targets --all-features --locked
+
+  desktop:
+    name: Linux desktop
+    runs-on: ubuntu-24.04
+    container:
+      image: fedora:44
+    steps:
+      - name: Install desktop build dependencies (Fedora)
+        run: >-
+          dnf install -y gcc gtk4-devel libadwaita-devel
+          pkgconf-pkg-config git curl
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Check desktop shell
+        run: cargo check --locked --features desktop --bin balun
+
+      - name: Lint desktop shell
+        run: cargo clippy --locked --features desktop --bin balun -- -D warnings
+
+      - name: Build desktop shell
+        run: cargo build --locked --features desktop --bin balun
 
   platform-smoke:
     name: ${{ matrix.name }} compile smoke

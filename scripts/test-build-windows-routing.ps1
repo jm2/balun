@@ -286,7 +286,7 @@ exit $global:LASTEXITCODE
     Assert-ExpectedStatus 0
     Assert-ExpectedLog (
         "cargo <llvm-cov> <--version>`n" +
-        'cargo <llvm-cov> <--all-targets> <--all-features> <--locked> ' +
+        'cargo <llvm-cov> <--all-targets> <--no-default-features> <--locked> ' +
         '<--target> <x86_64-pc-windows-msvc> <--summary-only>'
     )
 

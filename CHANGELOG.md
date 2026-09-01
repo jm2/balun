@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GTK development shell** — Add an opt-in `balun` desktop binary using GTK 4
+  and libadwaita at Tributary's proven API floors, with adaptive nested device,
+  channel, and live-TV panes, truthful packet-free empty states, exact
+  application identity, Linux desktop compile/link/lint coverage, and MSRV
+  checking without adding GTK to the default library or diagnostic build.
 - **Headless discovery foundation** — Add the initial Rust library and
   `balun-discover` diagnostic for ordinary local discovery, exact-address
   probes, and explicitly approved routed discovery.

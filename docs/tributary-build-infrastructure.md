@@ -62,7 +62,7 @@ final artifact reopening for that format.
 
 | Tributary file | Status and landing condition |
 | --- | --- |
-| `build-linux.sh` | Adapted for the current headless diagnostic; GUI and native/Flatpak package modes fail before build work until their complete gates land |
+| `build-linux.sh` | Adapted for the current headless diagnostic; native/Flatpak package modes fail before build work until their complete gates land |
 | `build-macos.sh` | Adapted for the current native headless diagnostic and pinned Mach-O inspection; app, DMG, signing, and notarization modes fail before external work until their complete gates land |
 | `build-windows.ps1` | Adapted for the current headless diagnostic; bundle, ZIP, Inno, update, and launch paths fail before external work until their complete gates land |
 | `macos-icon-bundle-policy.sh` | Adapted preparatory helper with Balun identity/temp names |
@@ -78,6 +78,11 @@ headless Linux, macOS, and Windows helpers. Tributary has no equivalent
 scripts, so `test-build-linux-policy.sh`, `test-build-macos-policy.sh`, and
 `test-build-windows-routing.ps1` are new, narrow responsibilities rather than
 renamed upstream ports.
+
+All three developer helpers keep their default build and coverage routes
+explicitly headless after the optional `desktop` feature was introduced. The
+desktop shell is built directly with Cargo until each platform helper gains a
+reviewed application-binary route without implying a bundle or package.
 
 The compiler proposal manifest lives at
 `build-aux/toolchain/rust-toolchain.toml`. Dependabot supports a configured

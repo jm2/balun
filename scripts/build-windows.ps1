@@ -34,14 +34,14 @@
     Test all targets with Cargo's locked dependency graph, then exit.
 
 .PARAMETER Coverage
-    Print an all-target/all-feature coverage summary. Requires preinstalled
+    Print a headless all-target coverage summary. Requires preinstalled
     cargo-llvm-cov 0.8.7 and its compiler support; nothing is installed.
 
 .PARAMETER Bundle
-    Unavailable until Balun has a reviewed GUI executable and runtime closure.
+    Unavailable until Balun has a reviewed packaged-GUI runtime closure.
 
 .PARAMETER Zip
-    Unavailable until Balun has a reviewed GUI executable and runtime closure.
+    Unavailable until Balun has a reviewed packaged-GUI runtime closure.
 
 .PARAMETER InnoSetup
     Unavailable until Balun has a reviewed installer recipe and artifact gates.
@@ -296,7 +296,7 @@ try {
         $CargoArguments = @(
             'llvm-cov',
             '--all-targets',
-            '--all-features',
+            '--no-default-features',
             '--locked'
         ) + $TargetArguments + @('--summary-only')
         Invoke-Cargo $CargoCommand $CargoArguments 'cargo llvm-cov'

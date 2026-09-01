@@ -3,15 +3,22 @@ name = "balun"
 version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.94"
+autobins = false
 description = "A lightweight cross-platform HDHomeRun live TV viewer"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/jm2/balun"
 authors = ["Balun Contributors"]
 
+[features]
+default = []
+desktop = ["dep:adw", "dep:gtk"]
+
 [dependencies]
+adw = { version = "0.9", package = "libadwaita", features = ["v1_6"], optional = true }
 blake3 = { version = "1.8", features = ["zeroize"] }
 crc32fast = "1.5"
 getrandom = "0.4"
+gtk = { version = "0.11", package = "gtk4", features = ["v4_16"], optional = true }
 if-addrs = { version = "0.15", features = ["link-local"] }
 ipnet = "2.12"
 reqwest = { version = "0.13", default-features = false }
@@ -22,6 +29,15 @@ thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 zeroize = "1"
+
+[[bin]]
+name = "balun"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "balun-discover"
+path = "src/bin/balun-discover.rs"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 neli = { version = "0.7.4", default-features = false, features = ["async"] }
