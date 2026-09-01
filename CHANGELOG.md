@@ -73,7 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Add a Linux whole-pair owner that prepares route observation before the
   store reread, retains both live actors and the activation owner, coalesces
   replacement requests, and retires authority synchronously before concurrent
-  joined shutdown.
+  joined shutdown; partial-start and activation failures await destruction of
+  every actor they started before a replacement may proceed.
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.

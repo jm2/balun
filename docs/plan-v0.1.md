@@ -323,12 +323,15 @@ shutdown for both sources. A Linux whole-pair owner now prepares the route
 observer first, supplies that monitored snapshot inside the exact store-reread
 sandwich, retains the activation and both actors, coalesces child events into
 one replacement request, and retires authority synchronously before returning
-its concurrent join future. Confirmed reservation publication likewise returns
-only a non-cloneable, redacted typestate which retains the raw permit until a
-fresh store reread exactly matches the complete ledger and immutable key
-binding. These pieces remain internal foundations: no production controller
-yet replaces and rebaselines the pair, so they cannot authorize traffic. The
-store-owned fresh-snapshot gate
+its concurrent join future. A partial start or failed combined activation also
+awaits destruction of every actor it started before returning an error; a
+cancelled cleanup retains the synchronous fail-closed poison-and-abort
+fallback. Confirmed reservation publication likewise returns only a non-
+cloneable, redacted typestate which retains the raw permit until a fresh store
+reread exactly matches the complete ledger and immutable key binding. These
+pieces remain internal foundations: no production controller yet replaces and
+rebaselines the pair, so they cannot authorize traffic. The store-owned fresh-
+snapshot gate
 requires the exact active fingerprint and run, rebuilds the complete proposal,
 permits only a transient interface-ID replacement, and caps work to the
 remaining lease. The Linux socket factory now performs one interface pin plus

@@ -105,18 +105,19 @@ impl LinuxObserverPair {
             .await
             .map_err(LinuxObserverPairError::Store)?;
 
-        let mut owner = PairedObserverOwner::start(
+        let owner = PairedObserverOwner::start_joining(
             coordinator,
             incarnation,
             move |activation| route.start(activation),
             move |activation| store.start(activation),
         )
+        .await
         .map_err(|error| match error {
             PairStartError::Route(error) => LinuxObserverPairError::Route(error),
             PairStartError::Store(error) => LinuxObserverPairError::Store(error),
         })?;
-        let epoch = owner
-            .take_epoch()
+        let (epoch, owner) = owner
+            .activate_or_shutdown()
             .await
             .map_err(LinuxObserverPairError::Activation)?;
 
@@ -203,37 +204,6 @@ struct PairedObserverOwner<Route, Store> {
 }
 
 impl<Route, Store> PairedObserverOwner<Route, Store> {
-    fn start<RouteError, StoreError, StartRoute, StartStore>(
-        coordinator: Arc<RoutedObserverCoordinator>,
-        incarnation: RoutedObserverIncarnation,
-        start_route: StartRoute,
-        start_store: StartStore,
-    ) -> Result<Self, PairStartError<RouteError, StoreError>>
-    where
-        StartRoute: FnOnce(RouteActivationCallback) -> Result<Route, RouteError>,
-        StartStore: FnOnce(StoreActivationCallback) -> Result<Store, StoreError>,
-    {
-        let (activation, route_activation, store_activation) = incarnation.into_paired_activation();
-        let route = start_route(route_activation).map_err(PairStartError::Route)?;
-        let store = start_store(store_activation).map_err(PairStartError::Store)?;
-
-        Ok(Self {
-            activation: Some(activation),
-            route: Some(route),
-            store: Some(store),
-            coordinator: Some(coordinator),
-            replacement_required: false,
-        })
-    }
-
-    async fn take_epoch(&mut self) -> Result<HealthyRoutedEpoch, PairedObserverActivationError> {
-        self.activation
-            .as_mut()
-            .expect("a live pair retains its activation owner")
-            .take_epoch()
-            .await
-    }
-
     fn retire_activation(&mut self) {
         // Dropping the activation drops its exact incarnation. Retirement is
         // source-bound, so a late old owner cannot invalidate a newer pair.
@@ -246,6 +216,69 @@ where
     Route: ObserverActorOwner,
     Store: ObserverActorOwner,
 {
+    /// Start route first, then store, joining the route actor before a store
+    /// start failure can escape to a replacement controller.
+    async fn start_joining<RouteError, StoreError, StartRoute, StartStore>(
+        coordinator: Arc<RoutedObserverCoordinator>,
+        incarnation: RoutedObserverIncarnation,
+        start_route: StartRoute,
+        start_store: StartStore,
+    ) -> Result<Self, PairStartError<RouteError, StoreError>>
+    where
+        StartRoute: FnOnce(RouteActivationCallback) -> Result<Route, RouteError>,
+        StartStore: FnOnce(StoreActivationCallback) -> Result<Store, StoreError>,
+    {
+        let (activation, route_activation, store_activation) = incarnation.into_paired_activation();
+        let route = match start_route(route_activation) {
+            Ok(route) => route,
+            Err(error) => {
+                drop(store_activation);
+                drop(activation);
+                return Err(PairStartError::Route(error));
+            }
+        };
+        let store = match start_store(store_activation) {
+            Ok(store) => store,
+            Err(error) => {
+                // Retire the exact incarnation before polling shutdown. If
+                // this await is cancelled, the shutdown future still owns the
+                // route session and its Drop fallback poisons and aborts it.
+                drop(activation);
+                let _termination = route.shutdown().await;
+                return Err(PairStartError::Store(error));
+            }
+        };
+
+        Ok(Self {
+            activation: Some(activation),
+            route: Some(route),
+            store: Some(store),
+            coordinator: Some(coordinator),
+            replacement_required: false,
+        })
+    }
+
+    /// Await combined activation or retire and join both actors before
+    /// returning the activation error.
+    async fn activate_or_shutdown(
+        mut self,
+    ) -> Result<(HealthyRoutedEpoch, Self), PairedObserverActivationError> {
+        let activation = self
+            .activation
+            .as_mut()
+            .expect("a live pair retains its activation owner");
+        match activation.take_epoch().await {
+            Ok(epoch) => Ok((epoch, self)),
+            Err(error) => {
+                // shutdown() is a synchronous constructor: it retires the
+                // activation before yielding its concurrent join future.
+                let shutdown = self.shutdown();
+                let _terminations = shutdown.await;
+                Err(error)
+            }
+        }
+    }
+
     async fn next_event(&mut self) -> LinuxObserverPairEvent {
         if !self.replacement_required {
             let route = self
@@ -403,6 +436,16 @@ mod tests {
         store_dropped: Arc<AtomicBool>,
     }
 
+    struct ActivationFailureFixture {
+        owner: PairedObserverOwner<FakeActor, FakeActor>,
+        route_started: oneshot::Receiver<()>,
+        store_started: oneshot::Receiver<()>,
+        route_release: oneshot::Sender<()>,
+        store_release: oneshot::Sender<()>,
+        route_dropped: Arc<AtomicBool>,
+        store_dropped: Arc<AtomicBool>,
+    }
+
     async fn pair_fixture() -> PairFixture {
         let coordinator = Arc::new(RoutedObserverCoordinator::new());
         let mut incarnation = coordinator.start_incarnation().unwrap();
@@ -413,7 +456,7 @@ mod tests {
         let route = actor(FakeAuthority::Route(route_sink));
         let store = actor(FakeAuthority::Store(store_sink));
 
-        let mut owner = PairedObserverOwner::start(
+        let owner = PairedObserverOwner::start_joining(
             Arc::clone(&coordinator),
             incarnation,
             move |activation| {
@@ -425,10 +468,11 @@ mod tests {
                 Ok::<_, Infallible>(store.actor)
             },
         )
+        .await
         .unwrap_or_else(|never| match never {
             PairStartError::Route(never) | PairStartError::Store(never) => match never {},
         });
-        let epoch = owner.take_epoch().await.unwrap();
+        let (epoch, owner) = owner.activate_or_shutdown().await.unwrap();
 
         PairFixture {
             coordinator,
@@ -436,6 +480,45 @@ mod tests {
             epoch,
             route_event: route.event,
             store_event: store.event,
+            route_started: route.shutdown_started,
+            store_started: store.shutdown_started,
+            route_release: route.shutdown_release,
+            store_release: store.shutdown_release,
+            route_dropped: route.dropped,
+            store_dropped: store.dropped,
+        }
+    }
+
+    async fn activation_failure_fixture() -> ActivationFailureFixture {
+        let coordinator = Arc::new(RoutedObserverCoordinator::new());
+        let mut incarnation = coordinator.start_incarnation().unwrap();
+        let route_sink = Arc::new(incarnation.take_route_sink().unwrap());
+        let store_sink = incarnation.take_store_sink().unwrap();
+        let route_baseline = incarnation.begin_route_baseline().unwrap();
+        let route = actor(FakeAuthority::Route(route_sink));
+        let store = actor(FakeAuthority::Store(store_sink));
+
+        let owner = PairedObserverOwner::start_joining(
+            coordinator,
+            incarnation,
+            move |activation| {
+                activation.activate(route_baseline).unwrap();
+                Ok::<_, Infallible>(route.actor)
+            },
+            move |activation| {
+                // Simulate the store actor rejecting its final clean drain
+                // while still returning an owned live actor session.
+                drop(activation);
+                Ok::<_, Infallible>(store.actor)
+            },
+        )
+        .await
+        .unwrap_or_else(|never| match never {
+            PairStartError::Route(never) | PairStartError::Store(never) => match never {},
+        });
+
+        ActivationFailureFixture {
+            owner,
             route_started: route.shutdown_started,
             store_started: store.shutdown_started,
             route_release: route.shutdown_release,
@@ -541,6 +624,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn activation_failure_awaits_both_actor_destructions() {
+        let fixture = activation_failure_fixture().await;
+        let ActivationFailureFixture {
+            owner,
+            mut route_started,
+            mut store_started,
+            route_release,
+            store_release,
+            route_dropped,
+            store_dropped,
+        } = fixture;
+        let mut activation = Box::pin(owner.activate_or_shutdown());
+
+        tokio::select! {
+            result = &mut activation => panic!("activation error returned before cleanup: {result:?}"),
+            starts = async { (&mut route_started).await.unwrap(); (&mut store_started).await.unwrap(); } => starts,
+        }
+        assert!(!route_dropped.load(Ordering::SeqCst));
+        assert!(!store_dropped.load(Ordering::SeqCst));
+
+        route_release.send(()).unwrap();
+        tokio::task::yield_now().await;
+        assert!(!store_dropped.load(Ordering::SeqCst));
+        store_release.send(()).unwrap();
+        assert!(matches!(
+            activation.await,
+            Err(PairedObserverActivationError::CallbackDropped)
+        ));
+        assert!(route_dropped.load(Ordering::SeqCst));
+        assert!(store_dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn cancelling_activation_failure_cleanup_drops_both_actor_owners() {
+        let fixture = activation_failure_fixture().await;
+        let ActivationFailureFixture {
+            owner,
+            mut route_started,
+            mut store_started,
+            route_dropped,
+            store_dropped,
+            ..
+        } = fixture;
+        let mut activation = Box::pin(owner.activate_or_shutdown());
+
+        tokio::select! {
+            result = &mut activation => panic!("activation error returned before cancellation: {result:?}"),
+            starts = async { (&mut route_started).await.unwrap(); (&mut store_started).await.unwrap(); } => starts,
+        }
+        drop(activation);
+
+        assert!(route_dropped.load(Ordering::SeqCst));
+        assert!(store_dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
     async fn drop_retires_and_destroys_both_actor_owners() {
         let fixture = pair_fixture().await;
         let registration = fixture.coordinator.register(&fixture.epoch).unwrap();
@@ -583,7 +722,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn second_start_failure_drops_the_started_sibling_and_activation() {
+    async fn second_start_failure_awaits_the_started_sibling() {
         let coordinator = Arc::new(RoutedObserverCoordinator::new());
         let mut incarnation = coordinator.start_incarnation().unwrap();
         let route_sink = Arc::new(incarnation.take_route_sink().unwrap());
@@ -594,7 +733,9 @@ mod tests {
         let route_dropped = Arc::clone(&route.dropped);
         let store = actor(FakeAuthority::Store(store_sink));
 
-        let result = PairedObserverOwner::start(
+        let mut route_started = route.shutdown_started;
+        let route_release = route.shutdown_release;
+        let mut start = Box::pin(PairedObserverOwner::start_joining(
             Arc::clone(&coordinator),
             incarnation,
             move |activation| {
@@ -606,13 +747,57 @@ mod tests {
                 drop(store.actor);
                 Err::<FakeActor, _>(())
             },
-        );
+        ));
+
+        tokio::select! {
+            _result = &mut start => panic!("pair start returned before sibling cleanup"),
+            started = &mut route_started => started.unwrap(),
+        }
+        assert!(!route_dropped.load(Ordering::SeqCst));
+        route_release.send(()).unwrap();
+        let result = start.await;
         assert!(matches!(result, Err(PairStartError::Store(()))));
         assert!(route_dropped.load(Ordering::SeqCst));
         assert!(matches!(
             coordinator.start_incarnation(),
             Ok(RoutedObserverIncarnation { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn cancelling_second_start_failure_cleanup_drops_the_started_sibling() {
+        let coordinator = Arc::new(RoutedObserverCoordinator::new());
+        let mut incarnation = coordinator.start_incarnation().unwrap();
+        let route_sink = Arc::new(incarnation.take_route_sink().unwrap());
+        let store_sink = incarnation.take_store_sink().unwrap();
+        let route_baseline = incarnation.begin_route_baseline().unwrap();
+        let store_baseline = incarnation.begin_store_baseline().unwrap();
+        let route = actor(FakeAuthority::Route(route_sink));
+        let route_dropped = Arc::clone(&route.dropped);
+        let store = actor(FakeAuthority::Store(store_sink));
+        let mut route_started = route.shutdown_started;
+        let mut start = Box::pin(PairedObserverOwner::start_joining(
+            Arc::clone(&coordinator),
+            incarnation,
+            move |activation| {
+                activation.activate(route_baseline).unwrap();
+                Ok::<_, Infallible>(route.actor)
+            },
+            move |activation| {
+                activation.activate(store_baseline).unwrap();
+                drop(store.actor);
+                Err::<FakeActor, _>(())
+            },
+        ));
+
+        tokio::select! {
+            _result = &mut start => panic!("pair start returned before cancellation"),
+            started = &mut route_started => started.unwrap(),
+        }
+        drop(start);
+
+        assert!(route_dropped.load(Ordering::SeqCst));
+        assert!(coordinator.start_incarnation().is_ok());
     }
 
     #[test]
