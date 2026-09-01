@@ -29,6 +29,8 @@ mod activation;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
+mod pair;
+#[cfg(target_os = "linux")]
 mod store;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

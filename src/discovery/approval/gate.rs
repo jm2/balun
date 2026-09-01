@@ -452,7 +452,7 @@ mod tests {
             RoutedBeginDecision::Pending(pending) => pending,
             other => panic!("expected pending reservation, got {other:?}"),
         };
-        pending.confirm_persisted().1
+        pending.into_test_persisted_parts().1
     }
 
     fn default_permit(snapshot: &RouteSnapshot, key: &RouteFingerprintKey) -> RoutedScanPermit {

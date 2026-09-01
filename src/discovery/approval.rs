@@ -786,9 +786,9 @@ impl RoutedApprovalState {
     /// Plan a reservation for one exact proposal without publishing authority.
     ///
     /// A successful decision contains a [`RoutedPendingReservation`], not a
-    /// scan permit. The store must durably persist its complete
-    /// `state_after_reservation()` before calling `confirm_persisted`; the
-    /// store-owned reserve path releases nothing at weaker durability.
+    /// scan permit. Only the private store implementation can extract its
+    /// permit, after durably publishing the complete
+    /// `state_after_reservation()`; weaker durability releases no authority.
     pub(crate) fn plan_begin(
         &self,
         proposal: RoutedScanProposal,
@@ -839,7 +839,7 @@ impl RoutedApprovalState {
 
         RoutedBeginDecision::Pending(Box::new(RoutedPendingReservation {
             state_after_reservation: next_state,
-            permit: RoutedScanPermit {
+            sealed_permit: store::seal_pending_permit(RoutedScanPermit {
                 fingerprint: proposal.fingerprint,
                 run_id,
                 expires_at,
@@ -847,7 +847,7 @@ impl RoutedApprovalState {
                 resolved_candidates: proposal.resolved_candidates,
                 probe_config: proposal.probe_config,
                 scan_config: proposal.scan_config,
-            },
+            }),
         }))
     }
 
@@ -976,12 +976,12 @@ impl fmt::Debug for RoutedBeginDecision {
 
 /// A reservation transition which has not yet been durably committed.
 ///
-/// This value is non-cloneable. It contains a permit, but exposes no method to
-/// obtain it until the persistence owner explicitly confirms that the exact
-/// next state was stored successfully.
+/// This value is non-cloneable. It contains a permit, but exposes no production
+/// method to obtain it; extraction is private to the approval-store module and
+/// occurs only after the exact next state was durably published.
 pub struct RoutedPendingReservation {
     state_after_reservation: RoutedApprovalState,
-    permit: RoutedScanPermit,
+    sealed_permit: store::StoreSealedPermit,
 }
 
 impl RoutedPendingReservation {
@@ -990,10 +990,14 @@ impl RoutedPendingReservation {
         &self.state_after_reservation
     }
 
-    /// Release authority only after the caller durably persisted
-    /// `state_after_reservation()`.
-    pub(crate) fn confirm_persisted(self) -> (RoutedApprovalState, RoutedScanPermit) {
-        (self.state_after_reservation, self.permit)
+    /// Unit tests for the pure policy and fresh-route gate have no persistent
+    /// store. Keep their synthetic extraction unavailable in production.
+    #[cfg(test)]
+    fn into_test_persisted_parts(self) -> (RoutedApprovalState, RoutedScanPermit) {
+        (
+            self.state_after_reservation,
+            store::unseal_pending_permit_for_test(self.sealed_permit),
+        )
     }
 }
 
@@ -1002,7 +1006,7 @@ impl fmt::Debug for RoutedPendingReservation {
         formatter
             .debug_struct("RoutedPendingReservation")
             .field("state_after_reservation", &self.state_after_reservation)
-            .field("permit", &self.permit)
+            .field("permit", &self.sealed_permit)
             .finish()
     }
 }
@@ -1194,7 +1198,7 @@ mod tests {
         match approval.plan_begin(proposal, trigger, now, run_id) {
             RoutedBeginDecision::Pending(pending) => {
                 let persisted = pending.state_after_reservation().clone();
-                let (next_state, permit) = pending.confirm_persisted();
+                let (next_state, permit) = pending.into_test_persisted_parts();
                 assert!(persisted == next_state);
                 *approval = next_state;
                 permit

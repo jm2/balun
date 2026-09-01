@@ -735,8 +735,8 @@ where
             .reserve(proposal, trigger, reserve_now)
             .map_err(RoutedAdmissionError::Store)?;
 
-        let permit = match decision {
-            StoredBeginDecision::Permitted(permit) => permit,
+        let published = match decision {
+            StoredBeginDecision::Published(published) => published,
             StoredBeginDecision::NeedsApproval(summary) => {
                 ensure_live(&registration, cancellation)?;
                 return Ok(RoutedAdmissionDecision::NeedsApproval(summary));
@@ -754,6 +754,16 @@ where
                 return Ok(RoutedAdmissionDecision::PublishedWithoutPermit { durability });
             }
         };
+
+        // This legacy packet-free boundary consumes the publication through
+        // the same exact matcher which the production controller will move
+        // inside its fresh store-observer subscribe/drain/reread/drain
+        // sandwich. A confirmed reserve never exposes a detached permit.
+        ensure_live(&registration, cancellation)?;
+        let permit = self
+            .store
+            .match_published_reservation(published)
+            .map_err(RoutedAdmissionError::Revalidation)?;
 
         let fingerprint = permit.fingerprint();
         let run_id = permit.run_id();
@@ -1522,7 +1532,7 @@ mod tests {
                     RoutedPolicyTime::from_seconds(160),
                 )
                 .unwrap(),
-            StoredBeginDecision::Permitted(_)
+            StoredBeginDecision::Published(_)
         ));
     }
 

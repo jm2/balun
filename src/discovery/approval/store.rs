@@ -59,8 +59,9 @@ use super::gate::{RevalidatedRoutedScan, RoutedRevalidationError, revalidate_rou
 use super::{
     ActiveReservation, MAX_AUTOMATIC_COOLDOWN, MAX_EMPTY_RUN_STREAK, RESERVATION_LEASE,
     RouteFingerprint, RouteFingerprintKey, RoutedApprovalState, RoutedBeginDecision,
-    RoutedCompletionDecision, RoutedPolicyTime, RoutedProposalError, RoutedProposalSummary,
-    RoutedRunId, RoutedScanOutcome, RoutedScanPermit, RoutedScanProposal, RoutedScanTrigger,
+    RoutedCompletionDecision, RoutedPendingReservation, RoutedPolicyTime, RoutedProposalError,
+    RoutedProposalSummary, RoutedRunId, RoutedScanOutcome, RoutedScanPermit, RoutedScanProposal,
+    RoutedScanTrigger,
 };
 
 pub(super) const STATE_FILE_NAME: &str = "routed-approvals.json";
@@ -74,6 +75,32 @@ const DEFAULT_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 const KEY_BINDING_DOMAIN: &[u8] = b"io.github.jm2.Balun/routed-approval-store-key-v1";
+
+/// Opaque store-owned payload for a policy-planned permit.
+///
+/// The approval policy can seal a newly planned permit into this value, but
+/// the private field is owned by this child module. Sibling approval modules
+/// may move or drop the payload but cannot recover its authority.
+pub(super) struct StoreSealedPermit {
+    permit: RoutedScanPermit,
+}
+
+impl fmt::Debug for StoreSealedPermit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.permit, formatter)
+    }
+}
+
+/// Seal a policy-planned permit without exposing an extraction operation.
+pub(super) fn seal_pending_permit(permit: RoutedScanPermit) -> StoreSealedPermit {
+    StoreSealedPermit { permit }
+}
+
+/// Pure policy and gate tests deliberately run without a persistent store.
+#[cfg(test)]
+pub(super) fn unseal_pending_permit_for_test(payload: StoreSealedPermit) -> RoutedScanPermit {
+    payload.permit
+}
 
 /// An injected private directory. The store performs no platform path lookup.
 ///
@@ -576,7 +603,8 @@ pub(crate) enum StoreError {
     SerializedStateTooLarge,
 }
 
-/// A topology-redacted failure at the store-owned fresh-snapshot gate.
+/// A topology-redacted failure while matching published store authority or at
+/// the store-owned fresh-snapshot gate.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub(crate) enum StoredRevalidationError {
     #[error("approval storage rejected revalidation: {0}")]
@@ -650,9 +678,46 @@ impl fmt::Debug for StoredRoutedProposal {
     }
 }
 
-/// A store-owned begin decision. A permit exists only in the confirmed case.
-pub(crate) enum StoredBeginDecision {
-    Permitted(RoutedScanPermit),
+/// A confirmed reservation coupled to the complete state and immutable key
+/// binding which Balun just published.
+///
+/// This value is deliberately non-cloneable and does not expose its retained
+/// [`RoutedScanPermit`]. A fresh store observer must be subscribed before
+/// [`ApprovalStore::match_published_reservation`] consumes this value and
+/// rereads the store. Only an exact full-ledger and key-binding match releases
+/// the permit, allowing the observer to drain publication notifications on
+/// both sides of that reread before any network authority is admitted.
+#[must_use = "a published reservation contains unreleased routed authority"]
+pub(super) struct StoredPublishedReservation {
+    permit: RoutedScanPermit,
+    expected_ledger: ApprovalLedger,
+    key_binding: [u8; 32],
+}
+
+impl fmt::Debug for StoredPublishedReservation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("StoredPublishedReservation(<redacted>)")
+    }
+}
+
+/// The sole production extraction point for a policy-planned permit.
+///
+/// This free function is private to the store module. Code elsewhere in the
+/// approval subtree can plan a transition and inspect its next state, but
+/// cannot obtain the retained permit or bypass confirmed store publication.
+fn extract_confirmed_reservation(
+    pending: RoutedPendingReservation,
+) -> (RoutedApprovalState, RoutedScanPermit) {
+    (
+        pending.state_after_reservation,
+        pending.sealed_permit.permit,
+    )
+}
+
+/// A store-owned begin decision. A published reservation exists only in the
+/// confirmed case, but still releases no permit until a fresh exact reread.
+pub(super) enum StoredBeginDecision {
+    Published(StoredPublishedReservation),
     NeedsApproval(RoutedProposalSummary),
     CoolingDown { remaining: Duration },
     Busy,
@@ -662,7 +727,10 @@ pub(crate) enum StoredBeginDecision {
 impl fmt::Debug for StoredBeginDecision {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Permitted(permit) => formatter.debug_tuple("Permitted").field(permit).finish(),
+            Self::Published(reservation) => formatter
+                .debug_tuple("Published")
+                .field(reservation)
+                .finish(),
             Self::NeedsApproval(summary) => formatter
                 .debug_tuple("NeedsApproval")
                 .field(summary)
@@ -818,8 +886,13 @@ impl ApprovalStore {
         self.commit_ledger(&ledger)
     }
 
-    /// Reserve one global run and release its permit only after a confirmed
+    /// Reserve one global run and retain its permit only after a confirmed
     /// file and parent-directory commit.
+    ///
+    /// Even confirmed publication returns a [`StoredPublishedReservation`],
+    /// not a detached permit. The caller must establish a fresh store-observer
+    /// subscription and then consume it through
+    /// [`Self::match_published_reservation`].
     pub(super) fn reserve(
         &self,
         proposal: StoredRoutedProposal,
@@ -870,10 +943,15 @@ impl ApprovalStore {
         ledger.approvals[index] = pending.state_after_reservation().clone();
         ledger.last_issued_counter = Some(next_counter);
         ledger.sort();
+        let published_key_binding = key_binding(&key);
         let commit = self.commit_ledger(&ledger)?;
         if commit.is_confirmed() {
-            let (_state, permit) = pending.confirm_persisted();
-            Ok(StoredBeginDecision::Permitted(permit))
+            let (_state, permit) = extract_confirmed_reservation(*pending);
+            Ok(StoredBeginDecision::Published(StoredPublishedReservation {
+                permit,
+                expected_ledger: ledger,
+                key_binding: published_key_binding,
+            }))
         } else {
             // The pending value is deliberately dropped. A visible crash
             // reservation may remain, but no network authority escapes.
@@ -881,6 +959,31 @@ impl ApprovalStore {
                 durability: commit.durability,
             })
         }
+    }
+
+    /// Consume one confirmed publication and release its retained permit only
+    /// after a fresh exact store reread.
+    ///
+    /// The caller must subscribe a replacement store observer before this
+    /// blocking call, then drain that observer after it returns. Holding the
+    /// store lock across the complete read makes the comparison one coherent
+    /// point inside that notification sandwich. Any different ledger field or
+    /// immutable key binding fails closed without releasing authority.
+    pub(super) fn match_published_reservation(
+        &self,
+        reservation: StoredPublishedReservation,
+    ) -> Result<RoutedScanPermit, StoredRevalidationError> {
+        let _lock = self
+            .acquire_lock()
+            .map_err(StoredRevalidationError::Store)?;
+        let (ledger, key) = self
+            .load_mutable_if_present_locked()
+            .map_err(StoredRevalidationError::Store)?
+            .ok_or(StoredRevalidationError::AuthorityChanged)?;
+        if ledger != reservation.expected_ledger || key_binding(&key) != reservation.key_binding {
+            return Err(StoredRevalidationError::AuthorityChanged);
+        }
+        Ok(reservation.permit)
     }
 
     /// Apply completion only to the exact globally active fingerprint/run.
@@ -2021,6 +2124,20 @@ mod tests {
     const LOCK_CHILD_ENV: &str = "BALUN_APPROVAL_STORE_LOCK_CHILD";
     const LOCK_CHILD_TEST: &str = "discovery::approval::store::tests::approval_store_lock_child";
 
+    trait AmbiguousIfPublishedReservationClone<Marker> {
+        fn marker();
+    }
+
+    impl<T: ?Sized> AmbiguousIfPublishedReservationClone<()> for T {
+        fn marker() {}
+    }
+
+    struct ImplementsClone;
+
+    impl<T: Clone> AmbiguousIfPublishedReservationClone<ImplementsClone> for T {
+        fn marker() {}
+    }
+
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum TestDirectorySync {
         Confirmed,
@@ -2591,7 +2708,7 @@ mod tests {
                     RoutedPolicyTime::from_seconds(10)
                 )
                 .unwrap(),
-            StoredBeginDecision::Permitted(_)
+            StoredBeginDecision::Published(_)
         ));
     }
 
@@ -2864,7 +2981,9 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => store
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected first permit, got {decision:?}"),
         };
         assert_eq!(run_counter(first_permit.run_id()), 1);
@@ -2906,7 +3025,9 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => reopened
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected second permit, got {decision:?}"),
         };
         assert_eq!(run_counter(second_permit.run_id()), 2);
@@ -2929,7 +3050,9 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => reopened
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected reapproved permit, got {decision:?}"),
         };
         assert_eq!(run_counter(permit.run_id()), 3);
@@ -2993,7 +3116,9 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => store
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected permit, got {decision:?}"),
         };
         assert!(matches!(
@@ -3040,7 +3165,9 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => store
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected old permit, got {decision:?}"),
         };
 
@@ -3064,7 +3191,9 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => replacement_store
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected replacement permit, got {decision:?}"),
         };
         assert_eq!(run_counter(old_permit.run_id()), 1);
@@ -3188,7 +3317,9 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => store
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected permit, got {decision:?}"),
         };
         store
@@ -3217,10 +3348,156 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => store
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected permit after revoke, got {decision:?}"),
         };
         assert_eq!(run_counter(permit.run_id()), 2);
+    }
+
+    #[test]
+    fn exact_reread_releases_one_noncloneable_redacted_permit() {
+        // If the typestate ever implements `Clone`, the inferred marker below
+        // becomes ambiguous and this test stops compiling.
+        let _ = <StoredPublishedReservation as AmbiguousIfPublishedReservationClone<_>>::marker;
+
+        let (_temporary, store, _backend) = test_store();
+        let approved = proposal(&store, "172.31.90.8/30", 7);
+        approve(&store, &approved, 10);
+        let published = match store
+            .reserve(
+                approved,
+                RoutedScanTrigger::Automatic,
+                RoutedPolicyTime::from_seconds(10),
+            )
+            .unwrap()
+        {
+            StoredBeginDecision::Published(published) => published,
+            decision => panic!("expected confirmed publication, got {decision:?}"),
+        };
+
+        assert_eq!(
+            format!("{published:?}"),
+            "StoredPublishedReservation(<redacted>)"
+        );
+        let permit = store
+            .match_published_reservation(published)
+            .expect("fresh exact reservation match");
+        assert_eq!(run_counter(permit.run_id()), 1);
+        assert_eq!(permit.candidate_count(), 2);
+    }
+
+    #[test]
+    fn exact_reread_rejects_an_unrelated_approval_change() {
+        let (_temporary, store, _backend) = test_store();
+        let approved = proposal(&store, "172.31.90.8/30", 7);
+        let unrelated = proposal(&store, "172.31.91.8/30", 8);
+        let unrelated_fingerprint = unrelated.proposal.fingerprint;
+        approve(&store, &approved, 10);
+        approve(&store, &unrelated, 10);
+        let published = match store
+            .reserve(
+                approved,
+                RoutedScanTrigger::Automatic,
+                RoutedPolicyTime::from_seconds(10),
+            )
+            .unwrap()
+        {
+            StoredBeginDecision::Published(published) => published,
+            decision => panic!("expected confirmed publication, got {decision:?}"),
+        };
+
+        {
+            let _lock = store.acquire_lock().unwrap();
+            let LockedLoad::Ready {
+                mut ledger,
+                key: _key,
+            } = store.load_locked().unwrap()
+            else {
+                panic!("initialized ledger");
+            };
+            ledger
+                .approvals
+                .iter_mut()
+                .find(|approval| approval.fingerprint == unrelated_fingerprint)
+                .expect("unrelated approval")
+                .empty_run_streak = 1;
+            assert!(store.commit_ledger(&ledger).unwrap().is_confirmed());
+        }
+
+        assert_eq!(
+            store.match_published_reservation(published).unwrap_err(),
+            StoredRevalidationError::AuthorityChanged
+        );
+    }
+
+    #[test]
+    fn exact_reread_rejects_a_changed_global_high_water() {
+        let (_temporary, store, _backend) = test_store();
+        let approved = proposal(&store, "172.31.90.8/30", 7);
+        approve(&store, &approved, 10);
+        let published = match store
+            .reserve(
+                approved,
+                RoutedScanTrigger::Automatic,
+                RoutedPolicyTime::from_seconds(10),
+            )
+            .unwrap()
+        {
+            StoredBeginDecision::Published(published) => published,
+            decision => panic!("expected confirmed publication, got {decision:?}"),
+        };
+
+        {
+            let _lock = store.acquire_lock().unwrap();
+            let LockedLoad::Ready {
+                mut ledger,
+                key: _key,
+            } = store.load_locked().unwrap()
+            else {
+                panic!("initialized ledger");
+            };
+            let replacement_run = RoutedRunId::from_counter(2);
+            ledger.last_issued_counter = Some(2);
+            let active = ledger
+                .approvals
+                .iter_mut()
+                .find(|approval| approval.active.is_some())
+                .expect("active approval");
+            active.last_issued_run_id = Some(replacement_run);
+            active.active.as_mut().expect("active reservation").run_id = replacement_run;
+            assert!(store.commit_ledger(&ledger).unwrap().is_confirmed());
+        }
+
+        assert_eq!(
+            store.match_published_reservation(published).unwrap_err(),
+            StoredRevalidationError::AuthorityChanged
+        );
+    }
+
+    #[test]
+    fn exact_reread_rejects_a_replaced_immutable_key() {
+        let (_temporary, store, _backend) = test_store();
+        let approved = proposal(&store, "172.31.90.8/30", 7);
+        approve(&store, &approved, 10);
+        let published = match store
+            .reserve(
+                approved,
+                RoutedScanTrigger::Automatic,
+                RoutedPolicyTime::from_seconds(10),
+            )
+            .unwrap()
+        {
+            StoredBeginDecision::Published(published) => published,
+            decision => panic!("expected confirmed publication, got {decision:?}"),
+        };
+
+        write_private(&store.paths.key(), &[0x6b; KEY_BYTES]);
+        assert_eq!(
+            store.match_published_reservation(published).unwrap_err(),
+            StoredRevalidationError::AuthorityChanged
+        );
     }
 
     #[test]
@@ -3236,7 +3513,9 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => store
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected permit, got {decision:?}"),
         };
         let fresh = snapshot("172.31.90.8/30", 7);
@@ -3248,11 +3527,11 @@ mod tests {
     }
 
     #[test]
-    fn revoke_before_revalidation_consumes_no_network_authority() {
+    fn revoke_before_exact_match_releases_no_permit() {
         let (_temporary, store, _backend) = test_store();
         let approved = proposal(&store, "172.31.90.8/30", 7);
         approve(&store, &approved, 10);
-        let permit = match store
+        let published = match store
             .reserve(
                 approved,
                 RoutedScanTrigger::Automatic,
@@ -3260,19 +3539,16 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
-            decision => panic!("expected permit, got {decision:?}"),
+            StoredBeginDecision::Published(published) => published,
+            decision => panic!("expected confirmed publication, got {decision:?}"),
         };
         let current = proposal(&store, "172.31.90.8/30", 7);
         assert!(matches!(
             store.revoke(&current).unwrap(),
             StoredRevokeDecision::Published(commit) if commit.is_confirmed()
         ));
-        let fresh = snapshot("172.31.90.8/30", 7);
         assert_eq!(
-            store
-                .revalidate_permit(permit, &fresh, RoutedPolicyTime::from_seconds(11))
-                .unwrap_err(),
+            store.match_published_reservation(published).unwrap_err(),
             StoredRevalidationError::AuthorityChanged
         );
     }
@@ -3290,7 +3566,9 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => store
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected first permit, got {decision:?}"),
         };
         assert_eq!(run_counter(first_permit.run_id()), 1);
@@ -3316,7 +3594,9 @@ mod tests {
             )
             .unwrap()
         {
-            StoredBeginDecision::Permitted(permit) => permit,
+            StoredBeginDecision::Published(reservation) => store
+                .match_published_reservation(reservation)
+                .expect("fresh exact reservation match"),
             decision => panic!("expected second permit, got {decision:?}"),
         };
         assert_eq!(run_counter(second_permit.run_id()), 2);
