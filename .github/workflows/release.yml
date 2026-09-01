@@ -42,6 +42,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Test pinned release component policy
+        run: build-aux/packaging/test-release-component-policy.sh
+
       - name: Validate immutable source and version
         id: source
         env:
