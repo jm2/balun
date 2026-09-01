@@ -102,8 +102,8 @@ jobs:
     steps:
       - name: Install desktop build dependencies (Fedora)
         run: >-
-          dnf install -y gcc gtk4-devel libadwaita-devel
-          pkgconf-pkg-config git curl
+          dnf install -y dbus-daemon gcc gtk4-devel libadwaita-devel
+          pkgconf-pkg-config git curl xorg-x11-server-Xvfb
 
       - uses: actions/checkout@v7
         with:
@@ -120,6 +120,12 @@ jobs:
 
       - name: Lint desktop shell
         run: cargo clippy --locked --features desktop --bin balun -- -D warnings
+
+      - name: Test desktop bridge
+        run: cargo test --locked --features desktop --bin balun
+
+      - name: Smoke desktop lifecycle
+        run: scripts/test-desktop-lifecycle.sh
 
       - name: Build desktop shell
         run: cargo build --locked --features desktop --bin balun

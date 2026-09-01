@@ -629,22 +629,20 @@ Exit criteria:
 
 Implementation status: an opt-in thin desktop binary now constructs the exact
 Balun application identity and an adaptive nested device/channel/player shell.
-It performs no network or playback work. The GTK-free library now includes
-bounded immutable device and selected-lineup projections with independent
-operation generations and strict no-merge validation. A shared inspection
-service also owns identity-checked preferred-locator fallback without exposing
-stream URLs. A separate selected-device resolver freezes the registry's
-preferred-first locator order and can return one complete identity-checked
-snapshot to core code under a single deadline, while its issues and debug
-output retain no addresses or stream URLs. One packet-free controller runtime
-now owns explicit local refresh and its registry on a named current-thread
-Tokio worker, publishes coalesced complete snapshots through a bounded watch
-boundary, and cancels and joins superseded work and shutdown. The default
-library and diagnostic remain GTK-free, Linux desktop/MSRV compilation is
-enforced in CI, and native macOS and Windows desktop link checks are also
-enforced. The GLib reducer, selected-lineup controller lane, settings,
-documentation templates, and runtime smoke tests are still required to
-complete this milestone.
+Construction is packet-free; Refresh explicitly starts bounded local discovery
+and selecting one DeviceID resolves only that registry device's metadata and
+lineup without tuning. The GTK-free controller owns discovery and independent
+selection lanes on a named current-thread Tokio worker, cancels and joins
+superseded work, retains complete URL-bearing selected snapshots only inside
+the actor, and publishes coalesced URL-free projections through a bounded watch
+boundary. A GLib reducer applies complete snapshots to virtualized device and
+channel models, preserves stable identity across replacement, and never merges
+lineups. The ordinary window close path cancels and joins the controller and is
+covered by an isolated Linux Xvfb/D-Bus smoke. The default library and
+diagnostic remain GTK-free, Linux desktop/MSRV compilation is enforced in CI,
+and native macOS and Windows desktop link checks are also enforced. Versioned
+settings and native desktop runtime smoke remain required to complete this
+milestone; playback remains a Milestone 2 concern.
 
 ### Milestone 2: Playable vertical slice
 

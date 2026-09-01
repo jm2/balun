@@ -1,6 +1,10 @@
 //! GTK application lifecycle.
 
 use adw::prelude::*;
+use balun::controller::ControllerRuntime;
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use crate::ui;
 
@@ -9,6 +13,24 @@ pub(crate) const APPLICATION_ID: &str = "io.github.jm2.Balun";
 
 /// Start the desktop application and run the GLib main loop.
 pub(crate) fn run() -> gtk::glib::ExitCode {
+    let controller = match ControllerRuntime::start_default() {
+        Ok(controller) => controller,
+        Err(error) => {
+            eprintln!("Could not start the Balun controller: {error}");
+            return gtk::glib::ExitCode::FAILURE;
+        }
+    };
+    let (application, shutdown_failed) = application_with_controller(controller, |_| {});
+    finish_run(application.run(), &shutdown_failed)
+}
+
+fn application_with_controller<F>(
+    controller: ControllerRuntime,
+    window_ready: F,
+) -> (adw::Application, Rc<Cell<bool>>)
+where
+    F: Fn(&adw::ApplicationWindow) + 'static,
+{
     gtk::glib::set_prgname(Some("Balun"));
     gtk::glib::set_application_name("Balun");
 
@@ -16,7 +38,11 @@ pub(crate) fn run() -> gtk::glib::ExitCode {
         .application_id(APPLICATION_ID)
         .build();
 
-    application.connect_activate(|application| {
+    let controller = Rc::new(RefCell::new(Some(controller)));
+    let shutdown_failed = Rc::new(Cell::new(false));
+    let window_shutdown_failed = Rc::clone(&shutdown_failed);
+
+    application.connect_activate(move |application| {
         if let Some(window) = application
             .active_window()
             .or_else(|| application.windows().into_iter().next())
@@ -25,8 +51,79 @@ pub(crate) fn run() -> gtk::glib::ExitCode {
             return;
         }
 
-        ui::window::build(application).present();
+        let Some(controller) = controller.borrow_mut().take() else {
+            eprintln!("Balun cannot create another window after controller shutdown");
+            application.quit();
+            return;
+        };
+        let window = ui::window::build(application, controller, Rc::clone(&window_shutdown_failed));
+        window_ready(&window);
+        window.present();
     });
 
-    application.run()
+    (application, shutdown_failed)
+}
+
+fn finish_run(exit_code: gtk::glib::ExitCode, shutdown_failed: &Cell<bool>) -> gtk::glib::ExitCode {
+    if shutdown_failed.get() {
+        gtk::glib::ExitCode::FAILURE
+    } else {
+        exit_code
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use balun::controller::{DiscoveryFailure, LocalDiscoveryFuture, LocalDiscoveryService};
+    use balun::discovery::DiscoveryReport;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct CountingDiscovery {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl LocalDiscoveryService for CountingDiscovery {
+        fn discover_local(&self, _cancellation: CancellationToken) -> LocalDiscoveryFuture {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok::<_, DiscoveryFailure>(DiscoveryReport::default()) })
+        }
+    }
+
+    /// Run through `scripts/test-desktop-lifecycle.sh`; the ordinary unit-test
+    /// jobs deliberately compile but skip this display-dependent smoke.
+    #[test]
+    #[ignore = "requires the isolated Xvfb and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
+    fn headless_window_close_joins_controller_without_discovery() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let controller = ControllerRuntime::start(CountingDiscovery {
+            calls: Arc::clone(&calls),
+        })
+        .expect("start packet-free smoke controller");
+        let (application, shutdown_failed) = application_with_controller(controller, |window| {
+            let window = window.downgrade();
+            gtk::glib::idle_add_local_once(move || {
+                window
+                    .upgrade()
+                    .expect("smoke window should remain alive until its idle close")
+                    .close();
+            });
+        });
+
+        let exit_code = application.run_with_args(&["balun-desktop-lifecycle-smoke"]);
+        let exit_code = finish_run(exit_code, &shutdown_failed);
+
+        assert_eq!(exit_code, gtk::glib::ExitCode::SUCCESS);
+        assert!(!shutdown_failed.get(), "controller join must succeed");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "window activation and close must not start discovery"
+        );
+    }
 }

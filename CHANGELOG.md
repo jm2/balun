@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   channel, and live-TV panes, truthful packet-free empty states, exact
   application identity, Linux desktop compile/link/lint coverage, and MSRV
   checking without adding GTK to the default library or diagnostic build. A
-  local GTK 4 Broadway smoke also verifies display initialization and event-
-  loop entry; automated clean-shutdown runtime coverage remains pending.
+  local GTK 4 Broadway smoke verifies display initialization and event-loop
+  entry, while an isolated Xvfb/D-Bus smoke exercises the ordinary window
+  close path and requires a successful joined controller shutdown.
 - **Cross-platform desktop link checks** — Compile and link the feature-gated
   shell against native Homebrew GTK/libadwaita on macOS arm64 and an MSYS2
   CLANG64 GTK/libadwaita environment on Windows x86_64, without claiming a
@@ -57,8 +58,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inert; only an explicit refresh invokes discovery, supersession cancels and
   joins its predecessor, successful scans atomically replace the local view,
   failed scans retain last-good devices, and queue-independent shutdown wins
-  races before joining the worker. Selection commands remain fail-closed until
-  their resolver lane is connected.
+  races before joining the worker. An independent selection lane resolves
+  exactly one registered device, cancels and joins superseded work, re-resolves
+  after a successful registry refresh, rejects stale completions, retains
+  stream URLs only inside the actor, and publishes URL-free metadata and
+  channel rows.
+- **Connected device and channel sidebars** — Reduce complete controller
+  snapshots on the GLib main context into virtualized device and selected-
+  lineup models, restore selection by stable DeviceID or ChannelKey rather
+  than list position, strictly reset recycled rows, keep protected channels
+  visible but disabled, and expose discovery only through an explicit Refresh
+  action. Selecting a device never starts playback.
 - **Route candidate policy** — Add a platform-neutral route snapshot/provider
   boundary, a native Linux rtnetlink provider, and deterministic policy for
   exact or approved private tunnel candidates; native macOS and Windows

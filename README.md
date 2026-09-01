@@ -13,8 +13,8 @@ available program information, and a live-video area.
 
 > **Pre-alpha status:** the repository contains a runnable GTK development
 > shell plus the GTK-free discovery, device-registry, and lineup foundation.
-> Discovery is not connected to the window yet, and EPG and playback remain
-> unimplemented.
+> The window can explicitly discover local tuners and load the selected
+> device's lineup. Manual address entry, EPG, and playback remain unimplemented.
 
 ## Current foundation
 
@@ -49,8 +49,9 @@ available program information, and a live-video area.
 - A packet-free controller runtime on one named current-thread Tokio worker,
   with a bounded nonblocking command ingress, coalesced immutable snapshots,
   explicit-only local refresh, supersession cancellation, atomic last-good
-  registry replacement, and queue-independent joined shutdown. Selected-device
-  commands remain fail-closed until the lineup resolver lane is attached.
+  registry replacement, and queue-independent joined shutdown. An independent
+  cancellable selection lane retains the complete URL-bearing device snapshot
+  inside the actor while publishing only device-scoped, URL-free channel rows.
 - A cross-platform route snapshot and candidate policy with deterministic fake
   providers, plus a native Linux rtnetlink provider that recognizes WireGuard
   and other unambiguous tunnel links. Native macOS and Windows automatic
@@ -93,8 +94,10 @@ available program information, and a live-video area.
   joining both actors. No production controller replaces that pair yet.
 - GTK-free library boundaries and deterministic fake-device tests.
 - An opt-in GTK 4/libadwaita development shell with adaptive, separate device
-  and channel sidebars plus a live-TV empty state. It starts no network or
-  playback work and keeps the core library and diagnostic GTK-free.
+  and channel sidebars plus a live-TV empty state. Construction remains inert;
+  Refresh explicitly starts local discovery, selecting one device loads only
+  that device's lineup, and a joined close path stops the controller. It does
+  not start playback and keeps the core library and diagnostic GTK-free.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
 hardware-validation, packaging, and release boundaries, is in
@@ -169,9 +172,11 @@ available, launch it with:
 cargo run --locked --features desktop --bin balun
 ```
 
-This opens Balun's adaptive device, channel, and live-TV panes. The empty
-states are intentional: this slice does not start discovery, allocate a tuner,
-or construct a media pipeline.
+This opens Balun's adaptive device, channel, and live-TV panes without starting
+network work. Choose **Refresh** to run one bounded local discovery operation.
+Selecting a discovered device fetches its identity-checked metadata and lineup
+for the channel sidebar; it does not tune a channel or allocate a tuner. The
+live-TV pane remains an intentional empty state until playback lands.
 
 On Windows, install Rust with the
 `x86_64-pc-windows-gnullvm` target and an MSYS2 CLANG64 environment containing
