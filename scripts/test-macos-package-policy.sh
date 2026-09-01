@@ -238,10 +238,12 @@ set -euo pipefail
 mode=""
 artifact=""
 saw_arch_all=false
+saw_mach_header=false
 previous=""
 for argument in "$@"; do
   case "$argument" in
     -L|-l) mode="$argument" ;;
+    -h) saw_mach_header=true ;;
   esac
   if [[ "$previous" == -arch && "$argument" == all ]]; then
     saw_arch_all=true
@@ -250,10 +252,18 @@ for argument in "$@"; do
   artifact="$argument"
 done
 [[ "$saw_arch_all" == true ]] || exit 72
+if [[ "$mode" == -l && "$saw_mach_header" != true ]]; then
+  exit 73
+fi
+if [[ "$mode" == -L && "$saw_mach_header" == true ]]; then
+  exit 74
+fi
 emit_mach_header() {
+  local load_command_count="${1:-1}"
   printf 'Mach header\n'
   printf '      magic cputype cpusubtype caps filetype ncmds sizeofcmds flags\n'
-  printf ' 0xfeedfacf 16777223 3 0x00 2 1 48 0x00000000\n'
+  printf ' 0xfeedfacf 16777223 3 0x00 2 %s 48 0x00000000\n' \
+    "$load_command_count"
 }
 [[ ! -e "${artifact}.otool-fail" ]] || exit 71
 [[ ! -e "${artifact}.empty-output" ]] || exit 0
@@ -270,7 +280,8 @@ if [[ -e "${artifact}.invalid-text" ]]; then
   exit 0
 fi
 if [[ -e "${artifact}.architectures" \
-    || -e "${artifact}.architecture-mismatch" ]]; then
+    || -e "${artifact}.architecture-mismatch" \
+    || -e "${artifact}.architecture-missing-header" ]]; then
   for architecture in x86_64 arm64; do
     if [[ -e "${artifact}.architecture-mismatch" \
         && "$mode" == -l && "$architecture" == arm64 ]]; then
@@ -278,7 +289,10 @@ if [[ -e "${artifact}.architectures" \
     fi
     printf '%s (architecture %s):\n' "$artifact" "$architecture"
     if [[ "$mode" == -l ]]; then
-      emit_mach_header
+      if [[ ! -e "${artifact}.architecture-missing-header" \
+          || "$architecture" != arm64 ]]; then
+        emit_mach_header
+      fi
       printf 'Load command 0\n      cmd LC_RPATH\n  cmdsize 48\n     path /usr/lib (offset 12)\n'
     else
       printf '\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)\n'
@@ -288,7 +302,13 @@ if [[ -e "${artifact}.architectures" \
 fi
 if [[ "$mode" == -l ]]; then
   printf '%s:\n' "$artifact"
-  emit_mach_header
+  if [[ ! -e "${artifact}.missing-mach-header" ]]; then
+    if [[ -e "${artifact}.load-count-mismatch" ]]; then
+      emit_mach_header 2
+    else
+      emit_mach_header
+    fi
+  fi
   if [[ -e "${artifact}.missing-cmd" ]]; then
     printf 'Load command 0\n'
   elif [[ -e "${artifact}.missing-reference" ]]; then
@@ -361,6 +381,13 @@ assert_status 2 macos_validate_macho_copy_control "$ARCHITECTURE_MISMATCH_ARTIFA
 assert_reason_contains 'disagree on architecture coverage'
 assert_no_policy_temporaries
 
+ARCHITECTURE_HEADER_ARTIFACT="${ARTIFACTS}/libarchitecture-missing-header.dylib"
+printf 'synthetic Mach-O\n' > "$ARCHITECTURE_HEADER_ARTIFACT"
+touch "${ARCHITECTURE_HEADER_ARTIFACT}.architecture-missing-header"
+assert_status 2 macos_validate_macho_copy_control "$ARCHITECTURE_HEADER_ARTIFACT"
+assert_reason_contains 'omits its Mach header preamble'
+assert_no_policy_temporaries
+
 NAMED_ARTIFACT="${ARTIFACTS}/lib${DENIED_TOKEN}.dylib"
 printf 'synthetic Mach-O\n' > "$NAMED_ARTIFACT"
 assert_status 1 macos_validate_macho_copy_control "$NAMED_ARTIFACT"
@@ -419,6 +446,20 @@ printf 'synthetic Mach-O\n' > "$MALFORMED_DEPENDENCY_ARTIFACT"
 touch "${MALFORMED_DEPENDENCY_ARTIFACT}.malformed-dependency"
 assert_status 2 macos_validate_macho_copy_control "$MALFORMED_DEPENDENCY_ARTIFACT"
 assert_reason_contains 'malformed dependency record'
+assert_no_policy_temporaries
+
+MISSING_HEADER_ARTIFACT="${ARTIFACTS}/libmissing-mach-header.dylib"
+printf 'synthetic Mach-O\n' > "$MISSING_HEADER_ARTIFACT"
+touch "${MISSING_HEADER_ARTIFACT}.missing-mach-header"
+assert_status 2 macos_validate_macho_copy_control "$MISSING_HEADER_ARTIFACT"
+assert_reason_contains 'omits its Mach header preamble'
+assert_no_policy_temporaries
+
+LOAD_COUNT_ARTIFACT="${ARTIFACTS}/libload-count-mismatch.dylib"
+printf 'synthetic Mach-O\n' > "$LOAD_COUNT_ARTIFACT"
+touch "${LOAD_COUNT_ARTIFACT}.load-count-mismatch"
+assert_status 2 macos_validate_macho_copy_control "$LOAD_COUNT_ARTIFACT"
+assert_reason_contains 'load-command output is incomplete'
 assert_no_policy_temporaries
 
 MISSING_CMD_ARTIFACT="${ARTIFACTS}/libmissing-cmd.dylib"

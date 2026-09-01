@@ -1062,7 +1062,7 @@ macos_validate_macho_copy_control() {
       "Mach-O load-command output" "$load_output" \
       "$MACOS_PACKAGE_POLICY_MAX_OUTPUT_BYTES" \
       "$remaining_seconds" \
-      "${MACOS_OTOOL_COMMAND:-otool}" -arch all -l "$artifact"; then
+      "${MACOS_OTOOL_COMMAND:-otool}" -arch all -h -l "$artifact"; then
     macos_package_policy_remove_private_dir "$inspection_dir" || true
     return 2
   fi
