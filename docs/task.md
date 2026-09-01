@@ -23,7 +23,7 @@ outcomes belong in [`../CHANGELOG.md`](../CHANGELOG.md).
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **16/64 (25.0%)** implementation records complete. This is a
+Current status: **17/64 (26.6%)** implementation records complete. This is a
 dependency ledger, not an effort estimate; packaging and cross-platform
 playback records are substantially larger than most completed foundation work.
 
@@ -33,16 +33,17 @@ The discovery, identity, selected-lineup, and two-sidebar path is implemented.
 The current Windows correction uses per-interface limited IPv4 broadcast,
 omits unusable scoped-link-local-only results, and provides a fixed
 `-InspectLocal` diagnostic. It still needs the two physical Windows hosts to
-confirm the repair.
+confirm the repair. The optional GStreamer foundation is also implemented: the
+desktop now owns one main-context runtime/capability snapshot, but no pipeline
+or stream handoff exists.
 
 The shortest path to the first live-TV test is:
 
-1. Publish the current discovery/helper slice and pass native CI.
-2. Re-run Windows local discovery and selected-device lineup loading.
-3. Land the GStreamer feature boundary and exact runtime capability probe.
-4. Add one generation-owned tune session and actor-private stream handoff.
-5. Render one unprotected ATSC 1.0 channel through `gtk4paintablesink`.
-6. Prove channel switch, Stop, device loss, and window close release the tuner.
+1. Re-run Windows local discovery and selected-device lineup loading.
+2. Complete the bounded M0.5 synthetic `playbin3`/`gtk4paintablesink` experiment.
+3. Add the actor-private stream handoff and one generation-owned tune session.
+4. Render one unprotected ATSC 1.0 channel through `gtk4paintablesink`.
+5. Prove channel switch, Stop, device loss, and window close release the tuner.
 
 The first playback target is a clear ATSC 1.0 channel on an accessible CONNECT
 or CONNECT 4K. ATSC 3.0 codec/audio support and protected PRIME channels are
@@ -89,9 +90,11 @@ compatibility/error-path work, not prerequisites for that first picture.
   tables during an already active stream, without allocating a background
   tuner, and document device/region gaps.
 
-- [ ] **M0.10 — Freeze the GStreamer floor and plugin contract.** Record the
-  minimum supported GStreamer release and exact required factories for HTTP,
-  MPEG-TS, parsers/decoders, platform audio, and GTK video.
+- [ ] **M0.10 — Freeze the GStreamer floor and plugin contract.** The selected
+  GStreamer 1.20 foundation floor and seven structural factories are recorded.
+  Complete this record by proving and freezing the exact required
+  HTTP, MPEG-TS, parser/decoder, platform-audio, and GTK-video factory/package
+  contract across the supported platforms.
 
 ## M1 — Repository foundation
 
@@ -157,9 +160,15 @@ compatibility/error-path work, not prerequisites for that first picture.
   selection stable by identity, reset recycled rows, expose protected channels
   honestly, and never tune merely because a device was selected.
 
-- [ ] **M2.4 — Add an optional GStreamer feature boundary.** Introduce the
-  minimum Rust bindings and initialization owner without adding GTK/GStreamer
-  to the diagnostic or default library build.
+- [x] **M2.4 — Add an optional GStreamer feature boundary.** Keep `gstreamer`
+  0.25/`v1_20` behind a GTK-free `playback` feature included by `desktop`, while
+  the default library and diagnostic acquire neither GTK nor GStreamer. Own
+  initialization on the default GLib main context, enforce the native 1.20
+  floor, expose fixed path-free failures, and snapshot exactly `playbin3`,
+  `uridecodebin3`, `decodebin3`, `souphttpsrc`, `tsdemux`, `deinterlace`, and
+  `gtk4paintablesink`. Missing components disable playback readiness without
+  disabling discovery or lineup inspection; no pipeline or stream URL exists in
+  this slice.
 
 - [ ] **M2.5 — Define the actor-private stream handoff.** Select a ChannelKey
   only from the current complete selected snapshot, revalidate its device and

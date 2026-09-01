@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Optional GStreamer playback foundation** — Add a GTK-free `playback`
+  feature using the optional Rust `gstreamer` 0.25 binding with its `v1_20` API
+  surface, and make the desktop feature include it while leaving the default
+  library and diagnostic free of GTK/GStreamer. A non-`Send`, non-`Sync` owner
+  initializes on the owned default GLib main context, enforces a native
+  GStreamer 1.20 floor, exposes fixed path-free initialization failures, and
+  takes one immutable startup snapshot of `playbin3`, `uridecodebin3`,
+  `decodebin3`, `souphttpsrc`, `tsdemux`, `deinterlace`, and
+  `gtk4paintablesink`. Missing components produce a playback-unavailable player
+  state without disabling discovery or lineup inspection. This foundation does
+  not yet create a pipeline, hand off a stream URL, choose codecs or an audio
+  sink, render video, or complete the synthetic and packaged-runtime probes.
 - **GTK development shell** — Add an opt-in `balun` desktop binary using GTK 4
   and libadwaita at Tributary's proven API floors, with adaptive nested device,
   channel, and live-TV panes, truthful packet-free empty states, exact
@@ -18,9 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry, while an isolated Xvfb/D-Bus smoke exercises the ordinary window
   close path and requires a successful joined controller shutdown.
 - **Cross-platform desktop link checks** — Compile and link the feature-gated
-  shell against native Homebrew GTK/libadwaita on macOS arm64 and an MSYS2
-  CLANG64 GTK/libadwaita environment on Windows x86_64, without claiming a
-  runnable bundle or package.
+  shell against native Homebrew GTK/libadwaita/GStreamer on macOS arm64 and an
+  MSYS2 CLANG64 GTK/libadwaita/GStreamer environment on Windows x86_64, without
+  claiming a runnable bundle or package.
 - **Desktop-default platform build helpers** — Make the same-named Linux,
   macOS, and Windows helpers derived from Tributary build locked release desktop
   executables without launching when invoked with no options. Keep the GTK-
@@ -184,6 +196,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Playback component boundary** — Treat the seven structural GStreamer
+  factories as a startup capability snapshot rather than a bundle allowlist.
+  Future self-contained packages must derive and review the actual codec,
+  parser, HTTP, MPEG-TS, audio, and video plugin/native closure, while continuing
+  to reject libdvdcss, optical-disc copy-control/circumvention components, and
+  proprietary DRM modules at staging, native-import, completed-tree, and
+  reopened-artifact boundaries. Broad development/runtime packages do not grant
+  authority to stage those unused components.
 - **Release component input policy** — Add a shared, fail-closed optical-disc
   and proprietary-DRM token policy, a reviewed-policy checksum,
   protected-television module names relevant to HDHomeRun deployments,

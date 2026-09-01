@@ -432,6 +432,16 @@ run_helper --check
 expect_status 1
 expect_output 'libadwaita-1 >= 1.6 was not found through pkg-config'
 expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>'
+
+fake_pkg_config_failure=gstreamer-1.0
+run_helper --check
+expect_status 1
+expect_output 'gstreamer-1.0 >= 1.20 was not found through pkg-config'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>'
+
+run_helper --diagnostic --check
+expect_status 0
+expect_log $'rustc <--print> <host-tuple>\ncargo <check> <--all-targets> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 fake_pkg_config_failure=
 
 run_helper --fmt
@@ -445,7 +455,7 @@ expect_log 'cargo <fmt> <--all>'
 run_helper --check
 expect_status 0
 expect_output 'Checking all Balun desktop targets'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <check> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <check> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 
 run_helper --diagnostic --check
 expect_status 0
@@ -454,7 +464,7 @@ expect_log $'rustc <--print> <host-tuple>\ncargo <check> <--all-targets> <--lock
 
 run_helper --clippy
 expect_status 0
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <clippy> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target> <--> <-D> <warnings>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <clippy> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target> <--> <-D> <warnings>'
 
 run_helper --clippy --diagnostic
 expect_status 0
@@ -462,7 +472,7 @@ expect_log $'rustc <--print> <host-tuple>\ncargo <clippy> <--all-targets> <--loc
 
 run_helper --coverage
 expect_status 0
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <llvm-cov> <--version>\ncargo <llvm-cov> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--summary-only> <CARGO_TARGET_DIR='"$fixture"$'/target> <CARGO_LLVM_COV_TARGET_DIR='"$fixture"$'/target/llvm-cov-target> <CARGO_LLVM_COV_BUILD_DIR='"$fixture"$'/target/llvm-cov-target>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <llvm-cov> <--version>\ncargo <llvm-cov> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--summary-only> <CARGO_TARGET_DIR='"$fixture"$'/target> <CARGO_LLVM_COV_TARGET_DIR='"$fixture"$'/target/llvm-cov-target> <CARGO_LLVM_COV_BUILD_DIR='"$fixture"$'/target/llvm-cov-target>'
 
 run_helper --diagnostic --coverage
 expect_status 0
@@ -473,21 +483,21 @@ run_helper --coverage
 expect_status 1
 expect_output 'requires preinstalled cargo-llvm-cov 0.8.7 exactly'
 expect_output 'will not install or replace tools'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <llvm-cov> <--version>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <llvm-cov> <--version>'
 fake_coverage_version='cargo-llvm-cov 0.8.7'
 
 fake_coverage_version=$'cargo-llvm-cov 0.8.7\nunexpected second line'
 run_helper --coverage
 expect_status 1
 expect_output 'requires preinstalled cargo-llvm-cov 0.8.7 exactly'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <llvm-cov> <--version>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <llvm-cov> <--version>'
 fake_coverage_version='cargo-llvm-cov 0.8.7'
 
 fake_cargo_status=26
 run_helper --coverage
 expect_status 1
 expect_output 'requires preinstalled cargo-llvm-cov 0.8.7 exactly'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <llvm-cov> <--version>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <llvm-cov> <--version>'
 fake_cargo_status=0
 
 mv "$fake_bin/cargo" "$fake_bin/cargo.saved"
@@ -508,7 +518,7 @@ policy_helper="$fixture/scripts/macos-package-policy.sh"
 mv "$policy_helper" "$policy_helper.saved"
 run_helper --check
 expect_status 0
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\ncargo <check> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <check> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 run_helper
 expect_status 1
 expect_output 'package-policy helper is unavailable or unsafe'
@@ -534,7 +544,7 @@ printf '%s\n' \
 run_helper
 expect_status 1
 expect_output 'does not provide macos_validate_macho_copy_control'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>'
 rm -f -- "$policy_helper"
 mv "$policy_helper.saved" "$policy_helper"
 
@@ -562,7 +572,7 @@ run_helper
 expect_status 0
 expect_output 'Application ID: io.github.jm2.Balun'
 expect_output 'Mach-O component policy passed for expected Balun desktop path:'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
 [ ! -e "$hostile_target_directory/$fake_native_target/release/balun" ] || \
     fail_test 'hostile CARGO_TARGET_DIR received the desktop output'
 [ ! -e "$fixture/target/$hostile_build_target/release/balun" ] || \
@@ -581,13 +591,13 @@ fake_policy_status=2
 run_helper
 expect_status 1
 expect_output 'Pinned macOS component policy could not be loaded: synthetic policy failure'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>'
 fake_policy_status=0
 
 fake_cargo_status=24
 run_helper
 expect_status 24
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 fake_cargo_status=0
 
 rm -f -- "$desktop_output"
@@ -595,7 +605,7 @@ fake_skip_binary=1
 run_helper
 expect_status 1
 expect_output 'expected nonempty, executable, regular, non-symlink binary'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 fake_skip_binary=0
 
 : > "$desktop_output"
@@ -611,7 +621,7 @@ fake_skip_binary=1
 run_helper
 expect_status 1
 expect_output 'expected nonempty, executable, regular, non-symlink binary'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 fake_skip_binary=0
 
 rm -f -- "$desktop_output"
@@ -647,7 +657,7 @@ run_helper
 expect_status 1
 expect_output 'failed macOS Mach-O component-policy inspection'
 expect_output 'synthetic Mach-O policy failure'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
 fake_macho_status=0
 
 forbidden_command_pattern='^[[:space:]]*([^[:space:]]*/)?(sudo|curl|wget|git|rustup|brew|port|apt|apt-get|dnf|yum|pacman|zypper|apk|snap|flatpak|hdiutil|create-dmg|productbuild|pkgbuild|codesign|xcrun)([[:space:]]|$)'

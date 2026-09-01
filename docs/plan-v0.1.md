@@ -196,7 +196,9 @@ src/
     events.rs
     state.rs
   playback/
-    gstreamer.rs
+    mod.rs
+    runtime.rs
+    pipeline.rs
     runtime_probe.rs
   ui/
     window.rs
@@ -227,6 +229,13 @@ they have behavior.
   to NULL, waits for bounded cleanup, and exits normally.
 - Device selection, lineup refresh, guide refresh, and tune requests each use
   monotonically increasing generations.
+
+Implementation status: M2.4 introduces an optional, GTK-free `playback` Cargo
+feature and makes the desktop feature include it. Its default-main-context owner
+initializes GStreamer, enforces the native 1.20 runtime floor, and retains one
+path-free startup capability snapshot. The default library and diagnostic still
+exclude both GTK and GStreamer. No pipeline or stream handoff exists yet; see
+the detailed [playback foundation](playback.md).
 
 ### 4.4 Domain identity
 
@@ -443,7 +452,29 @@ is offline, but it must not imply that the device is currently playable.
 
 ### 6.2 GStreamer MVP
 
-The first player implementation uses:
+The implemented M2.4 foundation uses the optional Rust `gstreamer` 0.25 binding
+with default Cargo features disabled and the `v1_20` API feature selected. Its
+main-context-owned runtime checks the loaded native GStreamer version against a
+1.20.0 floor and records these exact structural factories in stable order:
+
+- `playbin3`.
+- `uridecodebin3`.
+- `decodebin3`.
+- `souphttpsrc`.
+- `tsdemux`.
+- `deinterlace`.
+- `gtk4paintablesink`.
+
+Initialization failures use fixed, path-free copy. Missing factories disable
+playback readiness but do not disable discovery, device selection, or lineup
+inspection. Registry presence alone does not prove construction, negotiation,
+decoding, rendering, EOS, or teardown, and the current foundation creates no
+pipeline, accepts no stream URL, and allocates no tuner. Audio sinks, parsers,
+decoders, the M0.5 synthetic experiment, the full M0.10 plugin contract, and
+M2.5 and later player work remain open. The detailed boundary is recorded in
+[`playback.md`](playback.md).
+
+The first player implementation will use:
 
 - playbin3.
 - gtk4paintablesink exposed through GtkPicture.
@@ -492,7 +523,11 @@ DRM-tagged channels remain visible but unavailable. Balun's shared
 optical-disc copy-control and proprietary-DRM components that this application
 does not use. The current repository/input gate is in CI; it is not a completed
 package claim and does not broadly deny ordinary codecs, containers, TLS, or
-general-purpose cryptography.
+general-purpose cryptography. A broad development/runtime package is never
+authority to stage libdvdcss, a DRM module, or any other optical-disc
+copy-control/circumvention component. Self-contained bundles must instead use a
+reviewed capability-derived plugin and native-library closure while retaining
+the shared deny policy as defense in depth.
 
 ## 7. Guide data
 
@@ -583,22 +618,25 @@ Tributary's currently proven GTK 4.16/libadwaita 1.6 and platform bundle
 setup are the initial reference. Balun may lower that floor if its smaller UI
 can do so without fragmenting the bundle and CI matrix.
 
-Implementation status: the first desktop shell declares GTK 4.16 and
-libadwaita 1.6 as its API floors. The feature-gated binary is compiled and
-linted in a Fedora desktop job while default library and diagnostic builds
-remain GTK-free. Native macOS arm64 and Windows x86_64 CI lanes also link the
-shell against their GTK/libadwaita SDKs while continuing to prove the GTK-free
-core. The Windows developer helper now auto-detects an installed MSYS2 CLANG64
-environment and makes a locked, build-only release desktop build its no-flag
-operation; `-Run` explicitly builds and launches, while `-Diagnostic` retains
+Implementation status: the first desktop shell declares GTK 4.16, libadwaita
+1.6, and GStreamer 1.20 as its native API/runtime floors. The Rust `gstreamer`
+0.25 dependency is optional behind a GTK-free `playback` feature, while
+`desktop` includes GTK, libadwaita, and playback. The feature-gated binary is
+compiled and linted in a Fedora desktop job while default library and diagnostic
+builds remain GTK- and GStreamer-free. Native macOS arm64 and Windows x86_64 CI
+lanes also link the shell against their toolkit/media SDKs while continuing to
+prove the dependency-light core. The Windows developer helper now auto-detects
+an installed MSYS2 CLANG64 environment and makes a locked, build-only release
+desktop build its no-flag operation; `-Run` explicitly builds and launches,
+while `-Diagnostic` retains
 the GTK-free path. `-InspectLocal` is a separate Windows-only, fixed-argument
 diagnostic operation. Linux, macOS, and Windows helpers bind every compiling
 route to an explicit validated Rust target and repository-local target tree.
 This removes manual compiler, `pkg-config`, Rust-target, and Cargo-output path
 handling without making a portable bundle or installer claim. A local Linux
-GTK 4 Broadway smoke has verified display initialization and event-loop entry.
-Automated display-backed clean-shutdown smoke tests remain pending on every
-platform.
+GTK 4 Broadway smoke has verified display initialization and event-loop entry,
+and an isolated Linux Xvfb/D-Bus smoke covers joined close. Native macOS and
+Windows runtime activation/close smokes remain pending.
 
 Every completed package must run an exact runtime probe for:
 
@@ -609,6 +647,10 @@ Every completed package must run an exact runtime probe for:
 - Expected decoders and parsers.
 - Platform audio sink.
 - gtk4paintablesink and a tiny synthetic video path.
+
+The M2.4 startup snapshot covers only the seven structural factories listed in
+section 6.2. It is not this completed package probe: audio sinks and codecs are
+still unselected, and no synthetic frame path or packaged artifact exists.
 
 ## 10. Delivery milestones
 
@@ -695,12 +737,17 @@ Exit criteria:
 - Linux, macOS, and Windows smoke validation passes.
 
 Implementation status: standard desktop local discovery, bounded numeric
-exact-address entry, the DeviceID registry, selected-device lineup loading, and
-both virtualized sidebars are implemented. Hostname admission and the
-playback/control/pipeline/package-runtime work remain open, so this milestone
-is not yet complete. Initial Windows desktop trials exposed inconsistent IPv4
-broadcast discovery and an unusable-only locator path; the local endpoint
-projection now follows Windows limited-broadcast behavior, consumes the direct
+exact-address entry, the DeviceID registry, selected-device lineup loading, both
+virtualized sidebars, and the optional GStreamer initialization/capability
+foundation are implemented. The player pane retains its main-context owner and
+reports missing structural components without disabling discovery, but it does
+not create a pipeline or tune. Hostname admission, the actor-private stream
+handoff, generation-owned playback, controls, codecs/audio sinks, synthetic and
+packaged runtime probes, and live-platform validation remain open, so this
+milestone is not yet complete. Initial Windows desktop trials exposed
+inconsistent IPv4 broadcast discovery and an unusable-only locator path; the
+local endpoint projection now follows Windows limited-broadcast behavior,
+consumes the direct
 on-link prefix length, and omits link-local IPv6 until scoped HTTP is supported.
 Real-host regression testing remains required.
 

@@ -62,9 +62,9 @@ final artifact reopening for that format.
 
 | Tributary file | Status and landing condition |
 | --- | --- |
-| `build-linux.sh` | Adapted to a no-option, build-only locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, an exact native target and repository-local Cargo target path, and Linux ELF inspection; native/Flatpak package modes fail before build work until their complete gates land |
-| `build-macos.sh` | Adapted to a no-option, build-only native locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, exact native-target output binding, and pinned Mach-O inspection; app, DMG, signing, and notarization modes fail before external work until their complete gates land |
-| `build-windows.ps1` | Adapted to Tributary's desktop-default flag semantics: no flags auto-detect MSYS2 CLANG64 and build a locked release `balun.exe` without launching, `-Run` is the sole desktop launch route, `-Diagnostic` selects the GTK-free tool, and the new-purpose `-InspectLocal` builds, validates, and runs only its fixed local inspection; every compiling route pins its Rust target and repository-local output while bundle, ZIP, Inno, and update paths remain fail-closed |
+| `build-linux.sh` | Adapted to a no-option, build-only locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, GTK/libadwaita/GStreamer development-floor checks, an exact native target and repository-local Cargo target path, and Linux ELF inspection; native/Flatpak package modes fail before build work until their complete gates land |
+| `build-macos.sh` | Adapted to a no-option, build-only native locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, GTK/libadwaita/GStreamer development-floor checks, exact native-target output binding, and pinned Mach-O inspection; app, DMG, signing, and notarization modes fail before external work until their complete gates land |
+| `build-windows.ps1` | Adapted to Tributary's desktop-default flag semantics: no flags auto-detect MSYS2 CLANG64, require the GTK/libadwaita/GStreamer development floors, and build a locked release `balun.exe` without launching, `-Run` is the sole desktop launch route, `-Diagnostic` selects the GTK-free tool, and the new-purpose `-InspectLocal` builds, validates, and runs only its fixed local inspection; every compiling route pins its Rust target and repository-local output while bundle, ZIP, Inno, and update paths remain fail-closed |
 | `macos-icon-bundle-policy.sh` | Adapted preparatory helper with Balun identity/temp names |
 | `macos-package-policy.sh` | Adapted inspection-only core with bounded Mach-O output and completed-tree checks; broad copy-any-allowed-plugin staging API removed |
 | `sync_rust_toolchain.py` | Port independently against Balun's actual MSRV declarations |
@@ -81,7 +81,10 @@ narrow responsibilities rather than renamed upstream ports.
 
 All three helpers now make a locked, build-only desktop executable their route
 when invoked without options, and their compile-oriented quick modes select
-desktop features by default. Linux and macOS retain the GTK-free tool behind
+desktop features by default. Those desktop routes fail closed unless
+`pkg-config` reports GTK 4.16, libadwaita 1.6, and GStreamer 1.20; the helpers do
+not mistake that core development-library check for a codec, plugin, or bundle
+runtime probe. Linux and macOS retain the GTK- and GStreamer-free tool behind
 `--diagnostic`; Windows uses `-Diagnostic`. Tributary defines an explicit launch
 flag only for its Windows PowerShell helper, so Balun preserves `-Run` there and
 does not invent a shell `--run`. Linux and macOS derive, validate, and pass the

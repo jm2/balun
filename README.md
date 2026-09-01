@@ -14,8 +14,9 @@ available program information, and a live-video area.
 > **Pre-alpha status:** the repository contains a runnable GTK development
 > shell plus the GTK-free discovery, device-registry, and lineup foundation.
 > The window can explicitly discover local tuners, probe one known numeric
-> device address, and load the selected device's lineup. Hostname entry, EPG,
-> and playback remain unimplemented.
+> device address, load the selected device's lineup, and report whether the
+> optional GStreamer playback foundation is available. Hostname entry, EPG,
+> stream handoff, decoding, and live-video rendering remain unimplemented.
 
 ## Current foundation
 
@@ -102,6 +103,13 @@ available program information, and a live-video area.
   both actors, coalesces replacement events, and retires synchronously before
   joining both actors. No production controller replaces that pair yet.
 - GTK-free library boundaries and deterministic fake-device tests.
+- An optional GTK-free GStreamer 0.25/`v1_20` playback foundation with a native
+  GStreamer 1.20 runtime floor, one default-main-context owner, fixed path-free
+  initialization errors, and an immutable startup snapshot of the exact seven
+  structural factories needed for the first playback experiment. Missing
+  components disable playback readiness without disabling device discovery or
+  lineup inspection; no pipeline, stream URL, audio sink, decoder, or tuner is
+  owned yet.
 - An opt-in GTK 4/libadwaita development shell with adaptive, separate device
   and channel sidebars plus a live-TV empty state. Construction remains inert;
   Refresh explicitly starts local discovery, the adjacent add action admits a
@@ -113,7 +121,9 @@ The implementation plan, including the UI, lineup, guide, playback, security,
 hardware-validation, packaging, and release boundaries, is in
 [`docs/plan-v0.1.md`](docs/plan-v0.1.md). The countable done/remaining ledger is
 in [`docs/task.md`](docs/task.md), and sanitized hardware observations are
-recorded in [`docs/compatibility-v0.1.md`](docs/compatibility-v0.1.md).
+recorded in [`docs/compatibility-v0.1.md`](docs/compatibility-v0.1.md). The
+implemented playback boundary and its remaining acceptance work are detailed in
+[`docs/playback.md`](docs/playback.md).
 
 ## Try discovery
 
@@ -175,13 +185,23 @@ Press `Ctrl+C` to cancel discovery.
 
 ## Try the desktop shell
 
-The first desktop slice requires GTK 4.16 or newer and libadwaita 1.6 or
+The desktop slice requires GTK 4.16, libadwaita 1.6, and GStreamer 1.20 or
 newer. On Linux or macOS, with those development libraries and `pkg-config`
 available, launch it with:
 
 ```bash
 cargo run --locked --features desktop --bin balun
 ```
+
+At startup the player pane checks `playbin3`, `uridecodebin3`, `decodebin3`,
+`souphttpsrc`, `tsdemux`, `deinterlace`, and `gtk4paintablesink`. These are
+structural checks only: audio sinks, codecs, synthetic playback, stream handoff,
+and live tuning remain open. Fedora commonly supplies this development/runtime
+foundation through `gstreamer1-devel`, the base/good/bad-free plugin packages,
+and `gstreamer1-plugin-gtk4`; Homebrew uses `gstreamer`; MSYS2 CLANG64 uses its
+matching `gstreamer`, base/good/bad, and `gst-plugins-rs` packages. Package names
+vary, so the runtime factory snapshot is authoritative. See the
+[playback foundation](docs/playback.md) for the precise boundary.
 
 This opens Balun's adaptive device, channel, and live-TV panes without starting
 network work. Choose **Refresh** to run one bounded local discovery operation.
@@ -228,6 +248,7 @@ For the Windows desktop build, install Rust with the
 `x86_64-pc-windows-gnullvm` target and an MSYS2 CLANG64 environment containing
 `mingw-w64-clang-x86_64-gtk4`,
 `mingw-w64-clang-x86_64-libadwaita`,
+`mingw-w64-clang-x86_64-gstreamer`,
 `mingw-w64-clang-x86_64-pkg-config`, and
 `mingw-w64-clang-x86_64-toolchain`. Then build the release desktop shell from
 an ordinary PowerShell terminal with one command:
@@ -262,9 +283,10 @@ cargo test --release --all-targets --locked
 ```
 
 CI verifies the declared Rust 1.98 minimum across the desktop feature, runs
-strict Linux GTK-free debug and release checks, compiles, links, and lints the
-Linux desktop shell, links that shell against native macOS and Windows toolkit
-SDKs, and keeps compile-checking the GTK-free code on both platforms. CI also
+strict Linux GTK-free debug and release checks, tests the optional GTK-free
+playback capability layer, compiles, links, and lints the Linux desktop shell,
+links that shell against native macOS and Windows toolkit SDKs, and keeps
+compile-checking the GTK-free default code on both platforms. CI also
 exercises each platform helper's no-option desktop route. The release candidate
 workflow accepts an existing annotated, v-prefixed Semantic Version tag,
 verifies it against `Cargo.toml` and `CHANGELOG.md`, and builds the exact tag
@@ -281,9 +303,9 @@ Tributary established a launch flag only for its Windows PowerShell helper, so
 Balun preserves `-Run` there and deliberately does not invent `--run` for the
 shell helpers.
 
-On Linux, the default helper checks the GTK 4.16/libadwaita 1.6 development
-floors, binds Cargo to the validated native Rust host target and exact
-repository target directory, builds
+On Linux, the default helper checks the GTK 4.16, libadwaita 1.6, and GStreamer
+1.20 development floors, binds Cargo to the validated native Rust host target
+and exact repository target directory, builds
 `target/<native-target>/release/balun`, and applies the locked metadata and ELF
 component gates. Its package switches fail before starting build or network
 work until their recipes and complete artifact gates exist:
@@ -357,10 +379,12 @@ action pin.
 ### Release component policy
 
 Balun does not implement optical-disc or protected-channel playback. A shared,
-fail-closed filename-token policy rejects dedicated optical-disc copy-control
-components and proprietary DRM modules from current release inputs. Future
-bundles are required to enforce the same exclusion over their staged and final
-contents. The current Linux-CI check pins the reviewed policy, then validates
+fail-closed filename-token policy rejects libdvdcss, dedicated optical-disc
+copy-control/circumvention components, and proprietary DRM modules from current
+release inputs. Future bundles must never stage those components merely because
+a broad media package contains them, and must enforce the same exclusion over
+their staged and final contents. The current Linux-CI check pins the reviewed
+policy, then validates
 repository names, Rust and Cargo build inputs, executable helpers, workflows,
 and recognized native packaging/build inputs. The exact tag checkout runs the
 same pinned fixture suite in the release-candidate workflow.

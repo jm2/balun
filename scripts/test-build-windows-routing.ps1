@@ -137,10 +137,28 @@ function Assert-EmptyLog {
 
 function Assert-ExpectedPkgConfigProbeSet {
     $Lines = @([System.IO.File]::ReadAllLines($PkgConfigLog))
+    if ($Lines.Count -ne 3 -or
+        $Lines[0] -cne 'pkg-config <--atleast-version> <4.16> <gtk4>' -or
+        $Lines[1] -cne 'pkg-config <--atleast-version> <1.6> <libadwaita-1>' -or
+        $Lines[2] -cne 'pkg-config <--atleast-version> <1.20> <gstreamer-1.0>') {
+        Assert-RoutingTestFailure 'unexpected pkg-config probes'
+    }
+}
+
+function Assert-ExpectedPkgConfigGtkProbe {
+    $Lines = @([System.IO.File]::ReadAllLines($PkgConfigLog))
+    if ($Lines.Count -ne 1 -or
+        $Lines[0] -cne 'pkg-config <--atleast-version> <4.16> <gtk4>') {
+        Assert-RoutingTestFailure 'unexpected pkg-config probes before GTK rejection'
+    }
+}
+
+function Assert-ExpectedPkgConfigGtkAdwaitaProbes {
+    $Lines = @([System.IO.File]::ReadAllLines($PkgConfigLog))
     if ($Lines.Count -ne 2 -or
         $Lines[0] -cne 'pkg-config <--atleast-version> <4.16> <gtk4>' -or
         $Lines[1] -cne 'pkg-config <--atleast-version> <1.6> <libadwaita-1>') {
-        Assert-RoutingTestFailure 'unexpected pkg-config probes'
+        Assert-RoutingTestFailure 'unexpected pkg-config probes before libadwaita rejection'
     }
 }
 
@@ -721,6 +739,7 @@ exit $global:LASTEXITCODE
     Invoke-TestHelper -Arguments @()
     Assert-ExpectedStatus 1
     Assert-ExpectedOutput 'gtk4 >= 4.16 was not found'
+    Assert-ExpectedPkgConfigGtkProbe
     Assert-EmptyLog $CommandLog 'Cargo'
     $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '0'
 
@@ -729,8 +748,24 @@ exit $global:LASTEXITCODE
     Invoke-TestHelper -Arguments @()
     Assert-ExpectedStatus 1
     Assert-ExpectedOutput 'libadwaita-1 >= 1.6 was not found'
+    Assert-ExpectedPkgConfigGtkAdwaitaProbes
+    Assert-EmptyLog $CommandLog 'Cargo'
+
+    $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '33'
+    $env:BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE = 'gstreamer-1.0'
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'gstreamer-1.0 >= 1.20 was not found'
     Assert-ExpectedPkgConfigProbeSet
     Assert-EmptyLog $CommandLog 'Cargo'
+
+    Invoke-TestHelper -Arguments @('-Diagnostic', '-Check')
+    Assert-ExpectedStatus 0
+    Assert-ExpectedLog (
+        'cargo <check> <--all-targets> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
+    )
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
     $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '0'
     $env:BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE = ''
 
@@ -839,6 +874,8 @@ exit $global:LASTEXITCODE
         'io.github.jm2.Balun',
         "'--features',",
         "'desktop',",
+        "'gstreamer-1.0'",
+        "'1.20'",
         '& $BinaryItem.FullName',
         "& `$BinaryItem.FullName '--inspect' '--local'"
     )) {

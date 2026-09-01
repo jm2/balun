@@ -36,8 +36,9 @@ Quick-exit modes (choose at most one):
   --coverage        Print an all-target coverage summary with desktop features
                     by default; requires cargo-llvm-cov 0.8.7 installed already.
 
-Desktop compilation requires preinstalled, pkg-config-visible GTK 4.16 and
-libadwaita 1.6 development libraries. The diagnostic and format routes do not.
+Desktop compilation requires preinstalled, pkg-config-visible GTK 4.16,
+libadwaita 1.6, and GStreamer 1.20 development libraries. The diagnostic and
+format routes do not.
 Every compilation route requires a preinstalled rustc reporting one native
 Apple Darwin host tuple. The format route does not.
 
@@ -87,7 +88,9 @@ require_desktop_dependencies()
         fail 'gtk4 >= 4.16 was not found through pkg-config; install its development package explicitly and retry.'
     pkg-config --atleast-version=1.6 libadwaita-1 >/dev/null 2>&1 || \
         fail 'libadwaita-1 >= 1.6 was not found through pkg-config; install its development package explicitly and retry.'
-    info 'GTK 4.16 and libadwaita 1.6 development-library checks passed.'
+    pkg-config --atleast-version=1.20 gstreamer-1.0 >/dev/null 2>&1 || \
+        fail 'gstreamer-1.0 >= 1.20 was not found through pkg-config; install its development package explicitly and retry.'
+    info 'GTK 4.16, libadwaita 1.6, and GStreamer 1.20 development-library checks passed.'
 }
 
 resolve_native_target()

@@ -3,18 +3,19 @@
     Balun - Windows desktop build helper
 
 .DESCRIPTION
-    Builds Balun's GTK4/libadwaita desktop application with the MSYS2 CLANG64
-    toolchain. With no mode, this runs a locked release build and requires a
-    nonempty, regular, non-reparse-point balun.exe at Cargo's expected output
-    path. It does not launch, bundle, or install the application.
+    Builds Balun's GTK4/libadwaita/GStreamer desktop application with the MSYS2
+    CLANG64 toolchain. With no mode, this runs a locked release build and
+    requires a nonempty, regular, non-reparse-point balun.exe at Cargo's
+    expected output path. It does not launch, bundle, or install the application.
 
     A lightweight cross-platform HDHomeRun live TV viewer
     Application ID: io.github.jm2.Balun
 
     The helper selects x86_64-pc-windows-gnullvm, discovers a standard MSYS2
     installation automatically, configures its CLANG64 compiler and pkg-config
-    paths, and checks the GTK 4.16 and libadwaita 1.6 development-library
-    floors. Use Msys2Root only for a nonstandard MSYS2 installation.
+    paths, and checks the GTK 4.16, libadwaita 1.6, and GStreamer 1.20
+    development-library floors. Use Msys2Root only for a nonstandard MSYS2
+    installation.
 
     The helper never invokes an installer, package manager, dependency update,
     or toolchain installation command. Cargo may fetch missing locked dependency
@@ -529,6 +530,7 @@ function Resolve-Msys2Layout {
             "$($incomplete.Missing -join ', '). Install the " +
             'mingw-w64-clang-x86_64-gtk4, ' +
             'mingw-w64-clang-x86_64-libadwaita, ' +
+            'mingw-w64-clang-x86_64-gstreamer, ' +
             'mingw-w64-clang-x86_64-pkg-config, and ' +
             'mingw-w64-clang-x86_64-toolchain packages.'
         )
@@ -658,7 +660,11 @@ try {
         Write-Info "Using MSYS2 CLANG64 at $($MsysLayout.Prefix)."
         Assert-PkgConfigFloor $MsysLayout 'gtk4' '4.16' 'gtk4'
         Assert-PkgConfigFloor $MsysLayout 'libadwaita-1' '1.6' 'libadwaita'
-        Write-Info 'GTK 4.16 and libadwaita 1.6 development-library checks passed.'
+        Assert-PkgConfigFloor $MsysLayout 'gstreamer-1.0' '1.20' 'gstreamer'
+        Write-Info (
+            'GTK 4.16, libadwaita 1.6, and GStreamer 1.20 ' +
+            'development-library checks passed.'
+        )
     }
 
     $FeatureArguments = if ($DiagnosticMode) {

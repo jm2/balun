@@ -8,6 +8,7 @@ use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime,
 };
+use balun::playback::{PlaybackInitializationError, PlaybackRuntime};
 
 use super::objects::DeviceRowObject;
 use super::{channel_sidebar, device_sidebar, exact_discovery_dialog, player_view};
@@ -25,15 +26,16 @@ const COLLAPSE_CHANNEL_SIDEBAR_AT: f64 = 700.0;
 pub(crate) fn build(
     application: &adw::Application,
     controller: ControllerRuntime,
+    playback: Result<PlaybackRuntime, PlaybackInitializationError>,
     shutdown_failed: Rc<Cell<bool>>,
 ) -> adw::ApplicationWindow {
     let device_sidebar = device_sidebar::build();
     let channel_sidebar = channel_sidebar::build();
-    let player_view = player_view::build();
+    let player_view = player_view::build(playback);
 
     let device_page = adw::NavigationPage::new(device_sidebar.root(), "Devices");
     let channel_page = adw::NavigationPage::new(channel_sidebar.root(), "Channels");
-    let player_page = adw::NavigationPage::new(&player_view, "Live TV");
+    let player_page = adw::NavigationPage::new(player_view.root(), "Live TV");
 
     let channel_and_player = adw::NavigationSplitView::builder()
         .sidebar(&channel_page)
@@ -98,7 +100,7 @@ pub(crate) fn build(
         channel_sidebar,
         device_and_content,
     );
-    connect_joined_shutdown(&window, controller, shutdown_failed);
+    connect_joined_shutdown(&window, controller, player_view, shutdown_failed);
 
     window
 }
@@ -281,9 +283,11 @@ fn spawn_snapshot_reducer(
 fn connect_joined_shutdown(
     window: &adw::ApplicationWindow,
     controller: ControllerRuntime,
+    player_view: player_view::PlayerView,
     shutdown_failed: Rc<Cell<bool>>,
 ) {
     let controller = Rc::new(RefCell::new(Some(controller)));
+    let player_view = Rc::new(RefCell::new(Some(player_view)));
     let shutdown_started = Rc::new(Cell::new(false));
     let shutdown_complete = Rc::new(Cell::new(false));
 
@@ -300,12 +304,17 @@ fn connect_joined_shutdown(
             shutdown_complete.set(true);
             return gtk::glib::Propagation::Proceed;
         };
+        let retained_player_view = player_view.borrow_mut().take();
         controller.begin_shutdown();
 
         let shutdown_complete = Rc::clone(&shutdown_complete);
         let shutdown_failed = Rc::clone(&shutdown_failed);
         let window = window.downgrade();
         gtk::glib::MainContext::default().spawn_local(async move {
+            // There is no pipeline in this slice. Retain its explicit future
+            // owner until joined shutdown so no playback lifetime can outlive
+            // the window-close transaction.
+            let _retained_player_view = retained_player_view;
             match gtk::gio::spawn_blocking(move || controller.join()).await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {

@@ -79,7 +79,7 @@ jobs:
     steps:
       - name: Install desktop build dependencies (Fedora)
         run: >-
-          dnf install -y gcc gtk4-devel libadwaita-devel
+          dnf install -y gcc gstreamer1-devel gtk4-devel libadwaita-devel
           pkgconf-pkg-config git curl
 
       - uses: actions/checkout@v7
@@ -102,7 +102,9 @@ jobs:
     steps:
       - name: Install desktop build dependencies (Fedora)
         run: >-
-          dnf install -y binutils dbus-daemon gcc gtk4-devel libadwaita-devel
+          dnf install -y binutils dbus-daemon gcc gstreamer1-devel
+          gstreamer1-plugin-gtk4 gstreamer1-plugins-bad-free
+          gstreamer1-plugins-base gstreamer1-plugins-good gtk4-devel libadwaita-devel
           pkgconf-pkg-config git curl xorg-x11-server-Xvfb
 
       - uses: actions/checkout@v7
@@ -122,7 +124,13 @@ jobs:
         run: cargo clippy --locked --features desktop --bin balun -- -D warnings
 
       - name: Test desktop bridge
-        run: cargo test --locked --features desktop --bin balun
+        run: cargo test --locked --features desktop --all-targets
+
+      - name: Probe installed playback foundation
+        run: >-
+          cargo test --locked --features desktop --lib
+          playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation
+          -- --ignored --exact
 
       - name: Smoke desktop lifecycle
         run: scripts/test-desktop-lifecycle.sh
@@ -166,7 +174,7 @@ jobs:
         if: runner.os == 'macOS'
         env:
           HOMEBREW_NO_AUTO_UPDATE: '1'
-        run: brew install gtk4 libadwaita pkgconf
+        run: brew install gstreamer gtk4 libadwaita pkgconf
 
       - name: Set up Windows desktop build environment
         if: runner.os == 'Windows'
@@ -181,6 +189,7 @@ jobs:
           cache: true
           install: >-
             mingw-w64-clang-x86_64-gtk4
+            mingw-w64-clang-x86_64-gstreamer
             mingw-w64-clang-x86_64-libadwaita
             mingw-w64-clang-x86_64-pkg-config
             mingw-w64-clang-x86_64-toolchain

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Balun — Linux desktop build helper
 #
-# The default route builds the reviewable GTK4/libadwaita desktop application
+# The default route builds the reviewable GTK4/libadwaita/GStreamer desktop
+# application
 # without launching it. Native/Flatpak package modes remain unavailable until
 # their recipes, assets, runtime closure, and artifact gates land together.
 
@@ -26,8 +27,8 @@ Application ID: io.github.jm2.Balun
 Usage:
   ./scripts/build-linux.sh [MODE] [--diagnostic]
 
-With no options, builds the Balun GTK4/libadwaita desktop application with
-Cargo's locked release dependency graph, then applies Balun's repository-
+With no options, builds the Balun GTK4/libadwaita/GStreamer desktop application
+with Cargo's locked release dependency graph, then applies Balun's repository-
 metadata and Linux ELF policy gates. The helper builds only and never launches
 the application.
 
@@ -88,7 +89,9 @@ require_desktop_dependencies()
         fail 'gtk4 >= 4.16 was not found through pkg-config; install its development package explicitly and retry.'
     pkg-config --atleast-version=1.6 libadwaita-1 >/dev/null 2>&1 || \
         fail 'libadwaita-1 >= 1.6 was not found through pkg-config; install its development package explicitly and retry.'
-    info 'GTK 4.16 and libadwaita 1.6 development-library checks passed.'
+    pkg-config --atleast-version=1.20 gstreamer-1.0 >/dev/null 2>&1 || \
+        fail 'gstreamer-1.0 >= 1.20 was not found through pkg-config; install its development package explicitly and retry.'
+    info 'GTK 4.16, libadwaita 1.6, and GStreamer 1.20 development-library checks passed.'
 }
 
 mode=build

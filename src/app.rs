@@ -2,6 +2,7 @@
 
 use adw::prelude::*;
 use balun::controller::ControllerRuntime;
+use balun::playback::PlaybackRuntime;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -56,7 +57,16 @@ where
             application.quit();
             return;
         };
-        let window = ui::window::build(application, controller, Rc::clone(&window_shutdown_failed));
+        // `activate` runs while the default GLib main context is owned. A
+        // fixed initialization failure remains a player-pane state so device
+        // discovery and lineup inspection stay available.
+        let playback = PlaybackRuntime::initialize();
+        let window = ui::window::build(
+            application,
+            controller,
+            playback,
+            Rc::clone(&window_shutdown_failed),
+        );
         window_ready(&window);
         window.present();
     });
