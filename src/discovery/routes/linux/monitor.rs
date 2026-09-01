@@ -5,12 +5,12 @@
 //! socket-level overflow only to an outstanding request, which is unsuitable
 //! for a passive authority-invalidation source.
 //!
-//! A controller creates a fresh monitor before taking a route snapshot, calls
-//! [`LinuxRouteEventMonitor::post_snapshot_barrier`] after that snapshot, and
-//! starts [`LinuxRouteEventMonitor::run`] only after a clean barrier. A changed
-//! barrier means the snapshot must be discarded. Reconciliation after a live
-//! notification should replace this monitor with a fresh subscribed instance
-//! and repeat the same sequence.
+//! A controller creates a fresh monitor before taking a route snapshot, then
+//! consumes it with [`LinuxRouteEventMonitor::run_continuously`]. That handoff
+//! drains the post-snapshot barrier and synchronously activates the baseline
+//! before entering the live loop. A changed barrier means the snapshot must be
+//! discarded. Reconciliation after a live notification should replace this
+//! monitor with a fresh subscribed instance and repeat the same sequence.
 
 #![cfg_attr(not(test), allow(dead_code))]
 
@@ -108,6 +108,10 @@ pub(super) enum LinuxRouteMonitorError {
     BarrierLimitExceeded,
     #[error("the Linux route-event post-snapshot barrier was not completed")]
     BarrierRequired,
+    #[error("Linux route events changed during the route snapshot")]
+    ChangedDuringSnapshot,
+    #[error("Linux route-observer activation was rejected")]
+    ActivationRejected,
 }
 
 /// One subscribed, non-cloneable rtnetlink observer.
@@ -166,7 +170,7 @@ impl LinuxRouteEventMonitor {
     /// Work is yielded in bounded turns. A continuing stream which prevents a
     /// quiescent boundary from being established is terminal and poisons this
     /// observer incarnation.
-    pub(super) async fn post_snapshot_barrier(
+    async fn post_snapshot_barrier(
         &mut self,
     ) -> Result<PostSnapshotBarrier, LinuxRouteMonitorError> {
         self.barrier_complete = false;
@@ -177,15 +181,46 @@ impl LinuxRouteEventMonitor {
         result
     }
 
+    /// Close the handoff from a caller-owned snapshot into live observation.
+    ///
+    /// This value must have been subscribed before the caller took its route
+    /// snapshot. The callback runs synchronously after a final bounded drain to
+    /// `EAGAIN`, with no await after that clean boundary. It should install only
+    /// the healthy epoch derived from that snapshot. The future then owns and
+    /// continuously polls this monitor; cancellation, a rejected activation,
+    /// or a changed barrier drops the monitor and poisons its incarnation.
+    pub(super) async fn run_continuously<F>(
+        mut self,
+        activate: F,
+    ) -> Result<(), LinuxRouteMonitorError>
+    where
+        F: FnOnce() -> Result<(), ()>,
+    {
+        // Always establish a new barrier here. A caller cannot reuse a prior
+        // low-level barrier to bypass the activation handoff.
+        self.barrier_complete = false;
+        {
+            let mut source = NeliDatagramSource::new(self.socket.get_ref());
+            complete_snapshot_handoff(
+                &mut source,
+                &mut self.core,
+                &mut self.receive_buffer,
+                activate,
+            )
+            .await?;
+        }
+
+        self.barrier_complete = true;
+        self.run().await
+    }
+
     /// Observe notifications until a terminal failure or task cancellation.
     ///
     /// A caller must first establish a clean post-snapshot barrier. Each
     /// scheduler turn is bounded, but a busy socket remains invalidated and is
     /// drained again after yielding.
-    pub(super) async fn run(mut self) -> Result<(), LinuxRouteMonitorError> {
-        if !self.barrier_complete {
-            return self.core.fail(LinuxRouteMonitorError::BarrierRequired);
-        }
+    async fn run(mut self) -> Result<(), LinuxRouteMonitorError> {
+        require_completed_barrier(&mut self.core, self.barrier_complete)?;
 
         loop {
             let reconciliation = self.core.reconciliation.clone();
@@ -223,6 +258,17 @@ impl LinuxRouteEventMonitor {
                 Err(error) => return Err(error),
             }
         }
+    }
+}
+
+fn require_completed_barrier(
+    core: &mut MonitorCore,
+    barrier_complete: bool,
+) -> Result<(), LinuxRouteMonitorError> {
+    if barrier_complete {
+        Ok(())
+    } else {
+        core.fail(LinuxRouteMonitorError::BarrierRequired)
     }
 }
 
@@ -513,6 +559,33 @@ async fn drain_post_snapshot<S: NonblockingDatagramSource + ?Sized>(
     }
 }
 
+/// Perform the final drain and activation in one async state machine.
+///
+/// In particular, keep the callback in this function: once the drain reports
+/// `Clean`, there must be no `.await` before activation.
+async fn complete_snapshot_handoff<S, F>(
+    source: &mut S,
+    core: &mut MonitorCore,
+    receive_buffer: &mut [u8],
+    activate: F,
+) -> Result<(), LinuxRouteMonitorError>
+where
+    S: NonblockingDatagramSource + ?Sized,
+    F: FnOnce() -> Result<(), ()>,
+{
+    match drain_post_snapshot(source, core, receive_buffer).await? {
+        PostSnapshotBarrier::Clean => {}
+        PostSnapshotBarrier::Changed => {
+            return core.fail(LinuxRouteMonitorError::ChangedDuringSnapshot);
+        }
+    }
+
+    if activate().is_err() {
+        return core.fail(LinuxRouteMonitorError::ActivationRejected);
+    }
+    Ok(())
+}
+
 fn validate_notification(
     bytes: &[u8],
     source_pid: u32,
@@ -777,6 +850,22 @@ mod tests {
                 }
                 FakeReceive::Error(error) => Err(error),
             }
+        }
+    }
+
+    struct TrackingQuiescenceSource {
+        phase: Arc<AtomicUsize>,
+    }
+
+    impl NonblockingDatagramSource for TrackingQuiescenceSource {
+        fn receive(&mut self, _buffer: &mut [u8]) -> io::Result<ReceivedDatagram> {
+            assert_eq!(
+                self.phase
+                    .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst),
+                Ok(0),
+                "the activation barrier must drain exactly once"
+            );
+            Err(io::ErrorKind::WouldBlock.into())
         }
     }
 
@@ -1071,6 +1160,7 @@ mod tests {
     fn production_monitor_api_typechecks_while_deliberately_unwired() {
         let _subscribe = LinuxRouteEventMonitor::subscribe;
         let _barrier = LinuxRouteEventMonitor::post_snapshot_barrier;
+        let _continuous = LinuxRouteEventMonitor::run_continuously::<fn() -> Result<(), ()>>;
         let _run = LinuxRouteEventMonitor::run;
     }
 
@@ -1241,6 +1331,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn clean_handoff_activates_synchronously_after_the_final_drain() {
+        let phase = Arc::new(AtomicUsize::new(0));
+        let mut source = TrackingQuiescenceSource {
+            phase: Arc::clone(&phase),
+        };
+        let activation_phase = Arc::clone(&phase);
+        let (mut core, observer, _receiver) = core();
+        let mut buffer = vec![0_u8; RECEIVE_BUFFER_BYTES];
+
+        assert_eq!(
+            complete_snapshot_handoff(&mut source, &mut core, &mut buffer, move || {
+                assert_eq!(
+                    activation_phase.compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst,),
+                    Ok(1),
+                    "activation must immediately follow the clean drain"
+                );
+                Ok(())
+            })
+            .await,
+            Ok(())
+        );
+        assert_eq!(phase.load(Ordering::SeqCst), 2);
+        assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
+        assert_eq!(observer.poisons.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn changed_handoff_prevents_activation_and_poisons() {
+        let mut source = FakeSource::new([
+            event(Rtm::Newroute, RTNLGRP_IPV4_ROUTE),
+            FakeReceive::Error(io::ErrorKind::WouldBlock.into()),
+        ]);
+        let activation_calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = Arc::clone(&activation_calls);
+        let (mut core, observer, _receiver) = core();
+        let mut buffer = vec![0_u8; RECEIVE_BUFFER_BYTES];
+
+        assert_eq!(
+            complete_snapshot_handoff(&mut source, &mut core, &mut buffer, move || {
+                callback_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await,
+            Err(LinuxRouteMonitorError::ChangedDuringSnapshot)
+        );
+        assert_eq!(activation_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(observer.invalidations.load(Ordering::SeqCst), 1);
+        assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn rejected_activation_fails_closed() {
+        let mut source = FakeSource::new([FakeReceive::Error(io::ErrorKind::WouldBlock.into())]);
+        let activation_calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = Arc::clone(&activation_calls);
+        let (mut core, observer, _receiver) = core();
+        let mut buffer = vec![0_u8; RECEIVE_BUFFER_BYTES];
+
+        assert_eq!(
+            complete_snapshot_handoff(&mut source, &mut core, &mut buffer, move || {
+                callback_calls.fetch_add(1, Ordering::SeqCst);
+                Err(())
+            })
+            .await,
+            Err(LinuxRouteMonitorError::ActivationRejected)
+        );
+        assert_eq!(activation_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
+        assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn live_loop_cannot_start_without_a_completed_barrier() {
+        let (mut core, observer, _receiver) = core();
+
+        assert_eq!(
+            require_completed_barrier(&mut core, false),
+            Err(LinuxRouteMonitorError::BarrierRequired)
+        );
+        assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
+        assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn a_changed_subscription_can_never_become_clean_on_retry() {
         let (mut core, observer, _receiver) = core();
         let mut changed_source = FakeSource::new([
@@ -1296,12 +1470,14 @@ mod tests {
 
     #[test]
     fn errors_and_debug_output_are_topology_redacted() {
-        let rendered = format!(
-            "{:?} {}",
+        for error in [
             LinuxRouteMonitorError::InvalidDatagram,
-            LinuxRouteMonitorError::InvalidDatagram
-        );
-        assert!(!rendered.contains("192.168"));
-        assert!(!rendered.contains("wg-test"));
+            LinuxRouteMonitorError::ChangedDuringSnapshot,
+            LinuxRouteMonitorError::ActivationRejected,
+        ] {
+            let rendered = format!("{error:?} {error}");
+            assert!(!rendered.contains("192.168"));
+            assert!(!rendered.contains("wg-test"));
+        }
     }
 }
