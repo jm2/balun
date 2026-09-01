@@ -106,7 +106,7 @@ recorded in [`docs/compatibility-v0.1.md`](docs/compatibility-v0.1.md).
 
 ## Try discovery
 
-Balun currently requires Rust 1.94 or newer. Ordinary local discovery is the
+Balun currently requires Rust 1.98 or newer. Ordinary local discovery is the
 default:
 
 ```bash
@@ -215,7 +215,7 @@ cargo test --all-targets --locked
 cargo test --release --all-targets --locked
 ```
 
-CI verifies the declared Rust 1.94 minimum across the desktop feature, runs
+CI verifies the declared Rust 1.98 minimum across the desktop feature, runs
 strict Linux headless debug and release checks, compiles, links, and lints the
 Linux desktop shell, links that shell against native macOS and Windows toolkit
 SDKs, and keeps compile-checking the headless code on both platforms. The

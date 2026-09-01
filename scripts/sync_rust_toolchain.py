@@ -42,7 +42,7 @@ EXACT_TOOLCHAIN_ACTION = re.compile(
     r"(?m)^\s*uses:\s*dtolnay/rust-toolchain@([0-9a-f]{40})\s+#\s*master\s*$"
 )
 EXACT_CI_TOOLCHAIN = re.compile(
-    r'(?m)^(\s*toolchain:\s*)([1-9][0-9]*\.[0-9]+\.0)\s*$'
+    r'(?m)^([ \t]*toolchain:[ \t]*)([1-9][0-9]*\.[0-9]+\.0)[ \t]*$'
 )
 MSRV_JOB = re.compile(r"(?m)^  msrv:\s*$")
 STABLE_MSRV_CHECK = re.compile(r"(?m)^    name: MSRV\s*$")

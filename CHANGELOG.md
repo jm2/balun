@@ -143,6 +143,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unprotected playback and guide scope, neighbor-friendly tunnel discovery,
   supported hardware sites, architecture, test strategy, and release contract.
 
+### Changed
+
+- **Rust minimum version** — Deliberately adopt the Dependabot-proposed Rust
+  1.98 toolchain across Cargo, exact-MSRV CI, and developer documentation, and
+  preserve workflow whitespace during future synchronized promotions.
+
 ### Security
 
 - **Release component input policy** — Add a shared, fail-closed optical-disc

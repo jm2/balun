@@ -181,6 +181,9 @@ class RustToolchainPolicyTests(unittest.TestCase):
             self.assertIn('channel = "1.95.0"', toolchain)
             self.assertEqual(ci.count("toolchain: 1.95.0"), 1)
             self.assertEqual(ci.count("toolchain: stable"), 2)
+            self.assertIn(
+                "          toolchain: 1.95.0\n\n  platform-smoke:", ci
+            )
             self.assertEqual(release.count("toolchain: stable"), 1)
             self.assertEqual((ci + release).count(ACTION_SHA), 4)
             self.assertNotIn("1.94", ci + readme + manifest)

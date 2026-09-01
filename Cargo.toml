@@ -2,7 +2,7 @@
 name = "balun"
 version = "0.1.0-alpha.1"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.98"
 autobins = false
 description = "A lightweight cross-platform HDHomeRun live TV viewer"
 license = "GPL-3.0-or-later"
