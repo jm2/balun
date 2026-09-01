@@ -129,8 +129,10 @@ pub enum DeviceSnapshotTargetError {
 pub enum DeviceSnapshotIssueKind {
     UnsupportedEndpoint,
     IdentityMismatch,
-    MetadataUnavailable,
-    LineupUnavailable,
+    MetadataUnreachable,
+    MetadataInvalid,
+    LineupUnreachable,
+    LineupInvalid,
 }
 
 /// One bounded locator outcome. The ordinal is one-based within the opaque
@@ -194,6 +196,16 @@ impl ResolvedDeviceSnapshot {
     pub fn issues(&self) -> &[DeviceSnapshotIssue] {
         &self.issues
     }
+
+    #[cfg(test)]
+    pub(crate) fn controller_test_fixture(device_id: DeviceId) -> Self {
+        Self {
+            snapshot: DeviceSnapshot::debug_redaction_fixture(device_id),
+            selected_locator_ordinal: 1,
+            http_attempt_count: 1,
+            issues: Vec::new(),
+        }
+    }
 }
 
 impl fmt::Debug for ResolvedDeviceSnapshot {
@@ -246,6 +258,33 @@ pub enum DeviceSnapshotResolutionError {
 
     #[error(transparent)]
     Unavailable(#[from] DeviceSnapshotUnavailable),
+}
+
+#[cfg(test)]
+impl DeviceSnapshotResolutionError {
+    pub(crate) fn controller_test_unavailable(
+        device_id: DeviceId,
+        kinds: &[DeviceSnapshotIssueKind],
+    ) -> Self {
+        let issues = kinds
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, kind)| DeviceSnapshotIssue {
+                locator_ordinal: u8::try_from(index + 1).unwrap(),
+                kind,
+            })
+            .collect::<Vec<_>>();
+        DeviceSnapshotUnavailable {
+            device_id,
+            http_attempt_count: issues
+                .iter()
+                .filter(|issue| issue.kind != DeviceSnapshotIssueKind::UnsupportedEndpoint)
+                .count(),
+            issues,
+        }
+        .into()
+    }
 }
 
 /// Resolves one frozen selected-device target with a single overall deadline.
@@ -337,12 +376,43 @@ fn classify_snapshot_error(error: DeviceSnapshotError) -> SnapshotAttemptError {
         DeviceSnapshotError::Metadata(DeviceHttpError::DeviceIdMismatch { .. }) => {
             SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::IdentityMismatch)
         }
-        DeviceSnapshotError::Metadata(_) => {
-            SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::MetadataUnavailable)
+        DeviceSnapshotError::Metadata(error) => classify_http_error(
+            error,
+            DeviceSnapshotIssueKind::MetadataUnreachable,
+            DeviceSnapshotIssueKind::MetadataInvalid,
+        ),
+        DeviceSnapshotError::Lineup(LineupFetchError::Http(
+            DeviceHttpError::DeviceIdMismatch { .. },
+        )) => SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::IdentityMismatch),
+        DeviceSnapshotError::Lineup(LineupFetchError::Http(error)) => classify_http_error(
+            error,
+            DeviceSnapshotIssueKind::LineupUnreachable,
+            DeviceSnapshotIssueKind::LineupInvalid,
+        ),
+        DeviceSnapshotError::Lineup(LineupFetchError::Lineup(_)) => {
+            SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::LineupInvalid)
         }
-        DeviceSnapshotError::Lineup(_) => {
-            SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::LineupUnavailable)
+    }
+}
+
+fn classify_http_error(
+    error: DeviceHttpError,
+    unreachable: DeviceSnapshotIssueKind,
+    invalid: DeviceSnapshotIssueKind,
+) -> SnapshotAttemptError {
+    match error {
+        DeviceHttpError::Cancelled => SnapshotAttemptError::Cancelled,
+        DeviceHttpError::DeviceIdMismatch { .. } => {
+            SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::IdentityMismatch)
         }
+        DeviceHttpError::Transport(_)
+        | DeviceHttpError::UnexpectedStatus { .. }
+        | DeviceHttpError::Deadline { .. } => SnapshotAttemptError::Failed(unreachable),
+        DeviceHttpError::BodyTooLarge { .. }
+        | DeviceHttpError::Json(_)
+        | DeviceHttpError::InvalidDeviceId
+        | DeviceHttpError::InvalidField { .. }
+        | DeviceHttpError::Endpoint(_) => SnapshotAttemptError::Failed(invalid),
     }
 }
 
@@ -500,7 +570,16 @@ mod tests {
                     status: 404,
                 }
             )),
-            SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::MetadataUnavailable)
+            SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::MetadataUnreachable)
+        );
+        assert_eq!(
+            classify_snapshot_error(DeviceSnapshotError::Metadata(
+                DeviceHttpError::BodyTooLarge {
+                    operation: "fetch device metadata",
+                    maximum: 1,
+                }
+            )),
+            SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::MetadataInvalid)
         );
         assert_eq!(
             classify_snapshot_error(DeviceSnapshotError::Lineup(LineupFetchError::Http(
@@ -509,7 +588,16 @@ mod tests {
                     status: 404,
                 }
             ))),
-            SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::LineupUnavailable)
+            SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::LineupUnreachable)
+        );
+        assert_eq!(
+            classify_snapshot_error(DeviceSnapshotError::Lineup(LineupFetchError::Lineup(
+                crate::hdhr::LineupError::TooManyChannels {
+                    actual: 2,
+                    maximum: 1,
+                }
+            ))),
+            SnapshotAttemptError::Failed(DeviceSnapshotIssueKind::LineupInvalid)
         );
         assert_eq!(
             classify_snapshot_error(DeviceSnapshotError::Lineup(LineupFetchError::Http(
@@ -547,7 +635,7 @@ mod tests {
         let expected = target.device_id();
         let fetcher = FakeFetcher::new(vec![
             FakeOutcome::Result(Err(SnapshotAttemptError::Failed(
-                DeviceSnapshotIssueKind::MetadataUnavailable,
+                DeviceSnapshotIssueKind::MetadataUnreachable,
             ))),
             FakeOutcome::Result(Ok(FakeSnapshot(expected))),
         ]);
@@ -567,7 +655,7 @@ mod tests {
             resolution.issues,
             vec![DeviceSnapshotIssue {
                 locator_ordinal: 1,
-                kind: DeviceSnapshotIssueKind::MetadataUnavailable,
+                kind: DeviceSnapshotIssueKind::MetadataUnreachable,
             }]
         );
         assert_eq!(
@@ -584,7 +672,7 @@ mod tests {
         let fetcher = FakeFetcher::new(vec![
             FakeOutcome::Result(Ok(FakeSnapshot(wrong))),
             FakeOutcome::Result(Err(SnapshotAttemptError::Failed(
-                DeviceSnapshotIssueKind::LineupUnavailable,
+                DeviceSnapshotIssueKind::LineupInvalid,
             ))),
         ]);
 
@@ -611,7 +699,7 @@ mod tests {
                 },
                 DeviceSnapshotIssue {
                     locator_ordinal: 2,
-                    kind: DeviceSnapshotIssueKind::LineupUnavailable,
+                    kind: DeviceSnapshotIssueKind::LineupInvalid,
                 },
             ]
         );

@@ -14,13 +14,18 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    ApplicationSnapshot, DeviceSummary, DiscoveryFailure, DiscoveryState, DiscoveryStatus,
-    OperationGeneration, SelectedLineupState, SnapshotRevision, StateError,
+    ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryState,
+    DiscoveryStatus, LineupFailure, OperationGeneration, SelectedLineupState, SelectedLineupStatus,
+    SnapshotRevision, StateError,
 };
 use crate::discovery::{
     DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryReport, RegistryInstant,
 };
 use crate::domain::DeviceId;
+use crate::hdhr::{
+    DeviceSnapshotIssueKind, DeviceSnapshotResolutionError, DeviceSnapshotResolver,
+    DeviceSnapshotTarget, DeviceSnapshotTargetError, ResolvedDeviceSnapshot,
+};
 
 /// Name assigned to Balun's GTK-independent controller thread.
 pub const CONTROLLER_THREAD_NAME: &str = "balun-controller";
@@ -41,6 +46,36 @@ pub type LocalDiscoveryFuture =
 /// controller must not enumerate interfaces, open sockets, or send packets.
 pub trait LocalDiscoveryService: Send + Sync + 'static {
     fn discover_local(&self, cancellation: CancellationToken) -> LocalDiscoveryFuture;
+}
+
+type SelectedDeviceFuture = Pin<
+    Box<
+        dyn Future<Output = Result<ResolvedDeviceSnapshot, DeviceSnapshotResolutionError>>
+            + Send
+            + 'static,
+    >,
+>;
+
+/// Private injection boundary for the identity-checked selected-device lane.
+/// Production always installs [`DeviceSnapshotResolver`]; tests may inject a
+/// packet-free scripted service through a test-only constructor.
+trait SelectedDeviceService: Send + Sync + 'static {
+    fn resolve_selected(
+        &self,
+        target: DeviceSnapshotTarget,
+        cancellation: CancellationToken,
+    ) -> SelectedDeviceFuture;
+}
+
+impl SelectedDeviceService for DeviceSnapshotResolver {
+    fn resolve_selected(
+        &self,
+        target: DeviceSnapshotTarget,
+        cancellation: CancellationToken,
+    ) -> SelectedDeviceFuture {
+        let resolver = self.clone();
+        Box::pin(async move { resolver.resolve(&target, &cancellation).await })
+    }
 }
 
 impl LocalDiscoveryService for DiscoveryClient {
@@ -74,9 +109,9 @@ pub enum ControllerCommand {
     RefreshLocalDiscovery,
     /// Cancel a current local refresh without discarding last-good devices.
     CancelLocalDiscovery,
-    /// Reserved until selected-device inspection is integrated.
+    /// Resolve and retain exactly this registered device's lineup.
     SelectDevice(DeviceId),
-    /// Reserved until selected-device inspection is integrated.
+    /// Cancel selected-device work and discard its retained snapshot.
     ClearSelection,
 }
 
@@ -87,8 +122,6 @@ pub enum ControllerCommandError {
     Full,
     #[error("controller is shutting down")]
     ShuttingDown,
-    #[error("selected-device commands are not available yet")]
-    Unsupported,
 }
 
 /// Failure while constructing the controller thread and runtime.
@@ -113,6 +146,10 @@ pub enum ControllerRuntimeError {
     SnapshotRevisionExhausted,
     #[error("local-discovery generation is exhausted")]
     DiscoveryGenerationExhausted,
+    #[error("selected-device generation is exhausted")]
+    SelectionGenerationExhausted,
+    #[error("selected-device snapshot retention invariant failed")]
+    SelectionSnapshotInvariant,
     #[error(transparent)]
     InvalidSnapshot(#[from] StateError),
 }
@@ -169,6 +206,22 @@ impl ControllerRuntime {
     where
         S: LocalDiscoveryService,
     {
+        Self::start_with_services_and_capacity(
+            service,
+            DeviceSnapshotResolver::default(),
+            command_capacity,
+        )
+    }
+
+    fn start_with_services_and_capacity<D, S>(
+        discovery_service: D,
+        selection_service: S,
+        command_capacity: usize,
+    ) -> Result<Self, ControllerStartError>
+    where
+        D: LocalDiscoveryService,
+        S: SelectedDeviceService,
+    {
         if !(1..=MAX_COMMAND_CAPACITY).contains(&command_capacity) {
             return Err(ControllerStartError::InvalidCommandCapacity {
                 value: command_capacity,
@@ -176,7 +229,8 @@ impl ControllerRuntime {
             });
         }
 
-        let service: Arc<dyn LocalDiscoveryService> = Arc::new(service);
+        let discovery_service: Arc<dyn LocalDiscoveryService> = Arc::new(discovery_service);
+        let selection_service: Arc<dyn SelectedDeviceService> = Arc::new(selection_service);
         let (command_sender, command_receiver) = mpsc::channel(command_capacity);
         let shutdown = CancellationToken::new();
         let (snapshot_sender, snapshot_receiver) =
@@ -195,7 +249,8 @@ impl ControllerRuntime {
                     }
                 };
                 let actor = ControllerActor::new(
-                    service,
+                    discovery_service,
+                    selection_service,
                     command_receiver,
                     actor_shutdown,
                     snapshot_sender,
@@ -225,6 +280,22 @@ impl ControllerRuntime {
                 Err(_) => Err(ControllerStartError::ReadinessThreadPanicked),
             },
         }
+    }
+
+    #[cfg(test)]
+    fn start_with_test_services<D, S>(
+        discovery_service: D,
+        selection_service: S,
+    ) -> Result<Self, ControllerStartError>
+    where
+        D: LocalDiscoveryService,
+        S: SelectedDeviceService,
+    {
+        Self::start_with_services_and_capacity(
+            discovery_service,
+            selection_service,
+            DEFAULT_COMMAND_CAPACITY,
+        )
     }
 
     /// Clone a lightweight nonblocking ingress for application callbacks.
@@ -275,12 +346,6 @@ impl ControllerHandle {
         if self.shutdown.is_cancelled() {
             return Err(ControllerCommandError::ShuttingDown);
         }
-        if matches!(
-            command,
-            ControllerCommand::SelectDevice(_) | ControllerCommand::ClearSelection
-        ) {
-            return Err(ControllerCommandError::Unsupported);
-        }
         self.commands
             .try_send(command)
             .map_err(|error| match error {
@@ -307,7 +372,8 @@ impl ControllerHandle {
 }
 
 struct ControllerActor {
-    service: Arc<dyn LocalDiscoveryService>,
+    discovery_service: Arc<dyn LocalDiscoveryService>,
+    selection_service: Arc<dyn SelectedDeviceService>,
     commands: mpsc::Receiver<ControllerCommand>,
     shutdown: CancellationToken,
     snapshots: watch::Sender<Arc<ApplicationSnapshot>>,
@@ -318,19 +384,24 @@ struct ControllerActor {
     selection_generation: OperationGeneration,
     discovery: DiscoveryState,
     devices: Vec<DeviceSummary>,
+    selected_device: Option<DeviceId>,
     selected_lineup: SelectedLineupState,
+    selected_snapshot: Option<ResolvedDeviceSnapshot>,
     active_discovery: Option<ActiveDiscovery>,
+    active_selection: Option<ActiveSelection>,
 }
 
 impl ControllerActor {
     fn new(
-        service: Arc<dyn LocalDiscoveryService>,
+        discovery_service: Arc<dyn LocalDiscoveryService>,
+        selection_service: Arc<dyn SelectedDeviceService>,
         commands: mpsc::Receiver<ControllerCommand>,
         shutdown: CancellationToken,
         snapshots: watch::Sender<Arc<ApplicationSnapshot>>,
     ) -> Self {
         Self {
-            service,
+            discovery_service,
+            selection_service,
             commands,
             shutdown,
             snapshots,
@@ -341,31 +412,57 @@ impl ControllerActor {
             selection_generation: OperationGeneration::INITIAL,
             discovery: DiscoveryState::idle(OperationGeneration::INITIAL),
             devices: Vec::new(),
+            selected_device: None,
             selected_lineup: SelectedLineupState::unselected(OperationGeneration::INITIAL),
+            selected_snapshot: None,
             active_discovery: None,
+            active_selection: None,
         }
     }
 
     async fn run(mut self) -> Result<(), ControllerRuntimeError> {
         loop {
-            let event = if let Some(active) = &mut self.active_discovery {
-                tokio::select! {
-                    biased;
-                    () = self.shutdown.cancelled() => ActorEvent::Shutdown,
-                    command = self.commands.recv() => ActorEvent::Command(command),
-                    completion = &mut active.task => ActorEvent::Discovery(completion),
+            let event = match (
+                self.active_discovery.as_mut(),
+                self.active_selection.as_mut(),
+            ) {
+                (Some(discovery), Some(selection)) => {
+                    tokio::select! {
+                        biased;
+                        () = self.shutdown.cancelled() => ActorEvent::Shutdown,
+                        command = self.commands.recv() => ActorEvent::Command(command),
+                        completion = &mut discovery.task => ActorEvent::Discovery(completion),
+                        completion = &mut selection.task => ActorEvent::Selection(completion),
+                    }
                 }
-            } else {
-                tokio::select! {
-                    biased;
-                    () = self.shutdown.cancelled() => ActorEvent::Shutdown,
-                    command = self.commands.recv() => ActorEvent::Command(command),
+                (Some(discovery), None) => {
+                    tokio::select! {
+                        biased;
+                        () = self.shutdown.cancelled() => ActorEvent::Shutdown,
+                        command = self.commands.recv() => ActorEvent::Command(command),
+                        completion = &mut discovery.task => ActorEvent::Discovery(completion),
+                    }
+                }
+                (None, Some(selection)) => {
+                    tokio::select! {
+                        biased;
+                        () = self.shutdown.cancelled() => ActorEvent::Shutdown,
+                        command = self.commands.recv() => ActorEvent::Command(command),
+                        completion = &mut selection.task => ActorEvent::Selection(completion),
+                    }
+                }
+                (None, None) => {
+                    tokio::select! {
+                        biased;
+                        () = self.shutdown.cancelled() => ActorEvent::Shutdown,
+                        command = self.commands.recv() => ActorEvent::Command(command),
+                    }
                 }
             };
 
             match event {
                 ActorEvent::Shutdown | ActorEvent::Command(None) => {
-                    self.cancel_active_discovery().await;
+                    self.cancel_all_operations().await;
                     return Ok(());
                 }
                 ActorEvent::Command(Some(ControllerCommand::RefreshLocalDiscovery)) => {
@@ -374,14 +471,17 @@ impl ControllerActor {
                 ActorEvent::Command(Some(ControllerCommand::CancelLocalDiscovery)) => {
                     self.cancel_local_refresh().await?;
                 }
-                ActorEvent::Command(Some(
-                    ControllerCommand::SelectDevice(_) | ControllerCommand::ClearSelection,
-                )) => {
-                    // Public admission currently rejects these commands. Keep
-                    // the actor side inert as defense in depth.
+                ActorEvent::Command(Some(ControllerCommand::SelectDevice(device_id))) => {
+                    self.select_device(device_id).await?;
+                }
+                ActorEvent::Command(Some(ControllerCommand::ClearSelection)) => {
+                    self.clear_selection().await?;
                 }
                 ActorEvent::Discovery(completion) => {
-                    self.finish_local_refresh(completion)?;
+                    self.finish_local_refresh(completion).await?;
+                }
+                ActorEvent::Selection(completion) => {
+                    self.finish_selection(completion)?;
                 }
             }
         }
@@ -397,7 +497,7 @@ impl ControllerActor {
         self.publish()?;
 
         let cancellation = self.shutdown.child_token();
-        let service = Arc::clone(&self.service);
+        let service = Arc::clone(&self.discovery_service);
         let task_cancellation = cancellation.clone();
         let task = tokio::spawn(async move {
             let result = if task_cancellation.is_cancelled() {
@@ -433,7 +533,39 @@ impl ControllerActor {
         let _ = active.task.await;
     }
 
-    fn finish_local_refresh(
+    async fn cancel_active_selection(&mut self) {
+        let Some(active) = self.active_selection.take() else {
+            return;
+        };
+        active.cancellation.cancel();
+        let _ = active.task.await;
+    }
+
+    async fn cancel_all_operations(&mut self) {
+        let discovery = self.active_discovery.take();
+        let selection = self.active_selection.take();
+        if let Some(active) = &discovery {
+            active.cancellation.cancel();
+        }
+        if let Some(active) = &selection {
+            active.cancellation.cancel();
+        }
+
+        match (discovery, selection) {
+            (Some(discovery), Some(selection)) => {
+                let _ = tokio::join!(discovery.task, selection.task);
+            }
+            (Some(discovery), None) => {
+                let _ = discovery.task.await;
+            }
+            (None, Some(selection)) => {
+                let _ = selection.task.await;
+            }
+            (None, None) => {}
+        }
+    }
+
+    async fn finish_local_refresh(
         &mut self,
         completion: Result<DiscoveryCompletion, tokio::task::JoinError>,
     ) -> Result<(), ControllerRuntimeError> {
@@ -447,11 +579,11 @@ impl ControllerActor {
                 result: Err(DiscoveryFailure::Internal),
             },
         };
-        self.apply_discovery_completion(completion)?;
+        self.apply_discovery_completion(completion).await?;
         Ok(())
     }
 
-    fn apply_discovery_completion(
+    async fn apply_discovery_completion(
         &mut self,
         completion: DiscoveryCompletion,
     ) -> Result<bool, ControllerRuntimeError> {
@@ -464,10 +596,29 @@ impl ControllerActor {
         match completion.result {
             Ok(report) => {
                 let issue_count = u16::try_from(report.issues.len()).unwrap_or(u16::MAX);
-                match self.apply_discovery_report(report) {
-                    Ok(()) => {
+                match self.build_discovery_projection(report) {
+                    Ok((registry, devices)) => {
+                        let selected_device = self.selected_device;
+                        if selected_device.is_some() {
+                            self.cancel_active_selection().await;
+                            if self.shutdown.is_cancelled() {
+                                return Ok(false);
+                            }
+                        }
+
+                        self.registry = registry;
+                        self.devices = devices;
                         self.discovery =
                             DiscoveryState::ready(self.discovery_generation, issue_count);
+                        let pending_selection = if let Some(device_id) = selected_device {
+                            let generation = self.next_selection_generation()?;
+                            self.prepare_selection(device_id, generation)
+                        } else {
+                            None
+                        };
+                        self.publish()?;
+                        self.spawn_selection(pending_selection);
+                        return Ok(true);
                     }
                     Err(()) => {
                         self.discovery = DiscoveryState::failed(
@@ -485,7 +636,10 @@ impl ControllerActor {
         Ok(true)
     }
 
-    fn apply_discovery_report(&mut self, mut report: DiscoveryReport) -> Result<(), ()> {
+    fn build_discovery_projection(
+        &self,
+        mut report: DiscoveryReport,
+    ) -> Result<(DeviceRegistry, Vec<DeviceSummary>), ()> {
         report
             .observations
             .sort_by_key(|observation| (observation.device_id, observation.source));
@@ -499,8 +653,238 @@ impl ControllerActor {
             candidate.observe(observation, seen_at).map_err(|_| ())?;
         }
         let projection = project_devices(&candidate)?;
-        self.registry = candidate;
-        self.devices = projection;
+        Ok((candidate, projection))
+    }
+
+    async fn select_device(&mut self, device_id: DeviceId) -> Result<(), ControllerRuntimeError> {
+        self.cancel_active_selection().await;
+        if self.shutdown.is_cancelled() {
+            return Ok(());
+        }
+
+        let generation = self.next_selection_generation()?;
+        let pending = self.prepare_selection(device_id, generation);
+        self.publish()?;
+        self.spawn_selection(pending);
+        Ok(())
+    }
+
+    async fn clear_selection(&mut self) -> Result<(), ControllerRuntimeError> {
+        self.cancel_active_selection().await;
+        if self.shutdown.is_cancelled() {
+            return Ok(());
+        }
+
+        let generation = self.next_selection_generation()?;
+        self.selected_device = None;
+        self.selected_lineup = SelectedLineupState::unselected(generation);
+        self.selected_snapshot = None;
+        self.publish()
+    }
+
+    fn prepare_selection(
+        &mut self,
+        device_id: DeviceId,
+        generation: OperationGeneration,
+    ) -> Option<PendingSelection> {
+        self.selected_snapshot = None;
+        let Some(device) = self.registry.get(device_id) else {
+            self.selected_device = None;
+            self.selected_lineup = SelectedLineupState::unselected(generation);
+            return None;
+        };
+
+        self.selected_device = Some(device_id);
+        let target = match DeviceSnapshotTarget::from_registered(device) {
+            Ok(target) => target,
+            Err(DeviceSnapshotTargetError::NoLocators) => {
+                self.selected_lineup = SelectedLineupState::failed(
+                    device_id,
+                    generation,
+                    LineupFailure::NoSupportedLocator,
+                );
+                return None;
+            }
+            Err(DeviceSnapshotTargetError::TooManyLocators { .. }) => {
+                self.selected_lineup =
+                    SelectedLineupState::failed(device_id, generation, LineupFailure::Internal);
+                return None;
+            }
+        };
+        let supported_locator_count = target.supported_locator_count();
+        if supported_locator_count == 0 {
+            self.selected_lineup = SelectedLineupState::failed(
+                device_id,
+                generation,
+                LineupFailure::NoSupportedLocator,
+            );
+            return None;
+        }
+
+        self.selected_lineup = SelectedLineupState::loading(device_id, generation);
+        Some(PendingSelection {
+            generation,
+            device_id,
+            supported_locator_count,
+            target,
+        })
+    }
+
+    fn spawn_selection(&mut self, pending: Option<PendingSelection>) {
+        let Some(pending) = pending else {
+            return;
+        };
+        if self.shutdown.is_cancelled() {
+            return;
+        }
+
+        let cancellation = self.shutdown.child_token();
+        let task_cancellation = cancellation.clone();
+        let service = Arc::clone(&self.selection_service);
+        let PendingSelection {
+            generation,
+            device_id,
+            supported_locator_count,
+            target,
+        } = pending;
+        let task = tokio::spawn(async move {
+            let result = if task_cancellation.is_cancelled() {
+                Err(DeviceSnapshotResolutionError::Cancelled)
+            } else {
+                service.resolve_selected(target, task_cancellation).await
+            };
+            SelectionCompletion {
+                generation,
+                device_id,
+                result,
+            }
+        });
+        self.active_selection = Some(ActiveSelection {
+            generation,
+            device_id,
+            supported_locator_count,
+            cancellation,
+            task,
+        });
+    }
+
+    fn finish_selection(
+        &mut self,
+        completion: Result<SelectionCompletion, tokio::task::JoinError>,
+    ) -> Result<(), ControllerRuntimeError> {
+        let Some(active) = self.active_selection.take() else {
+            return Ok(());
+        };
+        match completion {
+            Ok(completion) => {
+                self.apply_selection_completion(completion, active.supported_locator_count)?;
+            }
+            Err(_) => {
+                if self.selection_is_current(active.generation, active.device_id) {
+                    self.selected_snapshot = None;
+                    self.selected_lineup = SelectedLineupState::failed(
+                        active.device_id,
+                        active.generation,
+                        LineupFailure::Internal,
+                    );
+                    self.publish()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_selection_completion(
+        &mut self,
+        completion: SelectionCompletion,
+        supported_locator_count: usize,
+    ) -> Result<bool, ControllerRuntimeError> {
+        if !self.selection_is_current(completion.generation, completion.device_id) {
+            return Ok(false);
+        }
+
+        match completion.result {
+            Ok(resolved) if resolved.device_id() == completion.device_id => {
+                if self.accept_selected_snapshot(resolved).is_err() {
+                    self.selected_snapshot = None;
+                    self.selected_lineup = SelectedLineupState::failed(
+                        completion.device_id,
+                        completion.generation,
+                        LineupFailure::Internal,
+                    );
+                }
+            }
+            Ok(_) => {
+                self.selected_snapshot = None;
+                self.selected_lineup = SelectedLineupState::failed(
+                    completion.device_id,
+                    completion.generation,
+                    LineupFailure::IdentityMismatch,
+                );
+            }
+            Err(error) => {
+                self.selected_snapshot = None;
+                self.selected_lineup = SelectedLineupState::failed(
+                    completion.device_id,
+                    completion.generation,
+                    project_resolution_failure(
+                        &error,
+                        completion.device_id,
+                        supported_locator_count,
+                    ),
+                );
+            }
+        }
+        self.publish()?;
+        Ok(true)
+    }
+
+    fn selection_is_current(&self, generation: OperationGeneration, device_id: DeviceId) -> bool {
+        generation == self.selection_generation
+            && self.selected_device == Some(device_id)
+            && self.selected_lineup.device_id() == Some(device_id)
+            && self.selected_lineup.status() == SelectedLineupStatus::Loading
+    }
+
+    fn accept_selected_snapshot(
+        &mut self,
+        resolved: ResolvedDeviceSnapshot,
+    ) -> Result<(), StateError> {
+        let device_id = resolved.device_id();
+        let device_index = self
+            .devices
+            .binary_search_by_key(&device_id, DeviceSummary::device_id)
+            .map_err(|_| StateError::SelectedDeviceMissing(device_id))?;
+        let current = &self.devices[device_index];
+        let info = resolved.snapshot().info();
+        let summary = DeviceSummary::new(
+            device_id,
+            info.friendly_name().map(str::to_owned),
+            info.model_number().map(str::to_owned),
+            info.tuner_count(),
+            current.preferred_locator(),
+            current.locator_count(),
+        )?;
+        let channels = resolved
+            .snapshot()
+            .lineup()
+            .channels()
+            .iter()
+            .map(|channel| {
+                ChannelSummary::new(
+                    channel.key().clone(),
+                    channel.name().to_owned(),
+                    channel.is_favorite(),
+                    channel.is_drm(),
+                    channel.is_hd(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let lineup = SelectedLineupState::ready(device_id, self.selection_generation, channels)?;
+
+        self.devices[device_index] = summary;
+        self.selected_lineup = lineup;
+        self.selected_snapshot = Some(resolved);
         Ok(())
     }
 
@@ -513,7 +897,17 @@ impl ControllerActor {
         Ok(generation)
     }
 
+    fn next_selection_generation(&mut self) -> Result<OperationGeneration, ControllerRuntimeError> {
+        let generation = self
+            .selection_generation
+            .checked_next()
+            .ok_or(ControllerRuntimeError::SelectionGenerationExhausted)?;
+        self.selection_generation = generation;
+        Ok(generation)
+    }
+
     fn publish(&mut self) -> Result<(), ControllerRuntimeError> {
+        self.validate_selection_retention()?;
         let revision = self
             .revision
             .checked_next()
@@ -524,12 +918,31 @@ impl ControllerActor {
             self.selection_generation,
             self.discovery,
             self.devices.iter().cloned(),
-            None,
+            self.selected_device,
             self.selected_lineup.clone(),
         )?;
         self.revision = revision;
         self.snapshots.send_replace(Arc::new(snapshot));
         Ok(())
+    }
+
+    fn validate_selection_retention(&self) -> Result<(), ControllerRuntimeError> {
+        match (
+            self.selected_lineup.status(),
+            self.selected_device,
+            self.selected_snapshot.as_ref(),
+        ) {
+            (SelectedLineupStatus::Ready, Some(selected), Some(snapshot))
+                if snapshot.device_id() == selected
+                    && self.selected_lineup.device_id() == Some(selected) =>
+            {
+                Ok(())
+            }
+            (SelectedLineupStatus::Ready, _, _) | (_, _, Some(_)) => {
+                Err(ControllerRuntimeError::SelectionSnapshotInvariant)
+            }
+            (_, _, None) => Ok(()),
+        }
     }
 }
 
@@ -551,10 +964,58 @@ fn project_devices(registry: &DeviceRegistry) -> Result<Vec<DeviceSummary>, ()> 
         .collect()
 }
 
+fn project_resolution_failure(
+    error: &DeviceSnapshotResolutionError,
+    expected_device_id: DeviceId,
+    supported_locator_count: usize,
+) -> LineupFailure {
+    if supported_locator_count == 0 {
+        return LineupFailure::NoSupportedLocator;
+    }
+    let DeviceSnapshotResolutionError::Unavailable(unavailable) = error else {
+        return match error {
+            DeviceSnapshotResolutionError::Deadline { .. } => LineupFailure::Unreachable,
+            DeviceSnapshotResolutionError::Cancelled => LineupFailure::Internal,
+            DeviceSnapshotResolutionError::Unavailable(_) => unreachable!(),
+        };
+    };
+    if unavailable.device_id() != expected_device_id {
+        return LineupFailure::Internal;
+    }
+    let issues = unavailable.issues();
+    if issues
+        .iter()
+        .any(|issue| issue.kind() == DeviceSnapshotIssueKind::IdentityMismatch)
+    {
+        LineupFailure::IdentityMismatch
+    } else if issues
+        .iter()
+        .any(|issue| issue.kind() == DeviceSnapshotIssueKind::LineupInvalid)
+    {
+        LineupFailure::InvalidLineup
+    } else if issues
+        .iter()
+        .any(|issue| issue.kind() == DeviceSnapshotIssueKind::MetadataInvalid)
+    {
+        LineupFailure::InvalidMetadata
+    } else if issues.iter().any(|issue| {
+        matches!(
+            issue.kind(),
+            DeviceSnapshotIssueKind::MetadataUnreachable
+                | DeviceSnapshotIssueKind::LineupUnreachable
+        )
+    }) {
+        LineupFailure::Unreachable
+    } else {
+        LineupFailure::Internal
+    }
+}
+
 enum ActorEvent {
     Shutdown,
     Command(Option<ControllerCommand>),
     Discovery(Result<DiscoveryCompletion, tokio::task::JoinError>),
+    Selection(Result<SelectionCompletion, tokio::task::JoinError>),
 }
 
 struct ActiveDiscovery {
@@ -566,6 +1027,27 @@ struct ActiveDiscovery {
 struct DiscoveryCompletion {
     generation: OperationGeneration,
     result: Result<DiscoveryReport, DiscoveryFailure>,
+}
+
+struct PendingSelection {
+    generation: OperationGeneration,
+    device_id: DeviceId,
+    supported_locator_count: usize,
+    target: DeviceSnapshotTarget,
+}
+
+struct ActiveSelection {
+    generation: OperationGeneration,
+    device_id: DeviceId,
+    supported_locator_count: usize,
+    cancellation: CancellationToken,
+    task: JoinHandle<SelectionCompletion>,
+}
+
+struct SelectionCompletion {
+    generation: OperationGeneration,
+    device_id: DeviceId,
+    result: Result<ResolvedDeviceSnapshot, DeviceSnapshotResolutionError>,
 }
 
 #[cfg(test)]
@@ -600,6 +1082,42 @@ mod tests {
         call: usize,
         thread_name: Option<String>,
         runtime_flavor: RuntimeFlavor,
+    }
+
+    #[derive(Clone)]
+    struct ScriptedSelectionService {
+        shared: Arc<ScriptedSelectionState>,
+    }
+
+    struct ScriptedSelectionState {
+        steps: Mutex<VecDeque<SelectionStep>>,
+        calls: AtomicUsize,
+        active: AtomicUsize,
+        maximum_active: AtomicUsize,
+        started: std_mpsc::Sender<SelectionStart>,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct SelectionStart {
+        call: usize,
+        device_id: DeviceId,
+        locator_count: usize,
+    }
+
+    enum SelectionStep {
+        Immediate(Result<ResolvedDeviceSnapshot, DeviceSnapshotResolutionError>),
+        Gated {
+            release:
+                oneshot::Receiver<Result<ResolvedDeviceSnapshot, DeviceSnapshotResolutionError>>,
+            cancelled: std_mpsc::Sender<()>,
+            cancellation_result: Result<ResolvedDeviceSnapshot, DeviceSnapshotResolutionError>,
+        },
+        CancellationBarrier {
+            cancellation_observed: std_mpsc::Sender<()>,
+            finish_cancellation: oneshot::Receiver<()>,
+            cancellation_result: Result<ResolvedDeviceSnapshot, DeviceSnapshotResolutionError>,
+        },
+        Panic,
     }
 
     enum ServiceStep {
@@ -700,6 +1218,95 @@ mod tests {
         }
     }
 
+    impl ScriptedSelectionService {
+        fn new(
+            steps: impl IntoIterator<Item = SelectionStep>,
+        ) -> (Self, std_mpsc::Receiver<SelectionStart>) {
+            let (started, starts) = std_mpsc::channel();
+            (
+                Self {
+                    shared: Arc::new(ScriptedSelectionState {
+                        steps: Mutex::new(steps.into_iter().collect()),
+                        calls: AtomicUsize::new(0),
+                        active: AtomicUsize::new(0),
+                        maximum_active: AtomicUsize::new(0),
+                        started,
+                    }),
+                },
+                starts,
+            )
+        }
+
+        fn calls(&self) -> usize {
+            self.shared.calls.load(Ordering::SeqCst)
+        }
+
+        fn maximum_active(&self) -> usize {
+            self.shared.maximum_active.load(Ordering::SeqCst)
+        }
+    }
+
+    impl SelectedDeviceService for ScriptedSelectionService {
+        fn resolve_selected(
+            &self,
+            target: DeviceSnapshotTarget,
+            cancellation: CancellationToken,
+        ) -> SelectedDeviceFuture {
+            let state = Arc::clone(&self.shared);
+            let step = state
+                .steps
+                .lock()
+                .expect("selection script mutex should not be poisoned")
+                .pop_front()
+                .expect("test should provide one selection step per call");
+            let call = state.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let active = state.active.fetch_add(1, Ordering::SeqCst) + 1;
+            state.maximum_active.fetch_max(active, Ordering::SeqCst);
+            state
+                .started
+                .send(SelectionStart {
+                    call,
+                    device_id: target.device_id(),
+                    locator_count: target.locator_count(),
+                })
+                .expect("selection start receiver should remain open");
+
+            Box::pin(async move {
+                let result = match step {
+                    SelectionStep::Immediate(result) => result,
+                    SelectionStep::Gated {
+                        release,
+                        cancelled,
+                        cancellation_result,
+                    } => {
+                        tokio::select! {
+                            result = release => result.expect("selection release should remain open"),
+                            () = cancellation.cancelled() => {
+                                let _ = cancelled.send(());
+                                cancellation_result
+                            }
+                        }
+                    }
+                    SelectionStep::CancellationBarrier {
+                        cancellation_observed,
+                        finish_cancellation,
+                        cancellation_result,
+                    } => {
+                        cancellation.cancelled().await;
+                        let _ = cancellation_observed.send(());
+                        finish_cancellation
+                            .await
+                            .expect("selection cancellation release should remain open");
+                        cancellation_result
+                    }
+                    SelectionStep::Panic => panic!("scripted selection panic"),
+                };
+                state.active.fetch_sub(1, Ordering::SeqCst);
+                result
+            })
+        }
+    }
+
     fn first_id() -> DeviceId {
         DeviceId::new(0x105A_1232).unwrap()
     }
@@ -717,11 +1324,18 @@ mod tests {
                 interface: Some("synthetic0".to_owned()),
                 device_types: vec![1],
                 tuner_count: Some(tuner_count),
-                advertised_base_url: Some("http://untrusted.invalid/secret".to_owned()),
-                advertised_lineup_url: Some("http://untrusted.invalid/lineup".to_owned()),
+                advertised_base_url: None,
+                advertised_lineup_url: None,
             }],
             ..DiscoveryReport::default()
         }
+    }
+
+    fn unsupported_report(device_id: DeviceId, source: &str) -> DiscoveryReport {
+        let mut report = report(device_id, source, 4);
+        report.observations[0].advertised_base_url =
+            Some("https://operator:secret@invalid.example/".to_owned());
+        report
     }
 
     async fn wait_for_snapshot(
@@ -750,6 +1364,12 @@ mod tests {
             .expect("discovery service should start within the test deadline")
     }
 
+    fn recv_selection_start(starts: &std_mpsc::Receiver<SelectionStart>) -> SelectionStart {
+        starts
+            .recv_timeout(WAIT)
+            .expect("selection service should start within the test deadline")
+    }
+
     #[test]
     fn invalid_capacities_fail_before_service_or_thread_startup() {
         let (service, _) = ScriptedService::new([]);
@@ -765,23 +1385,271 @@ mod tests {
     }
 
     #[test]
-    fn construction_is_inert_and_selection_commands_fail_closed() {
+    fn construction_is_inert() {
         let (service, _) = ScriptedService::new([]);
         let controller = ControllerRuntime::start(service.clone()).unwrap();
         let handle = controller.handle();
 
         assert_eq!(service.calls(), 0);
         assert_eq!(*handle.snapshot(), ApplicationSnapshot::initial());
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unknown_and_unsupported_selection_never_call_the_resolver() {
+        let (discovery, discovery_starts) = ScriptedService::new([ServiceStep::Immediate(Ok(
+            unsupported_report(first_id(), "192.0.2.10:65001"),
+        ))]);
+        let (selection, _selection_starts) = ScriptedSelectionService::new([]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        let unknown = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selection_generation() == OperationGeneration::new(1)
+        })
+        .await;
+        assert_eq!(unknown.selected_device(), None);
         assert_eq!(
-            handle.try_send(ControllerCommand::SelectDevice(first_id())),
-            Err(ControllerCommandError::Unsupported)
+            unknown.selected_lineup().status(),
+            SelectedLineupStatus::Unselected
+        );
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        let unsupported = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selection_generation() == OperationGeneration::new(2)
+                && snapshot.selected_lineup().status()
+                    == SelectedLineupStatus::Failed(LineupFailure::NoSupportedLocator)
+        })
+        .await;
+
+        assert_eq!(unsupported.selected_device(), Some(first_id()));
+        assert!(unsupported.selected_lineup().channels().is_empty());
+        assert_eq!(observed_selection.calls(), 0);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn selected_device_projects_metadata_and_channels_without_urls() {
+        let (discovery, discovery_starts) = ScriptedService::new([ServiceStep::Immediate(Ok(
+            report(first_id(), "192.0.2.10:65001", 4),
+        ))]);
+        let (release, release_rx) = oneshot::channel();
+        let (cancelled, _cancelled_rx) = std_mpsc::channel();
+        let (selection, selection_starts) = ScriptedSelectionService::new([SelectionStep::Gated {
+            release: release_rx,
+            cancelled,
+            cancellation_result: Err(DeviceSnapshotResolutionError::Cancelled),
+        }]);
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        assert_eq!(
+            recv_selection_start(&selection_starts).device_id,
+            first_id()
+        );
+        let loading = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Loading
+        })
+        .await;
+        assert_eq!(loading.selection_generation(), OperationGeneration::new(1));
+        assert!(loading.selected_lineup().channels().is_empty());
+
+        release
+            .send(Ok(ResolvedDeviceSnapshot::controller_test_fixture(
+                first_id(),
+            )))
+            .unwrap();
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+
+        assert_eq!(ready.selected_device(), Some(first_id()));
+        assert_eq!(
+            ready.devices()[0].friendly_name(),
+            Some("private fixture name")
+        );
+        assert_eq!(ready.devices()[0].tuner_count(), Some(1));
+        assert_eq!(ready.selected_lineup().channels().len(), 1);
+        let channel = &ready.selected_lineup().channels()[0];
+        assert_eq!(channel.key().device_id(), first_id());
+        assert!(channel.is_favorite());
+        assert!(channel.is_drm());
+        assert!(channel.is_hd());
+        let rendered = format!("{ready:?}");
+        assert!(!rendered.contains("127.0.0.1"));
+        assert!(!rendered.contains("auto/v5.1"));
+        controller.shutdown().unwrap();
+    }
+
+    #[test]
+    fn resolver_failures_map_to_truthful_fixed_lineup_categories() {
+        let unavailable =
+            |kind| DeviceSnapshotResolutionError::controller_test_unavailable(first_id(), &[kind]);
+        for (error, expected) in [
+            (
+                unavailable(DeviceSnapshotIssueKind::IdentityMismatch),
+                LineupFailure::IdentityMismatch,
+            ),
+            (
+                unavailable(DeviceSnapshotIssueKind::LineupInvalid),
+                LineupFailure::InvalidLineup,
+            ),
+            (
+                unavailable(DeviceSnapshotIssueKind::MetadataInvalid),
+                LineupFailure::InvalidMetadata,
+            ),
+            (
+                unavailable(DeviceSnapshotIssueKind::MetadataUnreachable),
+                LineupFailure::Unreachable,
+            ),
+            (
+                unavailable(DeviceSnapshotIssueKind::LineupUnreachable),
+                LineupFailure::Unreachable,
+            ),
+            (
+                DeviceSnapshotResolutionError::Deadline {
+                    deadline: Duration::from_secs(1),
+                },
+                LineupFailure::Unreachable,
+            ),
+            (
+                DeviceSnapshotResolutionError::Cancelled,
+                LineupFailure::Internal,
+            ),
+        ] {
+            assert_eq!(project_resolution_failure(&error, first_id(), 1), expected);
+        }
+        let wrong_identity = DeviceSnapshotResolutionError::controller_test_unavailable(
+            second_id(),
+            &[DeviceSnapshotIssueKind::IdentityMismatch],
         );
         assert_eq!(
-            handle.try_send(ControllerCommand::ClearSelection),
-            Err(ControllerCommandError::Unsupported)
+            project_resolution_failure(&wrong_identity, first_id(), 1),
+            LineupFailure::Internal
         );
-        assert_eq!(service.calls(), 0);
-        assert_eq!(*handle.snapshot(), ApplicationSnapshot::initial());
+        assert_eq!(
+            project_resolution_failure(
+                &unavailable(DeviceSnapshotIssueKind::UnsupportedEndpoint),
+                first_id(),
+                0,
+            ),
+            LineupFailure::NoSupportedLocator
+        );
+    }
+
+    #[test]
+    fn retained_snapshot_invariant_requires_exact_ready_identity() {
+        let (discovery, _) = ScriptedService::new([]);
+        let (selection, _) = ScriptedSelectionService::new([]);
+        let (_commands, receiver) = mpsc::channel(1);
+        let (snapshots, _snapshot_receiver) =
+            watch::channel(Arc::new(ApplicationSnapshot::initial()));
+        let mut actor = ControllerActor::new(
+            Arc::new(discovery),
+            Arc::new(selection),
+            receiver,
+            CancellationToken::new(),
+            snapshots,
+        );
+
+        actor.selected_snapshot = Some(ResolvedDeviceSnapshot::controller_test_fixture(first_id()));
+        assert_eq!(
+            actor.validate_selection_retention(),
+            Err(ControllerRuntimeError::SelectionSnapshotInvariant)
+        );
+        actor.selected_device = Some(first_id());
+        actor.selected_lineup =
+            SelectedLineupState::ready(first_id(), OperationGeneration::INITIAL, []).unwrap();
+        assert_eq!(actor.validate_selection_retention(), Ok(()));
+        actor.selected_snapshot =
+            Some(ResolvedDeviceSnapshot::controller_test_fixture(second_id()));
+        assert_eq!(
+            actor.validate_selection_retention(),
+            Err(ControllerRuntimeError::SelectionSnapshotInvariant)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn clear_cancels_and_joins_selection_before_publishing_unselected() {
+        let (discovery, discovery_starts) = ScriptedService::new([ServiceStep::Immediate(Ok(
+            report(first_id(), "192.0.2.10:65001", 4),
+        ))]);
+        let (cancellation_observed, cancellation_observed_rx) = std_mpsc::channel();
+        let (finish_cancellation, finish_cancellation_rx) = oneshot::channel();
+        let (selection, selection_starts) =
+            ScriptedSelectionService::new([SelectionStep::CancellationBarrier {
+                cancellation_observed,
+                finish_cancellation: finish_cancellation_rx,
+                cancellation_result: Ok(
+                    ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
+                ),
+            }]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Loading
+        })
+        .await;
+        handle.try_send(ControllerCommand::ClearSelection).unwrap();
+        cancellation_observed_rx
+            .recv_timeout(WAIT)
+            .expect("clear should cancel selected-device work");
+        assert_eq!(
+            handle.snapshot().selected_lineup().status(),
+            SelectedLineupStatus::Loading
+        );
+
+        finish_cancellation.send(()).unwrap();
+        let cleared = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selection_generation() == OperationGeneration::new(2)
+                && snapshot.selected_lineup().status() == SelectedLineupStatus::Unselected
+        })
+        .await;
+        assert_eq!(cleared.selected_device(), None);
+        assert_eq!(observed_selection.maximum_active(), 1);
         controller.shutdown().unwrap();
     }
 
@@ -981,6 +1849,216 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn failed_refresh_preserves_ready_selection_and_retained_metadata() {
+        let (discovery, discovery_starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(report(first_id(), "192.0.2.10:65001", 4))),
+            ServiceStep::Immediate(Err(DiscoveryFailure::Network)),
+        ]);
+        let (selection, selection_starts) =
+            ScriptedSelectionService::new([SelectionStep::Immediate(Ok(
+                ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
+            ))]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        let failed = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Failed(DiscoveryFailure::Network)
+        })
+        .await;
+
+        assert_eq!(failed.selection_generation(), OperationGeneration::new(1));
+        assert_eq!(
+            failed.selected_lineup().status(),
+            SelectedLineupStatus::Ready
+        );
+        assert_eq!(
+            failed.devices()[0].friendly_name(),
+            Some("private fixture name")
+        );
+        assert_eq!(observed_selection.calls(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn successful_refresh_cancels_joins_and_reresolves_selection() {
+        let (discovery, discovery_starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(report(first_id(), "192.0.2.10:65001", 4))),
+            ServiceStep::Immediate(Ok(report(first_id(), "192.0.2.20:65001", 4))),
+        ]);
+        let (cancellation_observed, cancellation_observed_rx) = std_mpsc::channel();
+        let (finish_cancellation, finish_cancellation_rx) = oneshot::channel();
+        let (selection, selection_starts) = ScriptedSelectionService::new([
+            SelectionStep::CancellationBarrier {
+                cancellation_observed,
+                finish_cancellation: finish_cancellation_rx,
+                cancellation_result: Ok(
+                    ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
+                ),
+            },
+            SelectionStep::Immediate(Ok(ResolvedDeviceSnapshot::controller_test_fixture(
+                first_id(),
+            ))),
+        ]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        assert_eq!(recv_selection_start(&selection_starts).call, 1);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Loading
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        assert_eq!(recv_start(&discovery_starts).call, 2);
+        cancellation_observed_rx
+            .recv_timeout(WAIT)
+            .expect("successful refresh should cancel the stale selected target");
+        let blocked = handle.snapshot();
+        assert_eq!(blocked.discovery().status(), DiscoveryStatus::Refreshing);
+        assert_eq!(blocked.selection_generation(), OperationGeneration::new(1));
+
+        finish_cancellation.send(()).unwrap();
+        assert_eq!(recv_selection_start(&selection_starts).call, 2);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+                && snapshot.selection_generation() == OperationGeneration::new(2)
+                && snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+
+        assert_eq!(
+            ready.devices()[0].preferred_locator(),
+            "192.0.2.20:65001".parse().unwrap()
+        );
+        assert_eq!(observed_selection.calls(), 2);
+        assert_eq!(observed_selection.maximum_active(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn successful_refresh_clears_selection_when_device_disappears() {
+        let (discovery, discovery_starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(report(first_id(), "192.0.2.10:65001", 4))),
+            ServiceStep::Immediate(Ok(DiscoveryReport::default())),
+        ]);
+        let (selection, selection_starts) =
+            ScriptedSelectionService::new([SelectionStep::Immediate(Ok(
+                ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
+            ))]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        let cleared = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+                && snapshot.selection_generation() == OperationGeneration::new(2)
+        })
+        .await;
+
+        assert!(cleared.devices().is_empty());
+        assert_eq!(cleared.selected_device(), None);
+        assert_eq!(
+            cleared.selected_lineup().status(),
+            SelectedLineupStatus::Unselected
+        );
+        assert_eq!(observed_selection.calls(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn selected_device_task_panic_projects_internal_failure() {
+        let (discovery, discovery_starts) = ScriptedService::new([ServiceStep::Immediate(Ok(
+            report(first_id(), "192.0.2.10:65001", 4),
+        ))]);
+        let (selection, selection_starts) = ScriptedSelectionService::new([SelectionStep::Panic]);
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        let failed = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status()
+                == SelectedLineupStatus::Failed(LineupFailure::Internal)
+        })
+        .await;
+
+        assert!(failed.selected_lineup().channels().is_empty());
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn successful_empty_refresh_replaces_the_previous_registry_projection() {
         let (service, starts) = ScriptedService::new([
             ServiceStep::Immediate(Ok(report(first_id(), "192.0.2.10:65001", 4))),
@@ -1013,14 +2091,16 @@ mod tests {
         controller.shutdown().unwrap();
     }
 
-    #[test]
-    fn stale_completion_cannot_change_registry_or_snapshot() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn stale_completion_cannot_change_registry_or_snapshot() {
         let (service, _) = ScriptedService::new([]);
+        let (selection, _) = ScriptedSelectionService::new([]);
         let (_commands, receiver) = mpsc::channel(1);
         let (snapshots, snapshot_receiver) =
             watch::channel(Arc::new(ApplicationSnapshot::initial()));
         let mut actor = ControllerActor::new(
             Arc::new(service),
+            Arc::new(selection),
             receiver,
             CancellationToken::new(),
             snapshots,
@@ -1034,6 +2114,7 @@ mod tests {
                     generation: OperationGeneration::new(1),
                     result: Ok(report(first_id(), "192.0.2.10:65001", 4)),
                 })
+                .await
                 .unwrap()
         );
         assert!(actor.registry.is_empty());
@@ -1046,6 +2127,58 @@ mod tests {
             actor.discovery,
             DiscoveryState::refreshing(OperationGeneration::new(2))
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_cancels_both_operation_lanes_before_joining() {
+        let (discovery_cancelled, discovery_cancelled_rx) = std_mpsc::channel();
+        let (finish_discovery, finish_discovery_rx) = oneshot::channel();
+        let (discovery, discovery_starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(report(first_id(), "192.0.2.10:65001", 4))),
+            ServiceStep::CancellationBarrier {
+                cancellation_observed: discovery_cancelled,
+                finish_cancellation: finish_discovery_rx,
+                cancellation_result: Err(DiscoveryFailure::Internal),
+            },
+        ]);
+        let (selection_cancelled, selection_cancelled_rx) = std_mpsc::channel();
+        let (finish_selection, finish_selection_rx) = oneshot::channel();
+        let (selection, selection_starts) =
+            ScriptedSelectionService::new([SelectionStep::CancellationBarrier {
+                cancellation_observed: selection_cancelled,
+                finish_cancellation: finish_selection_rx,
+                cancellation_result: Err(DeviceSnapshotResolutionError::Cancelled),
+            }]);
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+
+        controller.begin_shutdown();
+        discovery_cancelled_rx
+            .recv_timeout(WAIT)
+            .expect("shutdown should cancel discovery");
+        selection_cancelled_rx
+            .recv_timeout(WAIT)
+            .expect("shutdown should cancel selected-device resolution");
+        finish_discovery.send(()).unwrap();
+        finish_selection.send(()).unwrap();
+        controller.join().unwrap();
     }
 
     #[test]

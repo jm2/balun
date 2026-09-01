@@ -110,7 +110,7 @@ impl DeviceSnapshot {
         )
         .unwrap();
         let lineup = parse_lineup(
-            br#"[{"GuideNumber":"5.1","GuideName":"private channel","URL":"http://127.0.0.1:5004/auto/v5.1"}]"#,
+            br#"[{"GuideNumber":"5.1","GuideName":"private channel","Tags":"favorite,drm,hd","URL":"http://127.0.0.1:5004/auto/v5.1"}]"#,
             device_id,
             &endpoint,
             1,
