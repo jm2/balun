@@ -12,6 +12,7 @@
 // consumes revalidated authority.
 #![cfg_attr(not(test), allow(dead_code))]
 
+mod controller;
 mod gate;
 mod run;
 mod store;
