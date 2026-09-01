@@ -2,11 +2,11 @@
 """Validate or synchronize Balun's authoritative Rust/MSRV declarations.
 
 Dependabot proposes compiler-floor updates through
-`.github/rust-toolchain.toml`. Those proposals are only an input: this helper
-coordinates Cargo.toml, the single exact MSRV CI input, and developer
-documentation before the complete CI matrix decides whether the new compiler
-is feasible. Jobs which intentionally track `stable` are not compiler-floor
-authorities and are never rewritten here.
+`build-aux/toolchain/rust-toolchain.toml`. Those proposals are only an input:
+this helper coordinates Cargo.toml, the single exact MSRV CI input, and
+developer documentation before the complete CI matrix decides whether the new
+compiler is feasible. Jobs which intentionally track `stable` are not
+compiler-floor authorities and are never rewritten here.
 
 The `dtolnay/rust-toolchain` action reference is a separate supply-chain
 boundary. Every workflow use must remain an immutable, matching full commit
@@ -26,7 +26,9 @@ from typing import Iterable
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 MANIFEST = REPOSITORY / "Cargo.toml"
-TOOLCHAIN_MANIFEST = REPOSITORY / ".github" / "rust-toolchain.toml"
+TOOLCHAIN_MANIFEST = (
+    REPOSITORY / "build-aux" / "toolchain" / "rust-toolchain.toml"
+)
 CI = REPOSITORY / ".github" / "workflows" / "ci.yml"
 WORKFLOW_DIRECTORY = REPOSITORY / ".github" / "workflows"
 README = REPOSITORY / "README.md"
@@ -299,7 +301,10 @@ def parse_args() -> argparse.Namespace:
     group.add_argument(
         "--from-toolchain",
         action="store_true",
-        help="adopt the exact Rust release proposed in .github/rust-toolchain.toml",
+        help=(
+            "adopt the exact Rust release proposed in "
+            "build-aux/toolchain/rust-toolchain.toml"
+        ),
     )
     group.add_argument("--set", metavar="X.Y", dest="target")
     return parser.parse_args()

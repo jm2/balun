@@ -137,9 +137,10 @@ tag commit on all three platforms. It intentionally produces internal
 diagnostic workflow artifacts only; application packages and public artifact
 publication begin with the playable GTK/GStreamer slice.
 
-`.github/rust-toolchain.toml` is the Dependabot proposal source for the compiler
-floor; it is not a repository-wide rustup override. Keep its exact patch-zero
-release aligned with `Cargo.toml`, the dedicated `MSRV` job, and this README:
+`build-aux/toolchain/rust-toolchain.toml` is the Dependabot proposal source for
+the compiler floor. Its deliberately nested location prevents it from acting as
+a repository-wide rustup override. Keep its exact patch-zero release aligned
+with `Cargo.toml`, the dedicated `MSRV` job, and this README:
 
 ```bash
 python3 scripts/test_rust_toolchain_policy.py

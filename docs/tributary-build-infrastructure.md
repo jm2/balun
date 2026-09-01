@@ -62,6 +62,12 @@ and final artifact reopening for that format.
 | `test-macos-package-policy.sh` | Land with the package helper; derive denied fixtures from the shared policy |
 | `test_dependency_update_policy.py` | Split by feature; land focused MSRV, fuzz, and automation tests with their owners |
 
+The compiler proposal manifest lives at
+`build-aux/toolchain/rust-toolchain.toml`. Dependabot supports a configured
+subdirectory, and this non-privileged location avoids both a repository-wide
+rustup override and GitHub's rejected attempt to update the original copy under
+`.github`.
+
 ## Package-file port ledger
 
 | Tributary file | Status and landing condition |

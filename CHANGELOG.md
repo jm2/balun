@@ -61,7 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata, completed-commit, and macOS icon/bundle fixtures.
 - **Rust floor synchronization** — Coordinate the Cargo, Dependabot proposal,
   exact MSRV CI, and README compiler declarations while leaving stable-channel
-  jobs and immutable action-code pins independent.
+  jobs and immutable action-code pins independent; keep the proposal manifest
+  under `build-aux` so it is neither a repository-wide rustup override nor a
+  privileged `.github` update target.
 - **v0.1 product plan** — Define the separate device/channel sidebars,
   unprotected playback and guide scope, neighbor-friendly tunnel discovery,
   supported hardware sites, architecture, test strategy, and release contract.

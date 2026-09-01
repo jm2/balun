@@ -1,0 +1,6 @@
+# Dependabot proposal source for Balun's compiler floor. Keeping this manifest
+# below build-aux avoids silently changing the repository-wide rustup toolchain;
+# use scripts/sync_rust_toolchain.py to validate or deliberately adopt it.
+[toolchain]
+channel = "1.94.0"
+profile = "minimal"

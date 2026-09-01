@@ -71,7 +71,7 @@ def policy_fixture(
         workflow_directory = root / ".github" / "workflows"
         workflow_directory.mkdir(parents=True)
         manifest = root / "Cargo.toml"
-        toolchain = root / ".github" / "rust-toolchain.toml"
+        toolchain = root / "build-aux" / "toolchain" / "rust-toolchain.toml"
         ci = workflow_directory / "ci.yml"
         release = workflow_directory / "release.yml"
         readme = root / "README.md"
@@ -81,6 +81,7 @@ def policy_fixture(
             f'rust-version = "{cargo_line}"\n',
             encoding="utf-8",
         )
+        toolchain.parent.mkdir(parents=True)
         toolchain.write_text(
             f'[toolchain]\nchannel = "{proposal_line}.0"\nprofile = "minimal"\n',
             encoding="utf-8",
