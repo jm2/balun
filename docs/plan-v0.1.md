@@ -636,11 +636,15 @@ service also owns identity-checked preferred-locator fallback without exposing
 stream URLs. A separate selected-device resolver freezes the registry's
 preferred-first locator order and can return one complete identity-checked
 snapshot to core code under a single deadline, while its issues and debug
-output retain no addresses or stream URLs. The default library and diagnostic remain GTK-free, Linux
-desktop/MSRV compilation is enforced in CI, and native macOS and Windows
-desktop link checks are also enforced. The bounded Tokio/GLib bridge,
-settings, documentation templates, and runtime smoke tests are still required
-to complete this milestone.
+output retain no addresses or stream URLs. One packet-free controller runtime
+now owns explicit local refresh and its registry on a named current-thread
+Tokio worker, publishes coalesced complete snapshots through a bounded watch
+boundary, and cancels and joins superseded work and shutdown. The default
+library and diagnostic remain GTK-free, Linux desktop/MSRV compilation is
+enforced in CI, and native macOS and Windows desktop link checks are also
+enforced. The GLib reducer, selected-lineup controller lane, settings,
+documentation templates, and runtime smoke tests are still required to
+complete this milestone.
 
 ### Milestone 2: Playable vertical slice
 

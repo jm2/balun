@@ -51,6 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and selected-lineup projections with independent discovery and selection
   generations, URL-free channel rows, deterministic ordering, and validation
   that prevents cross-device lineup merging or stale reducer replacement.
+- **Packet-free controller runtime** — Own local discovery and the device
+  registry on one named current-thread Tokio worker, behind an eight-command
+  nonblocking ingress and coalesced immutable snapshot receiver. Startup is
+  inert; only an explicit refresh invokes discovery, supersession cancels and
+  joins its predecessor, successful scans atomically replace the local view,
+  failed scans retain last-good devices, and queue-independent shutdown wins
+  races before joining the worker. Selection commands remain fail-closed until
+  their resolver lane is connected.
 - **Route candidate policy** — Add a platform-neutral route snapshot/provider
   boundary, a native Linux rtnetlink provider, and deterministic policy for
   exact or approved private tunnel candidates; native macOS and Windows

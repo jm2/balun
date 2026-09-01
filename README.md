@@ -46,6 +46,11 @@ available program information, and a live-video area.
 - Bounded immutable controller snapshots for device and selected-lineup state,
   with independent operation generations, strict selected-device scoping, and
   no URL-bearing values at the GTK boundary.
+- A packet-free controller runtime on one named current-thread Tokio worker,
+  with a bounded nonblocking command ingress, coalesced immutable snapshots,
+  explicit-only local refresh, supersession cancellation, atomic last-good
+  registry replacement, and queue-independent joined shutdown. Selected-device
+  commands remain fail-closed until the lineup resolver lane is attached.
 - A cross-platform route snapshot and candidate policy with deterministic fake
   providers, plus a native Linux rtnetlink provider that recognizes WireGuard
   and other unambiguous tunnel links. Native macOS and Windows automatic
