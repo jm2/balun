@@ -29,6 +29,17 @@ jobs:
       - name: Test pinned release component policy
         run: build-aux/packaging/test-release-component-policy.sh
 
+      - name: Test Linux package compliance scaffolding
+        run: build-aux/linux/test-package-compliance.sh
+
+      - name: Test macOS icon policy scaffolding
+        run: scripts/test-macos-icon-bundle-policy.sh
+
+      - name: Test Rust toolchain policy
+        run: |
+          python3 scripts/test_rust_toolchain_policy.py
+          python3 scripts/sync_rust_toolchain.py --check
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
@@ -48,6 +59,7 @@ jobs:
         run: cargo test --release --all-targets --locked
 
   msrv:
+    # Cargo.toml's declared floor is rustc 1.94.
     name: MSRV
     runs-on: ubuntu-24.04
     steps:
@@ -55,7 +67,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust 1.94
+      - name: Install Rust toolchain (1.94)
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.94.0

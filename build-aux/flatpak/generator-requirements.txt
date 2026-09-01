@@ -1,0 +1,6 @@
+# Exact direct dependencies for Balun's JSON invocation of the vendored
+# flatpak-cargo-generator. The helper verifies them before execution. Pip still
+# resolves transitives, so this is not a complete or hash-locked environment.
+# PyYAML is optional upstream and omitted because Balun never requests YAML.
+aiohttp==3.14.3
+tomlkit==0.15.1

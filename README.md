@@ -132,6 +132,21 @@ tag commit on all three platforms. It intentionally produces internal
 diagnostic workflow artifacts only; application packages and public artifact
 publication begin with the playable GTK/GStreamer slice.
 
+`.github/rust-toolchain.toml` is the Dependabot proposal source for the compiler
+floor; it is not a repository-wide rustup override. Keep its exact patch-zero
+release aligned with `Cargo.toml`, the dedicated `MSRV` job, and this README:
+
+```bash
+python3 scripts/test_rust_toolchain_policy.py
+python3 scripts/sync_rust_toolchain.py --check
+# After reviewing a Dependabot compiler proposal:
+python3 scripts/sync_rust_toolchain.py --from-toolchain
+```
+
+The synchronization helper never rewrites CI jobs which track `stable`, and it
+keeps the compiler version independent from the immutable full-SHA toolchain
+action pin.
+
 ### Release component policy
 
 Balun does not implement optical-disc or protected-channel playback. A shared,
@@ -159,6 +174,17 @@ Every new build system, dependency source, or package recipe must extend the
 input classifier and its negative fixtures in the same change. Input checking
 does not replace the mandatory native-import, completed-tree, and reopened
 artifact inspection required when application packages are introduced.
+
+The repository now also carries Tributary-derived Linux archive/tree and
+Flatpak-commit validators with deterministic positive and negative fixtures.
+CI exercises them as preparatory packaging scaffolding only. They do not become
+an artifact claim until each real package adds bounded extraction and traversal,
+containment and symlink checks, stable completed-tree snapshots, and a final
+reopen-and-validate step. The vendored Flatpak Cargo generator is checksum- and
+provenance-pinned; its dependency snapshot must be regenerated from Balun's own
+`Cargo.lock`, never copied from Tributary.
+The file-by-file decisions and atomic landing conditions are recorded in the
+[Tributary build-infrastructure port ledger](docs/tributary-build-infrastructure.md).
 
 ## Scope
 

@@ -17,6 +17,14 @@ updates:
           - minor
           - patch
 
+  # Compiler-floor proposals are independent of action implementation updates.
+  # They require synchronization and the complete CI matrix before adoption.
+  - package-ecosystem: rust-toolchain
+    directory: /.github
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

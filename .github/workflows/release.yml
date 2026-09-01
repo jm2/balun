@@ -45,6 +45,17 @@ jobs:
       - name: Test pinned release component policy
         run: build-aux/packaging/test-release-component-policy.sh
 
+      - name: Test Linux package compliance scaffolding
+        run: build-aux/linux/test-package-compliance.sh
+
+      - name: Test macOS icon policy scaffolding
+        run: scripts/test-macos-icon-bundle-policy.sh
+
+      - name: Test Rust toolchain policy
+        run: |
+          python3 scripts/test_rust_toolchain_policy.py
+          python3 scripts/sync_rust_toolchain.py --check
+
       - name: Validate immutable source and version
         id: source
         env:

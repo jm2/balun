@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.
+- **Reusable packaging foundation** — Port Tributary's pinned Flatpak Cargo
+  generator and preparatory Linux/Flatpak artifact-policy validators, adapted
+  to Balun's application identity and exercised with synthetic archive, ELF,
+  metadata, completed-commit, and macOS icon/bundle fixtures.
+- **Rust floor synchronization** — Coordinate the Cargo, Dependabot proposal,
+  exact MSRV CI, and README compiler declarations while leaving stable-channel
+  jobs and immutable action-code pins independent.
 - **v0.1 product plan** — Define the separate device/channel sidebars,
   unprotected playback and guide scope, neighbor-friendly tunnel discovery,
   supported hardware sites, architecture, test strategy, and release contract.
@@ -65,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and immutable-tag release checks. Staging, native-import, completed-tree,
   and reopened-artifact enforcement remains mandatory when the GTK/GStreamer
   packages are introduced.
+- **Artifact-policy scaffolding** — Load the same checksum-pinned deny policy in
+  preparatory Linux tree/archive and Flatpak-commit validators, fail closed on
+  missing or mutated policy data, and derive negative fixtures without adding
+  prohibited component names to test source. Real packages still require
+  bounded extraction, containment, stable-tree, and reopened-artifact gates.
 - **Bounded routed discovery** — Require an explicit RFC 1918 range no wider
   than `/24`, cap candidates and concurrency, rate-limit targeted starts, and
   keep point-to-point interfaces out of automatic local enumeration. Native

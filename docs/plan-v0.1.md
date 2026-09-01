@@ -2,7 +2,7 @@
 
 - Status: Active
 - Target: v0.1.0-alpha.1
-- Last updated: 2026-08-31
+- Last updated: 2026-09-01
 
 ## 1. Product direction
 
@@ -852,6 +852,35 @@ deployed and tested.
 
 An xtask release-check command should semantically compare Cargo, lockfile,
 changelog, AppStream, packaging metadata, and the proposed tag.
+
+### 12.3 Tributary build-infrastructure port
+
+Treat Tributary's `scripts/` and `build-aux/` trees as Balun's release-
+engineering baseline and maintain a file-by-file port ledger. Generic,
+identity-neutral helpers should stay as close to upstream as practical;
+application-facing helpers must replace Tributary's identity and music-library
+assumptions with `balun`, `Balun`, `io.github.jm2.Balun`, network/video runtime
+needs, and the exact product tagline.
+
+The port lands in dependency order:
+
+1. Vendored tool provenance, source-generation helpers, and synthetic policy
+   validators that are useful before a desktop package exists.
+2. Cross-platform developer build/check helpers, dependency-update policy, and
+   fuzz-lock coordination once their referenced workspaces exist.
+3. Flatpak, native Linux, Windows, and macOS recipes together with the GTK
+   binary, desktop metadata, icons, runtime probes, and real package tests they
+   describe.
+
+Generated dependency snapshots are always rebuilt from Balun's lockfiles.
+Music-library permissions, MPRIS behavior, Rhythmbox compatibility, audio-file
+associations, and Tributary artifact names are not portable. Package recipes
+must never land in a state that claims a desktop executable or asset Balun does
+not yet produce. Every real package adds bounded traversal/extraction,
+containment and link checks, stable completed-tree inspection, and reopened
+final-artifact enforcement in the same change.
+The maintained file-by-file status is in
+[`tributary-build-infrastructure.md`](tributary-build-infrastructure.md).
 
 ## 13. Documentation plan
 

@@ -1,0 +1,6 @@
+# Dependabot proposal source for Balun's compiler floor. This does not activate
+# a repository-wide rustup override; use scripts/sync_rust_toolchain.py to
+# validate or deliberately adopt a proposal.
+[toolchain]
+channel = "1.94.0"
+profile = "minimal"
