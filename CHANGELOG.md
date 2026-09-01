@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exact revocation, and a topology-free revoke-all path; on Unix, pin all
   operations to one validated directory descriptor and reject persistent
   aliases of permanent entries.
+- **Sealed reservation publication** — Keep a confirmed durable reservation's
+  raw permit inside a non-cloneable, redacted typestate until a fresh exact
+  reread matches the complete approval ledger and immutable key binding; no
+  permit escapes uncertain or unsupported publication.
 - **Fresh route gate** — Consume a durably active permit only after rebuilding
   the exact proposal from a fresh route snapshot; reject every stable topology
   or policy change, use only a fresh nonzero interface identity, and cap the
@@ -66,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   either observer event, failure, replacement, or drop synchronously cancels
   every registration, stale callbacks cannot revive a successor, and a
   no-await paired callback rendezvous retains no authority after owner drop.
+  Add a Linux whole-pair owner that prepares route observation before the
+  store reread, retains both live actors and the activation owner, coalesces
+  replacement requests, and retires authority synchronously before concurrent
+  joined shutdown.
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.
@@ -114,12 +122,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fail-closed automatic authority** — Reject ambiguous tunnel origins,
   changed topology or traffic policy, stale and expired run completion,
   backward-clock shortcuts, uncertain durability, and revoked or replaced
-  active runs. The sealed Linux socket, packet-free admission, observer
-  handoff, and combined-epoch foundations are present, but automatic route-
-  derived traffic remains disconnected until one production controller owns
-  both live observer actors, rebaselines after each store publication,
-  serializes final pre-send revalidation, and lands consuming-runner
-  completion.
+  active runs. A confirmed store publication also releases no permit until a
+  fresh exact full-ledger and key-binding match. The sealed Linux socket,
+  packet-free admission, whole-pair observer owner, and combined-epoch
+  foundations are present, but automatic route-derived traffic remains
+  disconnected until one production controller replaces the pair after each
+  store publication, serializes final pre-send revalidation, and lands
+  consuming-runner completion.
 - **Authenticated route invalidation** — Accept Linux route notifications only
   from the kernel sender address, preflight every untrusted frame and attribute
   length without third-party payload logging, and poison authority on overflow,

@@ -48,7 +48,10 @@ program information, and a live-video area.
   reservations, strict quarantine, global run sequencing, exact and revoke-all
   controls, and no persisted raw topology. Unix processes pin one validated
   directory descriptor for all store operations and reject persistent aliases
-  of permanent files.
+  of permanent files. Even a confirmed reservation retains its permit in a
+  non-cloneable, redacted value until an exact locked reread matches the
+  complete ledger and immutable key binding; production wiring will perform
+  that match inside the newly subscribed store observer's drain sandwich.
 - A packet-free fresh-route gate that consumes the stored authority, permits
   only a transient interface-ID replacement, and caps work to the remaining
   reservation lease. No automatic socket runner is connected yet.
@@ -68,8 +71,10 @@ program information, and a live-video area.
 - A platform-neutral combined observer coordinator that exposes only one
   route-and-store health epoch, accepts each exact baseline through a no-await
   paired callback rendezvous, and synchronously cancels authority when either
-  source changes, fails, or its owner drops. No production controller owns and
-  replaces the observer pair yet.
+  source changes, fails, or its owner drops. A Linux whole-pair owner prepares
+  route observation before the exact store reread, retains the activation and
+  both actors, coalesces replacement events, and retires synchronously before
+  joining both actors. No production controller replaces that pair yet.
 - GTK-free library boundaries and deterministic fake-device tests.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
@@ -125,12 +130,12 @@ gate are present. A private Linux factory now seals a UDP socket to the exact
 fresh interface after name/index readback, and a packet-free admission boundary
 registers invalidation before reserve and carries one non-extending monotonic
 deadline. A combined route/store epoch state machine, paired gap-free
-activation handoffs, and cancellation-safe Linux observer-session bridges are
-present, but they expose no automatic send path yet. Route-derived targets
-remain disconnected from the diagnostic until one production actor owns both
-live observer sessions,
-rebaselines after every store publication, serializes final pre-send
-revalidation, and gives a consuming runner exact completion ownership.
+activation handoffs, a whole-pair Linux owner, and a sealed published-
+reservation handoff are present, but they expose no automatic send path yet.
+Route-derived targets remain disconnected from the diagnostic until one
+production actor replaces and exactly rebaselines the pair after every store
+publication, serializes final pre-send revalidation, and gives a consuming
+runner exact completion ownership.
 Installing the provider does not silently enumerate a network.
 
 Press `Ctrl+C` to cancel discovery.

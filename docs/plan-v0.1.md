@@ -319,9 +319,16 @@ only from that source's final clean callback, and dropping its sole owner
 revokes authority even while a callback is completing. Linux preparation and
 live-session bridges now own subscribe-before-read ordering, blocking snapshot
 or exact-reread work, coalesced reconciliation, cancellation, and joined actor
-shutdown for both sources. These pieces remain internal foundations: no
-production controller yet owns and replaces the pair, so they cannot authorize
-traffic. The store-owned fresh-snapshot gate
+shutdown for both sources. A Linux whole-pair owner now prepares the route
+observer first, supplies that monitored snapshot inside the exact store-reread
+sandwich, retains the activation and both actors, coalesces child events into
+one replacement request, and retires authority synchronously before returning
+its concurrent join future. Confirmed reservation publication likewise returns
+only a non-cloneable, redacted typestate which retains the raw permit until a
+fresh store reread exactly matches the complete ledger and immutable key
+binding. These pieces remain internal foundations: no production controller
+yet replaces and rebaselines the pair, so they cannot authorize traffic. The
+store-owned fresh-snapshot gate
 requires the exact active fingerprint and run, rebuilds the complete proposal,
 permits only a transient interface-ID replacement, and caps work to the
 remaining lease. The Linux socket factory now performs one interface pin plus
@@ -334,13 +341,14 @@ abandonment deliberately retains the crash-conservative durable reservation.
 
 Route-derived execution remains disconnected from the diagnostic. Production
 wiring still requires one controller actor to own and join the non-cloneable
-route and approval-store observer sessions, feed their exact baselines into the
-combined coordinator, replace and exactly rebaseline the store observer after
-every Balun publication, retain combined health through the run, perform final
-socket/route/deadline validation immediately before each send, and use a
-consuming runner which stops all packet work before completing the exact
-durable run with a fresh paired clock sample. No partial implementation may
-fall back to an unpinned or unmonitored socket.
+observer pair, split admission at every store publication, replace and exactly
+rebaseline both observers before proceeding, consume the published-reservation
+typestate and revalidate its route inside the fresh store-observer sandwich,
+retain combined health through the run, perform final socket/route/deadline
+validation immediately before each send, and use a consuming runner which
+stops all packet work before completing the exact durable run with a fresh
+paired clock sample. No partial implementation may fall back to an unpinned or
+unmonitored socket.
 
 Native macOS and Windows automatic providers are intentionally unavailable,
 not merely stubbed. macOS needs a separately audited safe wrapper for bounded
