@@ -70,6 +70,13 @@ innocuously named nested archive, or attest a package that does not exist yet.
 It assumes the checked-out source tree is not being replaced concurrently
 during validation.
 
+The current macOS headless helper additionally loads this pinned policy before
+building and applies bounded, multi-architecture `otool` inspection to the
+native diagnostic. Its synthetic tests also validate stable, typed app-tree
+manifests. This is useful preparatory enforcement, but it is not a `Balun.app`
+or DMG claim; bundle staging, signing mutations, and reopened-container checks
+remain mandatory with the real package.
+
 ## Mandatory package gates
 
 Adding any self-contained GTK/GStreamer package also adds all of these

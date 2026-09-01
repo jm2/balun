@@ -157,7 +157,18 @@ The helper never installs tools or packages. Cargo can still fetch the locked
 dependency graph when it is not cached, and a rustup-managed invocation can
 fetch the selected Rust toolchain.
 
-The same-named Tributary Windows helper is also present in headless-only form:
+The same-named Tributary macOS and Windows helpers are also present in
+headless-only form. On macOS, a default run builds the native diagnostic,
+loads the checksum-pinned component policy through system inspection tools,
+and validates the resulting Mach-O without creating an app bundle or DMG:
+
+```bash
+scripts/test-build-macos-policy.sh
+/bin/bash scripts/build-macos.sh --check
+/bin/bash scripts/build-macos.sh
+```
+
+On Windows:
 
 ```powershell
 pwsh -NoProfile -File scripts/test-build-windows-routing.ps1

@@ -38,6 +38,9 @@ jobs:
       - name: Test Flatpak permission policy scaffolding
         run: build-aux/flatpak/test-permissions.sh
 
+      - name: Test macOS build helper policy
+        run: scripts/test-build-macos-policy.sh
+
       - name: Test macOS icon policy scaffolding
         run: scripts/test-macos-icon-bundle-policy.sh
 
@@ -104,6 +107,10 @@ jobs:
         if: runner.os == 'macOS'
         run: /bin/bash scripts/test-macos-package-policy.sh
 
+      - name: Test macOS build helper with system Bash
+        if: runner.os == 'macOS'
+        run: /bin/bash scripts/test-build-macos-policy.sh
+
       - name: Test Windows build helper routing
         if: runner.os == 'Windows'
         shell: pwsh
@@ -116,3 +123,12 @@ jobs:
 
       - name: Check all targets
         run: cargo check --all-targets --locked
+
+      - name: Build and inspect macOS diagnostic
+        if: runner.os == 'macOS'
+        run: /bin/bash scripts/build-macos.sh
+
+      - name: Build Windows diagnostic through helper
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-windows.ps1

@@ -54,6 +54,9 @@ jobs:
       - name: Test Flatpak permission policy scaffolding
         run: build-aux/flatpak/test-permissions.sh
 
+      - name: Test macOS build helper policy
+        run: scripts/test-build-macos-policy.sh
+
       - name: Test macOS icon policy scaffolding
         run: scripts/test-macos-icon-bundle-policy.sh
 
@@ -123,6 +126,10 @@ jobs:
         if: runner.os == 'macOS'
         run: /bin/bash scripts/test-macos-package-policy.sh
 
+      - name: Test macOS build helper with system Bash
+        if: runner.os == 'macOS'
+        run: /bin/bash scripts/test-build-macos-policy.sh
+
       - name: Test Windows build helper routing
         if: runner.os == 'Windows'
         shell: pwsh
@@ -136,8 +143,18 @@ jobs:
       - name: Test tagged source
         run: cargo test --all-targets --locked
 
-      - name: Build discovery diagnostic
-        run: cargo build --release --locked --bin balun-discover
+      - name: Build Linux discovery diagnostic
+        if: runner.os == 'Linux'
+        run: scripts/build-linux.sh
+
+      - name: Build and inspect macOS discovery diagnostic
+        if: runner.os == 'macOS'
+        run: /bin/bash scripts/build-macos.sh
+
+      - name: Build Windows discovery diagnostic
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
 
       - name: Upload internal candidate artifact
         uses: actions/upload-artifact@v7

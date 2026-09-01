@@ -61,7 +61,7 @@ final artifact reopening for that format.
 | Tributary file | Status and landing condition |
 | --- | --- |
 | `build-linux.sh` | Adapted for the current headless diagnostic; GUI and native/Flatpak package modes fail before build work until their complete gates land |
-| `build-macos.sh` | Redesign with `Balun.app`, runtime probe, exact plugin closure, and reopened DMG checks |
+| `build-macos.sh` | Adapted for the current native headless diagnostic and pinned Mach-O inspection; app, DMG, signing, and notarization modes fail before external work until their complete gates land |
 | `build-windows.ps1` | Adapted for the current headless diagnostic; bundle, ZIP, Inno, update, and launch paths fail before external work until their complete gates land |
 | `macos-icon-bundle-policy.sh` | Adapted preparatory helper with Balun identity/temp names |
 | `macos-package-policy.sh` | Adapted inspection-only core with bounded Mach-O output and completed-tree checks; broad copy-any-allowed-plugin staging API removed |
@@ -69,12 +69,13 @@ final artifact reopening for that format.
 | `sync_fuzz_lock.py` | Defer until Balun has a separate fuzz workspace and lockfile |
 | `test-macos-icon-bundle-policy.sh` | Adapted synthetic test for the icon helper |
 | `test-macos-package-policy.sh` | Adapted synthetic test; denied fixtures are derived from the shared policy |
-| `test_dependency_update_policy.py` | Split by feature; land focused MSRV, fuzz, and automation tests with their owners |
+| `test_dependency_update_policy.py` | Split by feature: the applicable compiler portion is `test_rust_toolchain_policy.py`; fuzz and automerge tests remain deferred or inapplicable until their owners exist |
 
 Balun additionally has deterministic command-routing tests for the current
-headless Linux and Windows helpers. Tributary has no equivalent scripts, so
-`test-build-linux-policy.sh` and `test-build-windows-routing.ps1` are new,
-narrow responsibilities rather than renamed upstream ports.
+headless Linux, macOS, and Windows helpers. Tributary has no equivalent
+scripts, so `test-build-linux-policy.sh`, `test-build-macos-policy.sh`, and
+`test-build-windows-routing.ps1` are new, narrow responsibilities rather than
+renamed upstream ports.
 
 The compiler proposal manifest lives at
 `build-aux/toolchain/rust-toolchain.toml`. Dependabot supports a configured

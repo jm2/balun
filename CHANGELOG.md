@@ -63,8 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reusable packaging foundation** — Port Tributary's pinned Flatpak Cargo
   generator and preparatory Linux/Flatpak artifact-policy validators, adapted
   to Balun's application identity and exercised with synthetic archive, ELF,
-  metadata, completed-commit, exact Flatpak-permission, Linux build-helper,
-  Windows build-helper, and macOS icon/bundle fixtures.
+  metadata, completed-commit, exact Flatpak-permission, cross-platform
+  build-helper, and macOS icon/bundle fixtures.
 - **Rust floor synchronization** — Coordinate the Cargo, Dependabot proposal,
   exact MSRV CI, and README compiler declarations while leaving stable-channel
   jobs and immutable action-code pins independent; keep the proposal manifest
