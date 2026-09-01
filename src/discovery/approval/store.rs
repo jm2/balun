@@ -28,7 +28,9 @@ use std::fmt;
 use std::fs::OpenOptions;
 use std::fs::{self, File, TryLockError};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+#[cfg(any(not(unix), target_os = "linux", test))]
+use std::path::Path;
+use std::path::PathBuf;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
