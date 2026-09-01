@@ -99,7 +99,8 @@ pub(crate) trait RoutedAdmissionClock: Send + Sync {
 /// one exact invalidation generation.
 ///
 /// The token contains no topology and is harmless to retain: registration
-/// rejects it as soon as either the generation or healthy epoch changes.
+/// rejects it as soon as its observer incarnation, generation, or healthy
+/// epoch changes.
 pub(crate) struct HealthyRouteEpoch {
     source: Weak<InvalidationInner>,
     identity: HealthyEpochIdentity,
@@ -115,6 +116,7 @@ impl Eq for HealthyRouteEpoch {}
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct HealthyEpochIdentity {
+    observer_incarnation: u64,
     generation: u64,
     healthy_epoch: u64,
 }
@@ -129,6 +131,8 @@ impl fmt::Debug for HealthyRouteEpoch {
 pub(crate) enum InvalidationHubError {
     #[error("route invalidation is not in a healthy observed epoch")]
     Unhealthy,
+    #[error("the route observer session is stale")]
+    StaleObserver,
     #[error("the supplied healthy route epoch is stale")]
     StaleEpoch,
     #[error("route invalidation state failed closed")]
@@ -142,6 +146,8 @@ struct RegisteredInvalidation {
 
 struct InvalidationState {
     generation: u64,
+    next_observer_incarnation: u64,
+    current_observer_incarnation: Option<u64>,
     next_healthy_epoch: u64,
     current_healthy_epoch: Option<HealthyEpochIdentity>,
     next_registration: u64,
@@ -153,6 +159,8 @@ impl Default for InvalidationState {
     fn default() -> Self {
         Self {
             generation: 0,
+            next_observer_incarnation: 0,
+            current_observer_incarnation: None,
             next_healthy_epoch: 0,
             current_healthy_epoch: None,
             next_registration: 1,
@@ -201,10 +209,11 @@ impl Drop for InvalidationInner {
 /// Shared invalidation authority for admitted routed scans.
 ///
 /// The hub deliberately does not implement `Clone`; owners which must share
-/// it do so explicitly with `Arc`. It starts unhealthy. An ordinary
-/// invalidation cancels every registration and leaves it unhealthy until the
-/// route observer explicitly installs a new post-subscription/post-baseline
-/// epoch with [`Self::mark_healthy`].
+/// it do so explicitly with `Arc`. It starts without an observer and
+/// unhealthy. Only the current non-cloneable [`RouteObserverSession`] can
+/// install a post-subscription/post-baseline healthy epoch. An ordinary
+/// invalidation cancels every registration and leaves the session alive but
+/// unhealthy until that observer establishes another coherent baseline.
 ///
 /// One hub represents exactly one observed invalidation source. A future
 /// cross-process approval-store observer must own a separate hub/healthy epoch
@@ -213,10 +222,10 @@ impl Drop for InvalidationInner {
 /// reread and match Balun's own reserve writes rather than blindly treating
 /// every file notification as an external revocation.
 ///
-/// The type does not prove that `mark_healthy` belongs to a live observer
-/// subscription/session; the future controller wiring must own that session
-/// and keep its baseline proof scoped to this hub. Production admission stays
-/// disconnected until that ownership exists.
+/// Starting a replacement observer invalidates all outstanding registrations;
+/// the superseded incarnation can neither restore health nor mint an epoch,
+/// and dropping it cannot disturb its replacement. Dropping the current
+/// session invalidates the hub before relinquishing observer ownership.
 pub(crate) struct RoutedInvalidationHub {
     inner: Arc<InvalidationInner>,
 }
@@ -231,30 +240,31 @@ impl RoutedInvalidationHub {
         }
     }
 
-    /// Install the next explicitly observed healthy epoch.
+    /// Begin a new, initially unhealthy observer incarnation.
     ///
-    /// Calling this while already healthy returns the existing proof; it does
-    /// not silently rotate authority beneath live registrations.
-    pub(crate) fn mark_healthy(&self) -> Result<HealthyRouteEpoch, InvalidationHubError> {
+    /// The controller must retain the returned session for exactly as long as
+    /// its event subscription remains live. Replacing a session invalidates
+    /// all authority from the previous observer before returning.
+    pub(crate) fn start_observer_session(
+        &self,
+    ) -> Result<RouteObserverSession, InvalidationHubError> {
         let mut state = self.inner.lock()?;
-        let identity = if let Some(epoch) = state.current_healthy_epoch {
-            epoch
-        } else {
-            let healthy_epoch = state.next_healthy_epoch.checked_add(1).ok_or_else(|| {
+        let incarnation = state
+            .next_observer_incarnation
+            .checked_add(1)
+            .ok_or_else(|| {
                 fail_closed(&mut state);
                 InvalidationHubError::FailedClosed
             })?;
-            state.next_healthy_epoch = healthy_epoch;
-            let identity = HealthyEpochIdentity {
-                generation: state.generation,
-                healthy_epoch,
-            };
-            state.current_healthy_epoch = Some(identity);
-            identity
-        };
-        Ok(HealthyRouteEpoch {
-            source: Arc::downgrade(&self.inner),
-            identity,
+        invalidate_state(&mut state);
+        if state.failed_closed {
+            return Err(InvalidationHubError::FailedClosed);
+        }
+        state.next_observer_incarnation = incarnation;
+        state.current_observer_incarnation = Some(incarnation);
+        Ok(RouteObserverSession {
+            hub: Arc::downgrade(&self.inner),
+            incarnation,
         })
     }
 
@@ -310,6 +320,105 @@ impl fmt::Debug for RoutedInvalidationHub {
     }
 }
 
+/// Exclusive lifetime proof for one route-observer incarnation.
+///
+/// This value is deliberately non-cloneable. It must be created before the
+/// observer subscribes, retained while the subscription is live, and used to
+/// establish health only after a coherent baseline and notification barrier.
+/// Dropping the current session invalidates all registrations. A superseded
+/// session is inert and cannot affect its replacement.
+pub(crate) struct RouteObserverSession {
+    hub: Weak<InvalidationInner>,
+    incarnation: u64,
+}
+
+impl RouteObserverSession {
+    /// Install the next explicitly observed healthy epoch.
+    ///
+    /// Calling this again without an intervening invalidation returns the
+    /// existing proof; it does not rotate authority beneath live scans.
+    pub(crate) fn establish_healthy_epoch(
+        &self,
+    ) -> Result<HealthyRouteEpoch, InvalidationHubError> {
+        let hub = self
+            .hub
+            .upgrade()
+            .ok_or(InvalidationHubError::FailedClosed)?;
+        let mut state = hub.lock()?;
+        if state.current_observer_incarnation != Some(self.incarnation) {
+            return Err(InvalidationHubError::StaleObserver);
+        }
+
+        let identity = if let Some(epoch) = state.current_healthy_epoch {
+            if epoch.observer_incarnation != self.incarnation {
+                fail_closed(&mut state);
+                return Err(InvalidationHubError::FailedClosed);
+            }
+            epoch
+        } else {
+            let healthy_epoch = state.next_healthy_epoch.checked_add(1).ok_or_else(|| {
+                fail_closed(&mut state);
+                InvalidationHubError::FailedClosed
+            })?;
+            state.next_healthy_epoch = healthy_epoch;
+            let identity = HealthyEpochIdentity {
+                observer_incarnation: self.incarnation,
+                generation: state.generation,
+                healthy_epoch,
+            };
+            state.current_healthy_epoch = Some(identity);
+            identity
+        };
+        Ok(HealthyRouteEpoch {
+            source: Arc::downgrade(&hub),
+            identity,
+        })
+    }
+
+    /// Invalidate this observer's current baseline after any event or fault.
+    pub(crate) fn invalidate(&self) -> Result<(), InvalidationHubError> {
+        let hub = self
+            .hub
+            .upgrade()
+            .ok_or(InvalidationHubError::FailedClosed)?;
+        let mut state = hub.lock()?;
+        if state.current_observer_incarnation != Some(self.incarnation) {
+            return Err(InvalidationHubError::StaleObserver);
+        }
+        invalidate_state(&mut state);
+        if state.failed_closed {
+            return Err(InvalidationHubError::FailedClosed);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for RouteObserverSession {
+    fn drop(&mut self) {
+        let Some(hub) = self.hub.upgrade() else {
+            return;
+        };
+        let mut state = match hub.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => {
+                let mut state = poisoned.into_inner();
+                fail_closed(&mut state);
+                return;
+            }
+        };
+        if state.current_observer_incarnation == Some(self.incarnation) {
+            state.current_observer_incarnation = None;
+            invalidate_state(&mut state);
+        }
+    }
+}
+
+impl fmt::Debug for RouteObserverSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("RouteObserverSession(<redacted>)")
+    }
+}
+
 fn invalidate_state(state: &mut InvalidationState) {
     state.current_healthy_epoch = None;
     for registration in state.registrations.values() {
@@ -324,6 +433,7 @@ fn invalidate_state(state: &mut InvalidationState) {
 
 fn fail_closed(state: &mut InvalidationState) {
     state.failed_closed = true;
+    state.current_observer_incarnation = None;
     state.current_healthy_epoch = None;
     for registration in state.registrations.values() {
         registration.signal.cancel();
@@ -794,6 +904,7 @@ mod tests {
     #[test]
     fn admission_authority_types_do_not_implement_clone() {
         let _ = <RoutedInvalidationHub as AmbiguousIfClone<_>>::marker;
+        let _ = <RouteObserverSession as AmbiguousIfClone<_>>::marker;
         let _ = <RoutedInvalidationRegistration as AmbiguousIfClone<_>>::marker;
         let _ = <AdmittedRoutedScan as AmbiguousIfClone<_>>::marker;
     }
@@ -1016,17 +1127,19 @@ mod tests {
     }
 
     #[test]
-    fn invalidation_requires_an_explicit_new_healthy_epoch() {
+    fn observer_session_exclusively_mints_epochs_and_drop_invalidates() {
         let hub = RoutedInvalidationHub::new();
         let foreign_hub = RoutedInvalidationHub::new();
-        let foreign_epoch = foreign_hub.mark_healthy().unwrap();
+        let foreign_observer = foreign_hub.start_observer_session().unwrap();
+        let foreign_epoch = foreign_observer.establish_healthy_epoch().unwrap();
         assert_eq!(
             hub.register(&foreign_epoch).unwrap_err(),
             InvalidationHubError::Unhealthy
         );
 
-        let first = hub.mark_healthy().unwrap();
-        assert_eq!(hub.mark_healthy().unwrap(), first);
+        let observer = hub.start_observer_session().unwrap();
+        let first = observer.establish_healthy_epoch().unwrap();
+        assert_eq!(observer.establish_healthy_epoch().unwrap(), first);
         assert_eq!(
             hub.register(&foreign_epoch).unwrap_err(),
             InvalidationHubError::StaleEpoch
@@ -1034,7 +1147,7 @@ mod tests {
         let registration = hub.register(&first).unwrap();
         assert!(registration.is_current());
 
-        hub.invalidate();
+        observer.invalidate().unwrap();
         assert!(!registration.is_current());
         assert!(registration.cancellation().is_cancelled());
         assert_eq!(
@@ -1042,19 +1155,61 @@ mod tests {
             InvalidationHubError::Unhealthy
         );
 
-        let second = hub.mark_healthy().unwrap();
+        let second = observer.establish_healthy_epoch().unwrap();
         assert_ne!(second, first);
         assert_eq!(
             hub.register(&first).unwrap_err(),
             InvalidationHubError::StaleEpoch
         );
-        assert!(hub.register(&second).unwrap().is_current());
+        let registration = hub.register(&second).unwrap();
+        assert!(registration.is_current());
+        let signal = registration.cancellation().clone();
+        drop(observer);
+        assert!(!registration.is_current());
+        assert!(signal.is_cancelled());
+        assert_eq!(
+            hub.register(&second).unwrap_err(),
+            InvalidationHubError::Unhealthy
+        );
+    }
+
+    #[test]
+    fn superseded_observer_is_inert_and_cannot_restore_health() {
+        let hub = RoutedInvalidationHub::new();
+        let stale_observer = hub.start_observer_session().unwrap();
+        let stale_epoch = stale_observer.establish_healthy_epoch().unwrap();
+        let stale_registration = hub.register(&stale_epoch).unwrap();
+
+        let current_observer = hub.start_observer_session().unwrap();
+        assert!(!stale_registration.is_current());
+        assert_eq!(
+            stale_observer.establish_healthy_epoch().unwrap_err(),
+            InvalidationHubError::StaleObserver
+        );
+        assert_eq!(
+            stale_observer.invalidate().unwrap_err(),
+            InvalidationHubError::StaleObserver
+        );
+        assert_eq!(
+            hub.register(&stale_epoch).unwrap_err(),
+            InvalidationHubError::Unhealthy
+        );
+
+        let current_epoch = current_observer.establish_healthy_epoch().unwrap();
+        let current_registration = hub.register(&current_epoch).unwrap();
+        drop(stale_observer);
+        assert!(current_registration.is_current());
+        assert_eq!(
+            hub.register(&stale_epoch).unwrap_err(),
+            InvalidationHubError::StaleEpoch
+        );
     }
 
     #[test]
     fn dropping_a_registration_cancels_any_retained_signal_clone() {
         let hub = RoutedInvalidationHub::new();
-        let epoch = hub.mark_healthy().unwrap();
+        let _observer = hub.start_observer_session().unwrap();
+        let epoch = _observer.establish_healthy_epoch().unwrap();
         let registration = hub.register(&epoch).unwrap();
         let escaped_signal = registration.cancellation().clone();
         drop(registration);
@@ -1066,7 +1221,8 @@ mod tests {
     fn unchanged_fresh_snapshot_is_admitted_with_one_absolute_budget() {
         let fixture = ApprovedFixture::new(100);
         let hub = RoutedInvalidationHub::new();
-        let epoch = hub.mark_healthy().unwrap();
+        let _observer = hub.start_observer_session().unwrap();
+        let epoch = _observer.establish_healthy_epoch().unwrap();
         let base = Instant::now();
         let clock = ordinary_clock(base, 100);
         let routes = FakeRouteProvider::ready(fixture.snapshot.clone());
@@ -1107,7 +1263,8 @@ mod tests {
     fn dropping_admitted_scan_cancels_memory_but_keeps_store_busy_until_expiry() {
         let fixture = ApprovedFixture::new(100);
         let hub = RoutedInvalidationHub::new();
-        let epoch = hub.mark_healthy().unwrap();
+        let _observer = hub.start_observer_session().unwrap();
+        let epoch = _observer.establish_healthy_epoch().unwrap();
         let clock = ordinary_clock(Instant::now(), 100);
         let routes = FakeRouteProvider::ready(fixture.snapshot.clone());
         let boundary = RoutedAdmissionBoundary::new(&fixture.store, &hub, &clock, &routes);
@@ -1164,7 +1321,8 @@ mod tests {
         let fixture = ApprovedFixture::new(100);
         let hub = RoutedInvalidationHub::new();
         let foreign_hub = RoutedInvalidationHub::new();
-        let foreign_epoch = foreign_hub.mark_healthy().unwrap();
+        let _foreign_observer = foreign_hub.start_observer_session().unwrap();
+        let foreign_epoch = _foreign_observer.establish_healthy_epoch().unwrap();
         let base = Instant::now();
         let clock = ordinary_clock(base, 100);
         let routes = FakeRouteProvider::ready(fixture.snapshot.clone());
@@ -1220,7 +1378,8 @@ mod tests {
     fn cancellation_or_invalidation_during_snapshot_never_admits() {
         let cancelled_fixture = ApprovedFixture::new(100);
         let cancelled_hub = RoutedInvalidationHub::new();
-        let cancelled_epoch = cancelled_hub.mark_healthy().unwrap();
+        let _cancelled_observer = cancelled_hub.start_observer_session().unwrap();
+        let cancelled_epoch = _cancelled_observer.establish_healthy_epoch().unwrap();
         let cancelled_token = CancellationToken::new();
         let cancellation_action = cancelled_token.clone();
         let cancelled_routes =
@@ -1257,7 +1416,8 @@ mod tests {
 
         let invalidated_fixture = ApprovedFixture::new(100);
         let invalidated_hub = Arc::new(RoutedInvalidationHub::new());
-        let invalidated_epoch = invalidated_hub.mark_healthy().unwrap();
+        let _invalidated_observer = invalidated_hub.start_observer_session().unwrap();
+        let invalidated_epoch = _invalidated_observer.establish_healthy_epoch().unwrap();
         let invalidation_action = Arc::clone(&invalidated_hub);
         let invalidated_routes =
             FakeRouteProvider::ready_then(invalidated_fixture.snapshot.clone(), move || {
@@ -1301,7 +1461,8 @@ mod tests {
     fn final_clock_boundary_rejects_cancellation_and_invalidation() {
         let cancelled_fixture = ApprovedFixture::new(100);
         let cancelled_hub = RoutedInvalidationHub::new();
-        let cancelled_epoch = cancelled_hub.mark_healthy().unwrap();
+        let _cancelled_observer = cancelled_hub.start_observer_session().unwrap();
+        let cancelled_epoch = _cancelled_observer.establish_healthy_epoch().unwrap();
         let cancelled_token = CancellationToken::new();
         let final_cancellation = cancelled_token.clone();
         let base = Instant::now();
@@ -1335,7 +1496,8 @@ mod tests {
 
         let invalidated_fixture = ApprovedFixture::new(100);
         let invalidated_hub = Arc::new(RoutedInvalidationHub::new());
-        let invalidated_epoch = invalidated_hub.mark_healthy().unwrap();
+        let _invalidated_observer = invalidated_hub.start_observer_session().unwrap();
+        let invalidated_epoch = _invalidated_observer.establish_healthy_epoch().unwrap();
         let final_invalidation = Arc::clone(&invalidated_hub);
         let base = Instant::now();
         let invalidated_clock = FakeClock::new([
@@ -1372,7 +1534,8 @@ mod tests {
     fn subsecond_policy_or_monotonic_rollback_fails_closed() {
         let policy_fixture = ApprovedFixture::new(100);
         let policy_hub = RoutedInvalidationHub::new();
-        let policy_epoch = policy_hub.mark_healthy().unwrap();
+        let _policy_observer = policy_hub.start_observer_session().unwrap();
+        let policy_epoch = _policy_observer.establish_healthy_epoch().unwrap();
         let base = Instant::now();
         let policy_clock = FakeClock::new([
             ClockStep::sample(clock_sample(base, 100, 900_000_000, Duration::ZERO)),
@@ -1399,7 +1562,8 @@ mod tests {
 
         let monotonic_fixture = ApprovedFixture::new(100);
         let monotonic_hub = RoutedInvalidationHub::new();
-        let monotonic_epoch = monotonic_hub.mark_healthy().unwrap();
+        let _monotonic_observer = monotonic_hub.start_observer_session().unwrap();
+        let monotonic_epoch = _monotonic_observer.establish_healthy_epoch().unwrap();
         let base = Instant::now();
         let monotonic_clock = FakeClock::new([
             ClockStep::sample(clock_sample(base, 100, 0, Duration::from_secs(2))),
@@ -1430,7 +1594,8 @@ mod tests {
     fn prior_store_time_high_water_is_rejected_instead_of_clamped() {
         let fixture = ApprovedFixture::new(200);
         let hub = RoutedInvalidationHub::new();
-        let epoch = hub.mark_healthy().unwrap();
+        let _observer = hub.start_observer_session().unwrap();
+        let epoch = _observer.establish_healthy_epoch().unwrap();
         let clock = ordinary_clock(Instant::now(), 100);
         let routes = FakeRouteProvider::ready(fixture.snapshot.clone());
         let boundary = RoutedAdmissionBoundary::new(&fixture.store, &hub, &clock, &routes);
@@ -1462,7 +1627,8 @@ mod tests {
     fn escaped_permit_failure_retains_crash_conservative_authority() {
         let fixture = ApprovedFixture::new(100);
         let hub = RoutedInvalidationHub::new();
-        let epoch = hub.mark_healthy().unwrap();
+        let _observer = hub.start_observer_session().unwrap();
+        let epoch = _observer.establish_healthy_epoch().unwrap();
         let clock = ordinary_clock(Instant::now(), 100);
         let routes = FakeRouteProvider::unavailable();
         let boundary = RoutedAdmissionBoundary::new(&fixture.store, &hub, &clock, &routes);
@@ -1517,7 +1683,8 @@ mod tests {
     fn elapsed_snapshot_and_revalidation_queue_time_never_extend_the_lease() {
         let fixture = ApprovedFixture::new(100);
         let hub = RoutedInvalidationHub::new();
-        let epoch = hub.mark_healthy().unwrap();
+        let _observer = hub.start_observer_session().unwrap();
+        let epoch = _observer.establish_healthy_epoch().unwrap();
         let base = Instant::now();
         let clock = FakeClock::new([
             ClockStep::sample(clock_sample(base, 100, 100_000_000, Duration::ZERO)),
@@ -1564,7 +1731,8 @@ mod tests {
     fn unavailable_clock_or_snapshot_is_topology_redacted_and_fails_closed() {
         let clock_fixture = ApprovedFixture::new(100);
         let clock_hub = RoutedInvalidationHub::new();
-        let clock_epoch = clock_hub.mark_healthy().unwrap();
+        let _clock_observer = clock_hub.start_observer_session().unwrap();
+        let clock_epoch = _clock_observer.establish_healthy_epoch().unwrap();
         let clock = FakeClock::new([ClockStep::unavailable()]);
         let routes = FakeRouteProvider::ready(clock_fixture.snapshot.clone());
         let boundary =
@@ -1583,7 +1751,8 @@ mod tests {
 
         let snapshot_fixture = ApprovedFixture::new(100);
         let snapshot_hub = RoutedInvalidationHub::new();
-        let snapshot_epoch = snapshot_hub.mark_healthy().unwrap();
+        let _snapshot_observer = snapshot_hub.start_observer_session().unwrap();
+        let snapshot_epoch = _snapshot_observer.establish_healthy_epoch().unwrap();
         let clock = ordinary_clock(Instant::now(), 100);
         let routes = FakeRouteProvider::unavailable();
         let boundary =
@@ -1607,7 +1776,8 @@ mod tests {
     fn revoke_invalidates_before_mutation_and_never_restores_health() {
         let fixture = ApprovedFixture::new(100);
         let hub = RoutedInvalidationHub::new();
-        let epoch = hub.mark_healthy().unwrap();
+        let observer = hub.start_observer_session().unwrap();
+        let epoch = observer.establish_healthy_epoch().unwrap();
         let clock = ordinary_clock(Instant::now(), 100);
         let routes = FakeRouteProvider::ready(fixture.snapshot.clone());
         let boundary = RoutedAdmissionBoundary::new(&fixture.store, &hub, &clock, &routes);
@@ -1649,7 +1819,8 @@ mod tests {
         let fixture = ApprovedFixture::new(100);
         let other = ApprovedFixture::new(100);
         let hub = RoutedInvalidationHub::new();
-        let epoch = hub.mark_healthy().unwrap();
+        let observer = hub.start_observer_session().unwrap();
+        let epoch = observer.establish_healthy_epoch().unwrap();
         let clock = ordinary_clock(Instant::now(), 100);
         let routes = FakeRouteProvider::ready(fixture.snapshot.clone());
         let boundary = RoutedAdmissionBoundary::new(&fixture.store, &hub, &clock, &routes);
@@ -1663,7 +1834,7 @@ mod tests {
             InvalidationHubError::Unhealthy
         );
 
-        let next_epoch = hub.mark_healthy().unwrap();
+        let next_epoch = observer.establish_healthy_epoch().unwrap();
         assert!(matches!(
             boundary.revoke_all().unwrap(),
             StoredRevokeDecision::Published(commit) if commit.is_confirmed()
