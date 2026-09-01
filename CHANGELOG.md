@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the exact proposal from a fresh route snapshot; reject every stable topology
   or policy change, use only a fresh nonzero interface identity, and cap the
   scan budget to the remaining reservation lease.
+- **Sealed Linux routed socket** — Construct a nonblocking IPv4 UDP socket only
+  after one `SO_BINDTODEVICE` assignment and matching interface-name/index
+  readbacks before and after local bind; retain it as an opaque, non-cloneable
+  capability with no I/O or raw-descriptor escape until the monitored runner
+  exists.
+- **Packet-free routed admission** — Register source-bound invalidation before
+  durable reserve, obtain and revalidate a fresh route snapshot, map wall-clock
+  authority onto one non-extending monotonic deadline, and leave abandoned
+  authority under its crash-conservative reservation and cooldown.
 - **Cross-platform repository checks** — Add locked formatting, strict Clippy,
   debug and release tests, exact-MSRV validation, macOS and Windows compile
   smoke checks, and immutable-tag release-candidate validation.
@@ -64,8 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fail-closed automatic authority** — Reject ambiguous tunnel origins,
   changed topology or traffic policy, stale and expired run completion,
   backward-clock shortcuts, uncertain durability, and revoked or replaced
-  active runs. Automatic route-derived traffic remains disconnected until
-  interface-pinned egress and pre-consumption cancellation registration land.
+  active runs. The sealed Linux socket and packet-free admission foundations
+  are present, but automatic route-derived traffic remains disconnected until
+  live observer-session provenance, cross-process store observation, final
+  pre-send revalidation, and consuming-runner completion land.
 - **Bounded lineup parsing** — Enforce the channel-row limit while
   deserializing lineup JSON so oversized responses cannot allocate every raw
   row before rejection.

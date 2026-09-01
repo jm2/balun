@@ -309,9 +309,21 @@ cross-process locking, atomic durability barriers, global run sequencing,
 quarantine, and topology-free revocation. Its store-owned fresh-snapshot gate
 requires the exact active fingerprint and run, rebuilds the complete proposal,
 permits only a transient interface-ID replacement, and caps work to the
-remaining lease. Route-derived execution remains deliberately disconnected
-from the diagnostic until Linux interface-pinned egress and pre-consumption
-network-change/revocation cancellation are complete.
+remaining lease. The Linux socket factory now performs one interface pin plus
+matching name/index readbacks before and after local bind, then seals the
+nonblocking socket behind a non-cloneable capability with no I/O escape. The
+packet-free admission boundary registers invalidation before reserve, obtains
+the fresh snapshot, rejects clock rollback or store-time clamping, and maps the
+authority onto one non-extending monotonic deadline. Post-reserve failure or
+abandonment deliberately retains the crash-conservative durable reservation.
+
+Route-derived execution remains disconnected from the diagnostic. Production
+wiring still requires a non-cloneable live route-observer session, a separate
+cross-process approval-store observer, both healthy epochs retained through
+the run, final socket/route/deadline validation immediately before each send,
+and a consuming runner which stops all packet work before completing the exact
+durable run with a fresh paired clock sample. No partial implementation may
+fall back to an unpinned or unmonitored socket.
 
 Native macOS and Windows automatic providers are intentionally unavailable,
 not merely stubbed. macOS needs a separately audited safe wrapper for bounded

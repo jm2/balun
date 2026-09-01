@@ -101,10 +101,14 @@ On Linux, Balun can now derive conservative candidates from a stable native
 route snapshot. It fails closed on policy routing, VRFs, ambiguous next hops,
 or route-table state that cannot be represented safely. The remembered
 approval policy, durable private store, and immediate exact-route revalidation
-gate are present. Route-derived targets remain disconnected from the
-diagnostic until the Linux runner can pin every UDP socket to the freshly
-validated interface and register cancellation before authority is consumed.
-Installing the provider does not silently enumerate a network.
+gate are present. A private Linux factory now seals a UDP socket to the exact
+fresh interface after name/index readback, and a packet-free admission boundary
+registers invalidation before reserve and carries one non-extending monotonic
+deadline. Neither capability exposes an automatic send path yet. Route-derived
+targets remain disconnected from the diagnostic until a live route-observer
+session, a separate cross-process approval-store observer, final pre-send
+revalidation, and a consuming runner with exact completion ownership are all
+present. Installing the provider does not silently enumerate a network.
 
 Press `Ctrl+C` to cancel discovery.
 
