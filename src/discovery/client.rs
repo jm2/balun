@@ -9,6 +9,7 @@ use tokio::task::JoinSet;
 use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 
+use super::local::{IPV6_LINK_LOCAL_DISCOVERY_GROUP, IPV6_SITE_LOCAL_DISCOVERY_GROUP};
 use super::{DiscoveryMethod, ProbeEndpoint, local_probe_endpoints};
 use crate::domain::DeviceId;
 use crate::hdhr::protocol::{
@@ -337,6 +338,16 @@ impl DiscoveryClient {
         cancellation: &CancellationToken,
     ) -> Result<DiscoveryReport, DiscoveryError> {
         validate_endpoint(&endpoint)?;
+        self.probe_validated_endpoint(endpoint, expected_device, cancellation)
+            .await
+    }
+
+    async fn probe_validated_endpoint(
+        &self,
+        endpoint: ProbeEndpoint,
+        expected_device: Option<DeviceId>,
+        cancellation: &CancellationToken,
+    ) -> Result<DiscoveryReport, DiscoveryError> {
         if cancellation.is_cancelled() {
             return Err(DiscoveryError::Cancelled);
         }
@@ -516,23 +527,40 @@ fn validate_endpoint(endpoint: &ProbeEndpoint) -> Result<(), DiscoveryError> {
             reason: "bind address and destination use different address families",
         });
     }
-    if endpoint.destination.port() == 0 {
+    if endpoint.bind.port() != 0 {
         return Err(DiscoveryError::InvalidEndpoint {
             endpoint: endpoint.destination,
-            reason: "destination port is zero",
+            reason: "discovery bind port must be selected by the operating system",
+        });
+    }
+    if endpoint.destination.port() != DISCOVERY_UDP_PORT {
+        return Err(DiscoveryError::InvalidEndpoint {
+            endpoint: endpoint.destination,
+            reason: "discovery destination must use the HDHomeRun discovery port",
         });
     }
     let source_policy_is_valid = match (endpoint.method, endpoint.accepted_source_network) {
-        (DiscoveryMethod::Targeted | DiscoveryMethod::RoutedTargeted, None) => true,
-        (DiscoveryMethod::Ipv4Broadcast, Some(ipnet::IpNet::V4(network))) => {
-            matches!(endpoint.bind.ip(), std::net::IpAddr::V4(address) if network.contains(&address))
-                && endpoint.destination.ip() == std::net::IpAddr::V4(network.broadcast())
+        (DiscoveryMethod::Targeted | DiscoveryMethod::RoutedTargeted, None) => {
+            endpoint.interface.is_none()
+                && endpoint.bind.ip().is_unspecified()
+                && !invalid_target(endpoint.destination)
         }
-        (
-            DiscoveryMethod::Ipv6LinkLocalMulticast | DiscoveryMethod::Ipv6SiteLocalMulticast,
-            Some(ipnet::IpNet::V6(network)),
-        ) => {
-            matches!(endpoint.bind.ip(), std::net::IpAddr::V6(address) if network.contains(&address))
+        (DiscoveryMethod::Ipv4Broadcast, Some(ipnet::IpNet::V4(network))) => {
+            endpoint.interface.is_some()
+                && (1..=30).contains(&network.prefix_len())
+                && matches!(endpoint.bind.ip(), std::net::IpAddr::V4(address) if network.contains(&address))
+                && matches!(
+                    endpoint.destination.ip(),
+                    std::net::IpAddr::V4(destination)
+                        if destination == network.broadcast()
+                            || destination == Ipv4Addr::BROADCAST
+                )
+        }
+        (DiscoveryMethod::Ipv6LinkLocalMulticast, Some(ipnet::IpNet::V6(network))) => {
+            valid_ipv6_multicast_endpoint(endpoint, network, IPV6_LINK_LOCAL_DISCOVERY_GROUP, true)
+        }
+        (DiscoveryMethod::Ipv6SiteLocalMulticast, Some(ipnet::IpNet::V6(network))) => {
+            valid_ipv6_multicast_endpoint(endpoint, network, IPV6_SITE_LOCAL_DISCOVERY_GROUP, false)
         }
         _ => false,
     };
@@ -544,6 +572,27 @@ fn validate_endpoint(endpoint: &ProbeEndpoint) -> Result<(), DiscoveryError> {
     }
 
     Ok(())
+}
+
+fn valid_ipv6_multicast_endpoint(
+    endpoint: &ProbeEndpoint,
+    network: ipnet::Ipv6Net,
+    expected_group: Ipv6Addr,
+    require_link_local_bind: bool,
+) -> bool {
+    let (SocketAddr::V6(bind), SocketAddr::V6(destination)) = (endpoint.bind, endpoint.destination)
+    else {
+        return false;
+    };
+
+    endpoint.interface.is_some()
+        && network.prefix_len() != 0
+        && network.contains(bind.ip())
+        && bind.scope_id() != 0
+        && destination.scope_id() == bind.scope_id()
+        && destination.flowinfo() == 0
+        && *destination.ip() == expected_group
+        && bind.ip().is_unicast_link_local() == require_link_local_bind
 }
 
 fn source_matches(endpoint: &ProbeEndpoint, source: SocketAddr) -> bool {
@@ -568,11 +617,22 @@ fn source_matches(endpoint: &ProbeEndpoint, source: SocketAddr) -> bool {
         DiscoveryMethod::Targeted | DiscoveryMethod::RoutedTargeted => {
             source.ip() == endpoint.destination.ip()
         }
-        DiscoveryMethod::Ipv4Broadcast
-        | DiscoveryMethod::Ipv6LinkLocalMulticast
-        | DiscoveryMethod::Ipv6SiteLocalMulticast => endpoint
-            .accepted_source_network
-            .is_some_and(|network| network.contains(&source.ip())),
+        DiscoveryMethod::Ipv4Broadcast => {
+            let (Some(ipnet::IpNet::V4(network)), SocketAddr::V4(source)) =
+                (endpoint.accepted_source_network, source)
+            else {
+                return false;
+            };
+            network.contains(source.ip())
+                && *source.ip() != network.network()
+                && *source.ip() != network.broadcast()
+                && *source.ip() != Ipv4Addr::BROADCAST
+        }
+        DiscoveryMethod::Ipv6LinkLocalMulticast | DiscoveryMethod::Ipv6SiteLocalMulticast => {
+            endpoint
+                .accepted_source_network
+                .is_some_and(|network| network.contains(&source.ip()))
+        }
     }
 }
 
@@ -694,6 +754,22 @@ mod tests {
             &endpoint,
             "198.51.100.10:65001".parse().unwrap()
         ));
+        assert!(!source_matches(
+            &endpoint,
+            "192.0.2.10:65000".parse().unwrap()
+        ));
+        assert!(!source_matches(
+            &endpoint,
+            "192.0.2.0:65001".parse().unwrap()
+        ));
+        assert!(!source_matches(
+            &endpoint,
+            "192.0.2.255:65001".parse().unwrap()
+        ));
+        assert!(!source_matches(
+            &endpoint,
+            "255.255.255.255:65001".parse().unwrap()
+        ));
     }
 
     #[test]
@@ -714,6 +790,35 @@ mod tests {
             Err(DiscoveryError::InvalidEndpoint { .. })
         ));
 
+        let mut limited_broadcast = valid.clone();
+        limited_broadcast.destination = "255.255.255.255:65001".parse().unwrap();
+        assert!(validate_endpoint(&limited_broadcast).is_ok());
+
+        let mut unrelated_broadcast = valid.clone();
+        unrelated_broadcast.destination = "192.0.3.255:65001".parse().unwrap();
+        assert!(matches!(
+            validate_endpoint(&unrelated_broadcast),
+            Err(DiscoveryError::InvalidEndpoint { .. })
+        ));
+
+        let mut wrong_port = valid.clone();
+        wrong_port.destination = "192.0.2.255:65000".parse().unwrap();
+        assert!(matches!(
+            validate_endpoint(&wrong_port),
+            Err(DiscoveryError::InvalidEndpoint { .. })
+        ));
+
+        let mut targeted_wrong_port = ProbeEndpoint {
+            bind: "0.0.0.0:0".parse().unwrap(),
+            destination: "192.0.2.10:65000".parse().unwrap(),
+            method: DiscoveryMethod::Targeted,
+            interface: None,
+            accepted_source_network: None,
+        };
+        assert!(validate_endpoint(&targeted_wrong_port).is_err());
+        targeted_wrong_port.destination.set_port(DISCOVERY_UDP_PORT);
+        assert!(validate_endpoint(&targeted_wrong_port).is_ok());
+
         let mut targeted_with_prefix = valid;
         targeted_with_prefix.method = DiscoveryMethod::Targeted;
         targeted_with_prefix.destination = "192.0.2.10:65001".parse().unwrap();
@@ -733,6 +838,7 @@ mod tests {
             accepted_source_network: Some("fe80::/64".parse().unwrap()),
         };
 
+        assert!(validate_endpoint(&endpoint).is_ok());
         assert!(source_matches(
             &endpoint,
             "[fe80::10%7]:65001".parse().unwrap()
@@ -745,6 +851,31 @@ mod tests {
             &endpoint,
             "[fe80::10]:65001".parse().unwrap()
         ));
+    }
+
+    #[test]
+    fn ipv6_multicast_validation_requires_exact_group_scope_and_bind_class() {
+        let valid = ProbeEndpoint {
+            bind: "[fd12:3456::20%7]:0".parse().unwrap(),
+            destination: "[ff05::176%7]:65001".parse().unwrap(),
+            method: DiscoveryMethod::Ipv6SiteLocalMulticast,
+            interface: Some("test0".to_owned()),
+            accepted_source_network: Some("fd12:3456::/64".parse().unwrap()),
+        };
+        assert!(validate_endpoint(&valid).is_ok());
+
+        let mut wrong_group = valid.clone();
+        wrong_group.destination = "[ff05::177%7]:65001".parse().unwrap();
+        assert!(validate_endpoint(&wrong_group).is_err());
+
+        let mut wrong_scope = valid.clone();
+        wrong_scope.destination = "[ff05::176%8]:65001".parse().unwrap();
+        assert!(validate_endpoint(&wrong_scope).is_err());
+
+        let mut link_local_bind = valid;
+        link_local_bind.bind = "[fe80::20%7]:0".parse().unwrap();
+        link_local_bind.accepted_source_network = Some("fe80::/64".parse().unwrap());
+        assert!(validate_endpoint(&link_local_bind).is_err());
     }
 
     #[tokio::test]
@@ -778,14 +909,17 @@ mod tests {
 
         let config = ProbeConfig::new(1, Duration::from_millis(100), 8, 4).unwrap();
         let endpoint = ProbeEndpoint {
-            bind: "127.0.0.1:0".parse().unwrap(),
+            bind: "0.0.0.0:0".parse().unwrap(),
             destination: server_address,
             method: DiscoveryMethod::Targeted,
             interface: None,
             accepted_source_network: None,
         };
         let report = DiscoveryClient::new(config)
-            .probe_endpoint(endpoint, None, &CancellationToken::new())
+            // This transport-focused test uses an ephemeral loopback server;
+            // production entry points validate and normalize port 65001
+            // before reaching this already-validated socket loop.
+            .probe_validated_endpoint(endpoint, None, &CancellationToken::new())
             .await
             .unwrap();
         server_task.await.unwrap();
@@ -824,14 +958,16 @@ mod tests {
 
         let config = ProbeConfig::new(1, MIN_RESPONSE_WINDOW, 8, 4).unwrap();
         let endpoint = ProbeEndpoint {
-            bind: "127.0.0.1:0".parse().unwrap(),
+            bind: "0.0.0.0:0".parse().unwrap(),
             destination: server_address,
             method: DiscoveryMethod::RoutedTargeted,
             interface: None,
             accepted_source_network: None,
         };
         let report = DiscoveryClient::new(config)
-            .probe_endpoint(endpoint, None, &CancellationToken::new())
+            // See the transport-test note above: production never bypasses
+            // the exact discovery-port validator.
+            .probe_validated_endpoint(endpoint, None, &CancellationToken::new())
             .await
             .unwrap();
         server_task.await.unwrap();
