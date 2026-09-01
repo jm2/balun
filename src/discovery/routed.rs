@@ -14,6 +14,9 @@ use super::client::{DiscoveryClient, DiscoveryError, DiscoveryReport, ProbeIssue
 use super::types::{DiscoveryMethod, ProbeEndpoint};
 use crate::hdhr::protocol::DISCOVERY_UDP_PORT;
 
+#[cfg(target_os = "linux")]
+mod linux;
+
 /// Hard ceiling for an explicitly approved routed discovery range.
 pub const MAX_ROUTED_CANDIDATES: usize = 256;
 /// Hard ceiling for the nominal routed discovery packet rate.
