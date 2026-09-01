@@ -173,21 +173,75 @@ expect_status 1 \
     --repository
 git -C "$fixture_repository" rm -q -f "$rejected_repository_path"
 
-# Native-link declarations and standard build/package entry points are scanned
-# even when their own filename is innocent. The extensionless executable also
-# pins the generic executable-helper boundary.
+# Native-link declarations and every supported build/package input family are
+# scanned even when their own filename is innocent. Keep one negative fixture
+# per classifier family so adding or accidentally narrowing a case arm cannot
+# silently create an untested packaging path. The extensionless executable
+# also pins the generic executable-helper boundary.
 classified_inputs=(
     build.rs
+    config/dependency.toml
+    vendor/Cargo.lock
+    vendor/.cargo/config
     .cargo/config.toml
+    .github/workflows/package.yml
+    .github/actions/package/action.yml
+    .githooks/pre-commit
+    build-aux/platform/package.conf
+    packaging/release.conf
     src/native_link.rs
     scripts/build.sh
+    scripts/build.bash
+    scripts/build.ps1
+    scripts/build.psm1
+    scripts/build.cmd
+    scripts/build.bat
+    scripts/build.py
+    scripts/build.rb
+    scripts/build.pl
+    scripts/package-release.tool
+    scripts/release-candidate.tool
     tools/assemble
-    Makefile
-    CMakeLists.txt
-    meson.build
+    build/Makefile
+    build/GNUmakefile
+    build/makefile
+    build/rules.mk
+    build/CMakeLists.txt
+    build/toolchain.cmake
+    build/meson.build
+    build/meson_options.txt
+    subprojects/dependency.wrap
+    build/configure
+    build/configure.ac
+    build/configure.in
+    build/macro.m4
+    build/Justfile
+    build/justfile
+    build/Taskfile.yml
+    build/Taskfile.yaml
+    containers/Dockerfile
+    containers/Containerfile
+    distro/PKGBUILD
     debian/control
     snap/snapcraft.yaml
+    distro/package.spec
+    installer/setup.iss
     installer.nsi
+    installer/include.nsh
+    installer/product.wxs
+    installer/fragment.wxi
+    installer/strings.wxl
+    installer/product.wixproj
+    installer/product.wapproj
+    installer/product.appxmanifest
+    flatpak/io.github.jm2.Balun.flatpak.yml
+    flatpak/io.github.jm2.Balun.flatpak.yaml
+    flatpak/io.github.jm2.Balun.flatpak.json
+    macos/Balun.pkgproj
+    nix/default.nix
+    deps/vcpkg.json
+    deps/conanfile.py
+    deps/conanfile.txt
 )
 for classified_input in "${classified_inputs[@]}"; do
     mkdir -p "$fixture_repository/$(dirname -- "$classified_input")"

@@ -6,7 +6,8 @@ Balun plays unprotected live television supplied by HDHomeRun devices. It does
 not implement DVD or Blu-ray playback, protected-channel playback, or a
 proprietary content-decryption module. Release inputs and future application
 packages must therefore exclude dedicated optical-disc access/copy-control
-components and proprietary DRM modules that Balun does not use.
+plugins, optical-disc copy-control/decryption components, and proprietary DRM
+modules that Balun does not use.
 
 This is a conservative release-engineering boundary, not a conclusion about
 the legal status of a component or filename and not legal advice. Licenses,
@@ -26,6 +27,13 @@ general-purpose cryptography are not denied by this policy. They are necessary
 for normal unprotected playback or transport security and remain subject to
 separate compatibility, license, patent, and provenance review. This policy is
 not a broad codec allowlist or ban.
+
+As in Tributary, generic `libbluray` remains outside this denylist: it provides
+non-decrypting Blu-ray access and navigation and is not itself an AACS or BD+
+decryption implementation. Balun does not need or plan to bundle it; this
+distinction prevents the narrow recognizable-name policy from making a broader
+claim than it can support. Dedicated playback plugins and the separate AACS,
+BD+, DVD copy-control, and proprietary-DRM implementations remain denied.
 
 ## Enforcement available now
 
