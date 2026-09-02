@@ -50,6 +50,12 @@
     0.8.7 and its compiler support; nothing is installed. Build, coverage, and
     intermediate artifacts are confined under this repository's target tree.
 
+.PARAMETER ProbePlayback
+    Run the installed-runtime playback probes in the release profile and
+    exit: the exact structural factory snapshot and the constant-URI appsrc
+    contract. Requires the MSYS2 desktop development libraries and runtime
+    plugins; it cannot be combined with Diagnostic.
+
 .PARAMETER Bundle
     Unavailable until Balun has a reviewed packaged-GUI runtime closure.
 
@@ -110,6 +116,7 @@ param(
     [switch]$Clippy,
     [switch]$Test,
     [switch]$Coverage,
+    [switch]$ProbePlayback,
     [switch]$Bundle,
     [switch]$Zip,
     [switch]$InnoSetup,
@@ -210,7 +217,8 @@ foreach ($mode in @(
     @{ Name = '-Check'; Enabled = $Check.IsPresent },
     @{ Name = '-Clippy'; Enabled = $Clippy.IsPresent },
     @{ Name = '-Test'; Enabled = $Test.IsPresent },
-    @{ Name = '-Coverage'; Enabled = $Coverage.IsPresent }
+    @{ Name = '-Coverage'; Enabled = $Coverage.IsPresent },
+    @{ Name = '-ProbePlayback'; Enabled = $ProbePlayback.IsPresent }
 )) {
     if ($mode.Enabled) {
         $QuickModes += $mode.Name
@@ -232,6 +240,9 @@ if ($Run.IsPresent -and $InspectLocal.IsPresent) {
 }
 if ($Run.IsPresent -and $Diagnostic.IsPresent) {
     Exit-WithUsageError '-Run launches only the desktop application and cannot be combined with -Diagnostic.'
+}
+if ($ProbePlayback.IsPresent -and $Diagnostic.IsPresent) {
+    Exit-WithUsageError '-ProbePlayback exercises the desktop playback runtime and cannot be combined with -Diagnostic.'
 }
 if ($InspectLocal.IsPresent -and $Msys2RootSpecified) {
     Exit-WithUsageError '-Msys2Root cannot be combined with GTK-free -InspectLocal.'
@@ -847,6 +858,25 @@ try {
         $CargoArguments = @('llvm-cov', '--all-targets') +
             $CoverageFeatures + @('--locked') + $TargetArguments + @('--summary-only')
         Invoke-Cargo -CargoCommand $CargoCommand -Arguments $CargoArguments -Description 'cargo llvm-cov'
+        exit 0
+    }
+
+    if ($ProbePlayback) {
+        # The plugin-file gate names missing packages; the probes then prove
+        # the installed runtime satisfies Balun's factory and appsrc contract
+        # through the same release dependency graph the desktop build uses.
+        Assert-PlaybackRuntime $MsysLayout
+        Write-Info 'Probing the installed GStreamer playback runtime (release profile)...'
+        foreach ($Probe in @(
+            'playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation',
+            'playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc'
+        )) {
+            $CargoArguments = @('test', '--release', '--locked', '--features', 'desktop', '--lib') +
+                $TargetDirectoryArguments + $TargetArguments +
+                @($Probe, '--', '--ignored', '--exact')
+            Invoke-Cargo -CargoCommand $CargoCommand -Arguments $CargoArguments -Description 'cargo test'
+        }
+        Write-Info 'Playback runtime probes passed.'
         exit 0
     }
 

@@ -126,17 +126,8 @@ jobs:
       - name: Test desktop bridge
         run: cargo test --locked --features desktop --all-targets
 
-      - name: Probe installed playback foundation
-        run: >-
-          cargo test --locked --features desktop --lib
-          playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation
-          -- --ignored --exact
-
-      - name: Probe installed runtime constant-URI appsrc contract
-        run: >-
-          cargo test --locked --features desktop --lib
-          playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc
-          -- --ignored --exact
+      - name: Probe installed playback runtime through helper
+        run: scripts/build-linux.sh --probe-playback
 
       - name: Smoke desktop and synthetic playback lifecycle
         env:
@@ -215,11 +206,9 @@ jobs:
       - name: Check all targets
         run: cargo check --all-targets --locked
 
-      - name: Test playback transport and appsrc contract on macOS
+      - name: Test playback transport on macOS
         if: runner.os == 'macOS'
-        run: |
-          cargo test --locked --features desktop --lib playback::
-          cargo test --locked --features desktop --lib playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc -- --ignored --exact
+        run: "cargo test --locked --features desktop --lib playback::"
 
       - name: Test GTK-free library on Windows
         if: runner.os == 'Windows'
@@ -238,9 +227,20 @@ jobs:
         if: runner.os == 'macOS'
         run: /bin/bash scripts/build-macos.sh
 
+      - name: Probe installed playback runtime through macOS helper
+        if: runner.os == 'macOS'
+        run: /bin/bash scripts/build-macos.sh --probe-playback
+
       - name: Build Windows desktop shell through helper
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: ./scripts/build-windows.ps1
+
+      - name: Probe installed playback runtime through Windows helper
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: ./scripts/build-windows.ps1 -ProbePlayback

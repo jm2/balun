@@ -23,7 +23,7 @@ outcomes belong in [`../CHANGELOG.md`](../CHANGELOG.md).
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **23/64 (35.9%)** implementation records complete. This is a
+Current status: **24/64 (37.5%)** implementation records complete. This is a
 dependency ledger, not an effort estimate; packaging and cross-platform
 playback records are substantially larger than most completed foundation work.
 
@@ -62,8 +62,10 @@ bounded channel and blocking feeder, with numeric HTTP status and transport
 failures reduced to the seven fixed categories and both workers joined inside
 the five-second teardown bound. Loopback tests, including a child-process
 ambient-proxy trap and a `playbin3` decode of the checked-in fixture from the
-constant URI, cover the Linux contract; the native macOS and Windows CI lanes
-still need to run the same source-selection checks before M2.9 closes.
+constant URI, cover the contract on Linux and macOS, and the helpers'
+installed-runtime probes prove the constant-URI `appsrc` contract on all three
+CI lanes, closing M2.9. Live-device teardown acceptance (M2.10) and
+packaged-runtime probes (M2.11) remain open.
 
 A first Windows desktop launch reported `gtk4paintablesink` missing because
 the MSYS2 `gst-plugins-rs` package was not installed; the helpers now fail
@@ -169,7 +171,9 @@ compatibility/error-path work, not prerequisites for that first picture.
   launching, retain explicit diagnostics, validate native-target-qualified
   outputs, and keep incomplete package modes fail-closed. The helpers also
   fail before a desktop build when a structural GStreamer runtime plugin file
-  is missing, naming its package, and warn when the libav decoders are absent.
+  is missing, naming its package, warn when the libav decoders are absent, and
+  offer a fixed-purpose mode that runs the installed-runtime playback probes
+  in the release profile.
 
 - [ ] **M1.10 — Prove native desktop lifecycle on every target.** Retain the
   isolated Linux close/join smoke and add Windows and macOS runtime activation,
@@ -248,7 +252,7 @@ compatibility/error-path work, not prerequisites for that first picture.
   output, codec/audio-sink packaging, native-platform runtime acceptance, or the
   broader M4.6 accessibility audit.
 
-- [ ] **M2.9 — Add truthful playback state and errors.** Surface connecting,
+- [x] **M2.9 — Add truthful playback state and errors.** Surface connecting,
   buffering, playing, stopped, tuner-busy/503, missing/404, protected, missing
   codec/plugin, offline, and internal pipeline failures without endpoint data.
   The session now publishes a deduplicated URL-free latest-state watch for
@@ -274,10 +278,11 @@ compatibility/error-path work, not prerequisites for that first picture.
   queue growth, cancellation while reads and pushes are blocked, rapid
   replacement, joined teardown, `playbin3` decoding the checked-in fixture
   from the constant URI, and a child-process trap showing ambient proxy
-  configuration is never consulted. Remaining before this record closes: the
-  native macOS and Windows CI lanes must run the same source-selection and
-  transport checks so the constant-URI contract is proven on every supported
-  runtime rather than on Linux alone.
+  configuration is never consulted. The Linux, macOS, and Windows CI lanes
+  run the helpers' release-profile installed-runtime probes, proving the exact
+  factory snapshot and the constant-URI `appsrc` contract on every supported
+  development runtime, and macOS additionally runs the full loopback transport
+  suite; live-device and packaged-runtime acceptance remain M2.10-M2.12 work.
 
 - [ ] **M2.10 — Prove deterministic teardown.** Rapid switch, device
   reselection, discovery mutation, pipeline error, window close, and process
@@ -288,7 +293,11 @@ compatibility/error-path work, not prerequisites for that first picture.
 
 - [ ] **M2.11 — Add playback integration coverage and runtime probes.** Use a
   fake HDHomeRun HTTP server and synthetic MPEG-TS path, then verify the exact
-  GStreamer factory set in development and packaged runtimes.
+  GStreamer factory set in development and packaged runtimes. The loopback
+  fixture server and checked-in MPEG-TS fixture already cover the transport's
+  fake-server path, and the helpers' probe mode verifies the development
+  runtimes on all three CI lanes; a fake HDHomeRun discovery/lineup server for
+  end-to-end tuning and the packaged-runtime probes remain open.
 
 - [ ] **M2.12 — Pass the first cross-platform live-TV smoke.** Watch and switch
   an unprotected channel on Linux, macOS, and Windows dev builds and record

@@ -116,7 +116,9 @@ decodable or audible. They deliberately do not yet name MPEG-2, H.264, HEVC,
 AC-3, AAC, E-AC-3, or AC-4 parsers/decoders, nor a Linux, macOS, or Windows audio
 sink. The M0.5 test proves one narrow MPEG-2 fixture path through `playbin3` and
 `gtk4paintablesink`; M0.10 must still record the complete tested factory
-contract, and M2.11 must turn that contract into fake-device, development, and
+contract. The helpers' `--probe-playback` mode now provides the
+development-runtime probe of this snapshot and of the constant-URI `appsrc`
+contract on all three platforms, and M2.11 must add fake-device and
 packaged-runtime probes.
 
 Registry presence also does not prove that a factory can construct, negotiate,
@@ -309,8 +311,11 @@ and pushes are blocked, rapid replacement, joined teardown, and `playbin3`
 resolving the constant URI to exact `appsrc` and decoding the checked-in
 fixture to EOS. A child-process trap proves that ambient `http_proxy` and
 `all_proxy` configuration reaches a default client but never the transport.
-The native macOS and Windows CI lanes must run the same source-selection
-checks before M2.9 is recorded complete.
+The macOS CI lane runs that same loopback suite, and the Linux, macOS, and
+Windows lanes run the helpers' `--probe-playback`/`-ProbePlayback` mode, which
+proves the exact factory snapshot and the constant-URI `appsrc` contract on
+each development runtime. That evidence completes M2.9; packaged-runtime
+probes remain M2.11 work.
 
 M2.7's pipeline-side visual contract is now explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the
@@ -452,9 +457,8 @@ provenance, and distribution review.
 
 ## Next acceptance steps
 
-1. M2.9-M2.10: prove the constant-URI `appsrc` contract on the native macOS
-   and Windows CI lanes, then complete deterministic tuner-release acceptance
-   around the connected session and transport.
+1. M2.10: complete deterministic tuner-release acceptance around the
+   connected session and transport, including live-device evidence.
 2. M0.10: freeze the complete tested factory and platform package contract,
    including codecs and audio sinks.
 3. M2.11-M2.12: run fake-device, development-runtime, packaged-runtime, and
