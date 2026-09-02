@@ -52,7 +52,7 @@ pub enum PlaybackSessionFailure {
     /// No further unique tune generation can be assigned safely.
     #[error("the playback generation is exhausted")]
     GenerationExhausted,
-    /// The session has already completed its terminal shutdown.
+    /// Terminal shutdown was requested, so no future tune can be admitted.
     #[error("the playback session is shut down")]
     ShutDown,
     /// A mutating call was made without owning Balun's default main context.
