@@ -42,14 +42,20 @@ stream handoff from its current complete selected snapshot. The playback
 library owns the sole consumer: a separate tune generation serializes actor
 responses, pipeline replacement, bus events, terminal settlement, and bounded
 teardown. The desktop pane owns that session and its URI-opaque paintable
-binding/clearing path, but channel activation does not produce an active
-paintable yet.
+binding/clearing path. Double-click/Enter activation of an unprotected row now
+submits its exact applied lineup generation, consumes the private response, and
+binds an applied paintable. Superseding activation, device-selection change,
+and window shutdown cancel the appropriate pending or active owner. A device
+change stops immediately after command admission and again on its accepted
+generation publication, so lineup-worker cancellation cannot extend the old
+tuner lifetime.
 
 The shortest path to the first live-TV test is:
 
 1. Re-run Windows local discovery and selected-device lineup loading.
-2. Render one unprotected ATSC 1.0 channel through `gtk4paintablesink`.
-3. Prove channel switch, Stop, device loss, and window close release the tuner.
+2. Run the desktop dev build and activate one unprotected ATSC 1.0 channel.
+3. Prove picture/audio compatibility plus channel switch, explicit Stop,
+   device loss, and window-close tuner release.
 
 The first playback target is a clear ATSC 1.0 channel on an accessible CONNECT
 or CONNECT 4K. ATSC 3.0 codec/audio support and protected PRIME channels are
@@ -194,19 +200,30 @@ compatibility/error-path work, not prerequisites for that first picture.
   aspect preservation on both playbin and its GTK paintable before assigning a
   URI. The main-context `PlayerView` now owns the session, binds only the opaque
   paintable, and clears it before joined window shutdown. A display-backed
-  smoke covers this production binding boundary; channel activation still does
-  not invoke an active tune, so this record remains open.
+  smoke covers this production binding boundary, and the initial activation
+  lane invokes it for an applied tune. Deterministic display proof using an
+  active production session remains open, so this record is not yet complete.
 
 - [ ] **M2.8 — Add essential controls.** Implement channel activation, Stop,
   volume, mute, and fullscreen with accessible keyboard and pointer behavior.
+  Double-click and Enter activation now carry only the non-protected row's
+  exact applied lineup generation into the bounded actor/session path; rapid
+  successors abort the prior wait. Explicit Stop, volume, mute, fullscreen,
+  and their complete accessibility coverage remain open.
 
 - [ ] **M2.9 — Add truthful playback state and errors.** Surface connecting,
   buffering, playing, stopped, tuner-busy/503, missing/404, protected, missing
   codec/plugin, offline, and internal pipeline failures without endpoint data.
+  Activation now has fixed endpoint-free connecting and setup-failure copy,
+  but bus Error/EOS state is not yet projected back into `PlayerView`, so a
+  terminal session can leave its last paintable/status presentation stale.
 
 - [ ] **M2.10 — Prove deterministic teardown.** Rapid switch, device
   reselection, discovery mutation, pipeline error, window close, and process
-  shutdown must cancel/join the exact owner and release the tuner.
+  shutdown must cancel/join the exact owner and release the tuner. Device
+  change admission, accepted generation change, controller snapshot-channel
+  closure, and window shutdown now invoke stop or terminal shutdown; complete
+  fake/live-tuner proof remains open.
 
 - [ ] **M2.11 — Add playback integration coverage and runtime probes.** Use a
   fake HDHomeRun HTTP server and synthetic MPEG-TS path, then verify the exact

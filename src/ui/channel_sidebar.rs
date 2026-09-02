@@ -5,7 +5,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use balun::controller::{
-    ApplicationSnapshot, LineupFailure, SelectedLineupState, SelectedLineupStatus,
+    ApplicationSnapshot, LineupFailure, OperationGeneration, SelectedLineupState,
+    SelectedLineupStatus, StreamSelection,
 };
 use balun::domain::ChannelKey;
 
@@ -15,24 +16,53 @@ const STATUS_PAGE_NAME: &str = "status";
 const CHANNEL_LIST_PAGE_NAME: &str = "channels";
 
 /// GTK parts for the selected-device channel pane.
-///
-/// This slice intentionally connects no channel activation signal. Rendering
-/// a lineup cannot start playback or resolve a stream locator.
 #[derive(Clone)]
 pub(crate) struct ChannelSidebar {
     root: adw::ToolbarView,
     store: gtk::gio::ListStore,
     selection: gtk::SingleSelection,
+    list: gtk::ListView,
     stack: gtk::Stack,
     status: adw::StatusPage,
     spinner: gtk::Spinner,
     applying_snapshot: Rc<Cell<bool>>,
+    activation_generation: Rc<Cell<Option<OperationGeneration>>>,
 }
 
 impl ChannelSidebar {
     #[must_use]
     pub(crate) fn root(&self) -> &adw::ToolbarView {
         &self.root
+    }
+
+    /// Connect one URL-free activation intent for a row belonging to the
+    /// exact complete lineup generation currently applied to this sidebar.
+    ///
+    /// Selection alone remains inert. GTK emits this signal for the standard
+    /// double-click and keyboard activation paths because single-click
+    /// activation stays disabled on the list.
+    pub(crate) fn connect_channel_activated<F>(&self, activate: F) -> gtk::glib::SignalHandlerId
+    where
+        F: Fn(StreamSelection) + 'static,
+    {
+        let activation_generation = Rc::clone(&self.activation_generation);
+        let applying_snapshot = Rc::clone(&self.applying_snapshot);
+        self.list.connect_activate(move |list, position| {
+            if applying_snapshot.get() {
+                return;
+            }
+            let row = list
+                .model()
+                .and_then(|model| model.item(position))
+                .and_then(|item| item.downcast::<ChannelRowObject>().ok());
+            let Some(selection) = row
+                .as_ref()
+                .and_then(|row| activation_selection(row, activation_generation.get()))
+            else {
+                return;
+            };
+            activate(selection);
+        })
     }
 
     /// Atomically replace the channel model with the lineup belonging to the
@@ -58,11 +88,18 @@ impl ChannelSidebar {
             .iter()
             .map(ChannelRowObject::from_summary)
             .collect::<Vec<_>>();
+        let activation_generation =
+            (lineup.status() == SelectedLineupStatus::Ready).then_some(lineup.generation());
 
         let _applying = SnapshotApplicationGuard::enter(Rc::clone(&self.applying_snapshot));
+        // Revoke the old row authority before replacing any model item. If a
+        // nested GTK callback attempts activation during replacement, both
+        // the application guard and the absent generation fail closed.
+        self.activation_generation.set(None);
         self.store.splice(0, self.store.n_items(), &rows);
         self.selection
             .set_selected(selected_position.unwrap_or(gtk::INVALID_LIST_POSITION));
+        self.activation_generation.set(activation_generation);
 
         let show_list = lineup.status() == SelectedLineupStatus::Ready && !rows.is_empty();
         let loading = lineup.status() == SelectedLineupStatus::Loading;
@@ -135,11 +172,23 @@ pub(crate) fn build() -> ChannelSidebar {
         root,
         store,
         selection,
+        list,
         stack,
         status,
         spinner,
         applying_snapshot: Rc::new(Cell::new(false)),
+        activation_generation: Rc::new(Cell::new(None)),
     }
+}
+
+fn activation_selection(
+    row: &ChannelRowObject,
+    generation: Option<OperationGeneration>,
+) -> Option<StreamSelection> {
+    if row.is_drm() {
+        return None;
+    }
+    Some(StreamSelection::new(row.key()?, generation?))
 }
 
 fn channel_factory() -> gtk::SignalListItemFactory {
@@ -231,8 +280,9 @@ fn channel_factory() -> gtk::SignalListItemFactory {
         };
         row.set_tooltip_text(Some(&accessible));
         list_item.set_accessible_label(&accessible);
-        list_item.set_selectable(!model_row.is_drm());
-        list_item.set_activatable(false);
+        let can_activate = !model_row.is_drm() && model_row.key().is_some();
+        list_item.set_selectable(can_activate);
+        list_item.set_activatable(can_activate);
     });
     factory.connect_unbind(|_, object| {
         if let Some(list_item) = object.downcast_ref::<gtk::ListItem>() {
@@ -356,7 +406,38 @@ impl Drop for SnapshotApplicationGuard {
 
 #[cfg(test)]
 mod tests {
+    use balun::controller::ChannelSummary;
+    use balun::domain::{DeviceId, GuideNumber};
+
     use super::*;
+
+    fn channel_row(drm: bool) -> ChannelRowObject {
+        let key = ChannelKey::new(
+            DeviceId::new(0x105A_1232).unwrap(),
+            GuideNumber::new("7.1").unwrap(),
+        );
+        ChannelRowObject::from_summary(
+            &ChannelSummary::new(key, "Synthetic News".to_owned(), false, drm, true).unwrap(),
+        )
+    }
+
+    #[test]
+    fn activation_retains_the_exact_applied_generation_and_channel_key() {
+        let row = channel_row(false);
+        let generation = OperationGeneration::new(17);
+
+        let selection = activation_selection(&row, Some(generation)).unwrap();
+
+        assert_eq!(selection.channel_key(), &row.key().unwrap());
+        assert_eq!(selection.selection_generation(), generation);
+    }
+
+    #[test]
+    fn activation_fails_closed_without_ready_authority_or_for_protected_rows() {
+        assert!(activation_selection(&channel_row(false), None).is_none());
+        let protected = channel_row(true);
+        assert!(activation_selection(&protected, Some(OperationGeneration::new(17))).is_none());
+    }
 
     #[test]
     fn lineup_failures_have_stable_non_endpoint_descriptions() {

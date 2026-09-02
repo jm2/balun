@@ -1,7 +1,7 @@
 //! Top-level adaptive three-pane window and controller/GLib bridge.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use adw::prelude::*;
@@ -31,7 +31,7 @@ pub(crate) fn build(
 ) -> adw::ApplicationWindow {
     let device_sidebar = device_sidebar::build();
     let channel_sidebar = channel_sidebar::build();
-    let player_view = player_view::build(playback);
+    let player_view = Rc::new(player_view::build(playback));
 
     let device_page = adw::NavigationPage::new(device_sidebar.root(), "Devices");
     let channel_page = adw::NavigationPage::new(channel_sidebar.root(), "Channels");
@@ -92,17 +92,31 @@ pub(crate) fn build(
     connect_refresh(&device_sidebar, &handle);
     connect_exact_discovery(&window, &device_sidebar, &handle);
     connect_cancel_discovery(&device_sidebar, &handle);
-    connect_device_selection(&device_sidebar, &handle, &accepted);
+    connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
+    connect_channel_activation(&channel_sidebar, &handle, &player_view);
     spawn_snapshot_reducer(
         snapshots,
         Rc::clone(&accepted),
         device_sidebar,
         channel_sidebar,
         device_and_content,
+        Rc::downgrade(&player_view),
     );
     connect_joined_shutdown(&window, controller, player_view, shutdown_failed);
 
     window
+}
+
+fn connect_channel_activation(
+    sidebar: &channel_sidebar::ChannelSidebar,
+    controller: &ControllerHandle,
+    player_view: &Rc<player_view::PlayerView>,
+) {
+    let controller = controller.clone();
+    let player_view = Rc::clone(player_view);
+    sidebar.connect_channel_activated(move |selection| {
+        player_view.activate_channel(&controller, selection);
+    });
 }
 
 fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &ControllerHandle) {
@@ -200,10 +214,12 @@ fn connect_device_selection(
     sidebar: &device_sidebar::DeviceSidebar,
     controller: &ControllerHandle,
     accepted: &Rc<RefCell<Arc<ApplicationSnapshot>>>,
+    player_view: &Rc<player_view::PlayerView>,
 ) {
     let applying_snapshot = sidebar.snapshot_application_flag();
     let accepted = Rc::clone(accepted);
     let controller = controller.clone();
+    let player_view = Rc::downgrade(player_view);
     sidebar
         .selection()
         .connect_selected_notify(move |selection| {
@@ -221,8 +237,18 @@ fn connect_device_selection(
             // be suppressed: a different selection command can still be
             // queued or in flight on the controller thread.
             let command = selection_command(selected_device);
-            if controller.try_send(command).is_err() {
-                restore_device_selection(selection, authoritative_device, &applying_snapshot);
+            match controller.try_send(command) {
+                Ok(()) => {
+                    // Release the old tuner immediately after the superseding
+                    // intent is admitted; do not wait for a lineup worker to
+                    // cancel and publish the next selection generation.
+                    if let Some(player_view) = player_view.upgrade() {
+                        let _ = player_view.stop();
+                    }
+                }
+                Err(_) => {
+                    restore_device_selection(selection, authoritative_device, &applying_snapshot);
+                }
             }
         });
 }
@@ -260,16 +286,24 @@ fn spawn_snapshot_reducer(
     device_sidebar: device_sidebar::DeviceSidebar,
     channel_sidebar: channel_sidebar::ChannelSidebar,
     device_and_content: adw::NavigationSplitView,
+    player_view: Weak<player_view::PlayerView>,
 ) {
     gtk::glib::MainContext::default().spawn_local(async move {
         while snapshots.changed().await.is_ok() {
             let candidate = Arc::clone(&snapshots.borrow_and_update());
-            let can_replace = {
+            let (can_replace, selection_changed) = {
                 let current = accepted.borrow();
-                candidate.can_replace(&current)
+                (
+                    candidate.can_replace(&current),
+                    candidate.selection_generation() > current.selection_generation(),
+                )
             };
             if !can_replace {
                 continue;
+            }
+
+            if selection_changed && let Some(player_view) = player_view.upgrade() {
+                let _ = player_view.stop();
             }
 
             device_sidebar.apply_snapshot(&candidate);
@@ -277,13 +311,19 @@ fn spawn_snapshot_reducer(
             device_and_content.set_show_content(candidate.selected_device().is_some());
             accepted.replace(candidate);
         }
+
+        // The controller watch can also close because its actor failed. Its
+        // independent GStreamer owner must not keep a tuner open afterward.
+        if let Some(player_view) = player_view.upgrade() {
+            let _ = player_view.stop();
+        }
     });
 }
 
 fn connect_joined_shutdown(
     window: &adw::ApplicationWindow,
     controller: ControllerRuntime,
-    player_view: player_view::PlayerView,
+    player_view: Rc<player_view::PlayerView>,
     shutdown_failed: Rc<Cell<bool>>,
 ) {
     let controller = Rc::new(RefCell::new(Some(controller)));

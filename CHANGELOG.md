@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Initial channel-activation lane** — Make standard double-click and keyboard
+  activation on an unprotected channel submit only its exact `ChannelKey` and
+  applied selected-lineup generation. The main-context player invalidates the
+  predecessor before entering the controller's existing bounded FIFO, aborts
+  superseded response tasks, consumes the opaque response through the sole
+  playback session, and binds only an applied generation's GDK paintable. A
+  missing paintable or setup failure hides the old frame and settles the
+  pipeline. Successful admission of a selected-device change stops playback
+  immediately; the resulting generation publication repeats that stop before
+  replacing the sidebars as a fail-safe, and controller snapshot-channel
+  closure also stops the independent playback owner. Connecting and
+  activation-setup failure copy is fixed and endpoint-free. Explicit Stop,
+  volume, mute, fullscreen, detailed state/error projection, and live-device
+  acceptance remain open.
 - **Initial live-video presentation contract** — Configure each private
   `playbin3` with its documented adaptive deinterlace flag, forced source
   aspect-ratio preservation, and the library-owned GTK paintable sink with its
@@ -19,8 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   display-backed tests verify the configuration without network access. The
   main-context `PlayerView` now owns the session, binds only its URI-opaque
   paintable into a containment-fit `GtkPicture`, clears it during synchronous
-  playback shutdown, and remains retained until controller join completes.
-  Channel activation does not request an active paintable yet.
+  playback shutdown, and remains retained until controller join completes. An
+  applied channel activation now invokes this binding boundary; deterministic
+  display proof using an active production session remains in progress.
 - **Generation-owned tune session** — Add one default-main-context playback
   owner which assigns a monotonic tune generation before waiting for the
   actor-private stream response, consumes the opaque URI only inside the core
@@ -35,9 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panicking. Exposed states and failures remain URL-free. The library
   constructs and retains `gtk4paintablesink` itself and exposes only its
   URI-opaque GDK paintable, never a GStreamer element whose parents reveal the
-  playbin URI. Proof that an active session drives this presentation boundary
-  remains in M2.7, while channel activation remains in M2.8; no desktop action
-  opens a tuner yet.
+  playbin URI. The initial M2.8 activation lane now submits the URL-free intent
+  and consumes its response here; complete controls and active-session display
+  acceptance remain open.
 - **Actor-private stream handoff** — Add a URL-free channel intent containing
   the complete ChannelKey and selected-snapshot generation, resolve it in the
   controller's existing bounded FIFO only against the current complete private

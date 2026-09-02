@@ -170,9 +170,19 @@ a network source.
 
 The main-context desktop pane now owns the session and a narrow presentation
 boundary which can retrieve only its URI-opaque GDK paintable, bind it into the
-`GtkPicture`, and clear it before joined window shutdown. Channel activation
-does not request an active tune or invoke that binding yet. M2.8-M2.10 will
-connect activation, controls, user-visible state, and full teardown paths.
+`GtkPicture`, and clear it before joined window shutdown. Standard activation
+of a non-protected row now carries its exact applied lineup generation into the
+bounded controller FIFO, aborts superseded response tasks, and invokes this
+binding only after the session applies that generation. Selected-device
+changes stop the session immediately after successful command admission; the
+published generation repeats that stop before replacing the sidebars as a
+fail-safe. M2.8-M2.10 will complete controls, user-visible state, and teardown
+acceptance.
+
+Native Error and EOS already retire the session's exact pipeline, but the
+session does not yet notify `PlayerView` to clear or replace its last paintable
+and status copy. That UI projection remains explicit M2.9 work even though the
+tuner-owning pipeline is terminally settled.
 
 M2.7's pipeline-side visual contract is now explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the
@@ -184,8 +194,9 @@ URI-free playbin configuration, while the display-backed synthetic acceptance
 checks the native paintable property and `GtkPicture::ContentFit::Contain`
 without network access. A second display-backed smoke exercises the production
 `PlayerView` binding, empty-state transition, clearing, and shutdown boundary.
-No channel signal produces an active session paintable yet, so M2.7 remains
-incomplete.
+The activation lane now joins an actor-authorized response to that boundary,
+but deterministic display proof using an active production session remains
+open, so M2.7 is not yet complete.
 
 ## Synthetic display-backed acceptance
 

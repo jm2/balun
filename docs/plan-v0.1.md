@@ -243,7 +243,8 @@ events on its exact default context without reentrant borrow panics, and settles
 each exact predecessor to `NULL` before a successor can be constructed. The
 desktop pane now owns that session plus its URI-opaque paintable
 binding/clearing boundary. M2.7 retains active-session presentation proof;
-channel activation belongs to M2.8 and does not submit a stream yet.
+M2.8 now has its first exact-generation double-click/Enter activation lane,
+while explicit Stop, volume, mute, fullscreen, and accessibility remain open.
 M0.5 separately exercises a pinned local MPEG-2 fixture through a
 process-isolated Linux GTK pipeline; see the detailed
 [playback foundation](playback.md).
@@ -774,10 +775,12 @@ reports missing structural components without disabling discovery. The
 generation-owned library session can consume one private handoff, construct
 `playbin3` with its library-private GTK sink, and serialize bus events plus
 bounded teardown without exposing the URI-bearing GStreamer graph. The pane
-owns and invokes only its opaque presentation and terminal-shutdown boundary;
-it does not submit a tune yet. A separate Linux-only M0.5 smoke
+owns its opaque presentation and terminal-shutdown boundary. Initial channel
+activation now submits the URL-free intent through the bounded controller lane
+and invokes paintable binding only after the session applies the response. A
+separate Linux-only M0.5 smoke
 proves bounded rendering and teardown for a checked-in synthetic MPEG-2
-transport stream. Hostname admission, GTK playback activation, controls, the
+transport stream. Hostname admission, complete GTK playback controls, the
 complete codec/audio-sink contract, packaged-runtime probes, and live-platform
 validation remain open, so this
 milestone is not yet complete. Initial Windows desktop trials exposed

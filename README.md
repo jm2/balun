@@ -19,9 +19,11 @@ available program information, and a live-video area.
 > Linux smoke also decodes and renders a checked-in synthetic MPEG-2 transport
 > stream. The controller also provides a generation-bound, URL-redacted
 > tuner-stream handoff, and the playback library now owns its generation-safe
-> `playbin3` lifecycle. Channel activation is not connected yet, so no desktop
-> action opens a tuner or renders live-device video. Hostname entry and EPG
-> also remain unimplemented.
+> `playbin3` lifecycle. Double-clicking or pressing Enter on an unprotected
+> channel now enters that path and attempts live-device playback without
+> exposing the stream URI to the UI. Explicit Stop, volume, mute, fullscreen,
+> detailed playback errors, hostname entry, EPG, and live-device acceptance
+> remain unimplemented.
 
 ## Current foundation
 
@@ -130,8 +132,11 @@ available program information, and a live-video area.
   teardown failure quarantines that owner and blocks every successor. Bus
   reductions and stateful public calls share the exact default main context,
   with fixed errors instead of reentrant borrow panics. The desktop pane owns
-  this session and a URI-opaque paintable binding/clearing path; channel
-  activation does not submit a stream yet, so no active paintable is presented.
+  this session and a URI-opaque paintable binding/clearing path. Exact-
+  generation activation of an unprotected channel now requests the private
+  handoff, binds an applied paintable, aborts superseded waits, and stops when
+  a selected-device change is admitted, with a defensive repeat when its new
+  generation is published.
 - A bounded, display-backed Linux acceptance test which feeds a deterministic,
   video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
   `gtk4paintablesink`, requires multiple rendered frames and paintable updates,
