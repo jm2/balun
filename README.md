@@ -20,7 +20,7 @@ media framework.
 | Feature | Status |
 |---------|--------|
 | Local HDHomeRun discovery (IPv4 broadcast, IPv6 multicast) | ✅ |
-| Find a routed tuner by exact IP address (WireGuard and other tunnels) | ✅ |
+| Find a routed tuner by exact IP address (WireGuard and other tunnels) | ✅ Remembered across launches |
 | Approved private-range enumeration (`balun-discover` only, `/24` or narrower) | ✅ |
 | Multiple devices, each with its own channel lineup | ✅ |
 | Device metadata and lineup inspection without allocating a tuner | ✅ |
@@ -392,11 +392,12 @@ docs/                        # Plan, task ledger, playback contract, compatibili
 
 ### Discovering devices
 
-Balun sends no network traffic until you ask. **Refresh devices** runs one bounded local discovery
-over every attached interface. **Find device by address** probes one numeric IPv4 or unscoped
+At launch Balun probes only the addresses you previously added; everything else waits until you
+ask. **Refresh devices** runs one bounded local discovery over every attached interface. **Find device by address** probes one numeric IPv4 or unscoped
 IPv6 address for a tuner behind WireGuard or another routed link; it accepts no hostname, port, or
-range, sends at most two requests, and admits up to 32 distinct addresses per session. **Stop
-device discovery** cancels either kind.
+range, sends at most two requests, and admits up to 32 distinct addresses per session. A tuner
+that answers is remembered and probed again at the next launch. **Stop device discovery** cancels
+either kind and any remaining launch probes.
 
 On Windows, local discovery uses the limited broadcast from each interface. If a host firewall
 blocks the replies, use **Find device by address** with the tuner's IPv4 address.

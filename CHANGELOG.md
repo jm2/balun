@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in an atomic, schema-versioned `settings.json` under the platform configuration directory.
   The same file reserves bounded, credential-free storage for remembered device addresses and
   user-assigned device names, and a malformed or newer file is reported and left untouched.
+- **Remembered devices** — A tuner found through **Find device by address** is remembered once
+  it answers, and Balun probes those addresses again at the next launch so routed tuners
+  reappear without retyping. Up to 32 addresses are kept; local discovery still waits for
+  Refresh.
 - **Endpoint-free playback errors** — Failures reduce to fixed messages for no tuner available,
   channel unavailable, stream rejected, device or stream unavailable, missing codec or plugin,
   protected channel, and internal error. No native error text, header, or address is retained.

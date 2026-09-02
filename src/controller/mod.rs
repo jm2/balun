@@ -1,10 +1,12 @@
 //! GTK-free application state, controller ownership, and UI projections.
 
 mod handoff;
+mod remembered;
 mod runtime;
 mod state;
 
 pub use handoff::{StreamHandoff, StreamHandoffError, StreamHandoffReceiver, StreamSelection};
+pub use remembered::{ExactTargetTracker, RediscoveryQueue};
 
 pub use runtime::{
     CONTROLLER_THREAD_NAME, ControllerCommand, ControllerCommandError, ControllerHandle,

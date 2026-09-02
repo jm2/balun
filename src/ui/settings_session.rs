@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 
 use adw::prelude::*;
+use balun::discovery::ExactDiscoveryTarget;
 use balun::settings::{Settings, SettingsStore, WindowState};
 
 /// Loads the settings once and writes back only when the document was
@@ -31,6 +32,16 @@ impl SettingsSession {
             settings: RefCell::new(settings),
             writable: Cell::new(writable),
         }
+    }
+
+    /// Exact-address targets remembered from earlier launches, oldest first.
+    pub(crate) fn remembered_targets(&self) -> Vec<ExactDiscoveryTarget> {
+        self.settings.borrow().remembered_targets().to_vec()
+    }
+
+    /// Remember a target whose probe received a valid device reply.
+    pub(crate) fn remember_target(&self, target: ExactDiscoveryTarget) {
+        self.update(|settings| settings.remember_target(target));
     }
 
     /// Window geometry to apply before the window is shown.
@@ -107,6 +118,20 @@ mod tests {
 
         let reloaded = store.load().expect("load").expect("document");
         assert_eq!(reloaded.window(), resized());
+    }
+
+    #[test]
+    fn remembered_targets_round_trip_through_the_store() {
+        let (_directory, store) = store();
+        let session = SettingsSession::open(Some(store.clone()));
+        let target = ExactDiscoveryTarget::parse("192.0.2.9").expect("valid target");
+        assert!(session.remembered_targets().is_empty());
+
+        session.remember_target(target);
+
+        assert_eq!(session.remembered_targets(), vec![target]);
+        let reloaded = SettingsSession::open(Some(store));
+        assert_eq!(reloaded.remembered_targets(), vec![target]);
     }
 
     #[test]
