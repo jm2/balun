@@ -4,8 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use balun::discovery::ExactDiscoveryTarget;
-use balun::settings::{Settings, SettingsStore, WindowState};
+use balun::settings::{RememberedTarget, Settings, SettingsStore, WindowState};
 use tokio::sync::watch;
 
 /// Loads the settings once and writes back only when the document was
@@ -119,13 +118,13 @@ impl SettingsSession {
     }
 
     /// Exact-address targets remembered from earlier launches, oldest first.
-    pub(crate) fn remembered_targets(&self) -> Vec<ExactDiscoveryTarget> {
+    pub(crate) fn remembered_targets(&self) -> Vec<RememberedTarget> {
         self.settings.borrow().remembered_targets().to_vec()
     }
 
     /// Remember a target whose probe received a valid device reply and stage
     /// the save; the caller runs the write off the main context.
-    pub(crate) fn remember_target(&self, target: ExactDiscoveryTarget) -> Option<PendingSave> {
+    pub(crate) fn remember_target(&self, target: RememberedTarget) -> Option<PendingSave> {
         self.stage(|settings| settings.remember_target(target))
     }
 
@@ -295,17 +294,19 @@ mod tests {
     fn remembered_targets_round_trip_through_the_store() {
         let (_directory, store) = store();
         let session = SettingsSession::open(Some(store.clone()));
-        let target = ExactDiscoveryTarget::parse("192.0.2.9").expect("valid target");
+        let target = RememberedTarget::Address(
+            balun::discovery::ExactDiscoveryTarget::parse("192.0.2.9").expect("valid target"),
+        );
         assert!(session.remembered_targets().is_empty());
 
         session
-            .remember_target(target)
+            .remember_target(target.clone())
             .expect("a new target stages a save")
             .write();
 
-        assert_eq!(session.remembered_targets(), vec![target]);
+        assert_eq!(session.remembered_targets(), vec![target.clone()]);
         assert!(
-            session.remember_target(target).is_none(),
+            session.remember_target(target.clone()).is_none(),
             "repeating the newest target stages nothing"
         );
         let reloaded = SettingsSession::open(Some(store));

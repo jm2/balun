@@ -20,7 +20,7 @@ media framework.
 | Feature | Status |
 |---------|--------|
 | Local HDHomeRun discovery (IPv4 broadcast, IPv6 multicast) | ✅ |
-| Find a routed tuner by exact IP address (WireGuard and other tunnels) | ✅ Remembered across launches |
+| Find a routed tuner by IP address or hostname (WireGuard and other tunnels) | ✅ Remembered across launches |
 | Approved private-range enumeration (`balun-discover` only, `/24` or narrower) | ✅ |
 | Multiple devices, each with its own channel lineup | ✅ |
 | Device metadata and lineup inspection without allocating a tuner | ✅ |
@@ -33,7 +33,7 @@ media framework.
 | Windows local discovery | ✅ |
 | Route-derived tunnel discovery (Linux) | 🚧 Foundation only; not connected to the UI |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
-| Hostname entry | ❌ Planned |
+| Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
 | Audible output and complete codec contract | ✅ Windows; Linux and macOS pending |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
@@ -394,9 +394,11 @@ docs/                        # Plan, task ledger, playback contract, compatibili
 
 At launch Balun probes only the addresses you previously added; everything else waits until you
 ask. **Refresh devices** runs one bounded local discovery over every attached interface. **Find device by address** probes one numeric IPv4 or unscoped
-IPv6 address for a tuner behind WireGuard or another routed link; it accepts no hostname, port, or
-range, sends at most two requests, and admits up to 32 distinct addresses per session. A tuner
-that answers is remembered and probed again at the next launch. **Stop device discovery** cancels
+IPv6 address, or a hostname, for a tuner behind WireGuard or another routed link. It accepts no
+port or range; a name resolves to at most four unicast addresses that are probed one at a time,
+each probe sends at most two requests, and up to 32 distinct addresses are admitted per session.
+A tuner that answers is remembered, by name when you entered a name, and probed again at the next
+launch. **Stop device discovery** cancels
 either kind and any remaining launch probes.
 
 On Windows, local discovery uses the limited broadcast from each interface. If a host firewall

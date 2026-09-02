@@ -19,11 +19,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::discovery::ExactDiscoveryTarget;
+use crate::discovery::{ExactDiscoveryTarget, HostnameTarget};
 use crate::domain::DeviceId;
 
 /// Schema version written by this build and the newest version it can read.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 /// File name inside the settings directory.
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 /// Largest settings document that will be read or written.
@@ -120,11 +120,19 @@ pub enum InvalidDeviceName {
     TooMany,
 }
 
+/// One remembered discovery entry: a numeric address or a hostname that is
+/// resolved again at each launch.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum RememberedTarget {
+    Address(ExactDiscoveryTarget),
+    Hostname(HostnameTarget),
+}
+
 /// The complete in-memory settings document.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Settings {
     window: WindowState,
-    remembered_targets: Vec<ExactDiscoveryTarget>,
+    remembered_targets: Vec<RememberedTarget>,
     device_names: BTreeMap<DeviceId, String>,
 }
 
@@ -144,9 +152,9 @@ impl Settings {
         true
     }
 
-    /// Remembered exact-address targets, oldest first.
+    /// Remembered discovery entries, oldest first.
     #[must_use]
-    pub fn remembered_targets(&self) -> &[ExactDiscoveryTarget] {
+    pub fn remembered_targets(&self) -> &[RememberedTarget] {
         &self.remembered_targets
     }
 
@@ -154,7 +162,7 @@ impl Settings {
     ///
     /// A repeated target moves to the most recent position. When the list is
     /// full, the oldest entry is forgotten. Returns whether the list changed.
-    pub fn remember_target(&mut self, target: ExactDiscoveryTarget) -> bool {
+    pub fn remember_target(&mut self, target: RememberedTarget) -> bool {
         if self.remembered_targets.last() == Some(&target) {
             return false;
         }
@@ -167,9 +175,9 @@ impl Settings {
     }
 
     /// Forget a remembered target; returns whether it was present.
-    pub fn forget_target(&mut self, target: ExactDiscoveryTarget) -> bool {
+    pub fn forget_target(&mut self, target: &RememberedTarget) -> bool {
         let before = self.remembered_targets.len();
-        self.remembered_targets.retain(|known| *known != target);
+        self.remembered_targets.retain(|known| known != target);
         self.remembered_targets.len() != before
     }
 
@@ -501,6 +509,46 @@ struct StoredTargetV1 {
     address: String,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredSettingsV2 {
+    schema_version: u32,
+    #[serde(default)]
+    window: StoredWindowV1,
+    #[serde(default)]
+    remembered_targets: Vec<StoredTargetV2>,
+    #[serde(default)]
+    device_names: BTreeMap<String, String>,
+}
+
+/// Exactly one of `address` or `host` is present.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredTargetV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    host: Option<String>,
+}
+
+impl From<StoredSettingsV1> for StoredSettingsV2 {
+    fn from(stored: StoredSettingsV1) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            window: stored.window,
+            remembered_targets: stored
+                .remembered_targets
+                .into_iter()
+                .map(|target| StoredTargetV2 {
+                    address: Some(target.address),
+                    host: None,
+                })
+                .collect(),
+            device_names: stored.device_names,
+        }
+    }
+}
+
 fn parse_document(bytes: &[u8]) -> Result<Settings, SettingsError> {
     let header: SchemaHeader = serde_json::from_slice(bytes)
         .map_err(|_| SettingsError::Malformed(MalformedSettings::Json))?;
@@ -511,6 +559,11 @@ fn parse_document(bytes: &[u8]) -> Result<Settings, SettingsError> {
         1 => {
             let stored: StoredSettingsV1 = serde_json::from_slice(bytes)
                 .map_err(|_| SettingsError::Malformed(MalformedSettings::Json))?;
+            Settings::try_from(StoredSettingsV2::from(stored)).map_err(SettingsError::Malformed)
+        }
+        2 => {
+            let stored: StoredSettingsV2 = serde_json::from_slice(bytes)
+                .map_err(|_| SettingsError::Malformed(MalformedSettings::Json))?;
             Settings::try_from(stored).map_err(SettingsError::Malformed)
         }
         found => Err(SettingsError::UnsupportedSchema { found }),
@@ -518,7 +571,7 @@ fn parse_document(bytes: &[u8]) -> Result<Settings, SettingsError> {
 }
 
 fn serialize_document(settings: &Settings) -> Result<Vec<u8>, SettingsError> {
-    let stored = StoredSettingsV1::from(settings);
+    let stored = StoredSettingsV2::from(settings);
     let mut bytes = serde_json::to_vec_pretty(&stored).map_err(|_| SettingsError::Serialization)?;
     bytes.push(b'\n');
     if bytes.len() as u64 > MAX_SETTINGS_BYTES {
@@ -527,7 +580,7 @@ fn serialize_document(settings: &Settings) -> Result<Vec<u8>, SettingsError> {
     Ok(bytes)
 }
 
-impl From<&Settings> for StoredSettingsV1 {
+impl From<&Settings> for StoredSettingsV2 {
     fn from(settings: &Settings) -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
@@ -539,8 +592,15 @@ impl From<&Settings> for StoredSettingsV1 {
             remembered_targets: settings
                 .remembered_targets
                 .iter()
-                .map(|target| StoredTargetV1 {
-                    address: target.ip_addr().to_string(),
+                .map(|target| match target {
+                    RememberedTarget::Address(address) => StoredTargetV2 {
+                        address: Some(address.ip_addr().to_string()),
+                        host: None,
+                    },
+                    RememberedTarget::Hostname(host) => StoredTargetV2 {
+                        address: None,
+                        host: Some(host.name().to_owned()),
+                    },
                 })
                 .collect(),
             device_names: settings
@@ -552,10 +612,10 @@ impl From<&Settings> for StoredSettingsV1 {
     }
 }
 
-impl TryFrom<StoredSettingsV1> for Settings {
+impl TryFrom<StoredSettingsV2> for Settings {
     type Error = MalformedSettings;
 
-    fn try_from(stored: StoredSettingsV1) -> Result<Self, Self::Error> {
+    fn try_from(stored: StoredSettingsV2) -> Result<Self, Self::Error> {
         let window = WindowState::new(
             stored.window.width,
             stored.window.height,
@@ -568,8 +628,15 @@ impl TryFrom<StoredSettingsV1> for Settings {
         }
         let mut remembered_targets = Vec::with_capacity(stored.remembered_targets.len());
         for stored_target in &stored.remembered_targets {
-            let target = ExactDiscoveryTarget::parse(&stored_target.address)
-                .map_err(|_| MalformedSettings::RememberedTarget)?;
+            let target = match (&stored_target.address, &stored_target.host) {
+                (Some(address), None) => ExactDiscoveryTarget::parse(address)
+                    .map(RememberedTarget::Address)
+                    .map_err(|_| MalformedSettings::RememberedTarget)?,
+                (None, Some(host)) => HostnameTarget::parse(host)
+                    .map(RememberedTarget::Hostname)
+                    .map_err(|_| MalformedSettings::RememberedTarget)?,
+                _ => return Err(MalformedSettings::RememberedTarget),
+            };
             if remembered_targets.contains(&target) {
                 return Err(MalformedSettings::DuplicateTarget);
             }
@@ -636,8 +703,8 @@ mod tests {
     fn populated() -> Settings {
         let mut settings = Settings::default();
         settings.set_window(WindowState::new(1_600, 900, true).expect("valid window"));
-        assert!(settings.remember_target(target(1)));
-        assert!(settings.remember_target(target(2)));
+        assert!(settings.remember_target(RememberedTarget::Address(target(1))));
+        assert!(settings.remember_target(RememberedTarget::Address(target(2))));
         assert!(
             settings
                 .set_device_name(device(0x105A_1232), "Living room")
@@ -742,12 +809,12 @@ mod tests {
     #[test]
     fn newer_schema_is_reported_and_left_untouched() {
         let (_directory, store) = test_store();
-        let raw = b"{\"schema_version\":2,\"future\":{\"unknown\":true}}\n";
+        let raw = b"{\"schema_version\":3,\"future\":{\"unknown\":true}}\n";
         write_raw(&store, raw);
 
         assert_eq!(
             store.load(),
-            Err(SettingsError::UnsupportedSchema { found: 2 })
+            Err(SettingsError::UnsupportedSchema { found: 3 })
         );
         assert_eq!(raw_bytes(&store), raw);
     }
@@ -879,30 +946,37 @@ mod tests {
     fn remembered_targets_deduplicate_reorder_and_evict_oldest() {
         let mut settings = Settings::default();
         for index in 1..=MAX_REMEMBERED_TARGETS {
-            assert!(settings.remember_target(target(u8::try_from(index).expect("u8"))));
+            assert!(settings.remember_target(RememberedTarget::Address(target(
+                u8::try_from(index).expect("u8")
+            ))));
         }
         assert_eq!(settings.remembered_targets().len(), MAX_REMEMBERED_TARGETS);
         assert!(
-            !settings.remember_target(target(32)),
+            !settings.remember_target(RememberedTarget::Address(target(32))),
             "repeating the newest is inert"
         );
 
         assert!(
-            settings.remember_target(target(1)),
+            settings.remember_target(RememberedTarget::Address(target(1))),
             "an older repeat moves to the end"
         );
-        assert_eq!(settings.remembered_targets().last(), Some(&target(1)));
+        assert_eq!(
+            settings.remembered_targets().last(),
+            Some(&RememberedTarget::Address(target(1)))
+        );
         assert_eq!(settings.remembered_targets().len(), MAX_REMEMBERED_TARGETS);
 
-        assert!(settings.remember_target(target(33)));
+        assert!(settings.remember_target(RememberedTarget::Address(target(33))));
         assert_eq!(settings.remembered_targets().len(), MAX_REMEMBERED_TARGETS);
         assert!(
-            !settings.remembered_targets().contains(&target(2)),
+            !settings
+                .remembered_targets()
+                .contains(&RememberedTarget::Address(target(2))),
             "the oldest entry is evicted"
         );
 
-        assert!(settings.forget_target(target(33)));
-        assert!(!settings.forget_target(target(33)));
+        assert!(settings.forget_target(&RememberedTarget::Address(target(33))));
+        assert!(!settings.forget_target(&RememberedTarget::Address(target(33))));
     }
 
     #[test]
@@ -1034,5 +1108,66 @@ mod tests {
                 .to_string()
                 .contains(&unused.to_string())
         );
+    }
+
+    #[test]
+    fn version_one_documents_migrate_and_are_rewritten_as_version_two() {
+        let (_directory, store) = test_store();
+        write_raw(
+            &store,
+            b"{\"schema_version\":1,\"remembered_targets\":[{\"address\":\"192.0.2.1\"}]}\n",
+        );
+
+        let loaded = store.load().expect("load").expect("document");
+        assert_eq!(
+            loaded.remembered_targets(),
+            &[RememberedTarget::Address(target(1))]
+        );
+
+        store.save(&loaded).expect("save");
+        let value: serde_json::Value = serde_json::from_slice(&raw_bytes(&store)).expect("json");
+        assert_eq!(value["schema_version"], SCHEMA_VERSION);
+        assert_eq!(value["remembered_targets"][0]["address"], "192.0.2.1");
+        assert!(value["remembered_targets"][0].get("host").is_none());
+    }
+
+    #[test]
+    fn remembered_hostnames_round_trip_and_normalize() {
+        let (_directory, store) = test_store();
+        let host = HostnameTarget::parse("tuner.example").expect("valid hostname");
+        let mut settings = Settings::default();
+        assert!(settings.remember_target(RememberedTarget::Hostname(host.clone())));
+        assert!(settings.remember_target(RememberedTarget::Address(target(1))));
+        store.save(&settings).expect("save");
+
+        let value: serde_json::Value = serde_json::from_slice(&raw_bytes(&store)).expect("json");
+        assert_eq!(value["remembered_targets"][0]["host"], "tuner.example");
+        assert!(value["remembered_targets"][0].get("address").is_none());
+        assert_eq!(store.load(), Ok(Some(settings)));
+
+        write_raw(
+            &store,
+            b"{\"schema_version\":2,\"remembered_targets\":[{\"host\":\"Tuner.Example.\"}]}\n",
+        );
+        let loaded = store.load().expect("load").expect("document");
+        assert_eq!(
+            loaded.remembered_targets(),
+            &[RememberedTarget::Hostname(host)]
+        );
+
+        for raw in [
+            &b"{\"schema_version\":2,\"remembered_targets\":[{\"address\":\"192.0.2.1\",\"host\":\"t.example\"}]}"[..],
+            b"{\"schema_version\":2,\"remembered_targets\":[{}]}",
+            b"{\"schema_version\":2,\"remembered_targets\":[{\"host\":\"192.0.2.1\"}]}",
+            b"{\"schema_version\":2,\"remembered_targets\":[{\"host\":\"http://t.example\"}]}",
+        ] {
+            write_raw(&store, raw);
+            assert_eq!(
+                store.load(),
+                Err(SettingsError::Malformed(MalformedSettings::RememberedTarget)),
+                "{}",
+                String::from_utf8_lossy(raw)
+            );
+        }
     }
 }
