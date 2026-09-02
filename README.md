@@ -409,8 +409,10 @@ defaults and are build-only with no options. Their check, Clippy, and coverage
 routes also include desktop features by default, and their `--probe-playback`
 (`-ProbePlayback` on Windows) route runs the installed-runtime playback probes
 that every native CI lane uses to prove the exact factory snapshot and the
-constant-URI `appsrc` contract. Select the GTK-free diagnostic explicitly with
-`--diagnostic` on Linux/macOS or `-Diagnostic` on Windows.
+constant-URI `appsrc` contract. The probe route exercises the desktop runtime,
+so it cannot be combined with the diagnostic selection on any platform. Select
+the GTK-free diagnostic explicitly with `--diagnostic` on Linux/macOS or
+`-Diagnostic` on Windows.
 Tributary established a launch flag only for its Windows PowerShell helper, so
 Balun preserves `-Run` there and deliberately does not invent `--run` for the
 shell helpers.
@@ -473,8 +475,9 @@ automatically detected MSYS2 CLANG64 environment; only `-Run` launches it.
 with quick modes such as `-Check`. `-ProbePlayback` applies the runtime plugin
 gate and then runs the two installed-runtime playback probes in the release
 profile: the exact factory snapshot and `playbin3` resolving the constant
-`appsrc://balun` URI to the built-in `appsrc`. `-InspectLocal` is the separate,
-explicit build-and-run diagnostic with fixed local-inspection arguments. Every compile
+`appsrc://balun` URI to the built-in `appsrc`; it cannot be combined with
+`-Diagnostic`. `-InspectLocal` is the separate, explicit build-and-run
+diagnostic with fixed local-inspection arguments. Every compile
 route pins an explicit Rust target and repository-local target tree before
 validating the expected output as a nonempty regular, non-reparse file. Bundle,
 ZIP, Inno Setup, and dependency-update switches remain fail-closed before
