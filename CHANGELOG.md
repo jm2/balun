@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Playback controls** — Stop, a volume slider, an independent mute toggle, and fullscreen with
   `F11` and `Escape`. Volume and mute carry across channel changes for the running session, and
   fullscreen presentation follows the compositor's confirmation.
+- **Versioned settings** — Balun remembers its window size and maximized state across launches
+  in an atomic, schema-versioned `settings.json` under the platform configuration directory.
+  The same file reserves bounded, credential-free storage for remembered device addresses and
+  user-assigned device names, and a malformed or newer file is reported and left untouched.
 - **Endpoint-free playback errors** — Failures reduce to fixed messages for no tuner available,
   channel unavailable, stream rejected, device or stream unavailable, missing codec or plugin,
   protected channel, and internal error. No native error text, header, or address is retained.

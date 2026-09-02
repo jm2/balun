@@ -25,6 +25,7 @@ media framework.
 | Multiple devices, each with its own channel lineup | ✅ |
 | Device metadata and lineup inspection without allocating a tuner | ✅ |
 | Adaptive three-pane GTK 4 / libadwaita window | ✅ |
+| Window size and maximized state remembered across launches | ✅ |
 | Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Windows against real tuners; Linux and macOS acceptance pending |
 | Stop, volume, mute, and fullscreen controls | ✅ |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
@@ -347,6 +348,8 @@ src/
 │   ├── runtime.rs          # Controller thread, command ingress, snapshot publishing
 │   ├── state.rs            # Immutable URL-free device and channel projections
 │   └── handoff.rs          # One-shot, URL-redacted stream handoff
+├── settings/
+│   └── mod.rs              # Versioned, atomic settings.json store
 ├── playback/
 │   ├── runtime.rs          # GStreamer initialization and factory snapshot
 │   ├── session.rs          # Generation-owned playbin3 session and teardown
@@ -360,6 +363,7 @@ src/
     ├── channel_sidebar.rs  # Selected device's channel list and badges
     ├── exact_discovery_dialog.rs # Find device by address dialog
     ├── player_view.rs      # Live-TV picture, status, and playback controls
+    ├── settings_session.rs # Loads settings once and saves window state on close
     └── objects.rs          # GObject wrappers for the sidebar models
 
 scripts/
