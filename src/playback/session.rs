@@ -17,6 +17,43 @@ use crate::domain::ChannelKey;
 const PIPELINE_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const DEINTERLACE_PLAY_FLAG: &str = "deinterlace";
 const PAINTABLE_ASPECT_PROPERTY: &str = "force-aspect-ratio";
+const PLAYBIN_VOLUME_PROPERTY: &str = "volume";
+const PLAYBIN_MUTE_PROPERTY: &str = "mute";
+
+/// Process-local audio settings inherited by every successor tune.
+///
+/// Volume is a normalized user level in the inclusive range `0.0..=1.0` and
+/// is converted to a cubic GStreamer gain at the private pipeline boundary.
+/// Muting is independent, so adjusting volume while muted preserves the level
+/// which will be restored when audio is unmuted.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlaybackAudioState {
+    volume: f64,
+    muted: bool,
+}
+
+impl PlaybackAudioState {
+    /// Return the normalized volume in the inclusive range `0.0..=1.0`.
+    #[must_use]
+    pub const fn volume(self) -> f64 {
+        self.volume
+    }
+
+    /// Return whether audio is muted independently of the retained volume.
+    #[must_use]
+    pub const fn is_muted(self) -> bool {
+        self.muted
+    }
+}
+
+impl Default for PlaybackAudioState {
+    fn default() -> Self {
+        Self {
+            volume: 1.0,
+            muted: false,
+        }
+    }
+}
 
 /// Monotonic identity for one playback attempt.
 ///
@@ -63,6 +100,9 @@ pub enum PlaybackSessionFailure {
     /// A native callback safely reentered an in-progress session mutation.
     #[error("the playback session is already handling another operation")]
     SessionBusy,
+    /// A volume value was non-finite or outside the supported linear range.
+    #[error("the playback volume must be between zero and one")]
+    InvalidVolume,
     /// The controller rejected or lost the URL-private handoff.
     #[error("the controller rejected the stream handoff: {0}")]
     Handoff(StreamHandoffError),
@@ -188,15 +228,20 @@ enum PipelineStartError<P> {
 
 trait PipelineBackend {
     type Active;
-    type StartOptions;
 
     fn start(
         &mut self,
         generation: TuneGeneration,
         handoff: StreamHandoff,
-        options: Self::StartOptions,
+        audio: PlaybackAudioState,
         events: EventSink,
     ) -> Result<Self::Active, PipelineStartError<Self::Active>>;
+
+    fn set_audio(
+        &mut self,
+        active: &mut Self::Active,
+        audio: PlaybackAudioState,
+    ) -> Result<(), PlaybackSessionFailure>;
 
     fn stop(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure>;
 }
@@ -215,6 +260,7 @@ struct ActiveTune<P> {
 
 struct SessionCore<B: PipelineBackend> {
     backend: B,
+    audio: PlaybackAudioState,
     generation: TuneGeneration,
     pending: Option<PendingTune>,
     active: Option<ActiveTune<B::Active>>,
@@ -228,6 +274,7 @@ impl<B: PipelineBackend> SessionCore<B> {
     fn new(backend: B) -> Self {
         Self {
             backend,
+            audio: PlaybackAudioState::default(),
             generation: TuneGeneration::INITIAL,
             pending: None,
             active: None,
@@ -240,6 +287,44 @@ impl<B: PipelineBackend> SessionCore<B> {
 
     fn state(&self) -> &PlaybackSessionState {
         &self.state
+    }
+
+    fn audio_state(&self) -> PlaybackAudioState {
+        self.audio
+    }
+
+    fn set_volume(&mut self, volume: f64) -> Result<(), PlaybackSessionFailure> {
+        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+            return Err(PlaybackSessionFailure::InvalidVolume);
+        }
+        self.set_audio(PlaybackAudioState {
+            volume,
+            ..self.audio
+        })
+    }
+
+    fn set_muted(&mut self, muted: bool) -> Result<(), PlaybackSessionFailure> {
+        self.set_audio(PlaybackAudioState {
+            muted,
+            ..self.audio
+        })
+    }
+
+    fn set_audio(&mut self, audio: PlaybackAudioState) -> Result<(), PlaybackSessionFailure> {
+        if self.shut_down {
+            return Err(PlaybackSessionFailure::ShutDown);
+        }
+        if self.teardown_failed {
+            return Err(PlaybackSessionFailure::PipelineTeardown);
+        }
+        if self.audio == audio {
+            return Ok(());
+        }
+        if let Some(active) = self.active.as_mut() {
+            self.backend.set_audio(&mut active.pipeline, audio)?;
+        }
+        self.audio = audio;
+        Ok(())
     }
 
     fn begin_tune(
@@ -308,12 +393,10 @@ impl<B: PipelineBackend> SessionCore<B> {
         &mut self,
         request: TuneRequest,
         response: Result<StreamHandoff, StreamHandoffError>,
-        options: B::StartOptions,
         events: EventSink,
     ) -> Result<TuneCompletion, PlaybackSessionFailure> {
         if self.shut_down || !self.request_is_current(&request) {
             drop(response);
-            drop(options);
             return Ok(TuneCompletion::Stale);
         }
 
@@ -339,7 +422,7 @@ impl<B: PipelineBackend> SessionCore<B> {
 
         let generation = pending.generation;
         let channel_key = pending.channel_key;
-        let pipeline = match self.backend.start(generation, handoff, options, events) {
+        let pipeline = match self.backend.start(generation, handoff, self.audio, events) {
             Ok(pipeline) => pipeline,
             Err(PipelineStartError::Clean(failure)) => {
                 self.state = PlaybackSessionState::Failed {
@@ -549,6 +632,10 @@ impl GstreamerPipeline {
         // Detach callbacks before requesting NULL so teardown messages cannot
         // mutate the settled generation.
         self.bus_watch.take();
+        // Silence the owned stream before the potentially blocking NULL wait.
+        // This is a fail-safe pipeline action and does not alter the retained
+        // process-local mute preference inherited by a successor.
+        self.pipeline.set_property(PLAYBIN_MUTE_PROPERTY, true);
         let request = self.pipeline.set_state(gst::State::Null);
         let (transition, current, pending) = self.pipeline.state(gst::ClockTime::from_nseconds(
             PIPELINE_TEARDOWN_TIMEOUT.as_nanos().min(u64::MAX as u128) as u64,
@@ -578,13 +665,12 @@ impl Drop for GstreamerPipeline {
 
 impl PipelineBackend for GstreamerBackend {
     type Active = GstreamerPipeline;
-    type StartOptions = ();
 
     fn start(
         &mut self,
         generation: TuneGeneration,
         handoff: StreamHandoff,
-        (): Self::StartOptions,
+        audio: PlaybackAudioState,
         events: EventSink,
     ) -> Result<Self::Active, PipelineStartError<Self::Active>> {
         let video_sink = gst::ElementFactory::make("gtk4paintablesink")
@@ -606,6 +692,7 @@ impl PipelineBackend for GstreamerBackend {
             .downcast::<gst::Pipeline>()
             .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
         configure_playbin_video(&pipeline, &video_sink).map_err(PipelineStartError::Clean)?;
+        configure_playbin_audio(&pipeline, audio).map_err(PipelineStartError::Clean)?;
 
         let bus = pipeline.bus().ok_or(PipelineStartError::Clean(
             PlaybackSessionFailure::BusUnavailable,
@@ -667,6 +754,14 @@ impl PipelineBackend for GstreamerBackend {
         Ok(active)
     }
 
+    fn set_audio(
+        &mut self,
+        active: &mut Self::Active,
+        audio: PlaybackAudioState,
+    ) -> Result<(), PlaybackSessionFailure> {
+        configure_playbin_audio(&active.pipeline, audio)
+    }
+
     fn stop(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure> {
         active.stop()
     }
@@ -703,6 +798,45 @@ fn configure_playbin_video(
         return Err(PlaybackSessionFailure::PipelineConstruction);
     }
     Ok(())
+}
+
+fn configure_playbin_audio(
+    pipeline: &gst::Pipeline,
+    audio: PlaybackAudioState,
+) -> Result<(), PlaybackSessionFailure> {
+    let volume_property = pipeline
+        .find_property(PLAYBIN_VOLUME_PROPERTY)
+        .filter(|property| property.value_type() == f64::static_type())
+        .filter(|property| {
+            property
+                .flags()
+                .contains(gst::glib::ParamFlags::READABLE | gst::glib::ParamFlags::WRITABLE)
+        });
+    let mute_property = pipeline
+        .find_property(PLAYBIN_MUTE_PROPERTY)
+        .filter(|property| property.value_type() == bool::static_type())
+        .filter(|property| {
+            property
+                .flags()
+                .contains(gst::glib::ParamFlags::READABLE | gst::glib::ParamFlags::WRITABLE)
+        });
+    if volume_property.is_none() || mute_property.is_none() {
+        return Err(PlaybackSessionFailure::PipelineConstruction);
+    }
+
+    let gain = playback_gain(audio.volume());
+    pipeline.set_property(PLAYBIN_VOLUME_PROPERTY, gain);
+    pipeline.set_property(PLAYBIN_MUTE_PROPERTY, audio.is_muted());
+    if pipeline.property::<f64>(PLAYBIN_VOLUME_PROPERTY) != gain
+        || pipeline.property::<bool>(PLAYBIN_MUTE_PROPERTY) != audio.is_muted()
+    {
+        return Err(PlaybackSessionFailure::PipelineConstruction);
+    }
+    Ok(())
+}
+
+fn playback_gain(volume: f64) -> f64 {
+    volume * volume * volume
 }
 
 fn configure_paintable_aspect(paintable: &gdk::Paintable) -> Result<(), PlaybackSessionFailure> {
@@ -823,7 +957,7 @@ impl PlaybackSession {
         self.inner
             .try_borrow_mut()
             .map_err(|_| PlaybackSessionFailure::SessionBusy)?
-            .complete_tune(request, response, (), events)
+            .complete_tune(request, response, events)
     }
 
     /// Return the current URI-opaque GTK paintable, if a pipeline is active.
@@ -853,6 +987,37 @@ impl PlaybackSession {
             .try_borrow_mut()
             .map_err(|_| PlaybackSessionFailure::SessionBusy)?
             .cancel_tune(request))
+    }
+
+    /// Return the process-local audio settings inherited by successor tunes.
+    pub fn audio_state(&self) -> Result<PlaybackAudioState, PlaybackSessionFailure> {
+        self.require_main_context()?;
+        Ok(self
+            .inner
+            .try_borrow()
+            .map_err(|_| PlaybackSessionFailure::SessionBusy)?
+            .audio_state())
+    }
+
+    /// Set linear volume for the current pipeline and every successor tune.
+    ///
+    /// The accepted range is finite `0.0..=1.0`. Muting remains independent,
+    /// so changing this value while muted selects the later unmuted level.
+    pub fn set_volume(&self, volume: f64) -> Result<(), PlaybackSessionFailure> {
+        self.require_main_context()?;
+        self.inner
+            .try_borrow_mut()
+            .map_err(|_| PlaybackSessionFailure::SessionBusy)?
+            .set_volume(volume)
+    }
+
+    /// Set mute for the current pipeline and every successor tune.
+    pub fn set_muted(&self, muted: bool) -> Result<(), PlaybackSessionFailure> {
+        self.require_main_context()?;
+        self.inner
+            .try_borrow_mut()
+            .map_err(|_| PlaybackSessionFailure::SessionBusy)?
+            .set_muted(muted)
     }
 
     /// Invalidate pending work and settle the active pipeline to `NULL`.
@@ -926,8 +1091,11 @@ mod tests {
     struct FakeShared {
         calls: Vec<Call>,
         events: BTreeMap<TuneGeneration, EventSink>,
+        start_audio: BTreeMap<TuneGeneration, PlaybackAudioState>,
+        audio_updates: Vec<(Option<usize>, PlaybackAudioState)>,
         next_pipeline: usize,
         fail_start: Option<FakeStartFailure>,
+        fail_audio: bool,
         fail_stop: bool,
         event_during_start: Option<PipelineEvent>,
         event_during_stop: Option<PipelineEvent>,
@@ -961,13 +1129,12 @@ mod tests {
 
     impl PipelineBackend for FakeBackend {
         type Active = usize;
-        type StartOptions = ();
 
         fn start(
             &mut self,
             generation: TuneGeneration,
             handoff: StreamHandoff,
-            (): Self::StartOptions,
+            audio: PlaybackAudioState,
             events: EventSink,
         ) -> Result<Self::Active, PipelineStartError<Self::Active>> {
             let mut shared = self.0.0.borrow_mut();
@@ -981,6 +1148,7 @@ mod tests {
             shared
                 .calls
                 .push(Call::Start(generation, handoff.channel_key().clone()));
+            shared.start_audio.insert(generation, audio);
             shared.events.insert(generation, events);
             drop(handoff);
             let start_failure = shared.fail_start;
@@ -995,6 +1163,19 @@ mod tests {
             } else {
                 Ok(pipeline)
             }
+        }
+
+        fn set_audio(
+            &mut self,
+            active: &mut Self::Active,
+            audio: PlaybackAudioState,
+        ) -> Result<(), PlaybackSessionFailure> {
+            let mut shared = self.0.0.borrow_mut();
+            if shared.fail_audio {
+                return Err(PlaybackSessionFailure::PipelineConstruction);
+            }
+            shared.audio_updates.push((Some(*active), audio));
+            Ok(())
         }
 
         fn stop(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure> {
@@ -1093,7 +1274,7 @@ mod tests {
     }
 
     #[test]
-    fn available_playbin_video_contract_enables_deinterlacing_and_aspect_ratio() {
+    fn available_playbin_contract_enables_video_and_applies_audio_before_uri() {
         if gst::init().is_err() {
             return;
         }
@@ -1122,6 +1303,11 @@ mod tests {
         );
 
         configure_playbin_video(&pipeline, &video_sink).unwrap();
+        let audio = PlaybackAudioState {
+            volume: 0.35,
+            muted: true,
+        };
+        configure_playbin_audio(&pipeline, audio).unwrap();
 
         let flags = pipeline.property_value("flags");
         let flags_class = gst::glib::FlagsClass::with_type(flags.type_()).unwrap();
@@ -1137,6 +1323,20 @@ mod tests {
             None
         );
         assert_eq!(pipeline.property::<Option<String>>("uri"), None);
+        assert_eq!(
+            pipeline.property::<f64>(PLAYBIN_VOLUME_PROPERTY),
+            playback_gain(0.35)
+        );
+        assert!(pipeline.property::<bool>(PLAYBIN_MUTE_PROPERTY));
+        assert_eq!(playback_gain(0.0), 0.0);
+        assert_eq!(playback_gain(0.5), 0.125);
+        assert_eq!(playback_gain(1.0), 1.0);
+
+        let propertyless_pipeline = gst::Pipeline::new();
+        assert_eq!(
+            configure_playbin_audio(&propertyless_pipeline, PlaybackAudioState::default()),
+            Err(PlaybackSessionFailure::PipelineConstruction)
+        );
     }
 
     /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
@@ -1156,6 +1356,19 @@ mod tests {
             "the lifecycle harness must install Balun's complete playback foundation"
         );
         let session = PlaybackSession::new(runtime);
+        assert_eq!(
+            session.audio_state().unwrap(),
+            PlaybackAudioState::default()
+        );
+        session.set_volume(0.35).unwrap();
+        session.set_muted(true).unwrap();
+        assert_eq!(
+            session.audio_state().unwrap(),
+            PlaybackAudioState {
+                volume: 0.35,
+                muted: true,
+            }
+        );
         let channel_key = first_key();
         let selection_generation = OperationGeneration::new(23);
         let request = session
@@ -1205,6 +1418,16 @@ mod tests {
         assert_eq!(picture.paintable().as_ref(), Some(&paintable));
         assert_eq!(picture.content_fit(), gtk::ContentFit::Contain);
 
+        session.set_volume(0.65).unwrap();
+        session.set_muted(false).unwrap();
+        assert_eq!(
+            session.audio_state().unwrap(),
+            PlaybackAudioState {
+                volume: 0.65,
+                muted: false,
+            }
+        );
+
         picture.set_paintable(gtk::gdk::Paintable::NONE);
         assert!(picture.paintable().is_none());
         session
@@ -1213,6 +1436,121 @@ mod tests {
         assert_eq!(session.state().unwrap(), PlaybackSessionState::ShutDown);
         assert!(session.paintable().unwrap().is_none());
         window.close();
+    }
+
+    #[test]
+    fn audio_defaults_and_invalid_volume_fail_without_mutation() {
+        let control = FakeControl::default();
+        let mut core = SessionCore::new(control.backend());
+        assert_eq!(core.audio_state(), PlaybackAudioState::default());
+
+        for invalid in [-0.01, 1.01, f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
+            assert_eq!(
+                core.set_volume(invalid),
+                Err(PlaybackSessionFailure::InvalidVolume)
+            );
+            assert_eq!(core.audio_state(), PlaybackAudioState::default());
+        }
+        assert!(control.0.borrow().audio_updates.is_empty());
+    }
+
+    #[test]
+    fn audio_settings_apply_to_the_exact_owner_and_every_successor() {
+        let control = FakeControl::default();
+        let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+
+        core.borrow_mut().set_volume(0.4).unwrap();
+        core.borrow_mut().set_muted(true).unwrap();
+        let first = core
+            .borrow_mut()
+            .begin_tune(selection(&first_key(), 41))
+            .unwrap();
+        let first_generation = first.generation();
+        core.borrow_mut()
+            .complete_tune(first, Ok(handoff(&first_key(), 41)), events_for(&core))
+            .unwrap();
+        assert_eq!(
+            control.0.borrow().start_audio.get(&first_generation),
+            Some(&PlaybackAudioState {
+                volume: 0.4,
+                muted: true,
+            })
+        );
+
+        // Volume remains independent while muted, and both updates target only
+        // the currently active pipeline.
+        core.borrow_mut().set_volume(0.65).unwrap();
+        core.borrow_mut().set_muted(false).unwrap();
+        assert_eq!(
+            core.borrow().audio_state(),
+            PlaybackAudioState {
+                volume: 0.65,
+                muted: false,
+            }
+        );
+        assert_eq!(
+            control.0.borrow().audio_updates,
+            vec![
+                (
+                    Some(0),
+                    PlaybackAudioState {
+                        volume: 0.65,
+                        muted: true,
+                    }
+                ),
+                (
+                    Some(0),
+                    PlaybackAudioState {
+                        volume: 0.65,
+                        muted: false,
+                    }
+                ),
+            ]
+        );
+
+        core.borrow_mut().stop().unwrap();
+        let second = core
+            .borrow_mut()
+            .begin_tune(selection(&second_key(), 41))
+            .unwrap();
+        let second_generation = second.generation();
+        core.borrow_mut()
+            .complete_tune(second, Ok(handoff(&second_key(), 41)), events_for(&core))
+            .unwrap();
+        assert_eq!(
+            control.0.borrow().start_audio.get(&second_generation),
+            Some(&PlaybackAudioState {
+                volume: 0.65,
+                muted: false,
+            })
+        );
+    }
+
+    #[test]
+    fn rejected_audio_update_preserves_settings_and_shutdown_blocks_controls() {
+        let control = FakeControl::default();
+        let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+        let request = core
+            .borrow_mut()
+            .begin_tune(selection(&first_key(), 17))
+            .unwrap();
+        core.borrow_mut()
+            .complete_tune(request, Ok(handoff(&first_key(), 17)), events_for(&core))
+            .unwrap();
+        control.0.borrow_mut().fail_audio = true;
+
+        assert_eq!(
+            core.borrow_mut().set_volume(0.5),
+            Err(PlaybackSessionFailure::PipelineConstruction)
+        );
+        assert_eq!(core.borrow().audio_state(), PlaybackAudioState::default());
+        control.0.borrow_mut().fail_audio = false;
+        core.borrow_mut().shut_down().unwrap();
+        assert_eq!(
+            core.borrow_mut().set_muted(true),
+            Err(PlaybackSessionFailure::ShutDown)
+        );
+        assert_eq!(core.borrow().audio_state(), PlaybackAudioState::default());
     }
 
     #[test]
@@ -1232,7 +1570,6 @@ mod tests {
             core.borrow_mut().complete_tune(
                 first,
                 Ok(handoff(&first_key(), 11)),
-                (),
                 events_for(&core),
             ),
             Ok(TuneCompletion::Stale)
@@ -1242,7 +1579,6 @@ mod tests {
             core.borrow_mut().complete_tune(
                 second,
                 Ok(handoff(&second_key(), 11)),
-                (),
                 events_for(&core),
             ),
             Ok(TuneCompletion::Applied)
@@ -1284,7 +1620,6 @@ mod tests {
             core.borrow_mut().complete_tune(
                 successor,
                 Ok(handoff(&second_key(), 12)),
-                (),
                 events_for(&core),
             ),
             Ok(TuneCompletion::Applied)
@@ -1304,14 +1639,14 @@ mod tests {
             .begin_tune(selection(&first_key(), 3))
             .unwrap();
         core.borrow_mut()
-            .complete_tune(first, Ok(handoff(&first_key(), 3)), (), events_for(&core))
+            .complete_tune(first, Ok(handoff(&first_key(), 3)), events_for(&core))
             .unwrap();
         let second = core
             .borrow_mut()
             .begin_tune(selection(&second_key(), 3))
             .unwrap();
         core.borrow_mut()
-            .complete_tune(second, Ok(handoff(&second_key(), 3)), (), events_for(&core))
+            .complete_tune(second, Ok(handoff(&second_key(), 3)), events_for(&core))
             .unwrap();
 
         assert_eq!(
@@ -1333,7 +1668,7 @@ mod tests {
             .begin_tune(selection(&first_key(), 3))
             .unwrap();
         core.borrow_mut()
-            .complete_tune(first, Ok(handoff(&first_key(), 3)), (), events_for(&core))
+            .complete_tune(first, Ok(handoff(&first_key(), 3)), events_for(&core))
             .unwrap();
         control.0.borrow_mut().fail_stop = true;
 
@@ -1391,12 +1726,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            core.borrow_mut().complete_tune(
-                first,
-                Ok(handoff(&first_key(), 3)),
-                (),
-                events_for(&core),
-            ),
+            core.borrow_mut()
+                .complete_tune(first, Ok(handoff(&first_key(), 3)), events_for(&core),),
             Err(PlaybackSessionFailure::PipelineTeardown)
         );
         control.0.borrow_mut().fail_start = None;
@@ -1407,6 +1738,10 @@ mod tests {
         assert_eq!(
             control.calls(),
             vec![Call::Start(TuneGeneration(1), first_key())]
+        );
+        assert_eq!(
+            core.borrow_mut().set_muted(true),
+            Err(PlaybackSessionFailure::PipelineTeardown)
         );
         assert!(matches!(
             core.borrow_mut().shut_down(),
@@ -1433,12 +1768,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            core.borrow_mut().complete_tune(
-                first,
-                Ok(handoff(&first_key(), 3)),
-                (),
-                events_for(&core),
-            ),
+            core.borrow_mut()
+                .complete_tune(first, Ok(handoff(&first_key(), 3)), events_for(&core),),
             Err(PlaybackSessionFailure::PipelineStart)
         );
         assert!(control.calls().is_empty());
@@ -1452,7 +1783,6 @@ mod tests {
             core.borrow_mut().complete_tune(
                 second,
                 Ok(handoff(&second_key(), 3)),
-                (),
                 events_for(&core),
             ),
             Ok(TuneCompletion::Applied)
@@ -1503,7 +1833,6 @@ mod tests {
             .complete_tune(
                 request,
                 Ok(handoff(&first_key(), 9)),
-                (),
                 queued_events_for(&main_context, &core),
             )
             .unwrap();
@@ -1540,7 +1869,7 @@ mod tests {
             .unwrap();
         let first_generation = first.generation();
         core.borrow_mut()
-            .complete_tune(first, Ok(handoff(&first_key(), 4)), (), events_for(&core))
+            .complete_tune(first, Ok(handoff(&first_key(), 4)), events_for(&core))
             .unwrap();
         let second = core
             .borrow_mut()
@@ -1548,7 +1877,7 @@ mod tests {
             .unwrap();
         let second_generation = second.generation();
         core.borrow_mut()
-            .complete_tune(second, Ok(handoff(&second_key(), 4)), (), events_for(&core))
+            .complete_tune(second, Ok(handoff(&second_key(), 4)), events_for(&core))
             .unwrap();
 
         control.emit(first_generation, PipelineEvent::Error);
@@ -1579,7 +1908,7 @@ mod tests {
             .begin_tune(selection(&first_key(), 1))
             .unwrap();
         core.borrow_mut()
-            .complete_tune(first, Ok(handoff(&first_key(), 1)), (), events_for(&core))
+            .complete_tune(first, Ok(handoff(&first_key(), 1)), events_for(&core))
             .unwrap();
         core.borrow_mut().stop().unwrap();
         core.borrow_mut().stop().unwrap();
@@ -1589,7 +1918,7 @@ mod tests {
             .begin_tune(selection(&second_key(), 1))
             .unwrap();
         core.borrow_mut()
-            .complete_tune(second, Ok(handoff(&second_key(), 1)), (), events_for(&core))
+            .complete_tune(second, Ok(handoff(&second_key(), 1)), events_for(&core))
             .unwrap();
         core.borrow_mut().shut_down().unwrap();
         core.borrow_mut().shut_down().unwrap();
@@ -1616,7 +1945,7 @@ mod tests {
                 .begin_tune(selection(&first_key(), 1))
                 .unwrap();
             core.borrow_mut()
-                .complete_tune(request, Ok(handoff(&first_key(), 1)), (), events_for(&core))
+                .complete_tune(request, Ok(handoff(&first_key(), 1)), events_for(&core))
                 .unwrap();
         }
 
@@ -1636,7 +1965,7 @@ mod tests {
             .unwrap();
         let generation = request.generation();
         core.borrow_mut()
-            .complete_tune(request, Ok(handoff(&first_key(), 8)), (), events_for(&core))
+            .complete_tune(request, Ok(handoff(&first_key(), 8)), events_for(&core))
             .unwrap();
 
         core.borrow_mut().handle_event(
@@ -1668,7 +1997,7 @@ mod tests {
             .unwrap();
         let generation = request.generation();
         core.borrow_mut()
-            .complete_tune(request, Ok(handoff(&first_key(), 8)), (), events_for(&core))
+            .complete_tune(request, Ok(handoff(&first_key(), 8)), events_for(&core))
             .unwrap();
 
         control.emit(generation, PipelineEvent::Error);
@@ -1692,6 +2021,48 @@ mod tests {
     }
 
     #[test]
+    fn audio_settings_survive_error_and_end_of_stream_retirement() {
+        for terminal in [PipelineEvent::Error, PipelineEvent::EndOfStream] {
+            let control = FakeControl::default();
+            let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+            core.borrow_mut().set_volume(0.45).unwrap();
+            core.borrow_mut().set_muted(true).unwrap();
+            let first = core
+                .borrow_mut()
+                .begin_tune(selection(&first_key(), 51))
+                .unwrap();
+            let first_generation = first.generation();
+            core.borrow_mut()
+                .complete_tune(first, Ok(handoff(&first_key(), 51)), events_for(&core))
+                .unwrap();
+            control.emit(first_generation, terminal);
+
+            assert_eq!(
+                core.borrow().audio_state(),
+                PlaybackAudioState {
+                    volume: 0.45,
+                    muted: true,
+                }
+            );
+            let successor = core
+                .borrow_mut()
+                .begin_tune(selection(&second_key(), 51))
+                .unwrap();
+            let successor_generation = successor.generation();
+            core.borrow_mut()
+                .complete_tune(successor, Ok(handoff(&second_key(), 51)), events_for(&core))
+                .unwrap();
+            assert_eq!(
+                control.0.borrow().start_audio.get(&successor_generation),
+                Some(&PlaybackAudioState {
+                    volume: 0.45,
+                    muted: true,
+                })
+            );
+        }
+    }
+
+    #[test]
     fn mismatched_handoff_fails_without_constructing_a_pipeline() {
         let control = FakeControl::default();
         let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
@@ -1704,7 +2075,6 @@ mod tests {
             core.borrow_mut().complete_tune(
                 request,
                 Ok(handoff(&second_key(), 2)),
-                (),
                 events_for(&core),
             ),
             Err(PlaybackSessionFailure::HandoffMismatch)
@@ -1721,12 +2091,7 @@ mod tests {
         let isolated = Rc::new(RefCell::new(core));
         isolated
             .borrow_mut()
-            .complete_tune(
-                request,
-                Ok(handoff(&first_key(), 6)),
-                (),
-                events_for(&isolated),
-            )
+            .complete_tune(request, Ok(handoff(&first_key(), 6)), events_for(&isolated))
             .unwrap();
 
         assert!(matches!(
@@ -1762,12 +2127,7 @@ mod tests {
         let isolated = Rc::new(RefCell::new(core));
         isolated
             .borrow_mut()
-            .complete_tune(
-                request,
-                Ok(handoff(&first_key(), 6)),
-                (),
-                events_for(&isolated),
-            )
+            .complete_tune(request, Ok(handoff(&first_key(), 6)), events_for(&isolated))
             .unwrap();
         control.0.borrow_mut().fail_stop = true;
 

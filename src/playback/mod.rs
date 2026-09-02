@@ -14,6 +14,6 @@ pub use runtime::{
 };
 #[cfg(feature = "desktop")]
 pub use session::{
-    PlaybackSession, PlaybackSessionFailure, PlaybackSessionState, TuneCompletion, TuneGeneration,
-    TuneRequest,
+    PlaybackAudioState, PlaybackSession, PlaybackSessionFailure, PlaybackSessionState,
+    TuneCompletion, TuneGeneration, TuneRequest,
 };
