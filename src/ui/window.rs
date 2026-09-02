@@ -750,15 +750,16 @@ fn connect_joined_shutdown(
             return gtk::glib::Propagation::Stop;
         }
 
-        // Record geometry while the window is still mapped and interactive.
-        settings.persist_window(window);
+        // Capture geometry while the window is still mapped and interactive.
+        // The durable write runs on the blocking worker below, so its file
+        // flushes never stall the main loop.
+        let pending_save = settings.stage_window(window);
         window.set_sensitive(false);
-        let Some(controller) = controller.borrow_mut().take() else {
-            shutdown_complete.set(true);
-            return gtk::glib::Propagation::Proceed;
-        };
+        let controller = controller.borrow_mut().take();
         let retained_player_view = player_view.borrow_mut().take();
-        controller.begin_shutdown();
+        if let Some(controller) = &controller {
+            controller.begin_shutdown();
+        }
         if retained_player_view
             .as_ref()
             .is_some_and(|player_view| player_view.shut_down().is_err())
@@ -772,9 +773,17 @@ fn connect_joined_shutdown(
         let window = window.downgrade();
         gtk::glib::MainContext::default().spawn_local(async move {
             // Retain GTK and playback ownership on this local future while
-            // only the controller join moves to the blocking worker.
+            // only the settings write and the controller join move to the
+            // blocking worker. The window closes only after both finish, so
+            // the process never exits ahead of the write.
             let _retained_player_view = retained_player_view;
-            match gtk::gio::spawn_blocking(move || controller.join()).await {
+            let worker = gtk::gio::spawn_blocking(move || {
+                if let Some(save) = pending_save {
+                    save.write();
+                }
+                controller.map_or(Ok(()), ControllerRuntime::join)
+            });
+            match worker.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
                     shutdown_failed.set(true);
