@@ -432,8 +432,25 @@ admitted only after the predecessor's transport is joined and the fake
 observes its connection close, the successor's open is observed strictly
 after that release, natural EOS settles to Stopped with a cleared paintable,
 and an explicit Stop on a second live tune releases the observed connection.
-These proofs cover fake-tuner release ordering for M2.10; live-device and
-packaged-runtime acceptance remain open.
+A second session-level smoke configures one lineup row whose stream path
+answers `404 Not Found`: the tune must fail as the exact channel-missing
+category, and the 404 connection itself must be observed closed before the
+session and controller settle, so a failing tune never strands a tuner.
+
+One bin-side Wayland window smoke drives the production window wiring
+against the real controller and a real targeted discovery probe: a loopback
+UDP responder plus one hand-built second-device observation populate two
+device rows through a stateful discovery lane, the sidebar signal's
+stop-on-admission fires for a user device change, a mutation refresh that
+empties the batch clears the vanished selection through a new generation and
+stops playback through the snapshot reducer, and the joined window close
+settles the controller and playback session. The loopback stream device
+itself is a library test module — the bin target enforces the production
+metadata-port policy whose loopback exemption compiles only into library
+test builds — so this proof exercises the window stop wiring, while the
+live-tuner release evidence for those same paths stays with the library
+end-to-end smokes above. These proofs cover fake-tuner release ordering for
+M2.10; live-device and packaged-runtime acceptance remain open.
 
 ## Development runtime examples
 

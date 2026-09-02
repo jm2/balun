@@ -70,7 +70,11 @@ identity-checked lineup, refuses its DRM row, and feeds the real handoff
 through the production transport to EOS with bounded joined teardown, while
 an isolated display-backed lifecycle smoke drives the real production session
 through tune, release-ordered switching, natural EOS, and explicit Stop
-against its fake tuner. Live-device teardown acceptance (M2.10),
+against its fake tuner, a second session-level smoke proves the
+channel-missing failure lane classifies exactly and releases its own 404
+connection, and a bin-side Wayland window smoke drives the production
+stop-on-admission, mutation, and joined-close wiring against the real
+controller. Live-device teardown acceptance (M2.10),
 packaged-runtime probes (M2.11), and the first cross-platform live-TV smoke
 (M2.12) remain open.
 
@@ -295,11 +299,14 @@ compatibility/error-path work, not prerequisites for that first picture.
   reselection, discovery mutation, pipeline error, window close, and process
   shutdown must cancel/join the exact owner and release the tuner. Device
   change admission, accepted generation change, controller snapshot-channel
-  closure, and window shutdown now invoke stop or terminal shutdown, and the
-  fake-device end-to-end smokes prove release-before-successor ordering,
-  EOS/teardown release, and explicit-Stop release against a fake tuner;
-  device-reselection/discovery-mutation/pipeline-error/window-close coverage
-  against the fake device and complete live-tuner proof remain open.
+  closure, and window shutdown now invoke stop or terminal shutdown; the
+  fake-device smokes prove release-before-successor ordering, EOS/teardown
+  release, explicit-Stop release, and the channel-missing failure lane's
+  release of its own 404 connection, and a bin-side Wayland window smoke
+  drives the production sidebar stop-on-admission, the reducer's
+  accepted-generation stop for a vanished device, and the joined close
+  shutdown against the real controller and a real targeted discovery probe.
+  Live-device teardown evidence remains open.
 
 - [ ] **M2.11 — Add playback integration coverage and runtime probes.** Use a
   fake HDHomeRun HTTP server and synthetic MPEG-TS path, then verify the exact

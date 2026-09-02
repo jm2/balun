@@ -59,6 +59,14 @@ pub(crate) fn fake_device_id() -> DeviceId {
     DeviceId::new(FAKE_DEVICE_ID).expect("the fake device ID is checksum-valid")
 }
 
+/// A second checksum-valid synthetic identity for multi-device scenarios.
+pub(crate) const SECOND_FAKE_DEVICE_ID: u32 = 0x205B_0144;
+
+/// Return the second synthetic device identity for multi-device scenarios.
+pub(crate) fn second_fake_device_id() -> DeviceId {
+    DeviceId::new(SECOND_FAKE_DEVICE_ID).expect("the second fake device ID is checksum-valid")
+}
+
 /// Hold the process-wide fake-device port lock for the caller's lifetime. A
 /// test that panicked while holding it owns no ports anymore, so a poisoned
 /// lock carries no stale state. Sibling test-only port-policy checks also use
@@ -77,6 +85,12 @@ pub(crate) enum FakeStreamBody {
     FixtureOnce,
     /// Serve fixture bytes in an open-ended loop until the client disconnects.
     FixtureRepeat,
+    /// Answer the channel's `/auto/v<n>` path with `404 Not Found`: the
+    /// deterministic channel-missing failure lane. Clients see the exact
+    /// `Content-Length: 0`, `Connection: close` response the unknown-path
+    /// branch serves, reached through a configured lineup row so a present
+    /// channel can deliberately present a missing stream.
+    NotFound,
 }
 
 /// One channel row served through `/lineup.json` and `/auto/v<guide_number>`.
@@ -425,6 +439,11 @@ fn serve_stream_connection(
         match spec.body {
             FakeStreamBody::FixtureOnce => serve_fixture_once(&mut stream, stop),
             FakeStreamBody::FixtureRepeat => serve_fixture_repeat(&mut stream, stop),
+            FakeStreamBody::NotFound => {
+                let bytes = response("404 Not Found", &[("Content-Length", "0".to_owned())], b"");
+                let _ = stream.write_all(&bytes);
+                let _ = stream.flush();
+            }
         }
     } else {
         let bytes = response("404 Not Found", &[("Content-Length", "0".to_owned())], b"");
@@ -849,6 +868,58 @@ mod tests {
                 .any(|event| event.path == "/auto/v7.1" && event.kind == StreamEventKind::Closed)
         });
         assert!(observed);
+    }
+
+    #[test]
+    fn second_fake_device_id_is_checksum_valid_and_distinct() {
+        assert!(DeviceId::new(SECOND_FAKE_DEVICE_ID).is_ok());
+        assert_ne!(SECOND_FAKE_DEVICE_ID, FAKE_DEVICE_ID);
+        assert_eq!(second_fake_device_id().get(), SECOND_FAKE_DEVICE_ID);
+    }
+
+    #[test]
+    fn not_found_channel_answers_404_and_records_lifecycle() {
+        let device = FakeHdhrDevice::start(
+            1,
+            &[FakeChannelSpec {
+                guide_number: "9.1",
+                guide_name: "FAKE MISSING",
+                drm: false,
+                body: FakeStreamBody::NotFound,
+            }],
+        );
+
+        let mut stream =
+            TcpStream::connect(STREAM_TARGET).expect("connect to the fake stream server");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("bound the test client read");
+        stream
+            .write_all(b"GET /auto/v9.1 HTTP/1.1\r\nHost: 127.0.0.1:5004\r\n\r\n")
+            .expect("send the stream request");
+
+        let expected: &[u8] =
+            b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        let received = read_until(&mut stream, expected.len(), Duration::from_secs(10));
+        assert_eq!(received, expected);
+        drop(stream);
+
+        let observed = device.wait_for_stream_events(Duration::from_secs(5), |events| {
+            let connected = events.iter().position(|event| {
+                event.path == "/auto/v9.1" && event.kind == StreamEventKind::Connected
+            });
+            let closed = events.iter().position(|event| {
+                event.path == "/auto/v9.1" && event.kind == StreamEventKind::Closed
+            });
+            connected.is_some_and(|connected| closed.is_some_and(|closed| closed > connected))
+        });
+        assert!(observed);
+        let events = device.stream_events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].path, "/auto/v9.1");
+        assert_eq!(events[0].kind, StreamEventKind::Connected);
+        assert_eq!(events[1].path, "/auto/v9.1");
+        assert_eq!(events[1].kind, StreamEventKind::Closed);
     }
 
     fn read_until(stream: &mut TcpStream, wanted: usize, timeout: Duration) -> Vec<u8> {

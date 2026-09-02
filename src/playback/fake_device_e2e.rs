@@ -25,7 +25,8 @@ mod tests {
     use crate::playback::test_support::hold_decoder_selection;
     use crate::playback::transport::{PIPELINE_URI, TransportConfig};
     use crate::playback::{
-        PlaybackRuntime, PlaybackSession, PlaybackSessionState, TuneCompletion, TuneGeneration,
+        PlaybackPipelineFailure, PlaybackRuntime, PlaybackSession, PlaybackSessionFailure,
+        PlaybackSessionState, TuneCompletion, TuneGeneration,
     };
 
     const WAIT: Duration = Duration::from_secs(5);
@@ -269,6 +270,38 @@ mod tests {
             assert!(
                 Instant::now() < deadline,
                 "the finite fake-device tune must settle to Stopped within the bound"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn pump_until_failed(
+        main_context: &gst::glib::MainContext,
+        states: &mut watch::Receiver<PlaybackSessionState>,
+        wanted: TuneGeneration,
+        timeout: Duration,
+    ) -> PlaybackSessionFailure {
+        let deadline = Instant::now() + timeout;
+        loop {
+            pump_context(main_context);
+            if states.has_changed().unwrap_or(false) {
+                match states.borrow_and_update().clone() {
+                    PlaybackSessionState::Failed {
+                        generation,
+                        failure,
+                        ..
+                    } if generation == wanted => {
+                        return failure;
+                    }
+                    PlaybackSessionState::Stopped | PlaybackSessionState::ShutDown => {
+                        panic!("the missing-channel fake-device tune settled without failing");
+                    }
+                    _ => {}
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the missing-channel fake-device tune must fail within the bound"
             );
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -669,5 +702,129 @@ mod tests {
         controller
             .shutdown()
             .expect("join the controller cleanly after the fake-device lifecycle");
+    }
+
+    /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
+    /// compile but skip this display- and tuner-dependent production proof.
+    ///
+    /// The channel-missing lane configures a present lineup row whose stream
+    /// path answers `404 Not Found`. The complete production session must
+    /// classify that failure exactly as the channel-missing category, and the
+    /// 404 connection itself is the released tuner: the fake must observe
+    /// `Connected` then `Closed` for the missing channel, proving a failed
+    /// tune never strands a tuner, before the session and controller settle.
+    #[test]
+    #[ignore = "requires the isolated display and complete playback runtime supplied by scripts/test-desktop-lifecycle.sh"]
+    fn fake_device_production_session_failure_releases_the_tuner() {
+        let _decoder_selection = hold_decoder_selection();
+        adw::init().expect("initialize libadwaita for the fake-device failure session");
+        let main_context = gst::glib::MainContext::default();
+        let _owner = main_context
+            .acquire()
+            .expect("acquire the default main context for the fake-device failure session");
+        let playback = PlaybackRuntime::initialize()
+            .expect("initialize the complete production playback runtime");
+        assert!(
+            playback.capabilities().is_foundation_ready(),
+            "the lifecycle harness must install Balun's complete playback foundation"
+        );
+        let session = PlaybackSession::new(playback);
+
+        let device = FakeHdhrDevice::start(
+            2,
+            &[FakeChannelSpec {
+                guide_number: "9.1",
+                guide_name: "Missing Nine",
+                drm: false,
+                body: FakeStreamBody::NotFound,
+            }],
+        );
+        let device_id = device.device_id();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build the controller-await runtime");
+        let (controller, generation) = rt.block_on(async {
+            let runtime = ControllerRuntime::start(FakeDeviceDiscovery {
+                target: device.discovery_target(),
+            })
+            .expect("start the controller against the loopback fake device");
+            let handle = runtime.handle();
+            let mut snapshots = handle.subscribe();
+            handle
+                .try_send(ControllerCommand::RefreshLocalDiscovery)
+                .expect("admit the local refresh command");
+            let discovered = wait_for_snapshot(&mut snapshots, |snapshot| {
+                snapshot.devices().len() == 1
+                    && snapshot.discovery().status() == DiscoveryStatus::Ready
+            })
+            .await;
+            assert_eq!(discovered.devices()[0].device_id(), device_id);
+            handle
+                .try_send(ControllerCommand::SelectDevice(device_id))
+                .expect("admit the select-device command");
+            let selected = wait_for_snapshot(&mut snapshots, |snapshot| {
+                snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+            })
+            .await;
+            assert_eq!(
+                selected
+                    .selected_lineup()
+                    .channels()
+                    .iter()
+                    .map(|row| row.key().guide_number().as_str())
+                    .collect::<Vec<_>>(),
+                ["9.1"]
+            );
+            (runtime, selected.selected_lineup().generation())
+        });
+        let handle = controller.handle();
+        let mut states = session
+            .subscribe_state()
+            .expect("subscribe to the URL-free session state");
+
+        let failure_generation =
+            tune_through_controller(&rt, &handle, &session, "9.1", device_id, generation);
+        let failure = pump_until_failed(
+            &main_context,
+            &mut states,
+            failure_generation,
+            Duration::from_secs(10),
+        );
+        assert!(
+            matches!(
+                failure,
+                PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::ChannelMissing)
+            ),
+            "the missing-channel lane must classify as the channel-missing category"
+        );
+
+        let released = device.wait_for_stream_events(Duration::from_secs(5), |events| {
+            let connected = events.iter().position(|event| {
+                event.path == "/auto/v9.1" && matches!(event.kind, StreamEventKind::Connected)
+            });
+            let closed = events.iter().position(|event| {
+                event.path == "/auto/v9.1" && matches!(event.kind, StreamEventKind::Closed)
+            });
+            connected.is_some_and(|connected| closed.is_some_and(|closed| closed > connected))
+        });
+        assert!(
+            released,
+            "the 404 connection itself is the released tuner and must be closed after the failure"
+        );
+
+        session
+            .shut_down()
+            .expect("settle the production session after the failure lane");
+        assert_eq!(
+            session.state().expect("read the session state"),
+            PlaybackSessionState::ShutDown
+        );
+        drop(_owner);
+        drop(rt);
+        controller
+            .shutdown()
+            .expect("join the controller cleanly after the failure lane");
     }
 }
