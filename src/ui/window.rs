@@ -1069,6 +1069,7 @@ mod tests {
                                     gtk::glib::idle_add_local_once(move || application.quit());
                                     return;
                                 }
+                                phase.set(3);
                                 completed.set(true);
                                 let application = application.clone();
                                 let window = window.downgrade();
