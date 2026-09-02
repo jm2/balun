@@ -41,7 +41,9 @@ render multiple frames, update its GTK paintable, reach EOS, and tear down to
 stream handoff from its current complete selected snapshot. The playback
 library owns the sole consumer: a separate tune generation serializes actor
 responses, pipeline replacement, bus events, terminal settlement, and bounded
-teardown. Channel activation and the GTK paintable are not connected yet.
+teardown. The desktop pane owns that session and its URI-opaque paintable
+binding/clearing path, but channel activation does not produce an active
+paintable yet.
 
 The shortest path to the first live-TV test is:
 
@@ -190,7 +192,10 @@ compatibility/error-path work, not prerequisites for that first picture.
   sink/deinterlacer setup failure without leaking the stream. The pipeline side
   now validates and sets the private sink, adaptive deinterlace flag, and forced
   aspect preservation on both playbin and its GTK paintable before assigning a
-  URI; production-pane paintable binding remains open.
+  URI. The main-context `PlayerView` now owns the session, binds only the opaque
+  paintable, and clears it before joined window shutdown. A display-backed
+  smoke covers this production binding boundary; channel activation still does
+  not invoke an active tune, so this record remains open.
 
 - [ ] **M2.8 — Add essential controls.** Implement channel activation, Stop,
   volume, mute, and fullscreen with accessible keyboard and pointer behavior.

@@ -168,10 +168,11 @@ generation-scoped buffering, teardown poison, explicit Stop, shutdown and
 active-owner Drop, handoff mismatch, and generation exhaustion without opening
 a network source.
 
-The desktop pane has not yet presented the paintable or connected channel
-activation. M2.7 will bind it into the `GtkPicture` and complete deinterlacing;
-M2.8-M2.10 will connect activation, controls, user-visible state, and full
-teardown paths.
+The main-context desktop pane now owns the session and a narrow presentation
+boundary which can retrieve only its URI-opaque GDK paintable, bind it into the
+`GtkPicture`, and clear it before joined window shutdown. Channel activation
+does not request an active tune or invoke that binding yet. M2.8-M2.10 will
+connect activation, controls, user-visible state, and full teardown paths.
 
 M2.7's pipeline-side visual contract is now explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the
@@ -181,8 +182,10 @@ sink with its own aspect preservation enabled plus the bus watch before copying
 the authorized URI into native storage. A factory-backed unit test proves the
 URI-free playbin configuration, while the display-backed synthetic acceptance
 checks the native paintable property and `GtkPicture::ContentFit::Contain`
-without network access. The session paintable is not bound into the production
-pane yet, so M2.7 remains incomplete.
+without network access. A second display-backed smoke exercises the production
+`PlayerView` binding, empty-state transition, clearing, and shutdown boundary.
+No channel signal produces an active session paintable yet, so M2.7 remains
+incomplete.
 
 ## Synthetic display-backed acceptance
 
@@ -195,6 +198,11 @@ The 18,424-byte file is exactly 98 188-byte MPEG-TS packets. Its provenance,
 generation command, and SHA-256 digest are committed beside it; it contains no
 audio, external media, device data, or network-derived content and is not an
 application resource.
+
+M2.7 adds a separate ignored display smoke to the same harness for the
+production `PlayerView` paintable boundary. It uses a one-pixel in-memory
+texture, opens no media or network source, and proves presentation and clearing
+without granting the desktop access to the pipeline, sink, or stream URI.
 
 Within an isolated Linux headless Wayland compositor and session bus, the test:
 

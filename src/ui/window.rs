@@ -306,14 +306,20 @@ fn connect_joined_shutdown(
         };
         let retained_player_view = player_view.borrow_mut().take();
         controller.begin_shutdown();
+        if retained_player_view
+            .as_ref()
+            .is_some_and(|player_view| player_view.shut_down().is_err())
+        {
+            shutdown_failed.set(true);
+            eprintln!("Balun playback shutdown failed");
+        }
 
         let shutdown_complete = Rc::clone(&shutdown_complete);
         let shutdown_failed = Rc::clone(&shutdown_failed);
         let window = window.downgrade();
         gtk::glib::MainContext::default().spawn_local(async move {
-            // There is no pipeline in this slice. Retain its explicit future
-            // owner until joined shutdown so no playback lifetime can outlive
-            // the window-close transaction.
+            // Retain GTK and playback ownership on this local future while
+            // only the controller join moves to the blocking worker.
             let _retained_player_view = retained_player_view;
             match gtk::gio::spawn_blocking(move || controller.join()).await {
                 Ok(Ok(())) => {}

@@ -129,9 +129,9 @@ available program information, and a live-video area.
   detach the predecessor's watch and request a bounded transition to `NULL`; a
   teardown failure quarantines that owner and blocks every successor. Bus
   reductions and stateful public calls share the exact default main context,
-  with fixed errors instead of reentrant borrow panics. The desktop pane does
-  not invoke this owner or present its paintable until channel
-  activation/rendering lands.
+  with fixed errors instead of reentrant borrow panics. The desktop pane owns
+  this session and a URI-opaque paintable binding/clearing path; channel
+  activation does not submit a stream yet, so no active paintable is presented.
 - A bounded, display-backed Linux acceptance test which feeds a deterministic,
   video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
   `gtk4paintablesink`, requires multiple rendered frames and paintable updates,
@@ -318,12 +318,13 @@ cargo test --release --all-targets --locked
 CI verifies the declared Rust 1.98 minimum across the desktop feature, runs
 strict Linux GTK-free debug and release checks, tests the optional GTK-free
 playback capability layer, compiles, links, and lints the Linux desktop shell,
-exercises its ordinary close/join lifecycle and an offline synthetic MPEG-2
-decode/render/EOS/`NULL` lifecycle under an isolated headless Wayland
-compositor, links that shell against native macOS and Windows toolkit SDKs, and
-keeps compile-checking the GTK-free default code on both platforms. The local
-smoke helper can fall back to an isolated Xvfb server when Wayland is
-unavailable; X11 is not the default or a Balun runtime requirement. CI also
+exercises its ordinary close/join lifecycle, URI-opaque `PlayerView`
+binding/clearing, and an offline synthetic MPEG-2 decode/render/EOS/`NULL`
+lifecycle under an isolated headless Wayland compositor, links that shell
+against native macOS and Windows toolkit SDKs, and keeps compile-checking the
+GTK-free default code on both platforms. The local smoke helper can fall back
+to an isolated Xvfb server when Wayland is unavailable; X11 is not the default
+or a Balun runtime requirement. CI also
 exercises each platform helper's no-option desktop route. The release candidate
 workflow accepts an existing annotated, v-prefixed Semantic Version tag,
 verifies it against `Cargo.toml` and `CHANGELOG.md`, and builds the exact tag

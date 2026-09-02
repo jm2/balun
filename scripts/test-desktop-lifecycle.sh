@@ -3,8 +3,9 @@
 # an isolated display compositor. Headless Wayland is preferred and is the CI
 # route; Xvfb remains an optional local fallback. Each Rust smoke gets a
 # separate session bus and bounded process: the first proves clean application
-# shutdown without discovery, while the second proves that a checked-in MPEG-2
-# transport stream reaches EOS after rendering through gtk4paintablesink.
+# shutdown without discovery, the second proves URI-opaque PlayerView binding,
+# and the third proves that a checked-in MPEG-2 transport stream reaches EOS
+# after rendering through gtk4paintablesink.
 
 set -euo pipefail
 
@@ -272,6 +273,12 @@ dbus-run-session -- \
     timeout --signal=TERM --kill-after=5s 30s \
     cargo test --locked --features desktop --bin balun \
         app::tests::headless_window_close_joins_controller_without_discovery -- \
+        --exact --ignored --nocapture
+
+dbus-run-session -- \
+    timeout --signal=TERM --kill-after=5s 30s \
+    cargo test --locked --features desktop --bin balun \
+        ui::player_view::tests::opaque_paintable_binding_tracks_status_and_shutdown -- \
         --exact --ignored --nocapture
 
 dbus-run-session -- \

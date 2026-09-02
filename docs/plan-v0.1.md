@@ -241,8 +241,9 @@ library-owned consumer: a main-context session assigns a separate tune
 generation before the actor wait, serializes replacement and terminal bus
 events on its exact default context without reentrant borrow panics, and settles
 each exact predecessor to `NULL` before a successor can be constructed. The
-desktop does not submit a channel to that owner until the M2.7-M2.8 rendering
-and activation work.
+desktop pane now owns that session plus its URI-opaque paintable
+binding/clearing boundary. M2.7 retains active-session presentation proof;
+channel activation belongs to M2.8 and does not submit a stream yet.
 M0.5 separately exercises a pinned local MPEG-2 fixture through a
 process-isolated Linux GTK pipeline; see the detailed
 [playback foundation](playback.md).
@@ -772,8 +773,9 @@ foundation are implemented. The player pane retains its main-context owner and
 reports missing structural components without disabling discovery. The
 generation-owned library session can consume one private handoff, construct
 `playbin3` with its library-private GTK sink, and serialize bus events plus
-bounded teardown without exposing the URI-bearing GStreamer graph, but the pane
-does not invoke it yet. A separate Linux-only M0.5 smoke
+bounded teardown without exposing the URI-bearing GStreamer graph. The pane
+owns and invokes only its opaque presentation and terminal-shutdown boundary;
+it does not submit a tune yet. A separate Linux-only M0.5 smoke
 proves bounded rendering and teardown for a checked-in synthetic MPEG-2
 transport stream. Hostname admission, GTK playback activation, controls, the
 complete codec/audio-sink contract, packaged-runtime probes, and live-platform

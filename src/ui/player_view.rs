@@ -1,14 +1,20 @@
-//! Empty live-TV player shell and playback-runtime owner.
+//! Live-TV picture shell and generation-owned playback-session owner.
 
-use balun::playback::{PlaybackCapabilities, PlaybackInitializationError, PlaybackRuntime};
+use adw::prelude::*;
+use balun::playback::{
+    PlaybackCapabilities, PlaybackInitializationError, PlaybackRuntime, PlaybackSession,
+    PlaybackSessionFailure,
+};
 
 /// Main-context-owned player pane.
 ///
-/// Retaining the runtime here gives the next slice one explicit owner for the
-/// generation-scoped pipeline without creating a pipeline prematurely.
+/// The native pipeline and GTK sink remain private to `PlaybackSession`; this
+/// pane retains only that owner and the URI-opaque GDK paintable it publishes.
 pub(crate) struct PlayerView {
     root: adw::ToolbarView,
-    _runtime: Option<PlaybackRuntime>,
+    picture: gtk::Picture,
+    status: adw::StatusPage,
+    session: Option<PlaybackSession>,
 }
 
 impl PlayerView {
@@ -16,9 +22,35 @@ impl PlayerView {
     pub(crate) const fn root(&self) -> &adw::ToolbarView {
         &self.root
     }
+
+    /// Synchronize the production picture with the session's current opaque
+    /// paintable. The pipeline, sink, and URI never cross this boundary.
+    pub(crate) fn sync_paintable(&self) -> Result<bool, PlaybackSessionFailure> {
+        let paintable = match self.session.as_ref() {
+            Some(session) => session.paintable()?,
+            None => None,
+        };
+        Ok(self.apply_paintable(paintable.as_ref()))
+    }
+
+    /// Clear presentation and terminally settle the playback owner.
+    pub(crate) fn shut_down(&self) -> Result<(), PlaybackSessionFailure> {
+        self.apply_paintable(None);
+        match self.session.as_ref() {
+            Some(session) => session.shut_down(),
+            None => Ok(()),
+        }
+    }
+
+    fn apply_paintable(&self, paintable: Option<&gtk::gdk::Paintable>) -> bool {
+        self.picture.set_paintable(paintable);
+        let has_video = paintable.is_some();
+        self.status.set_visible(!has_video);
+        has_video
+    }
 }
 
-/// Build the player pane without creating a media pipeline.
+/// Build the player pane and inert session without creating a media pipeline.
 pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError>) -> PlayerView {
     let picture = gtk::Picture::builder()
         .can_shrink(true)
@@ -27,11 +59,15 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         .vexpand(true)
         .build();
 
-    let (title, description) = match runtime.as_ref() {
-        Ok(runtime) => empty_state_copy(runtime.capabilities()),
+    let (title, description, session) = match runtime {
+        Ok(runtime) => {
+            let (title, description) = empty_state_copy(runtime.capabilities());
+            (title, description, Some(PlaybackSession::new(runtime)))
+        }
         Err(error) => (
             "Playback initialization unavailable",
             format!("{error}. Device discovery and lineup inspection remain available."),
+            None,
         ),
     };
     let empty_state = adw::StatusPage::builder()
@@ -48,10 +84,16 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&adw::HeaderBar::new());
     toolbar.set_content(Some(&player));
-    PlayerView {
+    let view = PlayerView {
         root: toolbar,
-        _runtime: runtime.ok(),
-    }
+        picture,
+        status: empty_state,
+        session,
+    };
+    // Exercise the same narrow binding path used after a future tune. The
+    // newly constructed session is inert, so this keeps the status visible.
+    let _ = view.sync_paintable();
+    view
 }
 
 fn empty_state_copy(capabilities: &PlaybackCapabilities) -> (&'static str, String) {
@@ -74,4 +116,38 @@ fn empty_state_copy(capabilities: &PlaybackCapabilities) -> (&'static str, Strin
         "Playback components unavailable",
         format!("Required GStreamer factories are missing: {missing}."),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
+    /// compile but skip this display-dependent widget contract.
+    #[test]
+    #[ignore = "requires the isolated display supplied by scripts/test-desktop-lifecycle.sh"]
+    fn opaque_paintable_binding_tracks_status_and_shutdown() {
+        adw::init().expect("initialize libadwaita for player-view presentation smoke");
+        let main_context = gtk::glib::MainContext::default();
+        let _owner = main_context
+            .acquire()
+            .expect("acquire default main context for player-view smoke");
+        let view = build(Err(PlaybackInitializationError::InitializationFailed));
+
+        assert_eq!(view.picture.content_fit(), gtk::ContentFit::Contain);
+        assert!(view.picture.paintable().is_none());
+        assert!(view.status.is_visible());
+
+        let bytes = gtk::glib::Bytes::from_static(&[0x18, 0x30, 0x48, 0xff]);
+        let paintable =
+            gtk::gdk::MemoryTexture::new(1, 1, gtk::gdk::MemoryFormat::R8g8b8a8, &bytes, 4)
+                .upcast::<gtk::gdk::Paintable>();
+        assert!(view.apply_paintable(Some(&paintable)));
+        assert_eq!(view.picture.paintable().as_ref(), Some(&paintable));
+        assert!(!view.status.is_visible());
+
+        view.shut_down().unwrap();
+        assert!(view.picture.paintable().is_none());
+        assert!(view.status.is_visible());
+    }
 }

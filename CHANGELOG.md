@@ -16,8 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   storage. Missing properties or flag support fail with fixed
   pipeline-construction copy while the pipeline is still `NULL`; later start
   or bus failures retain the generation-owned cleanup path. Factory-backed and
-  display-backed tests verify the configuration without network access.
-  Binding the resulting paintable into the desktop pane remains in progress.
+  display-backed tests verify the configuration without network access. The
+  main-context `PlayerView` now owns the session, binds only its URI-opaque
+  paintable into a containment-fit `GtkPicture`, clears it during synchronous
+  playback shutdown, and remains retained until controller join completes.
+  Channel activation does not request an active paintable yet.
 - **Generation-owned tune session** — Add one default-main-context playback
   owner which assigns a monotonic tune generation before waiting for the
   actor-private stream response, consumes the opaque URI only inside the core
@@ -32,8 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panicking. Exposed states and failures remain URL-free. The library
   constructs and retains `gtk4paintablesink` itself and exposes only its
   URI-opaque GDK paintable, never a GStreamer element whose parents reveal the
-  playbin URI. Channel activation and presentation are left to the next
-  playback slice, so no desktop action opens a tuner yet.
+  playbin URI. Proof that an active session drives this presentation boundary
+  remains in M2.7, while channel activation remains in M2.8; no desktop action
+  opens a tuner yet.
 - **Actor-private stream handoff** — Add a URL-free channel intent containing
   the complete ChannelKey and selected-snapshot generation, resolve it in the
   controller's existing bounded FIFO only against the current complete private
