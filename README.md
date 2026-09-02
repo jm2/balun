@@ -23,10 +23,12 @@ available program information, and a live-video area.
 > channel now enters that path and attempts live-device playback without
 > exposing the stream URI to the UI. The header now provides Stop, process-local
 > volume and mute, and compositor-confirmed fullscreen controls, with native
-> pointer/keyboard behavior and fixed accessible labels. Playback failures now
-> have fixed endpoint-free categories and presentation. Portable
-> direct/no-system-proxy transport, hostname entry, EPG, audible-output proof,
-> and live-device acceptance remain unimplemented.
+> pointer/keyboard behavior and fixed accessible labels. Live streams are
+> fetched by an application-owned direct HTTP transport that feeds GStreamer's
+> built-in `appsrc`, so no device endpoint or system proxy ever reaches the
+> media framework, and playback failures have fixed endpoint-free categories
+> and presentation. Hostname entry, EPG, audible-output proof, and live-device
+> acceptance remain unimplemented.
 
 ## Current foundation
 
@@ -145,20 +147,23 @@ available program information, and a live-video area.
   mute preference apply before a URI enters each pipeline, update its active
   owner, and carry into every successor; the UI level is converted to playbin's
   linear gain with a cubic curve. This property contract does not yet prove
-  audible output or a packaged platform audio sink. A worker-thread-safe,
-  schema-validated `source-setup` handler requires the exact `souphttpsrc`
-  factory for production streams, applies and reads back fixed redirect,
-  explicit-proxy, timeout, retry, internet-radio, compression, user-agent, and
-  HTTP-log settings, and locks an unexpected source to `NULL` before publishing
-  one field-free rejection marker. Clearing an explicit element proxy does not
-  disable a libsoup/GIO system proxy, so portable direct transport remains an
-  explicit M2.9 requirement. Native bus failures reduce to seven fixed public
-  categories without retaining error, debug, source-name, detail, or endpoint
-  text. Only an exact accepted production source plus a numeric HTTP status can
-  report tuner-busy, missing-channel, or HTTP-rejection state; exact native
-  domains cover offline, missing codec/plugin, and protected streams, with a
-  closed internal fallback. The player maps these and controller-handoff
-  failures to fixed visible and accessible copy.
+  audible output or a packaged platform audio sink. GStreamer receives only the
+  constant endpoint-free `appsrc://balun` URI: a worker-thread-safe,
+  schema-validated `source-setup` handler accepts exactly one built-in
+  `appsrc`, configures and reads back a bounded live MPEG-TS byte feed, and
+  locks any other or repeated source to `NULL` before publishing one field-free
+  rejection marker. A Balun-owned transport then fetches the responder-pinned
+  stream with a private `reqwest` client that disables automatic and explicit
+  proxies, redirects, and Referer, never resolves a name, and feeds `appsrc`
+  through a bounded channel and a dedicated blocking feeder. Numeric HTTP
+  status and connect, stall, or truncation failures reduce immediately to fixed
+  tuner-busy, missing-channel, HTTP-rejection, and offline categories through
+  one bounded bus marker; exact native codes cover missing codec/plugin and
+  protected streams, with a closed internal fallback, and no error, debug,
+  source-name, header, or endpoint text is retained. Teardown cancels the
+  request before `NULL` and joins both transport workers inside the same bound.
+  The player maps these and controller-handoff failures to fixed visible and
+  accessible copy.
 - A bounded, display-backed Linux acceptance test which feeds a deterministic,
   video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
   `gtk4paintablesink`, requires multiple rendered frames and paintable updates,
@@ -258,7 +263,7 @@ cargo run --locked --features desktop --bin balun
 ```
 
 At startup the player pane checks `playbin3`, `uridecodebin3`, `decodebin3`,
-`souphttpsrc`, `tsdemux`, `deinterlace`, and `gtk4paintablesink`. These are
+`appsrc`, `tsdemux`, `deinterlace`, and `gtk4paintablesink`. These are
 structural checks only: they do not establish the complete packaged codec and
 audio-sink contract. Desktop channel activation is implemented; physical
 HDHomeRun live-tuning and packaged-runtime acceptance remain open. Fedora

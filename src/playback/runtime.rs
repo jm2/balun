@@ -19,8 +19,8 @@ pub enum PlaybackFactory {
     UriDecodeBin3,
     /// Stream decode owner used internally by `uridecodebin3`.
     DecodeBin3,
-    /// HTTP source used for responder-pinned HDHomeRun streams.
-    SoupHttpSource,
+    /// Application-fed source filled by Balun's private HTTP transport.
+    AppSource,
     /// MPEG transport-stream demultiplexer.
     MpegTsDemuxer,
     /// Interlaced-video deinterlacer required for ordinary 1080i channels.
@@ -35,7 +35,7 @@ impl PlaybackFactory {
         Self::Playbin3,
         Self::UriDecodeBin3,
         Self::DecodeBin3,
-        Self::SoupHttpSource,
+        Self::AppSource,
         Self::MpegTsDemuxer,
         Self::Deinterlace,
         Self::Gtk4PaintableSink,
@@ -47,7 +47,7 @@ impl PlaybackFactory {
             Self::Playbin3 => "playbin3",
             Self::UriDecodeBin3 => "uridecodebin3",
             Self::DecodeBin3 => "decodebin3",
-            Self::SoupHttpSource => "souphttpsrc",
+            Self::AppSource => "appsrc",
             Self::MpegTsDemuxer => "tsdemux",
             Self::Deinterlace => "deinterlace",
             Self::Gtk4PaintableSink => "gtk4paintablesink",
@@ -251,7 +251,7 @@ mod tests {
                 "playbin3",
                 "uridecodebin3",
                 "decodebin3",
-                "souphttpsrc",
+                "appsrc",
                 "tsdemux",
                 "deinterlace",
                 "gtk4paintablesink",
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn capability_probe_reports_only_missing_factories_in_contract_order() {
         let missing = [
-            PlaybackFactory::SoupHttpSource,
+            PlaybackFactory::AppSource,
             PlaybackFactory::Gtk4PaintableSink,
         ];
         let capabilities =

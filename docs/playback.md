@@ -4,10 +4,11 @@ Last reviewed: 2026-09-02
 
 This document records Balun's implemented M2.4 GStreamer boundary, M2.5 private
 stream handoff, M2.6 generation-owned tune session, completed M2.7 video
-presentation path, completed M2.8 essential controls, and the initial M2.9
-live-source element policy and endpoint-free failure classification. The product
-and milestone scope remains authoritative in [`plan-v0.1.md`](plan-v0.1.md),
-while countable completion is tracked in [`task.md`](task.md).
+presentation path, completed M2.8 essential controls, and the M2.9
+application-owned direct stream transport with its endpoint-free failure
+classification. The product and milestone scope remains authoritative in
+[`plan-v0.1.md`](plan-v0.1.md), while countable completion is tracked in
+[`task.md`](task.md).
 
 ## Current status
 
@@ -24,9 +25,11 @@ The desktop-enabled playback library now has one main-context session capable
 of consuming an opaque actor handoff and constructing `playbin3` with a
 library-owned `gtk4paintablesink`. Standard activation of an unprotected row
 now submits only its exact applied selection generation, and an applied private
-response can open the HDHomeRun HTTP stream, allocate a tuner, and bind the
-session's URI-opaque paintable into the production pane. The desktop cannot
-inspect the URI or GStreamer graph. The session and native player controls now
+response opens the HDHomeRun HTTP stream through Balun's own direct transport,
+allocates a tuner, feeds GStreamer's built-in `appsrc` behind the constant
+`appsrc://balun` URI, and binds the session's URI-opaque paintable into the
+production pane. Neither the desktop nor the GStreamer graph ever holds the
+device endpoint. The session and native player controls now
 retain a normalized process-local volume plus independent mute setting and
 apply both to the active pipeline and successor tunes. This property contract
 does not establish audible output; playbin's native stream and sink selection,
@@ -34,8 +37,10 @@ the complete codec/audio-sink contract, and package contents remain M0.10 and
 later acceptance work.
 
 Process-isolated Linux tests prove the checked-in MPEG-2 fixture renders into a
-real GTK paintable, the real production session exposes only that paintable and
-settles to `NULL`, and `PlayerView` binds/clears an opaque paintable through its
+real GTK paintable, the real production session streams that fixture from a
+loopback HTTP listener through the transport and exact `appsrc` feed to
+PLAYING, natural EOS, and joined `NULL` settlement while exposing only the
+paintable, and `PlayerView` binds/clears an opaque paintable through its
 production widgets and Stop control. Physical HDHomeRun and packaged-runtime
 acceptance remain M2.11-M2.12 work. Additional isolated widget and Wayland
 smokes cover M2.8 audio-control state, exact ListView activation, and a real
@@ -101,7 +106,7 @@ The startup snapshot checks these seven exact registry names in stable order:
 | `playbin3` | Modern top-level URI player |
 | `uridecodebin3` | URI source and decode orchestration used by `playbin3` |
 | `decodebin3` | Stream parser/decoder orchestration |
-| `souphttpsrc` | HTTP source for an eventual responder-pinned device stream |
+| `appsrc` | Application-fed source filled by Balun's private HTTP transport |
 | `tsdemux` | MPEG transport-stream demultiplexing |
 | `deinterlace` | Interlaced-video conversion for ordinary 1080i content |
 | `gtk4paintablesink` | GTK 4 paintable video output |
@@ -139,8 +144,10 @@ HTTP, numeric host, port 5004, absent credentials/query/fragment, and the exact
 `StreamHandoff` is non-cloneable, has no public URI accessor or `Display`, uses
 a custom URL-redacted `Debug`, and zeroizes its private URI bytes on drop. The
 desktop can hold and move the opaque type but cannot inspect the URI. Its sole
-crate-private exposure is a consuming higher-ranked closure used by the M2.6
-pipeline constructor; the borrow cannot escape that closure. Merely selecting
+crate-private exposure is a consuming higher-ranked closure used by the M2.9
+transport when `playbin3` delivers its exact `appsrc`; the borrow cannot escape
+that closure, and the parsed URL lives only in that transport's reader thread.
+Merely selecting
 a channel row remains inert. Double-clicking or pressing Enter on a valid,
 unprotected row constructs a URL-free `StreamSelection`; only the controller's
 validated opaque handoff can then open the stream through `PlaybackSession`.
@@ -161,9 +168,10 @@ can retry the retained owner, while the failure remains visible. The returned
 
 Only a response matching the exact pending tune can construct `playbin3`.
 Successful responses from superseded attempts are dropped immediately so their
-Rust-owned URI storage is zeroized. The URI is copied directly into the native
-pipeline property inside the core library and is never returned to the desktop
-crate. The same library constructs and retains `gtk4paintablesink`; it exposes
+Rust-owned URI storage is zeroized. The URI never enters a native property: the
+pipeline receives only the constant `appsrc://balun`, and the handoff moves
+into the source policy's private state until the transport consumes it. The
+same library constructs and retains `gtk4paintablesink`; it exposes
 only the GDK paintable, not a GStreamer element whose parent graph can reach
 `playbin3`. Exposed request, state, failure, and session debug output is
 URL-free.
@@ -217,65 +225,92 @@ are forced to the player and their Back/pop paths are disabled while fullscreen,
 then their exact pages, pop permissions, and prior focus are restored. Native
 Back choices outside fullscreen remain synchronized, and a valid compact-width
 channel activation presents the player even when setup fails. These controls
-complete M2.8; the broader M4.6 accessibility audit, portable direct-transport
-completion in M2.9, and M2.10 teardown acceptance remain open.
+complete M2.8; the broader M4.6 accessibility audit and M2.10 teardown
+acceptance remain open.
 
 The session publishes every owned transition through a deduplicated,
 URL-free latest-state watch. `PlayerView` consumes it on the GTK main context
 through a weak capture and exposes connecting, buffering percentage, playing,
 stopped, and failed state in an accessible header status. Native Error and EOS
 therefore clear the exact terminal paintable instead of leaving a stale frame.
-Portable direct transport remains M2.9 work.
-
-Native bus failures now reduce immediately to the public, copy-only
-`PlaybackPipelineFailure` categories: tuner busy, channel missing, HTTP
-rejected, offline, missing codec/plugin, protected, or internal. A numeric HTTP
-status has meaning only when it is a `u32` in 100–599, the native domain is
-exactly a resource error, and the message source is the exact production
-`souphttpsrc` identity retained by the still-accepted source policy. Only 503
-means tuner busy and 404 means channel missing; other 3xx–5xx responses are
-HTTP rejection. Trusted NotFound, OpenRead, and Read resource codes mean
-offline. Exact missing-plugin element markers, Core MissingPlugin, Stream
-CodecNotFound, and Stream Decrypt/DecryptNokey cover the remaining specific
-categories; every other condition is internal.
 
 The reducer never formats, logs, or stores native error text, debug text,
-source names, structure fields, extraction errors, or endpoint values.
-Adversarial tests place URI and credential-like secrets in those ignored fields
-and prove the public category, session failure, and failed session-state debug
-output remain fixed. `PlayerView` maps all seven categories and controller
-handoff failures to fixed endpoint-free visible and accessible status text,
-while a teardown failure retains its stronger close-Balun warning.
+source names, structure fields, extraction errors, headers, bodies, or
+endpoint values. Adversarial tests place URI and credential-like secrets in
+those ignored fields and prove the public category, session failure, and
+failed session-state debug output remain fixed. `PlayerView` maps all seven
+categories and controller handoff failures to fixed endpoint-free visible and
+accessible status text, while a teardown failure retains its stronger
+close-Balun warning.
 
-The initial M2.9 source policy validates `playbin3`'s `source-setup` signal
-schema before URI assignment. Its worker-thread-safe handler requires the exact
-`souphttpsrc` factory, validates native property types and mutability, applies
-and reads back fixed redirect, explicit-proxy, timeout, retry, internet-radio,
-compression, user-agent, and HTTP-log settings, and retains the exact accepted
-source identity. An unexpected, repeated, or unconfigurable source is locked
-and requested to `NULL`; a single field-free application marker feeds the
-generation-owned error and bounded teardown path without native or endpoint
-text. Network-free tests cover the configuration, rejection, and callback
-thread boundary. A crate-test-only exact `filesrc` exception preserves the
-checked-in local fixture and does not exist in production builds.
+## Application-owned direct transport
 
-Those checks establish source identity and element setup policy, not how the
-underlying HTTP request is routed. In particular, clearing `souphttpsrc`'s
-`proxy` property does not prove direct transport or prevent fallback to the
-system proxy resolver. Balun explicitly rejects unsafe `GSimpleProxyResolver`
-registration as a workaround. A supported, portable direct/no-system-proxy
-transport remains open, so this partial source-setup contract cannot complete
-M2.9.
+[ADR-0001](architecture/adr-0001-discovery-playback.md) selected this path,
+and M2.9 implements it: keep `playbin3`, expose only the fixed
+`appsrc://balun` URI to GStreamer, and feed its exact built-in `appsrc` from a
+bounded Balun-owned HTTP worker. Production playback therefore never gives the
+media framework a device endpoint, and no libsoup/GIO proxy resolver can be
+consulted because no GStreamer element ever performs the request.
 
-[ADR-0001](architecture/adr-0001-discovery-playback.md) selects the completion
-path: keep `playbin3`, expose only the fixed `appsrc://balun` URI to GStreamer,
-and feed its exact built-in `appsrc` from a bounded Balun-owned HTTP worker
-whose `reqwest` client disables automatic and explicit proxies. This removes
-the device endpoint from native URI properties while preserving the current
-decode, synchronization, audio-control, and paintable path. The existing
-`souphttpsrc` policy remains only an intermediate implementation until that
-transport and its proxy-trap, backpressure, cross-platform, and joined-teardown
-proofs land.
+The source policy validates `playbin3`'s `source-setup` signal schema before
+playback starts. Its worker-thread-safe handler accepts only the exact
+`appsrc` factory, validates native property types and mutability, and applies
+and reads back `video/mpegts, systemstream=true` caps, byte format, stream
+type, live and blocking behavior, disabled signal emission and timestamping,
+and a 4 MiB queued-byte limit. It then consumes the one authorized handoff and
+starts the transport. Any other, repeated, retired, or unconfigurable source is
+locked and requested to `NULL`; a single field-free application marker feeds
+the generation-owned error and bounded teardown path without native or
+endpoint text. The generic GObject property and action-signal interface is
+schema-validated and used deliberately, so no `gstreamer-app` native
+development dependency is required on any platform.
+
+The transport owns two threads per tune. A reader thread runs a private
+current-thread Tokio runtime and a `reqwest` client with `no_proxy`, redirects
+and Referer disabled, a fixed Balun user agent, HTTP/1.1 only, no connection
+pooling, a five-second connect deadline, a ten-second response-header
+deadline, and a ten-second idle-read deadline. The URL must already be a
+credential-free, query-free, numeric-host HTTP URL, so the request never
+resolves a name. Only the numeric status is interpreted: 200 streams, 503 is
+tuner busy, 404 is channel missing, and every other status, including
+redirects that are never followed, is HTTP rejection. Connect, header, and
+read failures, including a stalled or truncated body, are offline. Body
+chunks are split to at most 64 KiB buffers and sent through a bounded
+eight-slot channel to a dedicated blocking feeder thread, which pushes them
+through `appsrc`'s validated `push-buffer` action signal and emits
+`end-of-stream` only after a natural end of body. Neither the GTK main context
+nor the controller runtime ever blocks on GStreamer backpressure: when
+`appsrc` is full the feeder blocks, the channel fills, and TCP flow control
+holds the device.
+
+Failures are posted to the pipeline bus as one application message from the
+exact pipeline carrying a single bounded numeric category code. The
+generation-scoped bus watch reduces that marker, native missing-plugin,
+codec-not-found, and decryption errors, and the source-policy rejection marker
+into the seven fixed `PlaybackPipelineFailure` categories; malformed markers,
+foreign pipelines, and every other native condition close to internal.
+
+Teardown cancels the request first, so the device connection begins closing
+while the pipeline moves to `NULL`; the transport is then joined inside the
+same five-second bound, because a flushing `appsrc` is what unblocks a feeder
+waiting on the byte limit. `NULL` alone is no longer sufficient proof: a
+teardown that cannot join both workers fails, quarantines the owner, and
+retains the unjoined transport for the shutdown retry. Cancellation is never
+reported as EOS or as a failure. A live `appsrc` feed does not post `playbin3`
+buffering messages, so the session's buffering state stays reserved for
+runtimes that publish it and the connecting state covers preroll.
+
+Network-free loopback tests cover accepted configuration, repeated, foreign,
+and retired source rejection, handoff zeroization, worker-thread
+`source-setup` delivery, every status category, redirect refusal with an
+uncontacted target, refused, stalled, and truncated streams, bounded chunk
+splitting, bounded queue growth under a paused sink, cancellation while reads
+and pushes are blocked, rapid replacement, joined teardown, and `playbin3`
+resolving the constant URI to exact `appsrc` and decoding the checked-in
+fixture to EOS. A child-process trap proves that ambient `http_proxy` and
+`all_proxy` configuration reaches a default client but never the transport.
+The native macOS and Windows CI lanes must run the same source-selection
+checks before M2.9 is recorded complete.
 
 M2.7's pipeline-side visual contract is now explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the
@@ -308,12 +343,13 @@ audio, external media, device data, or network-derived content and is not an
 application resource.
 
 M2.7 adds two separate ignored display smokes to the same harness. One drives
-the real production session with the checked-in local fixture, verifies its
-opaque paintable, and proves terminal shutdown. The other exercises the
-production `PlayerView` paintable and Stop boundary with a one-pixel in-memory
-texture. Neither grants the desktop access to the pipeline, sink, or stream
-URI; the local fixture path enters only the library's crate-private `cfg(test)`
-handoff constructor.
+the real production session with the checked-in fixture served by a loopback
+HTTP listener, verifies its opaque paintable, drives the main context through
+PLAYING and natural EOS, and proves joined terminal shutdown. The other
+exercises the production `PlayerView` paintable and Stop boundary with a
+one-pixel in-memory texture. Neither grants the desktop access to the
+pipeline, sink, or stream URI; the loopback URL enters only the library's
+crate-private `cfg(test)` handoff constructor.
 
 M2.8 extends the layered harness rather than weakening that boundary. A
 production `PlayerView` smoke changes volume and mute through the real GTK
@@ -359,9 +395,9 @@ closed; CI uses that mode and does not install Xvfb. Explicit `x11` exists only
 to exercise the fallback on a developer host.
 
 This is a Linux development/CI acceptance record only. It does not prove native
-macOS or Windows rendering, audio, physical MPEG-TS variants, live-source
+macOS or Windows rendering, audio, physical MPEG-TS variants, live-device
 behavior, channel switching, tuner release, or packaged-runtime relocation.
-Those claims remain in M0.6, M0.10, M1.10, and M2.9 through M2.12.
+Those claims remain in M0.6, M0.10, M1.10, and M2.10 through M2.12.
 
 ## Development runtime examples
 
@@ -413,8 +449,9 @@ provenance, and distribution review.
 
 ## Next acceptance steps
 
-1. M2.9-M2.10: complete detailed errors, terminal UI projection, and
-   deterministic tuner-release acceptance around the connected session.
+1. M2.9-M2.10: prove the constant-URI `appsrc` contract on the native macOS
+   and Windows CI lanes, then complete deterministic tuner-release acceptance
+   around the connected session and transport.
 2. M0.10: freeze the complete tested factory and platform package contract,
    including codecs and audio sinks.
 3. M2.11-M2.12: run fake-device, development-runtime, packaged-runtime, and

@@ -2,7 +2,7 @@
 
 - Status: Active
 - Target: v0.1.0-alpha.1
-- Last updated: 2026-09-01
+- Last updated: 2026-09-02
 
 The countable done/remaining execution ledger is maintained in
 [`task.md`](task.md); this document remains the authoritative scope,
@@ -254,7 +254,12 @@ the exact prior pages, pop permissions, and focus. Layered fake-backend,
 property, widget, production-session, ListView, and isolated Wayland tests cover
 the implementation without claiming audible output, complete codec/audio-sink
 packaging, native-platform runtime acceptance, live hardware, or the broader
-M4.6 accessibility audit.
+M4.6 accessibility audit. M2.9 replaces the intermediate HTTP element with an
+application-owned direct transport: `playbin3` receives only the constant
+`appsrc://balun` URI, the source policy accepts exactly one built-in `appsrc`,
+and a private no-proxy `reqwest` reader plus blocking feeder move the stream
+through a bounded channel, with failures reduced to fixed categories and both
+workers joined inside the teardown bound.
 M0.5 separately exercises a pinned local MPEG-2 fixture through a
 process-isolated Linux GTK pipeline; see the detailed
 [playback foundation](playback.md).
@@ -481,7 +486,7 @@ main-context-owned runtime checks the loaded native GStreamer version against a
 - `playbin3`.
 - `uridecodebin3`.
 - `decodebin3`.
-- `souphttpsrc`.
+- `appsrc`.
 - `tsdemux`.
 - `deinterlace`.
 - `gtk4paintablesink`.
@@ -504,18 +509,22 @@ checked-in video-only MPEG-2 transport stream through explicit `playbin3` and
 EOS, and teardown to `NULL`. M2.7 additionally proves the real production
 session and production pane as separate URI-confined display processes. M2.8
 adds process-local volume/mute property ownership plus native playback and
-compositor-confirmed fullscreen controls. Audio decoding and audible output,
-audio sinks, the parser/decoder set, the full M0.10 plugin contract, and M2.9
-through M2.12 player acceptance remain open. The detailed boundary is recorded
-in [`playback.md`](playback.md).
+compositor-confirmed fullscreen controls. M2.9 adds the application-owned
+direct transport behind the constant `appsrc://balun` URI. Audio decoding and
+audible output, audio sinks, the parser/decoder set, the full M0.10 plugin
+contract, native macOS/Windows source-selection evidence, and M2.10 through
+M2.12 player acceptance remain open. The detailed boundary is recorded in
+[`playback.md`](playback.md).
 
 The implemented first player path uses:
 
 - playbin3.
 - gtk4paintablesink exposed through GtkPicture.
-- The validated, responder-pinned device stream URI.
+- The constant endpoint-free `appsrc://balun` URI, whose built-in `appsrc` is
+  fed by Balun's own no-proxy HTTP transport from the validated,
+  responder-pinned device stream URL.
 - GStreamer bus handling for error, EOS, state, buffering, stream collection,
-  and missing-plugin messages.
+  missing-plugin, and Balun's bounded transport-failure messages.
 - Deinterlacing support suitable for normal 1080i broadcast content.
 - Generation-scoped bus watches and state changes.
 
@@ -536,9 +545,9 @@ Expected device HTTP behavior:
   failed. It should not trigger aggressive retries.
 
 If measurements show long-running drift or unstable live buffering, the next
-step is a controlled pipeline based on souphttpsrc, mpegtslivesrc, tsdemux,
-and decodebin3. That complexity is not part of the MVP unless the spike proves
-playbin3 inadequate.
+step is a controlled pipeline based on the same `appsrc` feed, mpegtslivesrc,
+tsdemux, and decodebin3. That complexity is not part of the MVP unless the
+spike proves playbin3 inadequate.
 
 ### 6.3 Codec policy
 

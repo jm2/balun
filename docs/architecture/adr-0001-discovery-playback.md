@@ -88,15 +88,23 @@ Natural EOF and malformed or truncated transport streams remain truthful,
 typed terminal outcomes. A teardown that cannot prove both socket and pipeline
 settlement quarantines the playback owner rather than starting a successor.
 
-The current `souphttpsrc` source policy is an intermediate implementation. It
-will be replaced, and M2.9 remains incomplete, until the `appsrc` transport,
-cross-platform source-selection checks, proxy-trap test, bounded backpressure,
-and cancellation/teardown tests land.
+Implementation status: the `appsrc` transport replaced the intermediate
+`souphttpsrc` policy on 2026-09-02 with proxy-trap, bounded-backpressure,
+cancellation, rapid-replacement, and joined-teardown tests plus a `playbin3`
+decode of the checked-in fixture from the constant URI on Linux. M2.9 records
+completion only once the native macOS and Windows lanes run the same
+source-selection checks.
 
 ## Consequences and required evidence
 
-- The default library and diagnostic remain free of GTK and GStreamer; the
-  optional playback feature adds the typed `gstreamer-app` binding.
+- The default library and diagnostic remain free of GTK and GStreamer. The
+  desktop feature drives the built-in `appsrc` through its schema-validated
+  generic GObject properties and action signals instead of adding the typed
+  `gstreamer-app` binding, so no additional native development dependency is
+  required on any platform.
+- A live `appsrc` feed does not post `playbin3` buffering messages; the
+  session's buffering state stays reserved for runtimes that publish it and
+  the connecting state covers preroll.
 - The native GStreamer graph stores only a constant nonsecret URI. The device
   endpoint stays inside the one generation that owns its request.
 - Direct transport is portable and testable without mutating process-global

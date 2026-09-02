@@ -244,7 +244,9 @@ fn verify_fixture_integrity() {
     );
     assert!(
         FIXTURE_BYTES
-            .chunks_exact(TRANSPORT_PACKET_LENGTH)
+            .as_chunks::<TRANSPORT_PACKET_LENGTH>()
+            .0
+            .iter()
             .all(|packet| packet[0] == 0x47),
         "every synthetic fixture transport packet must retain its sync byte"
     );

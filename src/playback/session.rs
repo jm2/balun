@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::{Rc, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gst::prelude::*;
 use gstreamer as gst;
@@ -13,7 +13,8 @@ use tokio::sync::watch;
 
 use super::PlaybackRuntime;
 use super::pipeline_failure::{self, PlaybackPipelineFailure};
-use super::source_policy::{self, SourcePolicy};
+use super::source_policy::SourcePolicy;
+use super::transport::{PIPELINE_URI, StreamTransport, TransportConfig};
 use crate::controller::{OperationGeneration, StreamHandoff, StreamHandoffError, StreamSelection};
 use crate::domain::ChannelKey;
 
@@ -641,6 +642,7 @@ struct GstreamerBackend {
 
 struct GstreamerPipeline {
     source_policy: SourcePolicy,
+    unjoined_transport: Option<StreamTransport>,
     pipeline: gst::Pipeline,
     paintable: gdk::Paintable,
     bus_watch: Option<gst::bus::BusWatchGuard>,
@@ -649,25 +651,41 @@ struct GstreamerPipeline {
 
 impl GstreamerPipeline {
     fn stop(&mut self) -> Result<(), PlaybackSessionFailure> {
+        let deadline = Instant::now() + PIPELINE_TEARDOWN_TIMEOUT;
         // Detach callbacks before requesting NULL so teardown messages cannot
         // mutate the settled generation.
         self.bus_watch.take();
+        // Cancel the private HTTP request first so the device connection
+        // starts closing while the pipeline settles. The transport is joined
+        // only after NULL, because a flushing appsrc is what unblocks a feeder
+        // waiting on the bounded byte limit.
+        let mut transport = self
+            .source_policy
+            .retire()
+            .or_else(|| self.unjoined_transport.take());
         // Silence the owned stream before the potentially blocking NULL wait.
         // This is a fail-safe pipeline action and does not alter the retained
         // process-local mute preference inherited by a successor.
         self.pipeline.set_property(PLAYBIN_MUTE_PROPERTY, true);
         let request = self.pipeline.set_state(gst::State::Null);
-        let (transition, current, pending) = self.pipeline.state(gst::ClockTime::from_nseconds(
-            PIPELINE_TEARDOWN_TIMEOUT.as_nanos().min(u64::MAX as u128) as u64,
-        ));
-        if request.is_ok()
+        let (transition, current, pending) = self.pipeline.state(clock_time_until(deadline));
+        let settled = request.is_ok()
             && transition.is_ok()
             && current == gst::State::Null
-            && pending == gst::State::VoidPending
-        {
+            && pending == gst::State::VoidPending;
+        let joined = match transport.as_mut() {
+            Some(transport) => transport.join(deadline).is_ok(),
+            None => true,
+        };
+        if settled && joined {
             self.armed = false;
             Ok(())
         } else {
+            // Retain an unjoined transport so a later retry can prove that the
+            // device connection was released, not merely requested closed.
+            if !joined {
+                self.unjoined_transport = transport;
+            }
             Err(PlaybackSessionFailure::PipelineTeardown)
         }
     }
@@ -676,11 +694,20 @@ impl GstreamerPipeline {
 impl Drop for GstreamerPipeline {
     fn drop(&mut self) {
         self.bus_watch.take();
+        if let Some(transport) = self.source_policy.retire() {
+            drop(transport);
+        }
+        self.unjoined_transport.take();
         if self.armed {
             let _ = self.pipeline.set_state(gst::State::Null);
             self.armed = false;
         }
     }
+}
+
+fn clock_time_until(deadline: Instant) -> gst::ClockTime {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    gst::ClockTime::from_nseconds(remaining.as_nanos().min(u128::from(u64::MAX)) as u64)
 }
 
 impl PipelineBackend for GstreamerBackend {
@@ -713,25 +740,19 @@ impl PipelineBackend for GstreamerBackend {
             .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
         configure_playbin_video(&pipeline, &video_sink).map_err(PipelineStartError::Clean)?;
         configure_playbin_audio(&pipeline, audio).map_err(PipelineStartError::Clean)?;
-        let source_policy = SourcePolicy::install(&pipeline)
-            .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
 
         let bus = pipeline.bus().ok_or(PipelineStartError::Clean(
             PlaybackSessionFailure::BusUnavailable,
         ))?;
-        let source_monitor = source_policy.monitor();
         let watched_pipeline = pipeline.clone();
         let watch = move |_: &gst::Bus, message: &gst::Message| {
             let event = match message.view() {
                 gst::MessageView::Eos(_) => Some(PipelineEvent::EndOfStream),
-                gst::MessageView::Error(_) | gst::MessageView::Element(_) => {
-                    pipeline_failure::classify_pipeline_message(message, &source_monitor)
+                gst::MessageView::Error(_)
+                | gst::MessageView::Element(_)
+                | gst::MessageView::Application(_) => {
+                    pipeline_failure::classify_pipeline_message(message, &watched_pipeline)
                         .map(PipelineEvent::Error)
-                }
-                gst::MessageView::Application(_)
-                    if source_policy::is_rejection_message(message, &watched_pipeline) =>
-                {
-                    Some(PipelineEvent::Error(PlaybackPipelineFailure::Internal))
                 }
                 gst::MessageView::Buffering(buffering) => {
                     let percent = buffering.percent().clamp(0, 100) as u8;
@@ -764,12 +785,21 @@ impl PipelineBackend for GstreamerBackend {
             .with_thread_default(|| bus.add_watch_local(watch))
             .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::BusWatch))?
             .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::BusWatch))?;
-        // Make every fallible structural check before the authorized URI
-        // enters native storage. The pipeline remains in NULL while the URI
-        // property is assigned, and every later failure owns bounded cleanup.
-        handoff.with_uri(|uri| pipeline.set_property("uri", uri));
+        // Every fallible structural check precedes this point. GStreamer only
+        // ever receives the constant endpoint-free URI; the authorized handoff
+        // moves into the source policy's private state and is consumed by the
+        // transport when playbin3 delivers its exact appsrc during start.
+        let source_policy = SourcePolicy::install(&pipeline, handoff, TransportConfig::PRODUCTION)
+            .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
+        pipeline.set_property("uri", PIPELINE_URI);
+        if pipeline.property::<Option<String>>("uri").as_deref() != Some(PIPELINE_URI) {
+            return Err(PipelineStartError::Clean(
+                PlaybackSessionFailure::PipelineConstruction,
+            ));
+        }
         let mut active = GstreamerPipeline {
             source_policy,
+            unjoined_transport: None,
             pipeline,
             paintable,
             bus_watch: Some(bus_watch),
@@ -1124,10 +1154,10 @@ impl fmt::Debug for PlaybackSession {
 mod tests {
     use std::cell::Cell;
     use std::collections::BTreeMap;
-    use std::path::Path;
 
     use super::*;
     use crate::domain::{DeviceId, GuideNumber};
+    use crate::playback::test_support::{FixtureStreamServer, StreamBehavior, fixture_response};
     use gtk::prelude::*;
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1396,6 +1426,11 @@ mod tests {
 
     /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
     /// compile but skip this display- and codec-dependent production proof.
+    ///
+    /// The checked-in fixture is served by a loopback HTTP listener, so the
+    /// real production session exercises the private transport, the exact
+    /// `appsrc` feed, decoding into the URI-opaque paintable, natural EOS, and
+    /// joined teardown without any external network or tuner.
     #[test]
     #[ignore = "requires the isolated display and complete playback runtime supplied by scripts/test-desktop-lifecycle.sh"]
     fn active_production_session_exposes_opaque_paintable_and_shuts_down() {
@@ -1426,24 +1461,23 @@ mod tests {
         );
         let channel_key = first_key();
         let selection_generation = OperationGeneration::new(23);
+        let mut states = session
+            .subscribe_state()
+            .expect("subscribe to the URL-free session state");
         let request = session
             .begin_tune(StreamSelection::new(
                 channel_key.clone(),
                 selection_generation,
             ))
-            .expect("begin one generation-owned local fixture tune");
-        let fixture = Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/synthetic-mpeg2.ts"
-        ));
-        let fixture_uri = gst::glib::filename_to_uri(fixture, None)
-            .expect("construct the checked-in fixture URI");
+            .expect("begin one generation-owned loopback fixture tune");
+        let server = FixtureStreamServer::start(fixture_response(), StreamBehavior::Close);
         let handoff = StreamHandoff::test_fixture(
             channel_key.clone(),
             selection_generation,
-            fixture_uri.as_str(),
+            &server.stream_url(),
         );
 
+        let request_generation = request.generation();
         assert_eq!(
             session.complete_tune(request, Ok(handoff)),
             Ok(TuneCompletion::Applied)
@@ -1483,11 +1517,49 @@ mod tests {
             }
         );
 
+        // Drive the default main context so the generation-scoped bus watch
+        // reduces the real Playing transition and the fixture's natural EOS.
+        let mut observed_playing = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            while main_context.pending() {
+                main_context.iteration(false);
+            }
+            if states.has_changed().unwrap_or(false) {
+                match states.borrow_and_update().clone() {
+                    PlaybackSessionState::Playing { generation, .. } => {
+                        assert_eq!(generation, request_generation);
+                        observed_playing = true;
+                    }
+                    PlaybackSessionState::Stopped => break,
+                    PlaybackSessionState::Failed { failure, .. } => {
+                        panic!("the loopback fixture tune failed: {failure}");
+                    }
+                    _ => {}
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the loopback fixture must reach EOS through the production session"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            observed_playing,
+            "the production session must publish PLAYING from the appsrc feed"
+        );
+        assert_eq!(session.state().unwrap(), PlaybackSessionState::Stopped);
+        assert!(
+            session.paintable().unwrap().is_none(),
+            "EOS retirement settles the exact pipeline and its paintable"
+        );
+        assert!(server.request(Duration::from_secs(3)).is_some());
+
         picture.set_paintable(gtk::gdk::Paintable::NONE);
         assert!(picture.paintable().is_none());
         session
             .shut_down()
-            .expect("settle the production pipeline to NULL");
+            .expect("settle the production session after EOS");
         assert_eq!(session.state().unwrap(), PlaybackSessionState::ShutDown);
         assert!(session.paintable().unwrap().is_none());
         window.close();

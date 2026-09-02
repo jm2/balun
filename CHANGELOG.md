@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Application-owned direct stream transport** — Give `playbin3` only the
+  constant endpoint-free `appsrc://balun` URI and feed its exact built-in
+  `appsrc` from a Balun-owned HTTP worker. A private `reqwest` client disables
+  automatic and explicit proxies, redirects, and Referer, sends a fixed user
+  agent, uses HTTP/1.1 without pooling, and applies connect, response-header,
+  and idle-read deadlines to a credential-free numeric-host URL that is never
+  resolved by name. Body chunks are split to bounded buffers and handed
+  through a bounded channel to a dedicated blocking feeder, so neither the GTK
+  main context nor the controller runtime waits on GStreamer backpressure.
+  HTTP 503, 404, other statuses, and connect, stall, or truncation failures
+  reduce immediately to the fixed tuner-busy, channel-missing, rejected, and
+  offline categories through one bounded bus marker; cancellation is never
+  reported as EOS or failure. Teardown cancels the request before `NULL` and
+  joins both workers inside the same five-second bound, quarantining the owner
+  if the device connection cannot be proven closed. Loopback tests cover
+  status mapping, redirect refusal with an uncontacted target, refused,
+  stalled, and truncated streams, bounded chunk splitting and queue growth,
+  cancellation while reads and pushes are blocked, rapid replacement, joined
+  teardown, and `playbin3` decoding the checked-in fixture from the constant
+  URI; a child-process trap proves ambient proxy configuration is never
+  consulted. The startup capability snapshot now checks `appsrc` instead of
+  `souphttpsrc`, the display-backed production-session smoke streams the
+  fixture over loopback HTTP, and the validated generic GObject interface is
+  used so no `gstreamer-app` development dependency is added on any platform.
 - **Bounded discovery and playback transport decision** — Accept ADR-0001,
   retaining Balun's safe-Rust implementation of documented HDHomeRun discovery
   with explicit local, exact, and user-approved bounded routed authority rather
@@ -18,44 +42,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   application-owned `reqwest` transport with automatic and explicit proxies
   disabled. Record lifecycle and cross-platform acceptance requirements plus
   the rejected ambient-proxy, global GIO resolver, loopback relay, custom-source
-  first choice, and direct-native-URI alternatives. M2.9 remains open until the
-  selected transport and its proxy-trap, backpressure, and joined-teardown
-  proofs are implemented.
+  first choice, and direct-native-URI alternatives. The selected transport and
+  its proxy-trap, backpressure, and joined-teardown proofs landed on Linux as
+  the entry above; the native macOS and Windows lanes still owe the same
+  source-selection evidence before M2.9 closes.
 - **Endpoint-free playback failure categories** — Replace the generic native
   pipeline error with fixed tuner-busy, channel-missing, HTTP-rejected,
   offline, missing-codec/plugin, protected, and internal categories. HTTP
-  interpretation requires the exact source identity accepted by the live-source
-  policy, an exact native resource-error domain, and a bounded `u32` status;
-  only 503 and 404 receive special meaning, while other 3xx–5xx responses are
-  rejected and resource busy without 503 remains internal. Exact missing-plugin
-  element markers, core/stream error codes, and decryption codes supply the
-  remaining narrow categories. All other, malformed, wrong-domain, untrusted,
-  or source-policy rejection messages close to internal. The classifier never
-  formats, logs, or retains native error, debug, source-name, details, or
-  endpoint text.
+  interpretation uses only the numeric status observed by Balun's own
+  transport: 503 is tuner busy, 404 is channel missing, and every other status
+  is rejected, while connect, header, stall, and truncation failures are
+  offline. Exact missing-plugin element markers, core/stream error codes, and
+  decryption codes supply the remaining narrow categories. All other,
+  malformed, foreign-pipeline, or source-policy rejection messages close to
+  internal. The classifier never formats, logs, or retains native error,
+  debug, source-name, details, or endpoint text.
   `PlayerView` maps every category plus URL-free handoff failures to fixed
   visible and accessible status copy while preserving the stronger teardown
   warning. Adversarial tests place URI and credential-like secrets in every
   ignored native field and prove public category, session-failure, session-state,
-  and UI text remain clean. Portable direct/no-system-proxy transport is still
-  open, so M2.9 remains incomplete.
-- **Initial live-source element policy** — Install a schema-validated,
-  worker-thread-safe `playbin3` `source-setup` handler before the authorized URI
-  enters native storage. Production playback accepts only the exact
-  `souphttpsrc` factory, validates every required property's native type and
-  mutability, then applies and reads back disabled redirects, a cleared explicit
-  proxy, a ten-second timeout, zero retries, disabled internet-radio mode and
-  compression, a fixed Balun user agent, and disabled HTTP logging. An
-  unexpected, repeated, or unconfigurable source is locked and requested to
-  `NULL`; one field-free, playbin-sourced application marker enters the existing
-  generation-owned error/teardown path without retaining native or endpoint
-  text. Network-free tests cover accepted configuration, deduplicated rejection,
-  and worker-thread signal delivery; a crate-test-only exact `filesrc` exception
-  preserves the checked-in local playback fixture. This establishes an element
-  setup boundary, not direct routing: clearing `souphttpsrc`'s explicit proxy
-  can still leave a libsoup/GIO system resolver in effect. An unsafe
-  `GSimpleProxyResolver` extension workaround is rejected, and portable
-  direct/no-system-proxy transport remains open in M2.9.
+  and UI text remain clean.
+- **Live-source element policy** — Install a schema-validated,
+  worker-thread-safe `playbin3` `source-setup` handler before playback starts.
+  Production playback accepts only the exact built-in `appsrc` factory,
+  validates every required property's native type and mutability, then applies
+  and reads back fixed MPEG-TS caps, byte format, stream type, live and
+  blocking behavior, disabled signal emission and timestamping, and a bounded
+  queued-byte limit before handing the one authorized handoff to the private
+  transport. An unexpected, repeated, retired, or unconfigurable source is
+  locked and requested to `NULL`; one field-free, playbin-sourced application
+  marker enters the existing generation-owned error/teardown path without
+  retaining native or endpoint text. Network-free tests cover accepted
+  configuration, deduplicated rejection, retired-policy rejection, handoff
+  zeroization, and worker-thread signal delivery. No production element ever
+  receives a device URL, so no libsoup/GIO proxy resolver or unsafe
+  `GSimpleProxyResolver` workaround is involved.
 - **Essential live-TV controls** — Complete M2.8 with native header controls for
   Stop, normalized volume, independent mute, and fullscreen alongside the
   existing exact-generation channel activation. The main-context playback
@@ -150,7 +171,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initializes on the owned default GLib main context, enforces a native
   GStreamer 1.20 floor, exposes fixed path-free initialization failures, and
   takes one immutable startup snapshot of `playbin3`, `uridecodebin3`,
-  `decodebin3`, `souphttpsrc`, `tsdemux`, `deinterlace`, and
+  `decodebin3`, `appsrc`, `tsdemux`, `deinterlace`, and
   `gtk4paintablesink`. Missing components produce a playback-unavailable player
   state without disabling discovery or lineup inspection. This foundation does
   not yet create a pipeline, hand off a stream URL, choose codecs or an audio

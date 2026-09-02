@@ -1,4 +1,12 @@
-//! Private fail-closed policy for the HTTP element created by `playbin3`.
+//! Private fail-closed policy for the source element created by `playbin3`.
+//!
+//! Production playback assigns only the constant
+//! [`PIPELINE_URI`](super::transport::PIPELINE_URI) to `playbin3`, so the
+//! element it creates must be the exact built-in `appsrc`.
+//! This policy validates that element, configures it as a bounded live MPEG-TS
+//! byte feed, and hands the one authorized stream handoff to the Balun-owned
+//! transport. Any other, repeated, or unconfigurable source is locked to
+//! `NULL` and reported through one field-free application marker.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,27 +16,33 @@ use gst::prelude::*;
 use gstreamer as gst;
 
 use super::PlaybackFactory;
+use super::transport::{StreamTransport, TransportConfig};
+use crate::controller::StreamHandoff;
 
 const SOURCE_SETUP_SIGNAL: &str = "source-setup";
 const REJECTION_MESSAGE: &str = "balun-source-policy-rejected";
-const USER_AGENT: &str = concat!("Balun/", env!("CARGO_PKG_VERSION"));
-const TIMEOUT_SECONDS: u32 = 10;
-const RETRIES: i32 = 0;
+const STREAM_CAPS_NAME: &str = "video/mpegts";
+const STREAM_CAPS_SYSTEMSTREAM: &str = "systemstream";
+const FORMAT_NICK: &str = "bytes";
+const STREAM_TYPE_NICK: &str = "stream";
+/// Bounded bytes `appsrc` may hold before the feeder blocks.
+const MAX_QUEUED_BYTES: u64 = 4 * 1_024 * 1_024;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SourcePolicyError;
 
-struct SourcePolicyState {
-    expected_factory: gst::ElementFactory,
-    #[cfg(test)]
-    test_file_factory: Option<gst::ElementFactory>,
-    accepted_source: Mutex<Option<AcceptedSource>>,
-    rejected: AtomicBool,
+struct PendingStream {
+    handoff: StreamHandoff,
+    config: TransportConfig,
 }
 
-struct AcceptedSource {
-    object: gst::Object,
-    trusted_http: bool,
+struct SourcePolicyState {
+    expected_factory: gst::ElementFactory,
+    pending: Mutex<Option<PendingStream>>,
+    transport: Mutex<Option<StreamTransport>>,
+    accepted_source: Mutex<Option<gst::Object>>,
+    rejected: AtomicBool,
+    retired: AtomicBool,
 }
 
 pub(super) struct SourcePolicy {
@@ -37,14 +51,15 @@ pub(super) struct SourcePolicy {
     signal_handler: Option<glib::SignalHandlerId>,
 }
 
-#[derive(Clone)]
-pub(super) struct SourcePolicyMonitor {
-    state: Arc<SourcePolicyState>,
-}
-
 impl SourcePolicy {
-    pub(super) fn install(playbin: &gst::Pipeline) -> Result<Self, SourcePolicyError> {
-        let expected_factory = gst::ElementFactory::find(PlaybackFactory::SoupHttpSource.name())
+    /// Validate the `appsrc` contract without network work, retain the
+    /// authorized handoff privately, and connect the `source-setup` handler.
+    pub(super) fn install(
+        playbin: &gst::Pipeline,
+        handoff: StreamHandoff,
+        config: TransportConfig,
+    ) -> Result<Self, SourcePolicyError> {
+        let expected_factory = gst::ElementFactory::find(PlaybackFactory::AppSource.name())
             .ok_or(SourcePolicyError)?;
         let preflight = expected_factory
             .create()
@@ -59,10 +74,11 @@ impl SourcePolicy {
         let signal_id = validated_source_setup_signal(playbin)?;
         let state = Arc::new(SourcePolicyState {
             expected_factory,
-            #[cfg(test)]
-            test_file_factory: gst::ElementFactory::find("filesrc"),
+            pending: Mutex::new(Some(PendingStream { handoff, config })),
+            transport: Mutex::new(None),
             accepted_source: Mutex::new(None),
             rejected: AtomicBool::new(false),
+            retired: AtomicBool::new(false),
         });
         let playbin_weak = playbin.downgrade();
         let callback_playbin = playbin_weak.clone();
@@ -106,30 +122,44 @@ impl SourcePolicy {
         self.state.rejected.load(Ordering::Acquire)
     }
 
-    pub(super) fn monitor(&self) -> SourcePolicyMonitor {
-        SourcePolicyMonitor {
-            state: Arc::clone(&self.state),
+    /// Stop admitting sources, zeroize any unconsumed handoff, and cancel the
+    /// transport. The returned transport must be joined after the pipeline
+    /// reaches `NULL`; a later call returns `None`.
+    pub(super) fn retire(&self) -> Option<StreamTransport> {
+        self.state.retired.store(true, Ordering::Release);
+        if let Ok(mut pending) = self.state.pending.lock() {
+            pending.take();
         }
+        let transport = self
+            .state
+            .transport
+            .lock()
+            .ok()
+            .and_then(|mut transport| transport.take());
+        if let Some(transport) = transport.as_ref() {
+            transport.cancel();
+        }
+        transport
     }
-}
 
-impl SourcePolicyMonitor {
-    pub(super) fn is_trusted_http_source(&self, source: &gst::Object) -> bool {
-        if self.state.rejected.load(Ordering::Acquire) {
-            return false;
-        }
-        let matches = self.state.accepted_source.lock().is_ok_and(|accepted| {
-            !self.state.rejected.load(Ordering::Acquire)
-                && accepted
-                    .as_ref()
-                    .is_some_and(|accepted| accepted.trusted_http && accepted.object == *source)
-        });
-        matches && !self.state.rejected.load(Ordering::Acquire)
+    #[cfg(test)]
+    fn accepted_factory_name(&self) -> Option<String> {
+        self.state
+            .accepted_source
+            .lock()
+            .ok()?
+            .as_ref()?
+            .downcast_ref::<gst::Element>()?
+            .factory()
+            .map(|factory| factory.name().to_string())
     }
 }
 
 impl Drop for SourcePolicy {
     fn drop(&mut self) {
+        if let Some(transport) = self.retire() {
+            drop(transport);
+        }
         let Some(signal_handler) = self.signal_handler.take() else {
             return;
         };
@@ -141,47 +171,45 @@ impl Drop for SourcePolicy {
 
 impl SourcePolicyState {
     fn inspect_source(&self, playbin: &gst::Pipeline, source: &gst::Element) {
-        if self.rejected.load(Ordering::Acquire) {
+        if self.rejected.load(Ordering::Acquire) || self.retired.load(Ordering::Acquire) {
             self.reject(Some(playbin), Some(source));
             return;
         }
-
-        let factory = source.factory();
-        let production_source = factory.as_ref() == Some(&self.expected_factory);
-        #[cfg(test)]
-        let test_file_source = factory
-            .as_ref()
-            .is_some_and(|factory| self.test_file_factory.as_ref() == Some(factory));
-        #[cfg(not(test))]
-        let test_file_source = false;
-
-        if (!production_source && !test_file_source)
-            || (production_source && !configure_and_verify(source))
+        if source.factory().as_ref() != Some(&self.expected_factory)
+            || !configure_and_verify(source)
         {
             self.reject(Some(playbin), Some(source));
             return;
         }
 
-        let source_object = source.clone().upcast::<gst::Object>();
-        let accepted = self.accepted_source.lock();
-        let Ok(mut accepted) = accepted else {
+        let Ok(mut accepted) = self.accepted_source.lock() else {
             self.reject(Some(playbin), Some(source));
             return;
         };
-        if self.rejected.load(Ordering::Acquire) {
+        if accepted.is_some() || self.rejected.load(Ordering::Acquire) {
             drop(accepted);
             self.reject(Some(playbin), Some(source));
             return;
         }
-        match accepted.as_ref() {
-            None => {
-                *accepted = Some(AcceptedSource {
-                    object: source_object,
-                    trusted_http: production_source,
-                });
+        let pending = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.take());
+        let Some(pending) = pending else {
+            drop(accepted);
+            self.reject(Some(playbin), Some(source));
+            return;
+        };
+        match StreamTransport::start(pending.handoff, source.clone(), playbin, pending.config) {
+            Ok(transport) => {
+                *accepted = Some(source.clone().upcast::<gst::Object>());
+                drop(accepted);
+                if let Ok(mut slot) = self.transport.lock() {
+                    *slot = Some(transport);
+                }
             }
-            Some(existing) if existing.object == source_object => {}
-            Some(_) => {
+            Err(_) => {
                 drop(accepted);
                 self.reject(Some(playbin), Some(source));
             }
@@ -240,70 +268,82 @@ fn readable_writable_property<T: glib::types::StaticType>(
     })
 }
 
-fn configure_and_verify(source: &gst::Element) -> bool {
-    if !readable_writable_property::<bool>(source, "automatic-redirect")
-        || !readable_writable_property::<String>(source, "proxy")
-        || !readable_writable_property::<u32>(source, "timeout")
-        || !readable_writable_property::<i32>(source, "retries")
-        || !readable_writable_property::<bool>(source, "iradio-mode")
-        || !readable_writable_property::<bool>(source, "compress")
-        || !readable_writable_property::<String>(source, "user-agent")
-    {
-        return false;
-    }
-    let Some(log_property) = source.find_property("http-log-level").filter(|property| {
+fn readable_writable_enum(source: &gst::Element, name: &str, nick: &str) -> Option<glib::Value> {
+    let property = source.find_property(name).filter(|property| {
         let flags = property.flags();
         flags.contains(glib::ParamFlags::READABLE | glib::ParamFlags::WRITABLE)
             && !flags.contains(glib::ParamFlags::CONSTRUCT_ONLY)
-    }) else {
-        return false;
-    };
-    let Some(log_class) = glib::EnumClass::with_type(log_property.value_type()) else {
-        return false;
-    };
-    let Some(log_none) = log_class.to_value_by_nick("none") else {
-        return false;
-    };
-
-    source.set_property("automatic-redirect", false);
-    // This clears an explicit element proxy. It does not promise that a
-    // platform or libsoup resolver will bypass ambient proxy configuration.
-    source.set_property("proxy", "");
-    source.set_property("timeout", TIMEOUT_SECONDS);
-    source.set_property("retries", RETRIES);
-    source.set_property("iradio-mode", false);
-    source.set_property("compress", false);
-    source.set_property("user-agent", USER_AGENT);
-    source.set_property_from_value("http-log-level", &log_none);
-
-    let configured_log = source.property_value("http-log-level");
-    let configured_log_is_none = glib::EnumValue::from_value(&configured_log)
-        .is_some_and(|(_, value)| value.nick() == "none");
-    !source.property::<bool>("automatic-redirect")
-        && source.property::<String>("proxy").is_empty()
-        && source.property::<u32>("timeout") == TIMEOUT_SECONDS
-        && source.property::<i32>("retries") == RETRIES
-        && !source.property::<bool>("iradio-mode")
-        && !source.property::<bool>("compress")
-        && source.property::<String>("user-agent") == USER_AGENT
-        && configured_log_is_none
+    })?;
+    glib::EnumClass::with_type(property.value_type())?.to_value_by_nick(nick)
 }
 
-pub(super) fn is_rejection_message(message: &gst::MessageRef, playbin: &gst::Pipeline) -> bool {
-    let gst::MessageView::Application(application) = message.view() else {
+fn enum_nick_is(source: &gst::Element, name: &str, nick: &str) -> bool {
+    glib::EnumValue::from_value(&source.property_value(name))
+        .is_some_and(|(_, value)| value.nick() == nick)
+}
+
+/// Configure an `appsrc` as Balun's bounded live MPEG-TS byte feed and read
+/// every setting back. This performs no network work and never sees a URL.
+pub(super) fn configure_and_verify(source: &gst::Element) -> bool {
+    if !readable_writable_property::<gst::Caps>(source, "caps")
+        || !readable_writable_property::<bool>(source, "is-live")
+        || !readable_writable_property::<bool>(source, "block")
+        || !readable_writable_property::<bool>(source, "emit-signals")
+        || !readable_writable_property::<bool>(source, "do-timestamp")
+        || !readable_writable_property::<u64>(source, "max-bytes")
+    {
+        return false;
+    }
+    let (Some(format), Some(stream_type)) = (
+        readable_writable_enum(source, "format", FORMAT_NICK),
+        readable_writable_enum(source, "stream-type", STREAM_TYPE_NICK),
+    ) else {
         return false;
     };
-    message
-        .src()
-        .is_some_and(|source| source == playbin.upcast_ref::<gst::Object>())
-        && application.structure().is_some_and(|structure| {
-            structure.name() == REJECTION_MESSAGE && structure.n_fields() == 0
-        })
+
+    let caps = gst::Caps::builder(STREAM_CAPS_NAME)
+        .field(STREAM_CAPS_SYSTEMSTREAM, true)
+        .build();
+    source.set_property("caps", &caps);
+    source.set_property_from_value("format", &format);
+    source.set_property_from_value("stream-type", &stream_type);
+    source.set_property("is-live", true);
+    source.set_property("block", true);
+    source.set_property("emit-signals", false);
+    source.set_property("do-timestamp", false);
+    source.set_property("max-bytes", MAX_QUEUED_BYTES);
+
+    source
+        .property::<Option<gst::Caps>>("caps")
+        .is_some_and(|configured| configured.is_strictly_equal(&caps))
+        && enum_nick_is(source, "format", FORMAT_NICK)
+        && enum_nick_is(source, "stream-type", STREAM_TYPE_NICK)
+        && source.property::<bool>("is-live")
+        && source.property::<bool>("block")
+        && !source.property::<bool>("emit-signals")
+        && !source.property::<bool>("do-timestamp")
+        && source.property::<u64>("max-bytes") == MAX_QUEUED_BYTES
+}
+
+pub(super) fn is_rejection_marker(structure: &gst::StructureRef) -> bool {
+    structure.name() == REJECTION_MESSAGE && structure.n_fields() == 0
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
+    use crate::controller::OperationGeneration;
+    use crate::domain::{ChannelKey, DeviceId, GuideNumber};
+    use crate::playback::test_support::{FixtureStreamServer, StreamBehavior, fixture_response};
+    use crate::playback::transport::PIPELINE_URI;
+
+    const QUICK: TransportConfig = TransportConfig::new(
+        Duration::from_millis(500),
+        Duration::from_millis(1_500),
+        Duration::from_millis(500),
+    );
 
     fn pipeline() -> Option<gst::Pipeline> {
         gst::init().ok()?;
@@ -314,39 +354,81 @@ mod tests {
             .ok()
     }
 
+    fn handoff(url: &str) -> StreamHandoff {
+        StreamHandoff::test_fixture(
+            ChannelKey::new(
+                DeviceId::new(0x105A_1232).unwrap(),
+                GuideNumber::new("5.1").unwrap(),
+            ),
+            OperationGeneration::new(9),
+            url,
+        )
+    }
+
+    fn unreachable_handoff() -> StreamHandoff {
+        handoff("http://127.0.0.1:9/auto/v5.1")
+    }
+
+    fn mpeg2_decoder_available() -> bool {
+        ["avdec_mpeg2video", "mpeg2dec"]
+            .into_iter()
+            .any(|factory| gst::ElementFactory::find(factory).is_some())
+    }
+
     #[test]
-    fn accepted_source_schema_and_configuration_are_network_free() {
+    fn appsrc_configuration_is_exact_bounded_and_network_free() {
+        if gst::init().is_err() {
+            return;
+        }
+        let Ok(source) = gst::ElementFactory::make("appsrc").build() else {
+            return;
+        };
+        assert!(configure_and_verify(&source));
+        assert!(source.property::<bool>("is-live"));
+        assert!(source.property::<bool>("block"));
+        assert!(!source.property::<bool>("emit-signals"));
+        assert!(!source.property::<bool>("do-timestamp"));
+        assert_eq!(source.property::<u64>("max-bytes"), 4 * 1_024 * 1_024);
+        assert!(enum_nick_is(&source, "format", "bytes"));
+        assert!(enum_nick_is(&source, "stream-type", "stream"));
+        let caps = source.property::<Option<gst::Caps>>("caps").unwrap();
+        assert_eq!(caps.to_string(), "video/mpegts, systemstream=(boolean)true");
+
+        let foreign = gst::ElementFactory::make("fakesrc").build().unwrap();
+        assert!(!configure_and_verify(&foreign));
+    }
+
+    #[test]
+    fn accepted_appsrc_consumes_the_handoff_and_rejects_a_repeat() {
         let Some(playbin) = pipeline() else {
             return;
         };
-        let Ok(policy) = SourcePolicy::install(&playbin) else {
+        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK) else {
             return;
         };
         assert!(validated_source_setup_signal(&playbin).is_ok());
-        let source = gst::ElementFactory::make("souphttpsrc").build().unwrap();
+        let source = gst::ElementFactory::make("appsrc").build().unwrap();
 
         playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&source]);
 
         assert!(!policy.is_rejected());
-        assert!(configure_and_verify(&source));
+        assert_eq!(policy.accepted_factory_name().as_deref(), Some("appsrc"));
+        assert!(policy.state.pending.lock().unwrap().is_none());
+        assert!(policy.state.transport.lock().unwrap().is_some());
+
+        let repeat = gst::ElementFactory::make("appsrc").build().unwrap();
+        playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&repeat]);
+        assert!(policy.is_rejected());
+        assert!(repeat.is_locked_state());
+        assert!(!source.is_locked_state());
+
+        let mut transport = policy
+            .retire()
+            .expect("the accepted transport is returned once");
+        assert!(policy.retire().is_none());
         assert_eq!(
-            policy
-                .state
-                .accepted_source
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|accepted| &accepted.object),
-            Some(source.upcast_ref::<gst::Object>())
-        );
-        assert!(
-            policy
-                .state
-                .accepted_source
-                .lock()
-                .unwrap()
-                .as_ref()
-                .is_some_and(|accepted| accepted.trusted_http)
+            transport.join(Instant::now() + Duration::from_secs(5)),
+            Ok(())
         );
     }
 
@@ -355,7 +437,7 @@ mod tests {
         let Some(playbin) = pipeline() else {
             return;
         };
-        let Ok(policy) = SourcePolicy::install(&playbin) else {
+        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK) else {
             return;
         };
         let bus = playbin.bus().unwrap();
@@ -369,17 +451,27 @@ mod tests {
         assert!(policy.is_rejected());
         assert!(first.is_locked_state());
         assert!(second.is_locked_state());
+        assert!(
+            policy.state.pending.lock().unwrap().is_some(),
+            "a rejected foreign source never consumes the handoff"
+        );
         let message = bus
             .timed_pop_filtered(
                 gst::ClockTime::from_mseconds(10),
                 &[gst::MessageType::Application],
             )
             .expect("the first rejection posts its fixed marker");
-        assert!(is_rejection_message(&message, &playbin));
+        assert_eq!(message.src(), Some(playbin.upcast_ref::<gst::Object>()));
+        let gst::MessageView::Application(application) = message.view() else {
+            panic!("application marker");
+        };
+        assert!(is_rejection_marker(application.structure().unwrap()));
         assert!(
             bus.timed_pop_filtered(gst::ClockTime::ZERO, &[gst::MessageType::Application])
                 .is_none()
         );
+        assert!(policy.retire().is_none());
+        assert!(policy.state.pending.lock().unwrap().is_none());
     }
 
     #[test]
@@ -387,71 +479,168 @@ mod tests {
         let Some(playbin) = pipeline() else {
             return;
         };
-        let Ok(policy) = SourcePolicy::install(&playbin) else {
+        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK) else {
             return;
         };
         let worker_playbin = playbin.clone();
-        let source = std::thread::spawn(move || {
-            let source = gst::ElementFactory::make("souphttpsrc").build().unwrap();
+        std::thread::spawn(move || {
+            let source = gst::ElementFactory::make("appsrc").build().unwrap();
             worker_playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&source]);
-            source
         })
         .join()
         .unwrap();
 
         assert!(!policy.is_rejected());
+        assert_eq!(policy.accepted_factory_name().as_deref(), Some("appsrc"));
+        let mut transport = policy.retire().unwrap();
         assert_eq!(
-            policy
-                .state
-                .accepted_source
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|accepted| &accepted.object),
-            Some(source.upcast_ref::<gst::Object>())
+            transport.join(Instant::now() + Duration::from_secs(5)),
+            Ok(())
         );
     }
 
     #[test]
-    fn test_only_file_source_is_accepted_but_never_http_trusted() {
+    fn retired_policy_rejects_late_sources_and_zeroizes_the_handoff() {
         let Some(playbin) = pipeline() else {
             return;
         };
-        let Ok(policy) = SourcePolicy::install(&playbin) else {
+        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK) else {
             return;
         };
-        let Ok(source) = gst::ElementFactory::make("filesrc").build() else {
-            return;
-        };
+        assert!(policy.retire().is_none());
+        assert!(policy.state.pending.lock().unwrap().is_none());
 
-        playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&source]);
-
-        assert!(!policy.is_rejected());
-        assert!(
-            !policy
-                .monitor()
-                .is_trusted_http_source(source.upcast_ref::<gst::Object>())
-        );
-    }
-
-    #[test]
-    fn later_source_rejection_revokes_the_previously_trusted_identity() {
-        let Some(playbin) = pipeline() else {
-            return;
-        };
-        let Ok(policy) = SourcePolicy::install(&playbin) else {
-            return;
-        };
-        let source = gst::ElementFactory::make("souphttpsrc").build().unwrap();
-        playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&source]);
-        let monitor = policy.monitor();
-        assert!(monitor.is_trusted_http_source(source.upcast_ref::<gst::Object>()));
-
-        let unexpected = gst::ElementFactory::make("fakesrc").build().unwrap();
-        playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&unexpected]);
-
+        let late = gst::ElementFactory::make("appsrc").build().unwrap();
+        playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&late]);
         assert!(policy.is_rejected());
-        assert!(unexpected.is_locked_state());
-        assert!(!monitor.is_trusted_http_source(source.upcast_ref::<gst::Object>()));
+        assert!(late.is_locked_state());
+        assert!(policy.state.transport.lock().unwrap().is_none());
+    }
+
+    /// Explicit runtime probe for CI lanes: the installed GStreamer must map
+    /// the constant URI to the exact built-in `appsrc`. Unlike the ordinary
+    /// unit tests, a missing factory fails instead of skipping, and no decoder
+    /// or display is needed because the pipeline only reaches PAUSED.
+    #[test]
+    #[ignore = "requires the installed GStreamer playback foundation"]
+    fn installed_runtime_maps_the_constant_uri_to_exact_appsrc() {
+        gst::init().expect("initialize the installed GStreamer runtime");
+        assert!(
+            gst::ElementFactory::find("appsrc").is_some(),
+            "the installed runtime must provide the built-in appsrc"
+        );
+        let playbin = gst::ElementFactory::make("playbin3")
+            .build()
+            .expect("the installed runtime must provide playbin3")
+            .downcast::<gst::Pipeline>()
+            .expect("playbin3 is a pipeline");
+        let video_sink = gst::ElementFactory::make("fakesink").build().unwrap();
+        let audio_sink = gst::ElementFactory::make("fakesink").build().unwrap();
+        playbin.set_property("video-sink", &video_sink);
+        playbin.set_property("audio-sink", &audio_sink);
+        let policy = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK)
+            .expect("install the appsrc policy on the installed runtime");
+        playbin.set_property("uri", PIPELINE_URI);
+        assert_eq!(
+            playbin.property::<Option<String>>("uri").as_deref(),
+            Some(PIPELINE_URI)
+        );
+
+        playbin
+            .set_state(gst::State::Paused)
+            .expect("playbin3 must accept the constant URI");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while policy.accepted_factory_name().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            policy.accepted_factory_name().as_deref(),
+            Some("appsrc"),
+            "playbin3 must deliver the exact built-in appsrc through source-setup"
+        );
+        assert!(!policy.is_rejected());
+
+        let mut transport = policy.retire().expect("the accepted transport is returned");
+        playbin.set_state(gst::State::Null).unwrap();
+        let (transition, current, _) = playbin.state(gst::ClockTime::from_seconds(5));
+        assert!(transition.is_ok());
+        assert_eq!(current, gst::State::Null);
+        assert_eq!(
+            transport.join(Instant::now() + Duration::from_secs(5)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn playbin3_resolves_the_constant_uri_to_exact_appsrc_and_plays_a_loopback_fixture() {
+        let Some(playbin) = pipeline() else {
+            return;
+        };
+        if !mpeg2_decoder_available() || gst::ElementFactory::find("tsdemux").is_none() {
+            return;
+        }
+        let server = FixtureStreamServer::start(fixture_response(), StreamBehavior::Close);
+        let video_sink = gst::ElementFactory::make("fakesink").build().unwrap();
+        let audio_sink = gst::ElementFactory::make("fakesink").build().unwrap();
+        playbin.set_property("video-sink", &video_sink);
+        playbin.set_property("audio-sink", &audio_sink);
+        let policy = SourcePolicy::install(&playbin, handoff(&server.stream_url()), QUICK)
+            .expect("install the appsrc policy");
+        playbin.set_property("uri", PIPELINE_URI);
+        assert_eq!(
+            playbin.property::<Option<String>>("uri").as_deref(),
+            Some(PIPELINE_URI)
+        );
+        let bus = playbin.bus().unwrap();
+
+        playbin
+            .set_state(gst::State::Playing)
+            .expect("request playback");
+        assert_eq!(policy.accepted_factory_name().as_deref(), Some("appsrc"));
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut reached_playing = false;
+        let mut terminal = None;
+        while terminal.is_none() && Instant::now() < deadline {
+            let Some(message) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) else {
+                continue;
+            };
+            match message.view() {
+                gst::MessageView::Eos(_) => terminal = Some("eos"),
+                gst::MessageView::Error(_) => terminal = Some("error"),
+                gst::MessageView::Application(_) => terminal = Some("application"),
+                gst::MessageView::StateChanged(changed)
+                    if message.src() == Some(playbin.upcast_ref::<gst::Object>())
+                        && changed.current() == gst::State::Playing =>
+                {
+                    reached_playing = true;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(terminal, Some("eos"));
+        assert!(
+            reached_playing,
+            "playbin3 must reach PLAYING from the appsrc feed"
+        );
+        assert!(
+            video_sink
+                .property::<gst::Structure>("stats")
+                .get::<u64>("rendered")
+                .is_ok_and(|rendered| rendered >= 2)
+        );
+        assert!(!policy.is_rejected());
+
+        let mut transport = policy
+            .retire()
+            .expect("the played transport is returned once");
+        playbin.set_state(gst::State::Null).unwrap();
+        let (transition, current, _) = playbin.state(gst::ClockTime::from_seconds(5));
+        assert!(transition.is_ok());
+        assert_eq!(current, gst::State::Null);
+        assert_eq!(
+            transport.join(Instant::now() + Duration::from_secs(5)),
+            Ok(())
+        );
     }
 }

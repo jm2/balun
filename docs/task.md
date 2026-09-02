@@ -55,13 +55,15 @@ labeled button, F11, and Escape without letting nested Back navigation escape
 the player. Layered core, widget, production-session, and isolated Wayland tests
 cover this contract. Audible output, the complete codec/audio-sink package,
 native-platform runtime acceptance, and the broader M4.6 accessibility audit
-remain separate work. The live-source setup boundary now requires and
-configures an exact production `souphttpsrc`, rejects source mismatches without
-endpoint text, and retains its exact identity for sanitized error reduction.
-Native failures now reduce to seven fixed categories from exact source identity,
-numeric HTTP status, and native domains only, and the player maps those plus
-handoff failures to fixed visible and accessible copy. A portable
-direct/no-system-proxy transport remains open in M2.9.
+remain separate work. Production playback now gives GStreamer only the
+constant `appsrc://balun` URI: the source policy accepts exactly one built-in
+`appsrc`, and a Balun-owned no-proxy `reqwest` transport feeds it through a
+bounded channel and blocking feeder, with numeric HTTP status and transport
+failures reduced to the seven fixed categories and both workers joined inside
+the five-second teardown bound. Loopback tests, including a child-process
+ambient-proxy trap and a `playbin3` decode of the checked-in fixture from the
+constant URI, cover the Linux contract; the native macOS and Windows CI lanes
+still need to run the same source-selection checks before M2.9 closes.
 
 The shortest path to the first live-TV test is:
 
@@ -192,7 +194,7 @@ compatibility/error-path work, not prerequisites for that first picture.
   the default library and diagnostic acquire neither GTK nor GStreamer. Own
   initialization on the default GLib main context, enforce the native 1.20
   floor, expose fixed path-free failures, and snapshot exactly `playbin3`,
-  `uridecodebin3`, `decodebin3`, `souphttpsrc`, `tsdemux`, `deinterlace`, and
+  `uridecodebin3`, `decodebin3`, `appsrc`, `tsdemux`, `deinterlace`, and
   `gtk4paintablesink`. Missing components disable playback readiness without
   disabling discovery or lineup inspection; no pipeline or stream URL exists in
   this slice.
@@ -248,25 +250,28 @@ compatibility/error-path work, not prerequisites for that first picture.
   context into accessible connecting, buffering-percentage, playing, stopped,
   and category-specific failed presentation. Error and EOS transitions clear
   the stale paintable, while stale-generation events remain unable to overwrite
-  a successor. A validated, worker-thread-safe `playbin3` `source-setup` handler
-  requires exact production `souphttpsrc` factory identity, applies and reads
-  back fixed source-property values, retains the accepted source identity, and
-  locks rejected sources to `NULL` before publishing one field-free marker into
-  the generation-owned error/teardown path. Native messages reduce only from
-  exact trusted identity, numeric HTTP status, exact error domains, or an exact
-  missing-plugin marker into fixed tuner-busy, missing, rejected, offline,
-  missing-codec/plugin, protected, and internal categories. The player maps
-  those categories and URL-free handoff failures to fixed visible and
-  accessible copy. Adversarial, network-free tests prove malformed, untrusted,
-  and secret-bearing native fields cannot enter public failure, state, or UI
-  text. Clearing the source's explicit `proxy` property does not prove
-  direct/no-system-proxy routing, however, and unsafe `GSimpleProxyResolver`
-  registration is explicitly rejected as a workaround. A supported portable
-  direct transport and fail-closed completion of that source contract remain
-  open. ADR-0001 selects a fixed endpoint-free `appsrc://balun` URI backed by a
-  bounded Balun-owned `reqwest` no-proxy worker; implementation, proxy-trap,
-  cross-platform source-selection, backpressure, and joined-teardown proof are
-  still required before this record can close.
+  a successor. Production playback gives `playbin3` only the constant
+  `appsrc://balun` URI: a validated, worker-thread-safe `source-setup` handler
+  accepts exactly one built-in `appsrc`, configures and reads back a bounded
+  live MPEG-TS byte feed, locks any other, repeated, or retired source to
+  `NULL` behind one field-free marker, and hands the one authorized handoff to
+  a Balun-owned transport whose private `reqwest` client disables proxies,
+  redirects, and Referer and never resolves a name. Numeric HTTP status and
+  connect, stall, or truncation outcomes reduce to the fixed tuner-busy,
+  missing, rejected, and offline categories through one bounded bus marker;
+  native missing-plugin, codec, and decryption codes cover the remaining
+  categories; everything else closes to internal, and the player maps all
+  categories plus URL-free handoff failures to fixed visible and accessible
+  copy. Teardown cancels the request before `NULL` and joins both transport
+  workers inside the same bound. Loopback tests prove status mapping, redirect
+  refusal, refused, stalled, and truncated streams, bounded chunk splitting and
+  queue growth, cancellation while reads and pushes are blocked, rapid
+  replacement, joined teardown, `playbin3` decoding the checked-in fixture
+  from the constant URI, and a child-process trap showing ambient proxy
+  configuration is never consulted. Remaining before this record closes: the
+  native macOS and Windows CI lanes must run the same source-selection and
+  transport checks so the constant-URI contract is proven on every supported
+  runtime rather than on Linux alone.
 
 - [ ] **M2.10 — Prove deterministic teardown.** Rapid switch, device
   reselection, discovery mutation, pipeline error, window close, and process
