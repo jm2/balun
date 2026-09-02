@@ -41,6 +41,7 @@ const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const METADATA_REQUEST_DEADLINE: Duration = Duration::from_secs(2);
 const STREAM_REQUEST_DEADLINE: Duration = Duration::from_secs(3);
 const STREAM_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+const STREAM_WRITE_CHUNK: usize = 16 * 1_024;
 const STREAM_READ_TIMEOUT: Duration = Duration::from_millis(100);
 const CLIENT_CLOSE_CAP: Duration = Duration::from_secs(10);
 const REPEAT_PACE: Duration = Duration::from_millis(5);
@@ -475,8 +476,18 @@ fn serve_fixture_repeat(stream: &mut TcpStream, stop: &AtomicBool) {
             Err(error) if is_timeout(&error) => {}
             Err(_) => return,
         }
-        if stream.write_all(FIXTURE_BYTES).is_err() {
-            return;
+        let mut written = 0;
+        while written < FIXTURE_BYTES.len() {
+            if stop.load(Ordering::Acquire) {
+                return;
+            }
+            let end = (written + STREAM_WRITE_CHUNK).min(FIXTURE_BYTES.len());
+            match stream.write(&FIXTURE_BYTES[written..end]) {
+                Ok(0) => return,
+                Ok(count) => written += count,
+                Err(error) if is_timeout(&error) => {}
+                Err(_) => return,
+            }
         }
         thread::sleep(REPEAT_PACE);
     }

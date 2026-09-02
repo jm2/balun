@@ -224,18 +224,22 @@ mod tests {
         timeout: Duration,
     ) {
         let deadline = Instant::now() + timeout;
+        let mut observed_playing = false;
         loop {
             pump_context(main_context);
             if states.has_changed().unwrap_or(false) {
                 match states.borrow_and_update().clone() {
                     PlaybackSessionState::Playing { generation, .. } if generation == wanted => {
-                        return;
+                        observed_playing = true;
                     }
                     PlaybackSessionState::Failed { failure, .. } => {
                         panic!("the fake-device tune failed: {failure}");
                     }
                     _ => {}
                 }
+            }
+            if observed_playing {
+                return;
             }
             assert!(
                 Instant::now() < deadline,
