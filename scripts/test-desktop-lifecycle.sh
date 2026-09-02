@@ -291,6 +291,25 @@ dbus-run-session -- \
         playback::fake_device_e2e::tests::fake_device_production_session_tunes_switches_and_releases_the_tuner -- \
         --exact --ignored --nocapture
 
+# The channel-missing lane proves a failing production session still
+# classifies and releases its one tuner connection.
+dbus-run-session -- \
+    timeout --signal=TERM --kill-after=5s 30s \
+    cargo test --locked --features desktop --lib \
+        playback::fake_device_e2e::tests::fake_device_production_session_failure_releases_the_tuner -- \
+        --exact --ignored --nocapture
+
+# The window release smoke asserts GTK's Wayland backend, so it runs only
+# under the selected headless Wayland compositor; the optional Xvfb fallback
+# keeps every other lifecycle smoke usable.
+if [ "$selected_backend" = wayland ]; then
+    dbus-run-session -- \
+        timeout --signal=TERM --kill-after=5s 60s \
+        cargo test --locked --features desktop --bin balun \
+            ui::window::tests::fake_device_window_releases_tuners_on_device_change_mutation_and_close -- \
+            --exact --ignored --nocapture
+fi
+
 dbus-run-session -- \
     timeout --signal=TERM --kill-after=5s 30s \
     cargo test --locked --features desktop --bin balun \

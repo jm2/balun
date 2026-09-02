@@ -32,6 +32,9 @@ pub(crate) struct PlayerView {
     session: Option<PlaybackSession>,
     updating_audio_controls: Cell<bool>,
     pending_response: RefCell<Option<gtk::glib::JoinHandle<()>>>,
+    /// Test-only observation of `stop` invocations for release-wiring smokes.
+    #[cfg(test)]
+    stop_calls: Cell<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -151,6 +154,23 @@ impl PlayerView {
     /// Return the native pointer/Enter/Space fullscreen request control.
     pub(crate) const fn fullscreen_button(&self) -> &gtk::Button {
         &self.fullscreen_button
+    }
+
+    /// Return the header-presented playback status copy for smoke
+    /// assertions; production code reaches this label only through the
+    /// session-state presentation it applies itself.
+    #[cfg(test)]
+    pub(crate) const fn playback_status(&self) -> &gtk::Label {
+        &self.playback_status
+    }
+
+    /// Return how often `stop` has been invoked. The bin-side window smoke
+    /// cannot host the lib-only fake stream device, so it observes this
+    /// counter to prove the stop wiring itself fired; production code has
+    /// no such observation.
+    #[cfg(test)]
+    pub(crate) fn stop_call_count(&self) -> u32 {
+        self.stop_calls.get()
     }
 
     /// Reconcile presentation only after the application window reports its
@@ -320,6 +340,8 @@ impl PlayerView {
     /// Cancel pending resolution, hide any retained frame, and settle the
     /// current generation without making the session terminal.
     pub(crate) fn stop(&self) -> Result<(), PlaybackSessionFailure> {
+        #[cfg(test)]
+        self.stop_calls.set(self.stop_calls.get() + 1);
         self.stop_button.set_sensitive(false);
         self.abort_pending_response();
         self.apply_paintable(None);
@@ -682,6 +704,8 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         session,
         updating_audio_controls: Cell::new(false),
         pending_response: RefCell::new(None),
+        #[cfg(test)]
+        stop_calls: Cell::new(0),
     };
     // Exercise the same narrow binding path used after a future tune. The
     // newly constructed session is inert, so this keeps the status visible.

@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fake HDHomeRun end-to-end tests** — A loopback fake device with UDP discovery, metadata, and
   an MPEG-TS stream server drives the real controller, transport, and session from discovery
   through lineup, DRM refusal, tuning, channel switching, and observed tuner release.
+- **Teardown-release proofs** — The fake device can also present a deliberately missing channel
+  and a second synthetic device: a failed tune must classify as its fixed category and release
+  its own connection, and the real window's device-change, discovery-mutation, and close paths
+  must stop playback through the production wiring.
 - **Synthetic playback acceptance** — A checked-in MPEG-2 transport-stream fixture and an isolated
   headless-Wayland harness prove decoding, rendering, EOS, and teardown on Linux CI.
 - **Installed-runtime playback probes** — `--probe-playback` (`-ProbePlayback` on Windows) checks

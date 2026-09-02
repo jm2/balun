@@ -727,7 +727,25 @@ fn connect_joined_shutdown(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use balun::controller::{
+        DiscoveryFailure, DiscoveryFuture, DiscoveryService, DiscoveryStatus, SelectedLineupStatus,
+    };
+    use balun::discovery::{
+        DiscoveryClient, DiscoveryError, DiscoveryMethod, DiscoveryObservation, DiscoveryReport,
+        ExactDiscoveryTarget, ProbeConfig,
+    };
+    use balun::domain::DeviceId;
+    use balun::hdhr::protocol::{
+        DEVICE_TYPE_TUNER, DISCOVERY_UDP_PORT, FRAME_OVERHEAD, MAX_PACKET_SIZE, TAG_BASE_URL,
+        TAG_DEVICE_ID, TAG_DEVICE_TYPE, TAG_LINEUP_URL, TAG_TUNER_COUNT, TYPE_DISCOVER_REPLY,
+        TYPE_DISCOVER_REQUEST,
+    };
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
 
@@ -1148,5 +1166,622 @@ mod tests {
             ControllerCommand::SelectDevice(device_id)
         );
         assert_eq!(selection_command(None), ControllerCommand::ClearSelection);
+    }
+
+    /// Checksum-valid synthetic identity of the loopback discovery responder.
+    const WINDOW_SMOKE_DEVICE_ID: u32 = 0x105A_1232;
+    /// Checksum-valid second synthetic identity for the device-change lane.
+    const WINDOW_SMOKE_SECOND_DEVICE_ID: u32 = 0x205B_0144;
+    /// Synthetic discovery source of the unreachable second device.
+    const WINDOW_SMOKE_SECOND_SOURCE_PORT: u16 = 65_002;
+    /// Bound for the whole phase-driven window release flow.
+    const WINDOW_SMOKE_PHASE_BOUND: Duration = Duration::from_secs(45);
+    /// Outer watchdog bound; the lifecycle script still enforces its own.
+    const WINDOW_SMOKE_WATCHDOG: Duration = Duration::from_secs(50);
+
+    fn window_smoke_device_id() -> DeviceId {
+        DeviceId::new(WINDOW_SMOKE_DEVICE_ID)
+            .expect("the loopback responder identity is checksum-valid")
+    }
+
+    fn window_smoke_second_device_id() -> DeviceId {
+        DeviceId::new(WINDOW_SMOKE_SECOND_DEVICE_ID)
+            .expect("the second synthetic identity is checksum-valid")
+    }
+
+    fn window_smoke_probe_config() -> ProbeConfig {
+        ProbeConfig::new(1, Duration::from_millis(200), 16, 4)
+            .expect("the fixed window-smoke probe budget is valid")
+    }
+
+    fn window_smoke_discovery_failure(error: DiscoveryError) -> DiscoveryFailure {
+        match error {
+            DiscoveryError::Interfaces(_) => DiscoveryFailure::InterfaceEnumeration,
+            DiscoveryError::Io { .. } | DiscoveryError::ShortSend { .. } => {
+                DiscoveryFailure::Network
+            }
+            DiscoveryError::InvalidEndpoint { .. }
+            | DiscoveryError::Task(_)
+            | DiscoveryError::RoutedScanDeadline { .. }
+            | DiscoveryError::Cancelled
+            | DiscoveryError::Protocol(_) => DiscoveryFailure::Internal,
+        }
+    }
+
+    fn window_smoke_second_observation() -> DiscoveryObservation {
+        DiscoveryObservation {
+            device_id: window_smoke_second_device_id(),
+            source: SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                WINDOW_SMOKE_SECOND_SOURCE_PORT,
+            ),
+            method: DiscoveryMethod::Targeted,
+            interface: None,
+            device_types: vec![DEVICE_TYPE_TUNER],
+            tuner_count: Some(1),
+            advertised_base_url: None,
+            advertised_lineup_url: None,
+        }
+    }
+
+    /// Stateful discovery lane behind the window smoke: odd refreshes run the
+    /// real targeted probe against the loopback responder and retain one
+    /// hand-built observation for the second synthetic device; the second
+    /// refresh reports the device gone (the mutation lane).
+    struct WindowSmokeDiscovery {
+        target: SocketAddr,
+        refresh_calls: Arc<AtomicUsize>,
+    }
+
+    impl DiscoveryService for WindowSmokeDiscovery {
+        fn discover_local(&self, cancellation: CancellationToken) -> DiscoveryFuture {
+            let client = DiscoveryClient::new(window_smoke_probe_config());
+            let target = self.target;
+            let refresh_calls = Arc::clone(&self.refresh_calls);
+            Box::pin(async move {
+                let call = refresh_calls.fetch_add(1, Ordering::SeqCst) + 1;
+                if call.is_multiple_of(2) {
+                    return Ok::<_, DiscoveryFailure>(DiscoveryReport::default());
+                }
+                let mut report = client
+                    .discover_target(target, None, &cancellation)
+                    .await
+                    .map_err(window_smoke_discovery_failure)?;
+                report.observations.push(window_smoke_second_observation());
+                Ok(report)
+            })
+        }
+
+        fn discover_exact(
+            &self,
+            _target: ExactDiscoveryTarget,
+            _expected_device: Option<DeviceId>,
+            _cancellation: CancellationToken,
+        ) -> DiscoveryFuture {
+            // The window smoke never issues exact-address discovery; like the
+            // packet-free application smoke, answer with an empty report.
+            Box::pin(async { Ok::<_, DiscoveryFailure>(DiscoveryReport::default()) })
+        }
+    }
+
+    /// Loopback UDP responder impersonating one HDHomeRun tuner on the fixed
+    /// discovery port. It advertises production-shaped port-80 metadata URLs;
+    /// nothing serves them, so a real selection settles `Unreachable` without
+    /// ever contacting a tuner.
+    struct WindowSmokeResponder {
+        target: SocketAddr,
+        stop: Arc<AtomicBool>,
+        worker: Option<thread::JoinHandle<()>>,
+    }
+
+    impl WindowSmokeResponder {
+        fn start() -> Self {
+            let target = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DISCOVERY_UDP_PORT);
+            let socket = UdpSocket::bind(target).expect("bind the loopback discovery responder");
+            let stop = Arc::new(AtomicBool::new(false));
+            let reply = encode_window_smoke_discover_reply();
+            let worker_stop = Arc::clone(&stop);
+            let worker = thread::spawn(move || {
+                let _ = socket.set_read_timeout(Some(Duration::from_millis(50)));
+                let mut buffer = [0_u8; MAX_PACKET_SIZE];
+                while !worker_stop.load(Ordering::Acquire) {
+                    match socket.recv_from(&mut buffer) {
+                        Ok((received, peer)) => {
+                            if received >= 2
+                                && u16::from_be_bytes([buffer[0], buffer[1]])
+                                    == TYPE_DISCOVER_REQUEST
+                            {
+                                let _ = socket.send_to(&reply, peer);
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(_) => return,
+                    }
+                }
+            });
+            Self {
+                target,
+                stop,
+                worker: Some(worker),
+            }
+        }
+    }
+
+    impl Drop for WindowSmokeResponder {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    fn encode_window_smoke_discover_reply() -> Vec<u8> {
+        let mut payload = Vec::new();
+        push_window_smoke_tlv(
+            &mut payload,
+            TAG_DEVICE_TYPE,
+            &DEVICE_TYPE_TUNER.to_be_bytes(),
+        );
+        push_window_smoke_tlv(
+            &mut payload,
+            TAG_DEVICE_ID,
+            &WINDOW_SMOKE_DEVICE_ID.to_be_bytes(),
+        );
+        push_window_smoke_tlv(&mut payload, TAG_TUNER_COUNT, &[2]);
+        push_window_smoke_tlv(&mut payload, TAG_BASE_URL, b"http://127.0.0.1:80");
+        push_window_smoke_tlv(
+            &mut payload,
+            TAG_LINEUP_URL,
+            b"http://127.0.0.1:80/lineup.json",
+        );
+
+        let payload_length = u16::try_from(payload.len())
+            .expect("the smoke discovery payload stays far below the u16 maximum");
+        let mut frame = Vec::with_capacity(payload.len() + FRAME_OVERHEAD);
+        frame.extend_from_slice(&TYPE_DISCOVER_REPLY.to_be_bytes());
+        frame.extend_from_slice(&payload_length.to_be_bytes());
+        frame.extend_from_slice(&payload);
+        let crc = crc32fast::hash(&frame);
+        frame.extend_from_slice(&crc.to_le_bytes());
+        frame
+    }
+
+    fn push_window_smoke_tlv(payload: &mut Vec<u8>, tag: u8, value: &[u8]) {
+        payload.push(tag);
+        if value.len() < 0x80 {
+            payload.push(value.len() as u8);
+        } else {
+            payload.push(0x80 | (value.len() & 0x7F) as u8);
+            payload.push((value.len() >> 7) as u8);
+        }
+        payload.extend_from_slice(value);
+    }
+
+    fn device_row_position(selection: &gtk::SingleSelection, wanted: DeviceId) -> Option<u32> {
+        let model = selection.model()?;
+        (0..model.n_items()).find(|position| {
+            model
+                .item(*position)
+                .and_then(|item| item.downcast::<DeviceRowObject>().ok())
+                .and_then(|row| row.device_id())
+                == Some(wanted)
+        })
+    }
+
+    fn fail_window_smoke(
+        failure: &Rc<RefCell<Option<String>>>,
+        application: &adw::Application,
+        text: String,
+    ) {
+        if failure.borrow().is_none() {
+            failure.replace(Some(text));
+        }
+        application.quit();
+    }
+
+    /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
+    /// compile but skip this compositor-dependent Wayland contract.
+    ///
+    /// Crate-boundary note: the loopback fake *stream* device is a lib-test
+    /// module, and the bin target enforces the production metadata-port
+    /// policy whose loopback exemption compiles only into lib test builds, so
+    /// this bin-side window proof cannot open a real tuner or host active
+    /// playback. It instead drives the production window wiring end to end
+    /// against the real controller and a real targeted discovery probe, and
+    /// observes `PlayerView`'s own test-only stop counter directly: the
+    /// sidebar-signal stop-on-admission for a user device change, the snapshot
+    /// reducer's accepted-generation stop for the mutation that makes the
+    /// selected device vanish, and the joined close shutdown of the controller
+    /// and the playback session. The real-tuner release proofs for these same
+    /// window stop paths (a live tuner observed `Closed` on device change,
+    /// mutation, and close) live in `playback::fake_device_e2e`, and the
+    /// sidebar admission stop itself is separately covered by the widget
+    /// tests in this crate.
+    #[test]
+    #[ignore = "requires the isolated Wayland compositor and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
+    fn fake_device_window_releases_tuners_on_device_change_mutation_and_close() {
+        assert_eq!(
+            std::env::var("GDK_BACKEND").as_deref(),
+            Ok("wayland"),
+            "this smoke must exercise GTK's Wayland backend"
+        );
+
+        let responder = Rc::new(WindowSmokeResponder::start());
+        let refresh_calls = Arc::new(AtomicUsize::new(0));
+        let controller = ControllerRuntime::start(WindowSmokeDiscovery {
+            target: responder.target,
+            refresh_calls: Arc::clone(&refresh_calls),
+        })
+        .expect("start the window smoke controller against the loopback responder");
+
+        let application = adw::Application::builder()
+            .application_id("io.github.jm2.Balun.FakeDeviceWindowSmoke")
+            .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
+            .build();
+        let completed = Rc::new(Cell::new(false));
+        let failure = Rc::new(RefCell::new(None::<String>));
+        let shutdown_failed = Rc::new(Cell::new(false));
+        let setup = Rc::new(RefCell::new(Some((Rc::clone(&responder), controller))));
+        let activated = Rc::new(Cell::new(false));
+
+        {
+            let completed = Rc::clone(&completed);
+            let failure = Rc::clone(&failure);
+            let shutdown_failed = Rc::clone(&shutdown_failed);
+            let setup = Rc::clone(&setup);
+            let activated = Rc::clone(&activated);
+            application.connect_activate(move |application| {
+                if activated.replace(true) {
+                    return;
+                }
+                gtk::Settings::default()
+                    .expect("window release smoke requires display settings")
+                    .set_gtk_enable_animations(false);
+
+                let Some((_responder, controller)) = setup.borrow_mut().take() else {
+                    fail_window_smoke(
+                        &failure,
+                        application,
+                        "the window release smoke lost its controller setup".into(),
+                    );
+                    return;
+                };
+                let playback = match PlaybackRuntime::initialize() {
+                    Ok(playback) => playback,
+                    Err(_) => {
+                        fail_window_smoke(
+                            &failure,
+                            application,
+                            "the lifecycle harness must provide the playback runtime".into(),
+                        );
+                        return;
+                    }
+                };
+                if !playback.capabilities().is_foundation_ready() {
+                    fail_window_smoke(
+                        &failure,
+                        application,
+                        "the lifecycle harness must install the complete playback foundation"
+                            .into(),
+                    );
+                    return;
+                }
+
+                // Mirror build()'s production wiring while retaining the
+                // panes the phase driver must reach as a user would.
+                let device_sidebar = device_sidebar::build();
+                let channel_sidebar = channel_sidebar::build();
+                let player_view = Rc::new(player_view::build(Ok(playback)));
+                player_view.connect_stop_control();
+                player_view.connect_audio_controls();
+                player_view.connect_session_state();
+
+                let device_page = adw::NavigationPage::new(device_sidebar.root(), "Devices");
+                let channel_page = adw::NavigationPage::new(channel_sidebar.root(), "Channels");
+                let player_page = adw::NavigationPage::new(player_view.root(), "Live TV");
+                let channel_and_player = adw::NavigationSplitView::builder()
+                    .sidebar(&channel_page)
+                    .content(&player_page)
+                    .min_sidebar_width(CHANNEL_SIDEBAR_MIN_WIDTH)
+                    .max_sidebar_width(CHANNEL_SIDEBAR_MAX_WIDTH)
+                    .sidebar_width_fraction(0.30)
+                    .sidebar_width_unit(adw::LengthUnit::Sp)
+                    .build();
+                let channel_and_player_page =
+                    adw::NavigationPage::new(&channel_and_player, "Channels and live TV");
+                let device_and_content = adw::NavigationSplitView::builder()
+                    .sidebar(&device_page)
+                    .content(&channel_and_player_page)
+                    .min_sidebar_width(DEVICE_SIDEBAR_MIN_WIDTH)
+                    .max_sidebar_width(DEVICE_SIDEBAR_MAX_WIDTH)
+                    .sidebar_width_fraction(0.18)
+                    .sidebar_width_unit(adw::LengthUnit::Sp)
+                    .build();
+                let window = adw::ApplicationWindow::builder()
+                    .application(application)
+                    .title("Balun")
+                    .default_width(DEFAULT_WIDTH)
+                    .default_height(DEFAULT_HEIGHT)
+                    .content(&device_and_content)
+                    .build();
+                let layout = ResponsiveLayout::new(
+                    &device_and_content,
+                    &channel_and_player_page,
+                    &channel_and_player,
+                    &player_page,
+                    &player_view,
+                );
+                let medium_breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+                    adw::BreakpointConditionLengthType::MaxWidth,
+                    COLLAPSE_DEVICE_SIDEBAR_AT,
+                    adw::LengthUnit::Sp,
+                ));
+                {
+                    let layout = layout.clone();
+                    medium_breakpoint.connect_apply(move |_| layout.set_medium_width(true));
+                }
+                {
+                    let layout = layout.clone();
+                    medium_breakpoint.connect_unapply(move |_| layout.set_medium_width(false));
+                }
+                window.add_breakpoint(medium_breakpoint);
+                let compact_breakpoint =
+                    adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+                        adw::BreakpointConditionLengthType::MaxWidth,
+                        COLLAPSE_CHANNEL_SIDEBAR_AT,
+                        adw::LengthUnit::Sp,
+                    ));
+                {
+                    let layout = layout.clone();
+                    compact_breakpoint.connect_apply(move |_| layout.set_compact_width(true));
+                }
+                {
+                    let layout = layout.clone();
+                    compact_breakpoint.connect_unapply(move |_| {
+                        layout.set_compact_width(false);
+                    });
+                }
+                window.add_breakpoint(compact_breakpoint);
+
+                let handle = controller.handle();
+                let mut reducer_snapshots = handle.subscribe();
+                let initial = Arc::clone(&reducer_snapshots.borrow_and_update());
+                device_sidebar.apply_snapshot(&initial);
+                channel_sidebar.apply_snapshot(&initial);
+                layout.set_device_selected(initial.selected_device().is_some());
+                let accepted = Rc::new(RefCell::new(initial));
+                let poll_snapshots = handle.subscribe();
+
+                connect_refresh(&device_sidebar, &handle);
+                connect_exact_discovery(&window, &device_sidebar, &handle);
+                connect_cancel_discovery(&device_sidebar, &handle);
+                connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
+                connect_channel_activation(
+                    &channel_sidebar,
+                    &handle,
+                    &player_view,
+                    layout.player_navigation(),
+                );
+                connect_fullscreen(&window, &player_view, &layout);
+                spawn_snapshot_reducer(
+                    reducer_snapshots,
+                    Rc::clone(&accepted),
+                    device_sidebar.clone(),
+                    channel_sidebar,
+                    layout,
+                    Rc::downgrade(&player_view),
+                );
+                connect_joined_shutdown(
+                    &window,
+                    controller,
+                    Rc::clone(&player_view),
+                    Rc::clone(&shutdown_failed),
+                );
+
+                // Phase-driven state machine mirroring the fullscreen smoke:
+                // bounded phases advance from real controller publications,
+                // with a deadline watchdog and a fixed-copy failure channel.
+                // The stop gates compare `PlayerView::stop` invocations
+                // against a baseline taken while the snapshot reducer has
+                // settled on the observed revision, so each cleanup path must
+                // itself raise the count: the sidebar admission stop for the
+                // user device change and the reducer's accepted-generation
+                // stop for the mutation.
+                let phase = Rc::new(Cell::new(0_u8));
+                let device_selection = device_sidebar.selection().clone();
+                let player_status = Rc::clone(&player_view);
+                let driver_handle = handle.clone();
+                let refresh_state = Arc::clone(&refresh_calls);
+                let driver_completed = Rc::clone(&completed);
+                let driver_failure = Rc::clone(&failure);
+                let driver_application = application.clone();
+                let window_weak = window.downgrade();
+                let accepted_generation = Rc::clone(&accepted);
+                let stop_baseline = Rc::new(Cell::new(0_u32));
+                let deadline = Instant::now() + WINDOW_SMOKE_PHASE_BOUND;
+                gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
+                    if driver_completed.get() || driver_failure.borrow().is_some() {
+                        return gtk::glib::ControlFlow::Continue;
+                    }
+                    if Instant::now() > deadline {
+                        fail_window_smoke(
+                            &driver_failure,
+                            &driver_application,
+                            "the window release phases did not advance within their bound".into(),
+                        );
+                        return gtk::glib::ControlFlow::Continue;
+                    }
+                    let snapshot = Arc::clone(&poll_snapshots.borrow());
+                    let reducer_generation = accepted_generation.borrow().selection_generation();
+                    let stop_calls = player_status.stop_call_count();
+                    let row_count = device_selection
+                        .model()
+                        .map(|model| model.n_items())
+                        .unwrap_or(0);
+                    match phase.get() {
+                        0 => {
+                            if driver_handle
+                                .try_send(ControllerCommand::RefreshLocalDiscovery)
+                                .is_err()
+                            {
+                                fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "the window smoke could not admit its first local refresh"
+                                        .into(),
+                                );
+                                return gtk::glib::ControlFlow::Continue;
+                            }
+                            phase.set(1);
+                        }
+                        1 if row_count == 2
+                            && snapshot.devices().len() == 2
+                            && snapshot.discovery().status() == DiscoveryStatus::Ready =>
+                        {
+                            match device_row_position(&device_selection, window_smoke_device_id()) {
+                                Some(position) => device_selection.set_selected(position),
+                                None => fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "the discovered loopback device row is missing".into(),
+                                ),
+                            }
+                            phase.set(2);
+                        }
+                        2 if snapshot.selected_device() == Some(window_smoke_device_id())
+                            && matches!(
+                                snapshot.selected_lineup().status(),
+                                SelectedLineupStatus::Failed(_)
+                            )
+                            && reducer_generation == snapshot.selection_generation() =>
+                        {
+                            if player_status.playback_status().label() != "Stopped" {
+                                fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "the idle player left its stopped presentation".into(),
+                                );
+                                return gtk::glib::ControlFlow::Continue;
+                            }
+                            // User device change: the sidebar signal's
+                            // stop-on-admission fires here, and only the
+                            // device change can raise the count past this
+                            // reducer-settled baseline.
+                            stop_baseline.set(stop_calls);
+                            match device_row_position(
+                                &device_selection,
+                                window_smoke_second_device_id(),
+                            ) {
+                                Some(position) => device_selection.set_selected(position),
+                                None => fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "the second synthetic device row is missing".into(),
+                                ),
+                            }
+                            phase.set(3);
+                        }
+                        3 if snapshot.selected_device()
+                            == Some(window_smoke_second_device_id())
+                            && matches!(
+                                snapshot.selected_lineup().status(),
+                                SelectedLineupStatus::Failed(_)
+                            )
+                            && reducer_generation == snapshot.selection_generation()
+                            && stop_calls > stop_baseline.get() =>
+                        {
+                            // The admission stop (and any fail-safe repeat for
+                            // the new selection generation) has fired. Baseline
+                            // again with the reducer settled, so only the
+                            // mutation's accepted-generation stop can raise it.
+                            stop_baseline.set(stop_calls);
+                            if driver_handle
+                                .try_send(ControllerCommand::RefreshLocalDiscovery)
+                                .is_err()
+                            {
+                                fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "the window smoke could not admit its mutation refresh".into(),
+                                );
+                                return gtk::glib::ControlFlow::Continue;
+                            }
+                            phase.set(4);
+                        }
+                        4 if row_count == 0
+                            && snapshot.devices().is_empty()
+                            && snapshot.selected_device().is_none()
+                            && snapshot.selected_lineup().status()
+                                == SelectedLineupStatus::Unselected
+                            && refresh_state.load(Ordering::SeqCst) == 2
+                            && stop_calls > stop_baseline.get() =>
+                        {
+                            if player_status.playback_status().label() != "Stopped" {
+                                fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "the mutation did not settle the player presentation".into(),
+                                );
+                                return gtk::glib::ControlFlow::Continue;
+                            }
+                            let Some(window) = window_weak.upgrade() else {
+                                fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "the window release smoke window disappeared before close"
+                                        .into(),
+                                );
+                                return gtk::glib::ControlFlow::Continue;
+                            };
+                            // Joined close: the controller and playback
+                            // session settle together here.
+                            driver_completed.set(true);
+                            window.close();
+                            phase.set(5);
+                        }
+                        _ => {}
+                    }
+                    gtk::glib::ControlFlow::Continue
+                });
+
+                {
+                    let completed = Rc::clone(&completed);
+                    let failure = Rc::clone(&failure);
+                    let application = application.clone();
+                    gtk::glib::timeout_add_local_once(WINDOW_SMOKE_WATCHDOG, move || {
+                        if !completed.get() && failure.borrow().is_none() {
+                            failure.replace(Some(
+                                "the window release smoke did not complete within its bound".into(),
+                            ));
+                            application.quit();
+                        }
+                    });
+                }
+
+                window.present();
+            });
+        }
+
+        let exit_code = application.run_with_args(&["balun-fake-device-window-smoke"]);
+        assert_eq!(exit_code, gtk::glib::ExitCode::SUCCESS);
+        let failure_text = failure.borrow().clone();
+        assert!(
+            failure_text.is_none(),
+            "{}",
+            failure_text.unwrap_or_default()
+        );
+        assert!(
+            completed.get(),
+            "the window release smoke did not reach its close phase"
+        );
+        assert!(
+            !shutdown_failed.get(),
+            "joined controller and playback shutdown must succeed"
+        );
     }
 }
