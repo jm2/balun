@@ -33,7 +33,7 @@ media framework.
 | Windows local discovery | ✅ |
 | Route-derived tunnel discovery (Linux) | 🚧 Foundation only; not connected to the UI |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
-| Hostname entry and remembered devices | ❌ Planned |
+| Hostname entry | ❌ Planned |
 | Audible output and complete codec contract | ✅ Windows; Linux and macOS pending |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |

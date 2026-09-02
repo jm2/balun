@@ -113,9 +113,9 @@ Built and tested:
   launch; storage for user-assigned names is reserved.
 
 Not yet done: Linux and macOS live-device acceptance, measured tune and
-teardown budgets, a frozen per-platform codec contract, hostname and
-remembered targets, the routed sender and its UX, search and favorites,
-packages, and the alpha release.
+teardown budgets, a frozen per-platform codec contract, hostname targets,
+the routed sender and its UX, search and favorites, packages, and the alpha
+release.
 
 ## 4. Architecture
 
