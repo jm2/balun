@@ -64,8 +64,15 @@ the five-second teardown bound. Loopback tests, including a child-process
 ambient-proxy trap and a `playbin3` decode of the checked-in fixture from the
 constant URI, cover the contract on Linux and macOS, and the helpers'
 installed-runtime probes prove the constant-URI `appsrc` contract on all three
-CI lanes, closing M2.9. Live-device teardown acceptance (M2.10) and
-packaged-runtime probes (M2.11) remain open.
+CI lanes, closing M2.9. A loopback fake HDHomeRun device now also carries the
+fake-server half of M2.11: the real controller discovers it, loads its
+identity-checked lineup, refuses its DRM row, and feeds the real handoff
+through the production transport to EOS with bounded joined teardown, while
+an isolated display-backed lifecycle smoke drives the real production session
+through tune, release-ordered switching, natural EOS, and explicit Stop
+against its fake tuner. Live-device teardown acceptance (M2.10),
+packaged-runtime probes (M2.11), and the first cross-platform live-TV smoke
+(M2.12) remain open.
 
 A first Windows desktop launch reported `gtk4paintablesink` missing because
 the MSYS2 `gst-plugins-rs` package was not installed; the helpers now fail
@@ -288,16 +295,27 @@ compatibility/error-path work, not prerequisites for that first picture.
   reselection, discovery mutation, pipeline error, window close, and process
   shutdown must cancel/join the exact owner and release the tuner. Device
   change admission, accepted generation change, controller snapshot-channel
-  closure, and window shutdown now invoke stop or terminal shutdown; complete
-  fake/live-tuner proof remains open.
+  closure, and window shutdown now invoke stop or terminal shutdown, and the
+  fake-device end-to-end smokes prove release-before-successor ordering,
+  EOS/teardown release, and explicit-Stop release against a fake tuner;
+  device-reselection/discovery-mutation/pipeline-error/window-close coverage
+  against the fake device and complete live-tuner proof remain open.
 
 - [ ] **M2.11 — Add playback integration coverage and runtime probes.** Use a
   fake HDHomeRun HTTP server and synthetic MPEG-TS path, then verify the exact
   GStreamer factory set in development and packaged runtimes. The loopback
   fixture server and checked-in MPEG-TS fixture already cover the transport's
   fake-server path, and the helpers' probe mode verifies the development
-  runtimes on all three CI lanes; a fake HDHomeRun discovery/lineup server for
-  end-to-end tuning and the packaged-runtime probes remain open.
+  runtimes on all three CI lanes. A complete loopback fake HDHomeRun device
+  now also owns the UDP discovery responder, identity-checked
+  `discover.json`/`lineup.json` metadata, and the port-5004 MPEG-TS stream
+  server: a headless end-to-end test drives the real controller from
+  discovery through selected-lineup authorization, refuses the DRM row, feeds
+  the real handoff through the production `appsrc` transport to EOS, and
+  proves bounded joined teardown releases the fake tuner, while an isolated
+  display-backed lifecycle smoke runs the real production session through
+  tune, switch-with-release ordering, natural EOS, and explicit Stop. The
+  packaged-runtime probes remain open.
 
 - [ ] **M2.12 — Pass the first cross-platform live-TV smoke.** Watch and switch
   an unprotected channel on Linux, macOS, and Windows dev builds and record

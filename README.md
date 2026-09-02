@@ -171,6 +171,13 @@ available program information, and a live-video area.
   decoder are development/CI inputs only; the test opens no network source or
   tuner and establishes neither the production codec contract nor package
   contents.
+- A complete loopback fake HDHomeRun device — UDP discovery responder,
+  identity-checked metadata, and a recording MPEG-TS stream server — used by
+  end-to-end tests that drive the real controller from discovery through
+  lineup authorization and the real production transport/session to EOS,
+  DRM-row refusal without tuner contact, release-ordered channel switching,
+  and explicit-Stop tuner release, all without endpoints reaching public
+  state or errors.
 - An opt-in GTK 4/libadwaita development shell with adaptive, separate device
   and channel sidebars plus a live-TV player pane. Construction remains inert;
   Refresh explicitly starts local discovery, the adjacent add action admits a

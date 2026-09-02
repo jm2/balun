@@ -283,6 +283,14 @@ dbus-run-session -- \
         playback::session::tests::active_production_session_exposes_opaque_paintable_and_shuts_down -- \
         --exact --ignored --nocapture
 
+# The fake-device proof adds real discovery plus three full tune lifecycles,
+# so it earns a wider bound than the established single-tune smokes.
+dbus-run-session -- \
+    timeout --signal=TERM --kill-after=5s 60s \
+    cargo test --locked --features desktop --lib \
+        playback::fake_device_e2e::tests::fake_device_production_session_tunes_switches_and_releases_the_tuner -- \
+        --exact --ignored --nocapture
+
 dbus-run-session -- \
     timeout --signal=TERM --kill-after=5s 30s \
     cargo test --locked --features desktop --bin balun \

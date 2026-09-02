@@ -404,6 +404,37 @@ macOS or Windows rendering, audio, physical MPEG-TS variants, live-device
 behavior, channel switching, tuner release, or packaged-runtime relocation.
 Those claims remain in M0.6, M0.10, M1.10, and M2.10 through M2.12.
 
+## Fake-device end-to-end acceptance
+
+M2.11's fake-server path is covered by a complete loopback fake HDHomeRun
+device: a UDP discovery responder on the fixed discovery port advertising a
+checksum-valid identity and the fake's metadata origin, identity-checked
+`discover.json`/`lineup.json` responses on an ephemeral loopback port, and an
+MPEG-TS stream server on the fixed device stream port that records per-path
+connection open and close instants. Because an unprivileged test process
+cannot bind port 80, a test-only exemption accepts exactly the installed
+loopback fake metadata port — and nothing else — in place of the production
+port-80 policy for the device's lifetime.
+
+A headless test drives the real controller through `RefreshLocalDiscovery`
+and `SelectDevice` against this fake, asserts the identity-checked lineup and
+honest DRM presentation, proves a protected request is refused before any
+tuner contact, and then feeds the real controller-authorized handoff through
+the production `appsrc` source policy and transport to natural EOS with
+bounded joined `NULL` teardown and an observed device-side connection close.
+It also verifies the metadata fetch order and that neither application
+snapshots nor the handoff debug output contain endpoint text.
+
+A separate display-backed lifecycle smoke runs the real production
+`PlaybackSession` through three full tune lifecycles against the fake:
+an open-ended channel reaches PLAYING, switching to a finite channel is
+admitted only after the predecessor's transport is joined and the fake
+observes its connection close, the successor's open is observed strictly
+after that release, natural EOS settles to Stopped with a cleared paintable,
+and an explicit Stop on a second live tune releases the observed connection.
+These proofs cover fake-tuner release ordering for M2.10; live-device and
+packaged-runtime acceptance remain open.
+
 ## Development runtime examples
 
 Package names and plugin grouping vary by platform and release. The exact
