@@ -1,6 +1,6 @@
 //! Live-TV picture shell and generation-owned playback-session owner.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -18,12 +18,31 @@ pub(crate) struct PlayerView {
     root: adw::ToolbarView,
     picture: gtk::Picture,
     status: adw::StatusPage,
+    volume_adjustment: gtk::Adjustment,
+    volume_scale: gtk::Scale,
+    mute_button: gtk::ToggleButton,
     stop_button: gtk::Button,
     idle_title: String,
     idle_description: String,
     session: Option<PlaybackSession>,
+    updating_audio_controls: Cell<bool>,
     pending_response: RefCell<Option<gtk::glib::JoinHandle<()>>>,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PlayerAccessibilityPlan {
+    volume_label: &'static str,
+    mute_label: &'static str,
+    unmute_label: &'static str,
+    stop_label: &'static str,
+}
+
+const PLAYER_ACCESSIBILITY: PlayerAccessibilityPlan = PlayerAccessibilityPlan {
+    volume_label: "Live TV volume",
+    mute_label: "Mute live TV",
+    unmute_label: "Unmute live TV",
+    stop_label: "Stop live TV",
+};
 
 impl PlayerView {
     /// Return the widget rooted in the live-TV navigation page.
@@ -50,6 +69,33 @@ impl PlayerView {
             if let Some(player_view) = player_view.upgrade() {
                 let _ = player_view.stop();
             }
+        });
+    }
+
+    /// Connect the native volume and mute widgets without retaining this owner
+    /// in either GTK signal closure.
+    pub(crate) fn connect_audio_controls(self: &Rc<Self>) {
+        let player_view = Rc::downgrade(self);
+        self.volume_adjustment
+            .connect_value_changed(move |adjustment| {
+                let Some(player_view) = player_view.upgrade() else {
+                    return;
+                };
+                if player_view.updating_audio_controls.get() {
+                    return;
+                }
+                player_view.apply_volume(adjustment.value() / 100.0);
+            });
+
+        let player_view = Rc::downgrade(self);
+        self.mute_button.connect_toggled(move |button| {
+            let Some(player_view) = player_view.upgrade() else {
+                return;
+            };
+            if player_view.updating_audio_controls.get() {
+                return;
+            }
+            player_view.apply_muted(button.is_active());
         });
     }
 
@@ -129,6 +175,7 @@ impl PlayerView {
     /// Clear presentation and terminally settle the playback owner.
     pub(crate) fn shut_down(&self) -> Result<(), PlaybackSessionFailure> {
         self.stop_button.set_sensitive(false);
+        self.set_audio_controls_sensitive(false);
         self.abort_pending_response();
         self.apply_paintable(None);
         match self.session.as_ref() {
@@ -187,6 +234,60 @@ impl PlayerView {
         }
     }
 
+    fn apply_volume(&self, volume: f64) {
+        let Some(session) = self.session.as_ref() else {
+            self.set_audio_controls_sensitive(false);
+            return;
+        };
+        match session.set_volume(volume) {
+            Ok(()) => {
+                if let Ok(audio) = session.audio_state() {
+                    self.sync_audio_controls(audio);
+                }
+            }
+            Err(_) => self.restore_audio_controls(),
+        }
+    }
+
+    fn apply_muted(&self, muted: bool) {
+        let Some(session) = self.session.as_ref() else {
+            self.set_audio_controls_sensitive(false);
+            return;
+        };
+        match session.set_muted(muted) {
+            Ok(()) => {
+                if let Ok(audio) = session.audio_state() {
+                    self.sync_audio_controls(audio);
+                }
+            }
+            Err(_) => self.restore_audio_controls(),
+        }
+    }
+
+    fn restore_audio_controls(&self) {
+        match self
+            .session
+            .as_ref()
+            .and_then(|session| session.audio_state().ok())
+        {
+            Some(audio) => self.sync_audio_controls(audio),
+            None => self.set_audio_controls_sensitive(false),
+        }
+    }
+
+    fn sync_audio_controls(&self, audio: balun::playback::PlaybackAudioState) {
+        let previous = self.updating_audio_controls.replace(true);
+        self.volume_adjustment.set_value(audio.volume() * 100.0);
+        self.mute_button.set_active(audio.is_muted());
+        update_mute_presentation(&self.mute_button, audio.volume(), audio.is_muted());
+        self.updating_audio_controls.set(previous);
+    }
+
+    fn set_audio_controls_sensitive(&self, sensitive: bool) {
+        self.volume_scale.set_sensitive(sensitive);
+        self.mute_button.set_sensitive(sensitive);
+    }
+
     fn show_connecting(&self) {
         self.status.set_title("Connecting");
         self.status
@@ -209,6 +310,7 @@ impl PlayerView {
     }
 
     fn show_stop_failure(&self) {
+        self.set_audio_controls_sensitive(false);
         self.status.set_title("Unable to stop live TV");
         self.status.set_description(Some(
             "Playback could not be stopped cleanly. Close Balun before selecting another channel.",
@@ -262,15 +364,54 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
     player.set_child(Some(&picture));
     player.add_overlay(&empty_state);
 
+    let audio_enabled = session
+        .as_ref()
+        .is_some_and(PlaybackSession::is_foundation_ready);
+    let volume_adjustment = gtk::Adjustment::new(100.0, 0.0, 100.0, 5.0, 10.0, 0.0);
+    let volume_scale = gtk::Scale::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .draw_value(false)
+        .width_request(120)
+        .valign(gtk::Align::Center)
+        .focusable(true)
+        .sensitive(audio_enabled)
+        .tooltip_text(PLAYER_ACCESSIBILITY.volume_label)
+        .adjustment(&volume_adjustment)
+        .build();
+    volume_scale.update_property(&[
+        gtk::accessible::Property::Label(PLAYER_ACCESSIBILITY.volume_label),
+        gtk::accessible::Property::Orientation(gtk::Orientation::Horizontal),
+    ]);
+
+    let mute_button = gtk::ToggleButton::builder()
+        .icon_name("audio-volume-high-symbolic")
+        .tooltip_text(PLAYER_ACCESSIBILITY.mute_label)
+        .focusable(true)
+        .sensitive(audio_enabled)
+        .build();
+    mute_button.update_property(&[gtk::accessible::Property::Label(
+        PLAYER_ACCESSIBILITY.mute_label,
+    )]);
+
     let stop_button = gtk::Button::builder()
         .icon_name("media-playback-stop-symbolic")
         .tooltip_text("Stop live TV")
         .focusable(true)
         .sensitive(false)
         .build();
-    stop_button.update_property(&[gtk::accessible::Property::Label("Stop live TV")]);
+    stop_button.update_property(&[gtk::accessible::Property::Label(
+        PLAYER_ACCESSIBILITY.stop_label,
+    )]);
+    let controls = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .valign(gtk::Align::Center)
+        .build();
+    controls.append(&mute_button);
+    controls.append(&volume_scale);
+    controls.append(&stop_button);
     let header = adw::HeaderBar::new();
-    header.pack_end(&stop_button);
+    header.pack_end(&controls);
 
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
@@ -279,16 +420,41 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         root: toolbar,
         picture,
         status: empty_state,
+        volume_adjustment,
+        volume_scale,
+        mute_button,
         stop_button,
         idle_title: title.to_owned(),
         idle_description: description,
         session,
+        updating_audio_controls: Cell::new(false),
         pending_response: RefCell::new(None),
     };
     // Exercise the same narrow binding path used after a future tune. The
     // newly constructed session is inert, so this keeps the status visible.
     let _ = view.sync_paintable();
     view
+}
+
+fn update_mute_presentation(button: &gtk::ToggleButton, volume: f64, muted: bool) {
+    let (icon, label) = if muted {
+        (
+            "audio-volume-muted-symbolic",
+            PLAYER_ACCESSIBILITY.unmute_label,
+        )
+    } else {
+        let icon = if volume > 0.66 {
+            "audio-volume-high-symbolic"
+        } else if volume > 0.33 {
+            "audio-volume-medium-symbolic"
+        } else {
+            "audio-volume-low-symbolic"
+        };
+        (icon, PLAYER_ACCESSIBILITY.mute_label)
+    };
+    button.set_icon_name(icon);
+    button.set_tooltip_text(Some(label));
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
 }
 
 fn empty_state_copy(capabilities: &PlaybackCapabilities) -> (&'static str, String) {
@@ -341,6 +507,7 @@ mod tests {
             PlaybackInitializationError::InitializationFailed,
         )));
         view.connect_stop_control();
+        view.connect_audio_controls();
 
         assert_eq!(view.picture.content_fit(), gtk::ContentFit::Contain);
         assert!(view.picture.paintable().is_none());
@@ -360,6 +527,35 @@ mod tests {
         );
         assert!(view.stop_button.is_focusable());
         assert!(!view.stop_button.is_sensitive());
+        assert_eq!(
+            view.volume_scale.accessible_role(),
+            gtk::AccessibleRole::Slider
+        );
+        assert!(view.volume_scale.is_focusable());
+        assert!(!view.volume_scale.is_sensitive());
+        assert_eq!(
+            view.volume_scale.orientation(),
+            gtk::Orientation::Horizontal
+        );
+        assert_eq!(view.volume_adjustment.lower(), 0.0);
+        assert_eq!(view.volume_adjustment.upper(), 100.0);
+        assert_eq!(view.volume_adjustment.step_increment(), 5.0);
+        assert_eq!(view.volume_adjustment.page_increment(), 10.0);
+        assert_eq!(
+            view.volume_scale.tooltip_text().as_deref(),
+            Some(PLAYER_ACCESSIBILITY.volume_label)
+        );
+        assert_eq!(
+            view.mute_button.accessible_role(),
+            gtk::AccessibleRole::ToggleButton
+        );
+        assert!(view.mute_button.is_focusable());
+        assert!(!view.mute_button.is_sensitive());
+        assert!(!view.mute_button.is_active());
+        assert_eq!(
+            view.mute_button.tooltip_text().as_deref(),
+            Some(PLAYER_ACCESSIBILITY.mute_label)
+        );
 
         let bytes = gtk::glib::Bytes::from_static(&[0x18, 0x30, 0x48, 0xff]);
         let paintable =
@@ -390,5 +586,105 @@ mod tests {
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
         assert!(!view.stop_button.is_sensitive());
+
+        let retained_stop_button = view.stop_button.clone();
+        let retained_mute_button = view.mute_button.clone();
+        let retained_adjustment = view.volume_adjustment.clone();
+        let weak_view = Rc::downgrade(&view);
+        drop(view);
+        assert!(weak_view.upgrade().is_none());
+        retained_stop_button.emit_clicked();
+        retained_mute_button.set_active(true);
+        retained_adjustment.set_value(25.0);
+    }
+
+    /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
+    /// compile but skip this display- and runtime-dependent control contract.
+    #[test]
+    #[ignore = "requires the isolated display and playback runtime supplied by scripts/test-desktop-lifecycle.sh"]
+    fn accessible_audio_controls_update_the_session() {
+        adw::init().expect("initialize libadwaita for player audio-control smoke");
+        let main_context = gtk::glib::MainContext::default();
+        let _owner = main_context
+            .acquire()
+            .expect("acquire default main context for player audio-control smoke");
+        let runtime =
+            PlaybackRuntime::initialize().expect("initialize production playback runtime");
+        assert!(runtime.capabilities().is_foundation_ready());
+        let view = Rc::new(build(Ok(runtime)));
+        view.connect_audio_controls();
+
+        assert!(view.volume_scale.is_sensitive());
+        assert!(view.mute_button.is_sensitive());
+        assert_eq!(
+            view.session
+                .as_ref()
+                .unwrap()
+                .audio_state()
+                .unwrap()
+                .volume(),
+            1.0
+        );
+
+        view.volume_adjustment.set_value(45.0);
+        let audio = view.session.as_ref().unwrap().audio_state().unwrap();
+        assert_eq!(audio.volume(), 0.45);
+        assert!(!audio.is_muted());
+        assert_eq!(
+            view.mute_button.icon_name().as_deref(),
+            Some("audio-volume-medium-symbolic")
+        );
+
+        view.mute_button.emit_clicked();
+        let audio = view.session.as_ref().unwrap().audio_state().unwrap();
+        assert!(audio.is_muted());
+        assert_eq!(
+            view.mute_button.tooltip_text().as_deref(),
+            Some(PLAYER_ACCESSIBILITY.unmute_label)
+        );
+        assert_eq!(
+            view.mute_button.icon_name().as_deref(),
+            Some("audio-volume-muted-symbolic")
+        );
+
+        view.volume_adjustment.set_value(65.0);
+        let audio = view.session.as_ref().unwrap().audio_state().unwrap();
+        assert_eq!(audio.volume(), 0.65);
+        assert!(audio.is_muted());
+        view.mute_button.emit_clicked();
+        assert!(
+            !view
+                .session
+                .as_ref()
+                .unwrap()
+                .audio_state()
+                .unwrap()
+                .is_muted()
+        );
+
+        view.shut_down().unwrap();
+        assert!(!view.volume_scale.is_sensitive());
+        assert!(!view.mute_button.is_sensitive());
+    }
+
+    #[test]
+    fn accessibility_copy_plan_is_stable_and_unambiguous() {
+        assert_eq!(
+            PLAYER_ACCESSIBILITY,
+            PlayerAccessibilityPlan {
+                volume_label: "Live TV volume",
+                mute_label: "Mute live TV",
+                unmute_label: "Unmute live TV",
+                stop_label: "Stop live TV",
+            }
+        );
+        assert_ne!(
+            PLAYER_ACCESSIBILITY.volume_label,
+            PLAYER_ACCESSIBILITY.stop_label
+        );
+        assert_ne!(
+            PLAYER_ACCESSIBILITY.mute_label,
+            PLAYER_ACCESSIBILITY.unmute_label
+        );
     }
 }

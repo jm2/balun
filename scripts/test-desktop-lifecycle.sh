@@ -290,6 +290,12 @@ dbus-run-session -- \
 
 dbus-run-session -- \
     timeout --signal=TERM --kill-after=5s 30s \
+    cargo test --locked --features desktop --bin balun \
+        ui::player_view::tests::accessible_audio_controls_update_the_session -- \
+        --exact --ignored --nocapture
+
+dbus-run-session -- \
+    timeout --signal=TERM --kill-after=5s 30s \
     cargo test --locked --features desktop --test playback_synthetic \
         synthetic_mpeg2_reaches_eos_and_renders_multiple_frames -- \
         --exact --ignored --nocapture --test-threads=1
