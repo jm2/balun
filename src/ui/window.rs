@@ -22,6 +22,147 @@ const CHANNEL_SIDEBAR_MAX_WIDTH: f64 = 360.0;
 const COLLAPSE_DEVICE_SIDEBAR_AT: f64 = 1_000.0;
 const COLLAPSE_CHANNEL_SIDEBAR_AT: f64 = 700.0;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ResponsiveLayoutState {
+    medium_width: bool,
+    compact_width: bool,
+    fullscreen: bool,
+    outer_show_content: bool,
+    inner_show_content: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ResponsiveLayoutDecision {
+    outer_collapsed: bool,
+    inner_collapsed: bool,
+    outer_show_content: bool,
+    inner_show_content: bool,
+}
+
+impl ResponsiveLayoutState {
+    const fn decision(self) -> ResponsiveLayoutDecision {
+        ResponsiveLayoutDecision {
+            outer_collapsed: self.medium_width || self.fullscreen,
+            inner_collapsed: self.compact_width || self.fullscreen,
+            outer_show_content: self.fullscreen || self.outer_show_content,
+            inner_show_content: self.fullscreen || self.inner_show_content,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ResponsiveLayout {
+    state: Rc<Cell<ResponsiveLayoutState>>,
+    outer: adw::NavigationSplitView,
+    inner: adw::NavigationSplitView,
+    player_view: Weak<player_view::PlayerView>,
+}
+
+impl ResponsiveLayout {
+    fn new(
+        outer: &adw::NavigationSplitView,
+        inner: &adw::NavigationSplitView,
+        player_view: &Rc<player_view::PlayerView>,
+    ) -> Self {
+        Self {
+            state: Rc::new(Cell::new(ResponsiveLayoutState {
+                medium_width: false,
+                compact_width: false,
+                fullscreen: false,
+                outer_show_content: outer.shows_content(),
+                inner_show_content: inner.shows_content(),
+            })),
+            outer: outer.clone(),
+            inner: inner.clone(),
+            player_view: Rc::downgrade(player_view),
+        }
+    }
+
+    fn set_medium_width(&self, active: bool) {
+        let mut state = self.state.get();
+        state.medium_width = active;
+        self.state.set(state);
+        self.apply();
+    }
+
+    fn set_compact_width(&self, active: bool) {
+        let mut state = self.state.get();
+        state.compact_width = active;
+        self.state.set(state);
+        self.apply();
+    }
+
+    fn set_device_selected(&self, selected: bool) {
+        let mut state = self.state.get();
+        state.outer_show_content = selected;
+        self.state.set(state);
+        self.apply();
+    }
+
+    fn set_fullscreen(&self, fullscreen: bool) {
+        let mut state = self.state.get();
+        if fullscreen && !state.fullscreen {
+            // Retain the exact navigation pages visible when the compositor
+            // confirms entry. Snapshot changes may still replace the outer
+            // preference while fullscreen, and will be applied on exit.
+            state.outer_show_content = self.outer.shows_content();
+            state.inner_show_content = self.inner.shows_content();
+        }
+        state.fullscreen = fullscreen;
+        self.state.set(state);
+        if let Some(player_view) = self.player_view.upgrade() {
+            player_view.apply_fullscreen_presentation(fullscreen);
+        }
+        self.apply();
+    }
+
+    fn is_fullscreen(&self) -> bool {
+        self.state.get().fullscreen
+    }
+
+    fn apply(&self) {
+        let decision = self.state.get().decision();
+        self.outer.set_collapsed(decision.outer_collapsed);
+        self.inner.set_collapsed(decision.inner_collapsed);
+        self.outer.set_show_content(decision.outer_show_content);
+        self.inner.set_show_content(decision.inner_show_content);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FullscreenKeyAction {
+    Toggle,
+    Exit,
+    Ignore,
+}
+
+fn fullscreen_key_action(
+    key: gtk::gdk::Key,
+    modifiers: gtk::gdk::ModifierType,
+    fullscreen: bool,
+) -> FullscreenKeyAction {
+    use gtk::gdk::ModifierType;
+
+    // Ignore ambient lock/legacy modifier bits and accept only exact
+    // unmodified bindings. This keeps application and child-widget shortcuts
+    // available instead of swallowing modified F11 or Escape.
+    let effective = modifiers
+        & (ModifierType::SHIFT_MASK
+            | ModifierType::CONTROL_MASK
+            | ModifierType::ALT_MASK
+            | ModifierType::SUPER_MASK);
+    if !effective.is_empty() {
+        return FullscreenKeyAction::Ignore;
+    }
+    if key == gtk::gdk::Key::F11 {
+        FullscreenKeyAction::Toggle
+    } else if key == gtk::gdk::Key::Escape && fullscreen {
+        FullscreenKeyAction::Exit
+    } else {
+        FullscreenKeyAction::Ignore
+    }
+}
+
 /// Build Balun's single application window.
 pub(crate) fn build(
     application: &adw::Application,
@@ -66,13 +207,21 @@ pub(crate) fn build(
         .default_height(DEFAULT_HEIGHT)
         .content(&device_and_content)
         .build();
+    let layout = ResponsiveLayout::new(&device_and_content, &channel_and_player, &player_view);
 
     let medium_breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
         COLLAPSE_DEVICE_SIDEBAR_AT,
         adw::LengthUnit::Sp,
     ));
-    medium_breakpoint.add_setters(&[(&device_and_content, "collapsed", true)]);
+    {
+        let layout = layout.clone();
+        medium_breakpoint.connect_apply(move |_| layout.set_medium_width(true));
+    }
+    {
+        let layout = layout.clone();
+        medium_breakpoint.connect_unapply(move |_| layout.set_medium_width(false));
+    }
     window.add_breakpoint(medium_breakpoint);
 
     let compact_breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
@@ -80,7 +229,14 @@ pub(crate) fn build(
         COLLAPSE_CHANNEL_SIDEBAR_AT,
         adw::LengthUnit::Sp,
     ));
-    compact_breakpoint.add_setters(&[(&channel_and_player, "collapsed", true)]);
+    {
+        let layout = layout.clone();
+        compact_breakpoint.connect_apply(move |_| layout.set_compact_width(true));
+    }
+    {
+        let layout = layout.clone();
+        compact_breakpoint.connect_unapply(move |_| layout.set_compact_width(false));
+    }
     window.add_breakpoint(compact_breakpoint);
 
     let handle = controller.handle();
@@ -88,7 +244,7 @@ pub(crate) fn build(
     let initial = Arc::clone(&snapshots.borrow_and_update());
     device_sidebar.apply_snapshot(&initial);
     channel_sidebar.apply_snapshot(&initial);
-    device_and_content.set_show_content(initial.selected_device().is_some());
+    layout.set_device_selected(initial.selected_device().is_some());
     let accepted = Rc::new(RefCell::new(initial));
 
     connect_refresh(&device_sidebar, &handle);
@@ -96,12 +252,13 @@ pub(crate) fn build(
     connect_cancel_discovery(&device_sidebar, &handle);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
     connect_channel_activation(&channel_sidebar, &handle, &player_view);
+    connect_fullscreen(&window, &player_view, &layout);
     spawn_snapshot_reducer(
         snapshots,
         Rc::clone(&accepted),
         device_sidebar,
         channel_sidebar,
-        device_and_content,
+        layout,
         Rc::downgrade(&player_view),
     );
     connect_joined_shutdown(&window, controller, player_view, shutdown_failed);
@@ -119,6 +276,80 @@ fn connect_channel_activation(
     sidebar.connect_channel_activated(move |selection| {
         player_view.activate_channel(&controller, selection);
     });
+}
+
+fn connect_fullscreen(
+    window: &adw::ApplicationWindow,
+    player_view: &Rc<player_view::PlayerView>,
+    layout: &ResponsiveLayout,
+) {
+    let window_weak = window.downgrade();
+    player_view.fullscreen_button().connect_clicked(move |_| {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+        if window.is_fullscreen() {
+            window.unfullscreen();
+        } else {
+            window.fullscreen();
+        }
+    });
+
+    let key_controller = gtk::EventControllerKey::new();
+    key_controller.set_propagation_phase(gtk::PropagationPhase::Bubble);
+    let window_weak = window.downgrade();
+    key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
+        let Some(window) = window_weak.upgrade() else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        match fullscreen_key_action(key, modifiers, window.is_fullscreen()) {
+            FullscreenKeyAction::Toggle => {
+                if window.is_fullscreen() {
+                    window.unfullscreen();
+                } else {
+                    window.fullscreen();
+                }
+                gtk::glib::Propagation::Stop
+            }
+            FullscreenKeyAction::Exit => {
+                window.unfullscreen();
+                gtk::glib::Propagation::Stop
+            }
+            FullscreenKeyAction::Ignore => gtk::glib::Propagation::Proceed,
+        }
+    });
+    window.add_controller(key_controller);
+
+    let previous_focus: Rc<RefCell<Option<gtk::glib::WeakRef<gtk::Widget>>>> =
+        Rc::new(RefCell::new(None));
+    let confirmed_layout = layout.clone();
+    let player_view = Rc::downgrade(player_view);
+    window.connect_fullscreened_notify(move |window| {
+        let fullscreen = window.is_fullscreen();
+        let entering = fullscreen && !confirmed_layout.is_fullscreen();
+        let leaving = !fullscreen && confirmed_layout.is_fullscreen();
+        if entering {
+            previous_focus.replace(
+                gtk::prelude::GtkWindowExt::focus(window).map(|widget| widget.downgrade()),
+            );
+        }
+        confirmed_layout.set_fullscreen(fullscreen);
+        if entering {
+            if let Some(player_view) = player_view.upgrade() {
+                let _ = player_view.fullscreen_button().grab_focus();
+            }
+        } else if leaving
+            && let Some(widget) = previous_focus
+                .borrow_mut()
+                .take()
+                .and_then(|focus| focus.upgrade())
+        {
+            let _ = widget.grab_focus();
+        }
+    });
+
+    // Initialize copy/layout from the actual window property, not a request.
+    layout.set_fullscreen(window.is_fullscreen());
 }
 
 fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &ControllerHandle) {
@@ -287,7 +518,7 @@ fn spawn_snapshot_reducer(
     accepted: Rc<RefCell<Arc<ApplicationSnapshot>>>,
     device_sidebar: device_sidebar::DeviceSidebar,
     channel_sidebar: channel_sidebar::ChannelSidebar,
-    device_and_content: adw::NavigationSplitView,
+    layout: ResponsiveLayout,
     player_view: Weak<player_view::PlayerView>,
 ) {
     gtk::glib::MainContext::default().spawn_local(async move {
@@ -310,7 +541,7 @@ fn spawn_snapshot_reducer(
 
             device_sidebar.apply_snapshot(&candidate);
             channel_sidebar.apply_snapshot(&candidate);
-            device_and_content.set_show_content(candidate.selected_device().is_some());
+            layout.set_device_selected(candidate.selected_device().is_some());
             accepted.replace(candidate);
         }
 
@@ -386,6 +617,117 @@ fn connect_joined_shutdown(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fullscreen_keyboard_contract_filters_modifiers_and_ambient_locks() {
+        use gtk::gdk::{Key, ModifierType};
+
+        assert_eq!(
+            fullscreen_key_action(Key::F11, ModifierType::empty(), false),
+            FullscreenKeyAction::Toggle
+        );
+        assert_eq!(
+            fullscreen_key_action(Key::F11, ModifierType::LOCK_MASK, true),
+            FullscreenKeyAction::Toggle
+        );
+        let ambient_mod2 = ModifierType::from_bits_retain(1 << 4);
+        assert_eq!(
+            fullscreen_key_action(Key::F11, ambient_mod2, false),
+            FullscreenKeyAction::Toggle
+        );
+        assert_eq!(
+            fullscreen_key_action(Key::Escape, ModifierType::empty(), true),
+            FullscreenKeyAction::Exit
+        );
+        assert_eq!(
+            fullscreen_key_action(Key::Escape, ModifierType::LOCK_MASK, true),
+            FullscreenKeyAction::Exit
+        );
+
+        for modifiers in [
+            ModifierType::SHIFT_MASK,
+            ModifierType::CONTROL_MASK,
+            ModifierType::ALT_MASK,
+            ModifierType::SUPER_MASK,
+        ] {
+            assert_eq!(
+                fullscreen_key_action(Key::F11, modifiers, false),
+                FullscreenKeyAction::Ignore
+            );
+            assert_eq!(
+                fullscreen_key_action(Key::Escape, modifiers, true),
+                FullscreenKeyAction::Ignore
+            );
+        }
+        assert_eq!(
+            fullscreen_key_action(Key::Escape, ModifierType::empty(), false),
+            FullscreenKeyAction::Ignore
+        );
+        assert_eq!(
+            fullscreen_key_action(Key::F10, ModifierType::empty(), true),
+            FullscreenKeyAction::Ignore
+        );
+    }
+
+    #[test]
+    fn fullscreen_layout_forces_player_then_restores_responsive_preferences() {
+        let mut state = ResponsiveLayoutState {
+            medium_width: false,
+            compact_width: false,
+            fullscreen: false,
+            outer_show_content: true,
+            inner_show_content: false,
+        };
+        assert_eq!(
+            state.decision(),
+            ResponsiveLayoutDecision {
+                outer_collapsed: false,
+                inner_collapsed: false,
+                outer_show_content: true,
+                inner_show_content: false,
+            }
+        );
+
+        state.medium_width = true;
+        state.compact_width = true;
+        assert_eq!(
+            state.decision(),
+            ResponsiveLayoutDecision {
+                outer_collapsed: true,
+                inner_collapsed: true,
+                outer_show_content: true,
+                inner_show_content: false,
+            }
+        );
+
+        state.medium_width = false;
+        state.compact_width = false;
+        state.fullscreen = true;
+        assert_eq!(
+            state.decision(),
+            ResponsiveLayoutDecision {
+                outer_collapsed: true,
+                inner_collapsed: true,
+                outer_show_content: true,
+                inner_show_content: true,
+            }
+        );
+
+        // A selection clear while fullscreen is retained but cannot reveal a
+        // sidebar until the compositor confirms exit.
+        state.outer_show_content = false;
+        assert!(state.decision().outer_show_content);
+        state.fullscreen = false;
+        assert_eq!(
+            state.decision(),
+            ResponsiveLayoutDecision {
+                outer_collapsed: false,
+                inner_collapsed: false,
+                outer_show_content: false,
+                inner_show_content: false,
+            }
+        );
+    }
 
     #[test]
     fn user_selection_changes_always_map_to_superseding_commands() {

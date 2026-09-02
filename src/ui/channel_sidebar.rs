@@ -406,7 +406,9 @@ impl Drop for SnapshotApplicationGuard {
 
 #[cfg(test)]
 mod tests {
-    use balun::controller::ChannelSummary;
+    use std::cell::RefCell;
+
+    use balun::controller::{ChannelSummary, DeviceSummary, DiscoveryState, SnapshotRevision};
     use balun::domain::{DeviceId, GuideNumber};
 
     use super::*;
@@ -419,6 +421,56 @@ mod tests {
         ChannelRowObject::from_summary(
             &ChannelSummary::new(key, "Synthetic News".to_owned(), false, drm, true).unwrap(),
         )
+    }
+
+    fn ready_snapshot() -> (
+        ApplicationSnapshot,
+        ChannelKey,
+        ChannelKey,
+        OperationGeneration,
+    ) {
+        let device_id = DeviceId::new(0x105A_1232).unwrap();
+        let generation = OperationGeneration::new(23);
+        let unprotected_key = ChannelKey::new(device_id, GuideNumber::new("7.1").unwrap());
+        let protected_key = ChannelKey::new(device_id, GuideNumber::new("8.1").unwrap());
+        let channels = [
+            ChannelSummary::new(
+                unprotected_key.clone(),
+                "Synthetic News".to_owned(),
+                false,
+                false,
+                true,
+            )
+            .unwrap(),
+            ChannelSummary::new(
+                protected_key.clone(),
+                "Protected Test".to_owned(),
+                false,
+                true,
+                true,
+            )
+            .unwrap(),
+        ];
+        let device = DeviceSummary::new(
+            device_id,
+            Some("Test tuner".to_owned()),
+            Some("HDHomeRun".to_owned()),
+            Some(2),
+            "192.0.2.10:65001".parse().unwrap(),
+            1,
+        )
+        .unwrap();
+        let snapshot = ApplicationSnapshot::new(
+            SnapshotRevision::new(7),
+            OperationGeneration::new(5),
+            generation,
+            DiscoveryState::ready(OperationGeneration::new(5), 0),
+            [device],
+            Some(device_id),
+            SelectedLineupState::ready(device_id, generation, channels).unwrap(),
+        )
+        .unwrap();
+        (snapshot, unprotected_key, protected_key, generation)
     }
 
     #[test]
@@ -437,6 +489,62 @@ mod tests {
         assert!(activation_selection(&channel_row(false), None).is_none());
         let protected = channel_row(true);
         assert!(activation_selection(&protected, Some(OperationGeneration::new(17))).is_none());
+    }
+
+    /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
+    /// compile but skip this display-backed ListView signal contract.
+    #[test]
+    #[ignore = "requires the isolated display supplied by scripts/test-desktop-lifecycle.sh"]
+    fn ready_listview_activation_is_inert_on_selection_and_exact_on_activate() {
+        adw::init().expect("initialize libadwaita for channel activation smoke");
+        let main_context = gtk::glib::MainContext::default();
+        let _owner = main_context
+            .acquire()
+            .expect("acquire default main context for channel activation smoke");
+        let sidebar = build();
+        let (snapshot, unprotected_key, _protected_key, generation) = ready_snapshot();
+        sidebar.apply_snapshot(&snapshot);
+        let activations = Rc::new(RefCell::new(Vec::new()));
+        let recorded = Rc::clone(&activations);
+        sidebar.connect_channel_activated(move |selection| {
+            recorded.borrow_mut().push(selection);
+        });
+
+        let window = gtk::Window::builder()
+            .title("Balun channel activation proof")
+            .default_width(320)
+            .default_height(480)
+            .child(sidebar.root())
+            .build();
+        window.present();
+        while main_context.pending() {
+            main_context.iteration(false);
+        }
+
+        assert_eq!(sidebar.store.n_items(), 2);
+        assert_eq!(
+            sidebar.stack.visible_child_name().as_deref(),
+            Some(CHANNEL_LIST_PAGE_NAME)
+        );
+        assert!(!sidebar.list.is_single_click_activate());
+        assert!(sidebar.list.is_focusable());
+        assert_eq!(sidebar.list.accessible_role(), gtk::AccessibleRole::List);
+
+        // A single-click-equivalent selection changes only the inert local
+        // highlight and must not allocate a tuner.
+        sidebar.selection.set_selected(0);
+        assert!(activations.borrow().is_empty());
+
+        sidebar.list.emit_by_name::<()>("activate", &[&0_u32]);
+        assert_eq!(activations.borrow().len(), 1);
+        assert_eq!(activations.borrow()[0].channel_key(), &unprotected_key);
+        assert_eq!(activations.borrow()[0].selection_generation(), generation);
+
+        // Even a forged signal position for a protected visible row fails
+        // closed in the same production callback.
+        sidebar.list.emit_by_name::<()>("activate", &[&1_u32]);
+        assert_eq!(activations.borrow().len(), 1);
+        window.close();
     }
 
     #[test]

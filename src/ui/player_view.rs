@@ -16,12 +16,14 @@ use balun::playback::{
 /// pane retains only that owner and the URI-opaque GDK paintable it publishes.
 pub(crate) struct PlayerView {
     root: adw::ToolbarView,
+    header: adw::HeaderBar,
     picture: gtk::Picture,
     status: adw::StatusPage,
     volume_adjustment: gtk::Adjustment,
     volume_scale: gtk::Scale,
     mute_button: gtk::ToggleButton,
     stop_button: gtk::Button,
+    fullscreen_button: gtk::Button,
     idle_title: String,
     idle_description: String,
     session: Option<PlaybackSession>,
@@ -35,6 +37,10 @@ struct PlayerAccessibilityPlan {
     mute_label: &'static str,
     unmute_label: &'static str,
     stop_label: &'static str,
+    enter_fullscreen_label: &'static str,
+    exit_fullscreen_label: &'static str,
+    enter_fullscreen_shortcuts: &'static str,
+    exit_fullscreen_shortcuts: &'static str,
 }
 
 const PLAYER_ACCESSIBILITY: PlayerAccessibilityPlan = PlayerAccessibilityPlan {
@@ -42,12 +48,47 @@ const PLAYER_ACCESSIBILITY: PlayerAccessibilityPlan = PlayerAccessibilityPlan {
     mute_label: "Mute live TV",
     unmute_label: "Unmute live TV",
     stop_label: "Stop live TV",
+    enter_fullscreen_label: "Enter fullscreen",
+    exit_fullscreen_label: "Exit fullscreen",
+    enter_fullscreen_shortcuts: "F11",
+    exit_fullscreen_shortcuts: "F11 Escape",
 };
 
 impl PlayerView {
     /// Return the widget rooted in the live-TV navigation page.
     pub(crate) const fn root(&self) -> &adw::ToolbarView {
         &self.root
+    }
+
+    /// Return the native pointer/Enter/Space fullscreen request control.
+    pub(crate) const fn fullscreen_button(&self) -> &gtk::Button {
+        &self.fullscreen_button
+    }
+
+    /// Reconcile presentation only after the application window reports its
+    /// compositor-confirmed fullscreen state.
+    pub(crate) fn apply_fullscreen_presentation(&self, fullscreen: bool) {
+        let (icon, label, shortcuts) = if fullscreen {
+            (
+                "view-restore-symbolic",
+                PLAYER_ACCESSIBILITY.exit_fullscreen_label,
+                PLAYER_ACCESSIBILITY.exit_fullscreen_shortcuts,
+            )
+        } else {
+            (
+                "view-fullscreen-symbolic",
+                PLAYER_ACCESSIBILITY.enter_fullscreen_label,
+                PLAYER_ACCESSIBILITY.enter_fullscreen_shortcuts,
+            )
+        };
+        self.fullscreen_button.set_icon_name(icon);
+        self.fullscreen_button.set_tooltip_text(Some(label));
+        self.fullscreen_button.update_property(&[
+            gtk::accessible::Property::Label(label),
+            gtk::accessible::Property::KeyShortcuts(shortcuts),
+        ]);
+        self.header.set_show_back_button(!fullscreen);
+        self.root.set_extend_content_to_top_edge(fullscreen);
     }
 
     /// Synchronize the production picture with the session's current opaque
@@ -402,6 +443,15 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
     stop_button.update_property(&[gtk::accessible::Property::Label(
         PLAYER_ACCESSIBILITY.stop_label,
     )]);
+    let fullscreen_button = gtk::Button::builder()
+        .icon_name("view-fullscreen-symbolic")
+        .tooltip_text(PLAYER_ACCESSIBILITY.enter_fullscreen_label)
+        .focusable(true)
+        .build();
+    fullscreen_button.update_property(&[
+        gtk::accessible::Property::Label(PLAYER_ACCESSIBILITY.enter_fullscreen_label),
+        gtk::accessible::Property::KeyShortcuts(PLAYER_ACCESSIBILITY.enter_fullscreen_shortcuts),
+    ]);
     let controls = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
@@ -410,6 +460,7 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
     controls.append(&mute_button);
     controls.append(&volume_scale);
     controls.append(&stop_button);
+    controls.append(&fullscreen_button);
     let header = adw::HeaderBar::new();
     header.pack_end(&controls);
 
@@ -418,12 +469,14 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
     toolbar.set_content(Some(&player));
     let view = PlayerView {
         root: toolbar,
+        header,
         picture,
         status: empty_state,
         volume_adjustment,
         volume_scale,
         mute_button,
         stop_button,
+        fullscreen_button,
         idle_title: title.to_owned(),
         idle_description: description,
         session,
@@ -556,6 +609,36 @@ mod tests {
             view.mute_button.tooltip_text().as_deref(),
             Some(PLAYER_ACCESSIBILITY.mute_label)
         );
+        assert_eq!(
+            view.fullscreen_button.accessible_role(),
+            gtk::AccessibleRole::Button
+        );
+        assert!(view.fullscreen_button.is_focusable());
+        assert!(view.fullscreen_button.is_sensitive());
+        assert_eq!(
+            view.fullscreen_button.icon_name().as_deref(),
+            Some("view-fullscreen-symbolic")
+        );
+        assert_eq!(
+            view.fullscreen_button.tooltip_text().as_deref(),
+            Some(PLAYER_ACCESSIBILITY.enter_fullscreen_label)
+        );
+        assert!(!view.root.is_extend_content_to_top_edge());
+
+        view.apply_fullscreen_presentation(true);
+        assert_eq!(
+            view.fullscreen_button.icon_name().as_deref(),
+            Some("view-restore-symbolic")
+        );
+        assert_eq!(
+            view.fullscreen_button.tooltip_text().as_deref(),
+            Some(PLAYER_ACCESSIBILITY.exit_fullscreen_label)
+        );
+        assert!(view.root.is_extend_content_to_top_edge());
+        assert!(!view.header.shows_back_button());
+        view.apply_fullscreen_presentation(false);
+        assert!(!view.root.is_extend_content_to_top_edge());
+        assert!(view.header.shows_back_button());
 
         let bytes = gtk::glib::Bytes::from_static(&[0x18, 0x30, 0x48, 0xff]);
         let paintable =
@@ -589,6 +672,7 @@ mod tests {
 
         let retained_stop_button = view.stop_button.clone();
         let retained_mute_button = view.mute_button.clone();
+        let retained_fullscreen_button = view.fullscreen_button.clone();
         let retained_adjustment = view.volume_adjustment.clone();
         let weak_view = Rc::downgrade(&view);
         drop(view);
@@ -596,6 +680,7 @@ mod tests {
         retained_stop_button.emit_clicked();
         retained_mute_button.set_active(true);
         retained_adjustment.set_value(25.0);
+        retained_fullscreen_button.emit_clicked();
     }
 
     /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
@@ -676,6 +761,10 @@ mod tests {
                 mute_label: "Mute live TV",
                 unmute_label: "Unmute live TV",
                 stop_label: "Stop live TV",
+                enter_fullscreen_label: "Enter fullscreen",
+                exit_fullscreen_label: "Exit fullscreen",
+                enter_fullscreen_shortcuts: "F11",
+                exit_fullscreen_shortcuts: "F11 Escape",
             }
         );
         assert_ne!(
@@ -685,6 +774,10 @@ mod tests {
         assert_ne!(
             PLAYER_ACCESSIBILITY.mute_label,
             PLAYER_ACCESSIBILITY.unmute_label
+        );
+        assert_ne!(
+            PLAYER_ACCESSIBILITY.enter_fullscreen_label,
+            PLAYER_ACCESSIBILITY.exit_fullscreen_label
         );
     }
 }

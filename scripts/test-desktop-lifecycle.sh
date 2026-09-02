@@ -296,6 +296,12 @@ dbus-run-session -- \
 
 dbus-run-session -- \
     timeout --signal=TERM --kill-after=5s 30s \
+    cargo test --locked --features desktop --bin balun \
+        ui::channel_sidebar::tests::ready_listview_activation_is_inert_on_selection_and_exact_on_activate -- \
+        --exact --ignored --nocapture
+
+dbus-run-session -- \
+    timeout --signal=TERM --kill-after=5s 30s \
     cargo test --locked --features desktop --test playback_synthetic \
         synthetic_mpeg2_reaches_eos_and_renders_multiple_frames -- \
         --exact --ignored --nocapture --test-threads=1
