@@ -21,9 +21,10 @@ available program information, and a live-video area.
 > tuner-stream handoff, and the playback library now owns its generation-safe
 > `playbin3` lifecycle. Double-clicking or pressing Enter on an unprotected
 > channel now enters that path and attempts live-device playback without
-> exposing the stream URI to the UI. Explicit Stop, volume, mute, fullscreen,
-> detailed playback errors, hostname entry, EPG, and live-device acceptance
-> remain unimplemented.
+> exposing the stream URI to the UI. An accessible header Stop button drops a
+> pending private response wait or settles the active generation. Volume, mute,
+> fullscreen, detailed playback errors, hostname entry, EPG, and live-device
+> acceptance remain unimplemented.
 
 ## Current foundation
 

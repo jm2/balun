@@ -176,8 +176,10 @@ bounded controller FIFO, aborts superseded response tasks, and invokes this
 binding only after the session applies that generation. Selected-device
 changes stop the session immediately after successful command admission; the
 published generation repeats that stop before replacing the sidebars as a
-fail-safe. M2.8-M2.10 will complete controls, user-visible state, and teardown
-acceptance.
+fail-safe. The accessible header Stop control disables immediately, aborts the
+pending private response, clears the paintable, and invokes the same exact-
+generation stop path without yielding. M2.8-M2.10 will complete volume, mute,
+fullscreen, user-visible state, and teardown acceptance.
 
 Native Error and EOS already retire the session's exact pipeline, but the
 session does not yet notify `PlayerView` to clear or replace its last paintable

@@ -18,6 +18,7 @@ pub(crate) struct PlayerView {
     root: adw::ToolbarView,
     picture: gtk::Picture,
     status: adw::StatusPage,
+    stop_button: gtk::Button,
     idle_title: String,
     idle_description: String,
     session: Option<PlaybackSession>,
@@ -40,6 +41,18 @@ impl PlayerView {
         Ok(self.apply_paintable(paintable.as_ref()))
     }
 
+    /// Connect the accessible Stop control without retaining this owner in its
+    /// GTK signal closure.
+    pub(crate) fn connect_stop_control(self: &Rc<Self>) {
+        let player_view = Rc::downgrade(self);
+        self.stop_button.connect_clicked(move |button| {
+            button.set_sensitive(false);
+            if let Some(player_view) = player_view.upgrade() {
+                let _ = player_view.stop();
+            }
+        });
+    }
+
     /// Start one URL-free channel intent and consume the actor-private response
     /// only through the generation-owned playback session.
     pub(crate) fn activate_channel(
@@ -57,10 +70,15 @@ impl PlayerView {
         // Even failed predecessor teardown must never leave its old frame in
         // the production picture.
         self.apply_paintable(None);
-        let Ok(request) = request else {
-            self.show_playback_failure();
-            return;
+        let request = match request {
+            Ok(request) => request,
+            Err(failure) => {
+                self.stop_button.set_sensitive(false);
+                self.show_session_failure(failure);
+                return;
+            }
         };
+        self.stop_button.set_sensitive(true);
         self.show_connecting();
 
         let receiver = match controller.try_request_stream(request.selection().clone()) {
@@ -69,6 +87,7 @@ impl PlayerView {
                 if let Some(session) = self.session.as_ref() {
                     let _ = session.cancel_tune(request);
                 }
+                self.stop_button.set_sensitive(false);
                 self.show_playback_failure();
                 return;
             }
@@ -88,22 +107,28 @@ impl PlayerView {
     /// Cancel pending resolution, hide any retained frame, and settle the
     /// current generation without making the session terminal.
     pub(crate) fn stop(&self) -> Result<(), PlaybackSessionFailure> {
+        self.stop_button.set_sensitive(false);
         self.abort_pending_response();
         self.apply_paintable(None);
         let result = match self.session.as_ref() {
             Some(session) => session.stop(),
             None => Ok(()),
         };
-        if result.is_ok() {
-            self.show_idle();
-        } else {
-            self.show_playback_failure();
+        match result {
+            Ok(()) => {
+                self.show_idle();
+                Ok(())
+            }
+            Err(failure) => {
+                self.show_stop_failure();
+                Err(failure)
+            }
         }
-        result
     }
 
     /// Clear presentation and terminally settle the playback owner.
     pub(crate) fn shut_down(&self) -> Result<(), PlaybackSessionFailure> {
+        self.stop_button.set_sensitive(false);
         self.abort_pending_response();
         self.apply_paintable(None);
         match self.session.as_ref() {
@@ -126,6 +151,7 @@ impl PlayerView {
     ) {
         let Some(session) = self.session.as_ref() else {
             drop(response);
+            self.stop_button.set_sensitive(false);
             self.show_playback_failure();
             return;
         };
@@ -134,8 +160,12 @@ impl PlayerView {
                 Ok(true) => {}
                 Ok(false) | Err(_) => {
                     self.apply_paintable(None);
-                    let _ = session.stop();
-                    self.show_playback_failure();
+                    self.stop_button.set_sensitive(false);
+                    if session.stop().is_err() {
+                        self.show_stop_failure();
+                    } else {
+                        self.show_playback_failure();
+                    }
                 }
             },
             Ok(TuneCompletion::Stale) => {
@@ -143,9 +173,10 @@ impl PlayerView {
                 // successor paintable or may deliberately be idle.
                 let _ = self.sync_paintable();
             }
-            Err(_) => {
+            Err(failure) => {
                 self.apply_paintable(None);
-                self.show_playback_failure();
+                self.stop_button.set_sensitive(false);
+                self.show_session_failure(failure);
             }
         }
     }
@@ -175,6 +206,22 @@ impl PlayerView {
             "The selected channel could not be started. Device discovery and lineup inspection remain available.",
         ));
         self.status.set_visible(true);
+    }
+
+    fn show_stop_failure(&self) {
+        self.status.set_title("Unable to stop live TV");
+        self.status.set_description(Some(
+            "Playback could not be stopped cleanly. Close Balun before selecting another channel.",
+        ));
+        self.status.set_visible(true);
+    }
+
+    fn show_session_failure(&self, failure: PlaybackSessionFailure) {
+        if failure == PlaybackSessionFailure::PipelineTeardown {
+            self.show_stop_failure();
+        } else {
+            self.show_playback_failure();
+        }
     }
 }
 
@@ -215,13 +262,24 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
     player.set_child(Some(&picture));
     player.add_overlay(&empty_state);
 
+    let stop_button = gtk::Button::builder()
+        .icon_name("media-playback-stop-symbolic")
+        .tooltip_text("Stop live TV")
+        .focusable(true)
+        .sensitive(false)
+        .build();
+    stop_button.update_property(&[gtk::accessible::Property::Label("Stop live TV")]);
+    let header = adw::HeaderBar::new();
+    header.pack_end(&stop_button);
+
     let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&player));
     let view = PlayerView {
         root: toolbar,
         picture,
         status: empty_state,
+        stop_button,
         idle_title: title.to_owned(),
         idle_description: description,
         session,
@@ -257,7 +315,17 @@ fn empty_state_copy(capabilities: &PlaybackCapabilities) -> (&'static str, Strin
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
+
+    struct DropProbe(Rc<Cell<bool>>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
 
     /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
     /// compile but skip this display-dependent widget contract.
@@ -269,12 +337,29 @@ mod tests {
         let _owner = main_context
             .acquire()
             .expect("acquire default main context for player-view smoke");
-        let view = build(Err(PlaybackInitializationError::InitializationFailed));
+        let view = Rc::new(build(Err(
+            PlaybackInitializationError::InitializationFailed,
+        )));
+        view.connect_stop_control();
 
         assert_eq!(view.picture.content_fit(), gtk::ContentFit::Contain);
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
         assert_eq!(view.status.title(), "Playback initialization unavailable");
+        assert_eq!(
+            view.stop_button.icon_name().as_deref(),
+            Some("media-playback-stop-symbolic")
+        );
+        assert_eq!(
+            view.stop_button.tooltip_text().as_deref(),
+            Some("Stop live TV")
+        );
+        assert_eq!(
+            view.stop_button.accessible_role(),
+            gtk::AccessibleRole::Button
+        );
+        assert!(view.stop_button.is_focusable());
+        assert!(!view.stop_button.is_sensitive());
 
         let bytes = gtk::glib::Bytes::from_static(&[0x18, 0x30, 0x48, 0xff]);
         let paintable =
@@ -284,14 +369,26 @@ mod tests {
         assert_eq!(view.picture.paintable().as_ref(), Some(&paintable));
         assert!(!view.status.is_visible());
 
-        view.stop().unwrap();
+        let task_dropped = Rc::new(Cell::new(false));
+        let drop_probe = DropProbe(Rc::clone(&task_dropped));
+        let task = main_context.spawn_local(async move {
+            let _drop_probe = drop_probe;
+            std::future::pending::<()>().await;
+        });
+        view.pending_response.replace(Some(task));
+        view.stop_button.set_sensitive(true);
+        view.stop_button.emit_clicked();
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
         assert_eq!(view.status.title(), "Playback initialization unavailable");
+        assert!(!view.stop_button.is_sensitive());
+        assert!(task_dropped.get());
 
         assert!(view.apply_paintable(Some(&paintable)));
+        view.stop_button.set_sensitive(true);
         view.shut_down().unwrap();
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
+        assert!(!view.stop_button.is_sensitive());
     }
 }

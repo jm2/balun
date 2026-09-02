@@ -208,8 +208,11 @@ compatibility/error-path work, not prerequisites for that first picture.
   volume, mute, and fullscreen with accessible keyboard and pointer behavior.
   Double-click and Enter activation now carry only the non-protected row's
   exact applied lineup generation into the bounded actor/session path; rapid
-  successors abort the prior wait. Explicit Stop, volume, mute, fullscreen,
-  and their complete accessibility coverage remain open.
+  successors abort the prior wait. An accessible header Stop button supports
+  pointer and native Enter/Space activation, disables before aborting the
+  response task, clears the paintable, and synchronously stops the exact
+  generation. Volume, mute, fullscreen, and their complete accessibility
+  coverage remain open.
 
 - [ ] **M2.9 — Add truthful playback state and errors.** Surface connecting,
   buffering, playing, stopped, tuner-busy/503, missing/404, protected, missing

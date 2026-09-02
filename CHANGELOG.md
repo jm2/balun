@@ -20,9 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immediately; the resulting generation publication repeats that stop before
   replacing the sidebars as a fail-safe, and controller snapshot-channel
   closure also stops the independent playback owner. Connecting and
-  activation-setup failure copy is fixed and endpoint-free. Explicit Stop,
-  volume, mute, fullscreen, detailed state/error projection, and live-device
-  acceptance remain open.
+  activation-setup failure copy is fixed and endpoint-free. An accessible
+  header Stop button is enabled during a pending or applied activation; pointer
+  click or native Enter/Space activation disables it immediately, aborts the
+  private response task, clears presentation, and synchronously stops the exact
+  session generation. Volume, mute, fullscreen, detailed state/error
+  projection, and live-device acceptance remain open.
 - **Initial live-video presentation contract** — Configure each private
   `playbin3` with its documented adaptive deinterlace flag, forced source
   aspect-ratio preservation, and the library-owned GTK paintable sink with its

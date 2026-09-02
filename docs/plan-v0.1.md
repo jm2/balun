@@ -244,7 +244,9 @@ each exact predecessor to `NULL` before a successor can be constructed. The
 desktop pane now owns that session plus its URI-opaque paintable
 binding/clearing boundary. M2.7 retains active-session presentation proof;
 M2.8 now has its first exact-generation double-click/Enter activation lane,
-while explicit Stop, volume, mute, fullscreen, and accessibility remain open.
+plus an accessible header Stop control which aborts pending resolution and
+settles the exact generation. Volume, mute, fullscreen, and their complete
+accessibility coverage remain open.
 M0.5 separately exercises a pinned local MPEG-2 fixture through a
 process-isolated Linux GTK pipeline; see the detailed
 [playback foundation](playback.md).
