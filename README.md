@@ -28,7 +28,7 @@ media framework.
 | Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Windows against real tuners; Linux and macOS acceptance pending |
 | Stop, volume, mute, and fullscreen controls | ✅ |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
-| Fixed, endpoint-free playback error messages | ✅ |
+| Playback errors that name the device and channel | ✅ |
 | Windows local discovery | ✅ |
 | Route-derived tunnel discovery (Linux) | 🚧 Foundation only; not connected to the UI |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |

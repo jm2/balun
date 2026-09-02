@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **0/30 (0.0%)** records complete. This is a dependency ledger,
+Current status: **1/30 (3.3%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -82,7 +82,7 @@ never recorded.
   exact targets at startup and accept a hostname resolved to a bounded set of
   unicast addresses; neither becomes prefix-scan authority.
 
-- [ ] **P1.3 — Let errors and diagnostics name the device.** Per ADR-0002,
+- [x] **P1.3 — Let errors and diagnostics name the device.** Per ADR-0002,
   failure copy and `--inspect` output may show the device name, address, and
   DeviceID suffix; `DeviceAuth` and credentials stay redacted.
 

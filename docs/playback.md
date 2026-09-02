@@ -241,8 +241,9 @@ source names, structure fields, extraction errors, headers, bodies, or
 endpoint values. Adversarial tests place URI and credential-like secrets in
 those ignored fields and prove the public category, session failure, and
 failed session-state debug output remain fixed. `PlayerView` maps all seven
-categories and controller handoff failures to fixed endpoint-free visible and
-accessible status text, while a teardown failure retains its stronger
+categories and controller handoff failures to fixed titles whose descriptions
+name the device and channel from the accepted snapshot (ADR-0002) and never a
+URL or credential, while a teardown failure retains its stronger
 close-Balun warning.
 
 ## Application-owned direct transport
