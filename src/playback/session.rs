@@ -1157,7 +1157,9 @@ mod tests {
 
     use super::*;
     use crate::domain::{DeviceId, GuideNumber};
-    use crate::playback::test_support::{FixtureStreamServer, StreamBehavior, fixture_response};
+    use crate::playback::test_support::{
+        FixtureStreamServer, StreamBehavior, fixture_response, hold_decoder_selection,
+    };
     use gtk::prelude::*;
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1434,6 +1436,9 @@ mod tests {
     #[test]
     #[ignore = "requires the isolated display and complete playback runtime supplied by scripts/test-desktop-lifecycle.sh"]
     fn active_production_session_exposes_opaque_paintable_and_shuts_down() {
+        // Decoding autoplugs from the shared registry; hold the selection lock
+        // through shutdown so a concurrent rank override cannot be observed.
+        let _decoder_selection = hold_decoder_selection();
         adw::init().expect("initialize libadwaita for active-session presentation proof");
         let main_context = gst::glib::MainContext::default();
         let _owner = main_context

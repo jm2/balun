@@ -336,7 +336,9 @@ mod tests {
     use super::*;
     use crate::controller::OperationGeneration;
     use crate::domain::{ChannelKey, DeviceId, GuideNumber};
-    use crate::playback::test_support::{FixtureStreamServer, StreamBehavior, fixture_response};
+    use crate::playback::test_support::{
+        FixtureStreamServer, StreamBehavior, fixture_response, hold_decoder_selection,
+    };
     use crate::playback::transport::PIPELINE_URI;
 
     const QUICK: TransportConfig = TransportConfig::new(
@@ -376,14 +378,10 @@ mod tests {
             .any(|factory| gst::ElementFactory::find(factory).is_some())
     }
 
-    /// Serializes every registry rank override in this test binary, so two
-    /// tests cannot interleave a demotion with another test's autoplugging.
-    static DECODER_RANK_OVERRIDE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Holds the rank-override lock and restores the original rank of every
-    /// demoted decoder factory when dropped, on every exit path including a
-    /// panicking assertion, so a later pipeline in the same process autoplugs
-    /// from the registry it started with.
+    /// Holds the shared decoder-selection lock and restores the original rank
+    /// of every demoted decoder factory when dropped, on every exit path
+    /// including a panicking assertion, so a later pipeline in the same
+    /// process autoplugs from the registry it started with.
     struct DecoderRankGuard {
         original: Vec<(gst::PluginFeature, gst::Rank)>,
         _lock: std::sync::MutexGuard<'static, ()>,
@@ -405,11 +403,7 @@ mod tests {
     /// the duration of the returned guard and let `decodebin3` choose the
     /// software decoders.
     fn prefer_software_mpeg2_decoders() -> DecoderRankGuard {
-        // A test that panicked while holding the lock already restored its
-        // ranks in Drop, so the poisoned state carries no stale override.
-        let lock = DECODER_RANK_OVERRIDE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let lock = hold_decoder_selection();
         let registry = gst::Registry::get();
         let mut original = Vec::new();
         for name in [
