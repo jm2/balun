@@ -732,7 +732,7 @@ Push-Location -LiteralPath $RepositoryRoot
 try {
     if ($Fmt) {
         Write-Info 'Formatting Balun...'
-        Invoke-Cargo $CargoCommand @('fmt', '--all') 'cargo fmt'
+        Invoke-Cargo -CargoCommand $CargoCommand -Arguments @('fmt', '--all') -Description 'cargo fmt'
         Write-Info 'Formatting complete.'
         exit 0
     }
@@ -772,7 +772,7 @@ try {
         $CargoArguments = @('check', '--all-targets') +
             $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
             $TargetArguments
-        Invoke-Cargo $CargoCommand $CargoArguments 'cargo check'
+        Invoke-Cargo -CargoCommand $CargoCommand -Arguments $CargoArguments -Description 'cargo check'
         Write-Info 'Check passed.'
         exit 0
     }
@@ -783,14 +783,14 @@ try {
         $CargoArguments = @('clippy', '--all-targets') +
             $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
             $TargetArguments + @('--', '-D', 'warnings')
-        Invoke-Cargo $CargoCommand $CargoArguments 'cargo clippy'
+        Invoke-Cargo -CargoCommand $CargoCommand -Arguments $CargoArguments -Description 'cargo clippy'
         # Tributary lints both profiles so cfg(debug_assertions)-gated code
         # cannot hide from either configuration.
         Write-Info "Linting all Balun $ModeName targets in the release profile..."
         $CargoArguments = @('clippy', '--release', '--all-targets') +
             $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
             $TargetArguments + @('--', '-D', 'warnings')
-        Invoke-Cargo $CargoCommand $CargoArguments 'cargo clippy'
+        Invoke-Cargo -CargoCommand $CargoCommand -Arguments $CargoArguments -Description 'cargo clippy'
         Write-Info 'Clippy passed.'
         exit 0
     }
@@ -801,7 +801,7 @@ try {
         $CargoArguments = @('test', '--all-targets') +
             $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
             $TargetArguments
-        Invoke-Cargo $CargoCommand $CargoArguments 'cargo test'
+        Invoke-Cargo -CargoCommand $CargoCommand -Arguments $CargoArguments -Description 'cargo test'
         Write-Info 'Tests passed.'
         exit 0
     }
@@ -837,7 +837,7 @@ try {
         }
         $CargoArguments = @('llvm-cov', '--all-targets') +
             $CoverageFeatures + @('--locked') + $TargetArguments + @('--summary-only')
-        Invoke-Cargo $CargoCommand $CargoArguments 'cargo llvm-cov'
+        Invoke-Cargo -CargoCommand $CargoCommand -Arguments $CargoArguments -Description 'cargo llvm-cov'
         exit 0
     }
 
@@ -850,7 +850,7 @@ try {
             'balun-discover'
         ) + $TargetDirectoryArguments + $TargetArguments
         Write-Info 'Building balun-discover (locked release diagnostic)...'
-        Invoke-Cargo $CargoCommand $CargoArguments 'cargo build'
+        Invoke-Cargo -CargoCommand $CargoCommand -Arguments $CargoArguments -Description 'cargo build'
 
         $BinaryPath = Join-Path (
             $CargoTargetRoot
@@ -883,7 +883,7 @@ try {
         'balun'
     ) + $TargetDirectoryArguments + $TargetArguments
     Write-Info "Building Balun desktop (locked release for $RustTarget)..."
-    Invoke-Cargo $CargoCommand $CargoArguments 'cargo build'
+    Invoke-Cargo -CargoCommand $CargoCommand -Arguments $CargoArguments -Description 'cargo build'
 
     $BinaryPath = Join-Path $RepositoryRoot "target\$RustTarget\release\$DesktopBinaryName"
     $BinaryItem = Get-ValidatedBuildOutput $BinaryPath 'desktop application'
