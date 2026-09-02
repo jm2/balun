@@ -904,9 +904,11 @@ impl fmt::Debug for PlaybackSession {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::path::Path;
 
     use super::*;
     use crate::domain::{DeviceId, GuideNumber};
+    use gtk::prelude::*;
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     enum Call {
@@ -1135,6 +1137,82 @@ mod tests {
             None
         );
         assert_eq!(pipeline.property::<Option<String>>("uri"), None);
+    }
+
+    /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
+    /// compile but skip this display- and codec-dependent production proof.
+    #[test]
+    #[ignore = "requires the isolated display and complete playback runtime supplied by scripts/test-desktop-lifecycle.sh"]
+    fn active_production_session_exposes_opaque_paintable_and_shuts_down() {
+        adw::init().expect("initialize libadwaita for active-session presentation proof");
+        let main_context = gst::glib::MainContext::default();
+        let _owner = main_context
+            .acquire()
+            .expect("acquire the default main context for active-session proof");
+        let runtime = PlaybackRuntime::initialize()
+            .expect("initialize the complete production playback runtime");
+        assert!(
+            runtime.capabilities().is_foundation_ready(),
+            "the lifecycle harness must install Balun's complete playback foundation"
+        );
+        let session = PlaybackSession::new(runtime);
+        let channel_key = first_key();
+        let selection_generation = OperationGeneration::new(23);
+        let request = session
+            .begin_tune(StreamSelection::new(
+                channel_key.clone(),
+                selection_generation,
+            ))
+            .expect("begin one generation-owned local fixture tune");
+        let fixture = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/synthetic-mpeg2.ts"
+        ));
+        let fixture_uri = gst::glib::filename_to_uri(fixture, None)
+            .expect("construct the checked-in fixture URI");
+        let handoff = StreamHandoff::test_fixture(
+            channel_key.clone(),
+            selection_generation,
+            fixture_uri.as_str(),
+        );
+
+        assert_eq!(
+            session.complete_tune(request, Ok(handoff)),
+            Ok(TuneCompletion::Applied)
+        );
+        assert!(matches!(
+            session.state().unwrap(),
+            PlaybackSessionState::Connecting {
+                channel_key: active,
+                ..
+            } if active == channel_key
+        ));
+        let paintable = session
+            .paintable()
+            .expect("read the URI-opaque active paintable")
+            .expect("an applied production pipeline must publish a paintable");
+        assert!(paintable.property::<bool>(PAINTABLE_ASPECT_PROPERTY));
+
+        let picture = gtk::Picture::for_paintable(&paintable);
+        picture.set_content_fit(gtk::ContentFit::Contain);
+        let window = gtk::Window::builder()
+            .title("Balun active-session presentation proof")
+            .default_width(320)
+            .default_height(192)
+            .child(&picture)
+            .build();
+        window.present();
+        assert_eq!(picture.paintable().as_ref(), Some(&paintable));
+        assert_eq!(picture.content_fit(), gtk::ContentFit::Contain);
+
+        picture.set_paintable(gtk::gdk::Paintable::NONE);
+        assert!(picture.paintable().is_none());
+        session
+            .shut_down()
+            .expect("settle the production pipeline to NULL");
+        assert_eq!(session.state().unwrap(), PlaybackSessionState::ShutDown);
+        assert!(session.paintable().unwrap().is_none());
+        window.close();
     }
 
     #[test]
