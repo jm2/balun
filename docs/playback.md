@@ -2,8 +2,8 @@
 
 Last reviewed: 2026-09-01
 
-This document records Balun's implemented M2.4 GStreamer boundary and the
-remaining work before a live-TV stream can be opened. The product and milestone
+This document records Balun's implemented M2.4 GStreamer boundary, M2.5 private
+stream handoff, and the remaining work before a live-TV stream can be opened. The product and milestone
 scope remains authoritative in [`plan-v0.1.md`](plan-v0.1.md), while countable
 completion is tracked in [`task.md`](task.md).
 
@@ -18,12 +18,14 @@ loading, and the two sidebars remain usable. The native core library is still a
 dynamic dependency of a desktop build and must be present for that executable
 to start.
 
-The production application does not yet create a pipeline, accept a stream URL,
-open an HDHomeRun HTTP stream, allocate a tuner, select an audio sink, or render
-a channel. M0.5 is now demonstrated separately by a process-isolated Linux test
+The production application does not yet create a pipeline, open an HDHomeRun
+HTTP stream, allocate a tuner, select an audio sink, or render a channel. Its
+controller can authorize one opaque stream handoff from a current complete
+selected snapshot, but the desktop cannot inspect or consume its URI. M0.5 is
+demonstrated separately by a process-isolated Linux test
 which decodes a pinned local fixture into a real GTK paintable. That bounded
-test does not complete the full runtime/plugin contract in M0.10 or the stream
-handoff and generation-owned player work in M2.5 and later.
+test does not complete the full runtime/plugin contract in M0.10 or the
+generation-owned player work in M2.6 and later.
 
 ## Feature and version boundary
 
@@ -101,6 +103,30 @@ Registry presence also does not prove that a factory can construct, negotiate,
 decode, render, reach EOS, or tear down cleanly. Those behaviors require the
 process-isolated synthetic and fake-device tests in the remaining milestones.
 
+## Actor-private stream handoff
+
+M2.5 adds a narrow URL-bearing path which is separate from application
+snapshots and GStreamer ownership. A `StreamSelection` contains only a complete
+ChannelKey and the selected-lineup generation copied from one immutable
+snapshot. `ControllerHandle::try_request_stream` admits it into the same
+bounded FIFO as selection and discovery commands, preserving their order, and
+returns one single-consumer response. Resolving it is synchronous and performs
+no HTTP, DNS, discovery, tuner, or media work.
+
+The actor fails closed unless the generation is still current, the selected
+lineup is `Ready`, its retained complete snapshot exactly matches the URL-free
+projection, and every DeviceID agrees. It finds the exact ChannelKey only in
+that private snapshot, refuses protected rows, requires the successful
+responder address to remain a locator for the selected device, and revalidates
+HTTP, numeric host, port 5004, absent credentials/query/fragment, and the exact
+`/auto/v<GuideNumber>` path before constructing a handoff.
+
+`StreamHandoff` is non-cloneable, has no public URI accessor or `Display`, uses
+a custom URL-redacted `Debug`, and zeroizes its private URI bytes on drop. The
+desktop can hold and move the opaque type but cannot inspect the URI. M2.6 will
+add a library-owned, generation-scoped playback constructor which consumes it;
+until then channel rows remain inert and no stream is opened.
+
 ## Synthetic display-backed acceptance
 
 M0.5 adds one ignored desktop integration test which is compiled by ordinary
@@ -146,7 +172,7 @@ to exercise the fallback on a developer host.
 This is a Linux development/CI acceptance record only. It does not prove native
 macOS or Windows rendering, audio, physical MPEG-TS variants, live-source
 behavior, channel switching, tuner release, or packaged-runtime relocation.
-Those claims remain in M0.6, M0.10, M1.10, and M2.5 through M2.12.
+Those claims remain in M0.6, M0.10, M1.10, and M2.6 through M2.12.
 
 ## Development runtime examples
 
@@ -198,11 +224,10 @@ provenance, and distribution review.
 
 ## Next acceptance steps
 
-1. M2.5: pass one revalidated stream URL privately from the controller actor
-   without publishing or logging it through GTK-facing state.
-2. M2.6-M2.10: own one generation-scoped tune session, paintable, controls,
+1. M2.6-M2.10: consume the private handoff in one generation-scoped tune
+   session and own its paintable, controls,
    errors, and deterministic tuner release.
-3. M0.10: freeze the complete tested factory and platform package contract,
+2. M0.10: freeze the complete tested factory and platform package contract,
    including codecs and audio sinks.
-4. M2.11-M2.12: run fake-device, development-runtime, packaged-runtime, and
+3. M2.11-M2.12: run fake-device, development-runtime, packaged-runtime, and
    native live-TV smoke coverage on Linux, macOS, and Windows.

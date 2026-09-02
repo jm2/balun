@@ -5,6 +5,7 @@
 //! boundary that may return responder-pinned stream URLs for later playback.
 
 use std::fmt;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use thiserror::Error;
@@ -162,6 +163,7 @@ impl DeviceSnapshotIssue {
 #[derive(Clone)]
 pub struct ResolvedDeviceSnapshot {
     snapshot: DeviceSnapshot,
+    selected_source: IpAddr,
     selected_locator_ordinal: u8,
     http_attempt_count: usize,
     issues: Vec<DeviceSnapshotIssue>,
@@ -183,6 +185,15 @@ impl ResolvedDeviceSnapshot {
         self.snapshot.info().device_id()
     }
 
+    /// Return the responder address that supplied this complete snapshot.
+    ///
+    /// This stays crate-private so UI projections cannot acquire topology;
+    /// the controller uses it only to revalidate a stream origin at handoff.
+    #[must_use]
+    pub(crate) const fn selected_source(&self) -> IpAddr {
+        self.selected_source
+    }
+
     #[must_use]
     pub const fn selected_locator_ordinal(&self) -> u8 {
         self.selected_locator_ordinal
@@ -201,6 +212,22 @@ impl ResolvedDeviceSnapshot {
     pub(crate) fn controller_test_fixture(device_id: DeviceId) -> Self {
         Self {
             snapshot: DeviceSnapshot::debug_redaction_fixture(device_id),
+            selected_source: "127.0.0.1".parse().unwrap(),
+            selected_locator_ordinal: 1,
+            http_attempt_count: 1,
+            issues: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn controller_stream_test_fixture(
+        device_id: DeviceId,
+        protected: bool,
+        selected_source: std::net::IpAddr,
+    ) -> Self {
+        Self {
+            snapshot: DeviceSnapshot::stream_handoff_test_fixture(device_id, protected),
+            selected_source,
             selected_locator_ordinal: 1,
             http_attempt_count: 1,
             issues: Vec::new(),
@@ -316,6 +343,7 @@ impl DeviceSnapshotResolver {
         .await?;
         Ok(ResolvedDeviceSnapshot {
             snapshot: resolution.snapshot,
+            selected_source: resolution.selected_source,
             selected_locator_ordinal: resolution.selected_locator_ordinal,
             http_attempt_count: resolution.http_attempt_count,
             issues: resolution.issues,
@@ -419,6 +447,7 @@ fn classify_http_error(
 #[derive(Debug)]
 struct Resolution<T> {
     snapshot: T,
+    selected_source: IpAddr,
     selected_locator_ordinal: u8,
     http_attempt_count: usize,
     issues: Vec<DeviceSnapshotIssue>,
@@ -513,6 +542,7 @@ async fn resolve_candidates<F: SnapshotFetcher>(
         }
         return Ok(Resolution {
             snapshot,
+            selected_source: endpoint.source().ip(),
             selected_locator_ordinal: ordinal,
             http_attempt_count,
             issues,
@@ -623,6 +653,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(resolution.snapshot, FakeSnapshot(expected));
+        assert_eq!(resolution.selected_source, ip("192.0.2.3"));
         assert_eq!(resolution.selected_locator_ordinal, 1);
         assert_eq!(resolution.http_attempt_count, 1);
         assert!(resolution.issues.is_empty());
@@ -650,6 +681,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(resolution.selected_locator_ordinal, 2);
+        assert_eq!(resolution.selected_source, ip("192.0.2.1"));
         assert_eq!(resolution.http_attempt_count, 2);
         assert_eq!(
             resolution.issues,
@@ -861,6 +893,7 @@ mod tests {
             "{:?}",
             ResolvedDeviceSnapshot {
                 snapshot,
+                selected_source: "127.0.0.1".parse().unwrap(),
                 selected_locator_ordinal: 1,
                 http_attempt_count: 1,
                 issues: Vec::new(),

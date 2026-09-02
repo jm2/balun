@@ -234,8 +234,10 @@ Implementation status: M2.4 introduces an optional, GTK-free `playback` Cargo
 feature and makes the desktop feature include it. Its default-main-context owner
 initializes GStreamer, enforces the native 1.20 runtime floor, and retains one
 path-free startup capability snapshot. The default library and diagnostic still
-exclude both GTK and GStreamer. No production pipeline or stream handoff exists
-yet. M0.5 separately exercises a pinned local MPEG-2 fixture through a
+exclude both GTK and GStreamer. M2.5 adds a generation-bound, actor-private
+one-shot stream handoff which revalidates the current responder and never
+publishes its zeroizing URI through application snapshots. No production
+pipeline consumes it yet. M0.5 separately exercises a pinned local MPEG-2 fixture through a
 process-isolated Linux GTK pipeline; see the detailed
 [playback foundation](playback.md).
 
@@ -471,12 +473,13 @@ Initialization failures use fixed, path-free copy. Missing factories disable
 playback readiness but do not disable discovery, device selection, or lineup
 inspection. Registry presence alone does not prove construction, negotiation,
 decoding, rendering, EOS, or teardown. The production foundation creates no
-pipeline, accepts no stream URL, and allocates no tuner. The completed M0.5
+pipeline and allocates no tuner. The M2.5 controller can separately authorize
+one opaque, revalidated stream handoff, but no player consumes it. The completed M0.5
 experiment separately proves a bounded, display-backed Linux path from one
 checked-in video-only MPEG-2 transport stream through explicit `playbin3` and
 `gtk4paintablesink`, including multiple rendered frames and paintable updates,
 EOS, and teardown to `NULL`. It opens no network source or tuner. Audio sinks,
-parser/decoder set, the full M0.10 plugin contract, and M2.5 and later player
+parser/decoder set, the full M0.10 plugin contract, and M2.6 and later player
 work remain open. The detailed boundary is recorded in
 [`playback.md`](playback.md).
 
@@ -759,8 +762,8 @@ foundation are implemented. The player pane retains its main-context owner and
 reports missing structural components without disabling discovery, but it does
 not create a production pipeline or tune. A separate Linux-only M0.5 smoke
 proves bounded rendering and teardown for a checked-in synthetic MPEG-2
-transport stream. Hostname admission, the actor-private stream handoff,
-generation-owned playback, controls, the complete codec/audio-sink contract,
+transport stream. The actor-private stream handoff is implemented but remains
+unconsumed. Hostname admission, generation-owned playback, controls, the complete codec/audio-sink contract,
 packaged-runtime probes, and live-platform validation remain open, so this
 milestone is not yet complete. Initial Windows desktop trials exposed
 inconsistent IPv4 broadcast discovery and an unusable-only locator path; the

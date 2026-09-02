@@ -57,7 +57,7 @@ impl LineupChannel {
     /// A responder-pinned URL. Callers must still refuse playback when
     /// [`Self::is_drm`] is true.
     #[must_use]
-    pub const fn stream_url(&self) -> &Url {
+    pub(crate) const fn stream_url(&self) -> &Url {
         &self.stream_url
     }
 }
@@ -116,6 +116,25 @@ impl DeviceSnapshot {
             1,
         )
         .unwrap();
+        Self {
+            info: DeviceInfo::debug_redaction_fixture(device_id),
+            lineup,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn stream_handoff_test_fixture(device_id: DeviceId, protected: bool) -> Self {
+        let endpoint = DeviceEndpoint::from_discovery(
+            "127.0.0.1:65001".parse().unwrap(),
+            Some("http://127.0.0.1/"),
+            None,
+        )
+        .unwrap();
+        let tags = if protected { r#","DRM":1"# } else { "" };
+        let body = format!(
+            r#"[{{"GuideNumber":"5.1","GuideName":"private channel"{tags},"URL":"http://127.0.0.1:5004/auto/v5.1"}}]"#
+        );
+        let lineup = parse_lineup(body.as_bytes(), device_id, &endpoint, 1).unwrap();
         Self {
             info: DeviceInfo::debug_redaction_fixture(device_id),
             lineup,

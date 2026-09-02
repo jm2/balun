@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Actor-private stream handoff** — Add a URL-free channel intent containing
+  the complete ChannelKey and selected-snapshot generation, resolve it in the
+  controller's existing bounded FIFO only against the current complete private
+  snapshot, and return one opaque one-shot handoff without publishing a new
+  GTK-facing state revision. Retain the successful responder authority,
+  require the current registry to still authorize it, reject stale
+  generations, cross-device or absent channels, protected rows, and any stream
+  scheme, host, port, credential, query, fragment, or channel-path mismatch.
+  The non-cloneable handoff has no public URI accessor or `Display`, redacts its
+  custom `Debug`, and zeroizes its private URI bytes on drop. This slice opens
+  no HTTP stream or tuner and creates no GStreamer pipeline; those lifetimes
+  remain generation-owned M2.6 and later work.
 - **Optional GStreamer playback foundation** — Add a GTK-free `playback`
   feature using the optional Rust `gstreamer` 0.25 binding with its `v1_20` API
   surface, and make the desktop feature include it while leaving the default

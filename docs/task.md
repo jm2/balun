@@ -23,7 +23,7 @@ outcomes belong in [`../CHANGELOG.md`](../CHANGELOG.md).
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **18/64 (28.1%)** implementation records complete. This is a
+Current status: **19/64 (29.7%)** implementation records complete. This is a
 dependency ledger, not an effort estimate; packaging and cross-platform
 playback records are substantially larger than most completed foundation work.
 
@@ -37,12 +37,14 @@ confirm the repair. The optional GStreamer foundation is also implemented: the
 desktop now owns one main-context runtime/capability snapshot. A separate,
 process-isolated Linux smoke proves a pinned local MPEG-2 fixture can decode,
 render multiple frames, update its GTK paintable, reach EOS, and tear down to
-`NULL`; no production pipeline or stream handoff exists.
+`NULL`. The controller can now authorize one generation-bound, URL-redacted
+stream handoff from its current complete selected snapshot, but no production
+pipeline consumes it yet.
 
 The shortest path to the first live-TV test is:
 
 1. Re-run Windows local discovery and selected-device lineup loading.
-2. Add the actor-private stream handoff and one generation-owned tune session.
+2. Add one generation-owned tune session which consumes the private handoff.
 3. Render one unprotected ATSC 1.0 channel through `gtk4paintablesink`.
 4. Prove channel switch, Stop, device loss, and window close release the tuner.
 
@@ -173,7 +175,7 @@ compatibility/error-path work, not prerequisites for that first picture.
   disabling discovery or lineup inspection; no pipeline or stream URL exists in
   this slice.
 
-- [ ] **M2.5 — Define the actor-private stream handoff.** Select a ChannelKey
+- [x] **M2.5 — Define the actor-private stream handoff.** Select a ChannelKey
   only from the current complete selected snapshot, revalidate its device and
   URL origin, and never publish or log the URL through GTK-facing state.
 

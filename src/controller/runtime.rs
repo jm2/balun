@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::io;
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::{Arc, mpsc as std_mpsc};
 use std::thread;
@@ -10,23 +11,24 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 use tokio::runtime::Builder;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::{
     ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryKind,
     DiscoveryState, DiscoveryStatus, LineupFailure, OperationGeneration, SelectedLineupState,
-    SelectedLineupStatus, SnapshotRevision, StateError,
+    SelectedLineupStatus, SnapshotRevision, StateError, StreamHandoff, StreamHandoffError,
+    StreamHandoffReceiver, StreamSelection,
 };
 use crate::discovery::{
     DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryMethod, DiscoveryObservation,
     DiscoveryReport, ExactDiscoveryTarget, ProbeConfig, RegistryInstant,
 };
-use crate::domain::DeviceId;
+use crate::domain::{ChannelKey, DeviceId};
 use crate::hdhr::protocol::DISCOVERY_UDP_PORT;
 use crate::hdhr::{
-    DeviceSnapshotIssueKind, DeviceSnapshotResolutionError, DeviceSnapshotResolver,
+    DeviceEndpoint, DeviceSnapshotIssueKind, DeviceSnapshotResolutionError, DeviceSnapshotResolver,
     DeviceSnapshotTarget, DeviceSnapshotTargetError, ResolvedDeviceSnapshot,
 };
 
@@ -181,6 +183,16 @@ pub enum ControllerCommand {
     ClearSelection,
 }
 
+/// Private queue payload. Stream replies deliberately cannot enter the public
+/// command enum or immutable GTK-facing snapshot channel.
+enum ActorCommand {
+    Controller(ControllerCommand),
+    RequestStream {
+        selection: StreamSelection,
+        reply: oneshot::Sender<Result<StreamHandoff, StreamHandoffError>>,
+    },
+}
+
 /// Immediate result of trying to admit a controller command.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum ControllerCommandError {
@@ -232,7 +244,7 @@ pub enum ControllerJoinError {
 /// Cloneable, nonblocking ingress to Balun's GTK-independent controller actor.
 #[derive(Clone)]
 pub struct ControllerHandle {
-    commands: mpsc::Sender<ControllerCommand>,
+    commands: mpsc::Sender<ActorCommand>,
     shutdown: CancellationToken,
     snapshots: watch::Receiver<Arc<ApplicationSnapshot>>,
 }
@@ -417,6 +429,24 @@ impl Drop for ControllerRuntime {
 impl ControllerHandle {
     /// Try to admit a command without waiting for queue capacity.
     pub fn try_send(&self, command: ControllerCommand) -> Result<(), ControllerCommandError> {
+        self.try_send_actor(ActorCommand::Controller(command))
+    }
+
+    /// Admit one private, one-shot stream request into the controller FIFO.
+    ///
+    /// The actor resolves the URL-free selection only against the matching
+    /// current complete selected snapshot. No URL is published through [`Self::subscribe`] or
+    /// [`Self::snapshot`], and this call performs no HTTP or tuner work.
+    pub fn try_request_stream(
+        &self,
+        selection: StreamSelection,
+    ) -> Result<StreamHandoffReceiver, ControllerCommandError> {
+        let (reply, receiver) = oneshot::channel();
+        self.try_send_actor(ActorCommand::RequestStream { selection, reply })?;
+        Ok(StreamHandoffReceiver::new(receiver))
+    }
+
+    fn try_send_actor(&self, command: ActorCommand) -> Result<(), ControllerCommandError> {
         if self.shutdown.is_cancelled() {
             return Err(ControllerCommandError::ShuttingDown);
         }
@@ -448,7 +478,7 @@ impl ControllerHandle {
 struct ControllerActor {
     discovery_service: Arc<dyn DiscoveryService>,
     selection_service: Arc<dyn SelectedDeviceService>,
-    commands: mpsc::Receiver<ControllerCommand>,
+    commands: mpsc::Receiver<ActorCommand>,
     shutdown: CancellationToken,
     snapshots: watch::Sender<Arc<ApplicationSnapshot>>,
     registry: DeviceRegistry,
@@ -463,7 +493,7 @@ struct ControllerActor {
     devices: Vec<DeviceSummary>,
     selected_device: Option<DeviceId>,
     selected_lineup: SelectedLineupState,
-    selected_snapshot: Option<ResolvedDeviceSnapshot>,
+    selected_snapshot: Option<RetainedSelectedSnapshot>,
     active_discovery: Option<ActiveDiscovery>,
     active_selection: Option<ActiveSelection>,
 }
@@ -472,7 +502,7 @@ impl ControllerActor {
     fn new(
         discovery_service: Arc<dyn DiscoveryService>,
         selection_service: Arc<dyn SelectedDeviceService>,
-        commands: mpsc::Receiver<ControllerCommand>,
+        commands: mpsc::Receiver<ActorCommand>,
         shutdown: CancellationToken,
         snapshots: watch::Sender<Arc<ApplicationSnapshot>>,
     ) -> Self {
@@ -545,20 +575,33 @@ impl ControllerActor {
                     self.cancel_all_operations().await;
                     return Ok(());
                 }
-                ActorEvent::Command(Some(ControllerCommand::RefreshLocalDiscovery)) => {
+                ActorEvent::Command(Some(ActorCommand::Controller(
+                    ControllerCommand::RefreshLocalDiscovery,
+                ))) => {
                     self.start_discovery(DiscoveryScope::Local).await?;
                 }
-                ActorEvent::Command(Some(ControllerCommand::DiscoverExact(target))) => {
+                ActorEvent::Command(Some(ActorCommand::Controller(
+                    ControllerCommand::DiscoverExact(target),
+                ))) => {
                     self.start_discovery(DiscoveryScope::Exact(target)).await?;
                 }
-                ActorEvent::Command(Some(ControllerCommand::CancelDiscovery)) => {
+                ActorEvent::Command(Some(ActorCommand::Controller(
+                    ControllerCommand::CancelDiscovery,
+                ))) => {
                     self.cancel_discovery().await?;
                 }
-                ActorEvent::Command(Some(ControllerCommand::SelectDevice(device_id))) => {
+                ActorEvent::Command(Some(ActorCommand::Controller(
+                    ControllerCommand::SelectDevice(device_id),
+                ))) => {
                     self.select_device(device_id).await?;
                 }
-                ActorEvent::Command(Some(ControllerCommand::ClearSelection)) => {
+                ActorEvent::Command(Some(ActorCommand::Controller(
+                    ControllerCommand::ClearSelection,
+                ))) => {
                     self.clear_selection().await?;
+                }
+                ActorEvent::Command(Some(ActorCommand::RequestStream { selection, reply })) => {
+                    let _ = reply.send(self.resolve_stream_handoff(selection));
                 }
                 ActorEvent::Discovery(completion) => {
                     self.finish_discovery(completion).await?;
@@ -1118,8 +1161,80 @@ impl ControllerActor {
 
         self.devices[device_index] = summary;
         self.selected_lineup = lineup;
-        self.selected_snapshot = Some(resolved);
+        self.selected_snapshot = Some(RetainedSelectedSnapshot {
+            generation: self.selection_generation,
+            resolved,
+        });
         Ok(())
+    }
+
+    fn resolve_stream_handoff(
+        &self,
+        selection: StreamSelection,
+    ) -> Result<StreamHandoff, StreamHandoffError> {
+        let (key, expected_generation) = selection.into_parts();
+        if expected_generation != self.selection_generation {
+            return Err(StreamHandoffError::SelectionChanged);
+        }
+        if self.selected_lineup.status() != SelectedLineupStatus::Ready {
+            return Err(StreamHandoffError::SelectionNotReady);
+        }
+        self.validate_selection_retention()
+            .map_err(|_| StreamHandoffError::Internal)?;
+
+        let selected = self.selected_device.ok_or(StreamHandoffError::Internal)?;
+        if key.device_id() != selected {
+            return Err(StreamHandoffError::DeviceMismatch);
+        }
+        let retained = self
+            .selected_snapshot
+            .as_ref()
+            .ok_or(StreamHandoffError::Internal)?;
+        let resolved = &retained.resolved;
+        let selected_source = resolved.selected_source();
+
+        let registered = self
+            .registry
+            .get(selected)
+            .ok_or(StreamHandoffError::OriginRejected)?;
+        if !registered.locators().any(|locator| {
+            locator.source().ip() == selected_source
+                && DeviceEndpoint::from_locator(locator).is_ok()
+        }) {
+            return Err(StreamHandoffError::OriginRejected);
+        }
+
+        let projected = self
+            .selected_lineup
+            .channels()
+            .binary_search_by(|channel| channel.key().cmp(&key))
+            .ok()
+            .and_then(|index| self.selected_lineup.channels().get(index))
+            .ok_or(StreamHandoffError::ChannelUnavailable)?;
+        let complete_lineup = resolved.snapshot().lineup();
+        let channel = complete_lineup
+            .channels()
+            .binary_search_by(|channel| channel.key().cmp(&key))
+            .ok()
+            .and_then(|index| complete_lineup.channels().get(index))
+            .ok_or(StreamHandoffError::ChannelUnavailable)?;
+        if projected.is_drm() != channel.is_drm() {
+            return Err(StreamHandoffError::Internal);
+        }
+        if channel.is_drm() {
+            return Err(StreamHandoffError::Protected);
+        }
+
+        let stream_url = channel.stream_url();
+        if !stream_url_matches(stream_url, selected_source, &key) {
+            return Err(StreamHandoffError::OriginRejected);
+        }
+
+        Ok(StreamHandoff::new(
+            key,
+            self.selection_generation,
+            stream_url.as_str(),
+        ))
     }
 
     fn next_discovery_generation(&mut self) -> Result<OperationGeneration, ControllerRuntimeError> {
@@ -1167,8 +1282,12 @@ impl ControllerActor {
             self.selected_snapshot.as_ref(),
         ) {
             (SelectedLineupStatus::Ready, Some(selected), Some(snapshot))
-                if snapshot.device_id() == selected
-                    && self.selected_lineup.device_id() == Some(selected) =>
+                if snapshot.generation == self.selection_generation
+                    && snapshot.generation == self.selected_lineup.generation()
+                    && snapshot.resolved.device_id() == selected
+                    && snapshot.resolved.snapshot().lineup().device_id() == selected
+                    && self.selected_lineup.device_id() == Some(selected)
+                    && selected_projection_matches(&self.selected_lineup, &snapshot.resolved) =>
             {
                 Ok(())
             }
@@ -1178,6 +1297,45 @@ impl ControllerActor {
             (_, _, None) => Ok(()),
         }
     }
+}
+
+fn selected_projection_matches(
+    projected: &SelectedLineupState,
+    resolved: &ResolvedDeviceSnapshot,
+) -> bool {
+    let complete = resolved.snapshot().lineup().channels();
+    projected.channels().len() == complete.len()
+        && projected
+            .channels()
+            .iter()
+            .zip(complete)
+            .all(|(summary, channel)| {
+                summary.key() == channel.key()
+                    && summary.name() == channel.name()
+                    && summary.is_favorite() == channel.is_favorite()
+                    && summary.is_drm() == channel.is_drm()
+                    && summary.is_hd() == channel.is_hd()
+            })
+}
+
+fn stream_url_matches(url: &reqwest::Url, selected_source: IpAddr, key: &ChannelKey) -> bool {
+    let host = url
+        .host_str()
+        .map(|value| {
+            value
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .unwrap_or(value)
+        })
+        .and_then(|value| value.parse::<IpAddr>().ok());
+    url.scheme() == "http"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.port_or_known_default() == Some(5_004)
+        && host == Some(selected_source)
+        && url.path() == format!("/auto/v{}", key.guide_number())
 }
 
 fn preserve_device_summary(
@@ -1293,7 +1451,7 @@ fn project_resolution_failure(
 
 enum ActorEvent {
     Shutdown,
-    Command(Option<ControllerCommand>),
+    Command(Option<ActorCommand>),
     Discovery(Result<DiscoveryCompletion, tokio::task::JoinError>),
     Selection(Result<SelectionCompletion, tokio::task::JoinError>),
 }
@@ -1394,6 +1552,11 @@ struct DiscoveryCompletion {
     generation: OperationGeneration,
     scope: DiscoveryScope,
     result: Result<DiscoveryReport, DiscoveryFailure>,
+}
+
+struct RetainedSelectedSnapshot {
+    generation: OperationGeneration,
+    resolved: ResolvedDeviceSnapshot,
 }
 
 struct PendingSelection {
@@ -1714,6 +1877,13 @@ mod tests {
         DeviceId::new(0x105A_1232).unwrap()
     }
 
+    fn retained_fixture(device_id: DeviceId) -> RetainedSelectedSnapshot {
+        RetainedSelectedSnapshot {
+            generation: OperationGeneration::INITIAL,
+            resolved: ResolvedDeviceSnapshot::controller_test_fixture(device_id),
+        }
+    }
+
     fn second_id() -> DeviceId {
         DeviceId::new(0x105A_1243).unwrap()
     }
@@ -1735,6 +1905,33 @@ mod tests {
             CancellationToken::new(),
             snapshots,
         )
+    }
+
+    fn ready_stream_actor(
+        protected: bool,
+        selected_source: &str,
+        registry_source: &str,
+    ) -> ControllerActor {
+        let mut actor = test_actor();
+        let mut observation = report(first_id(), &format!("{registry_source}:65001"), 4)
+            .observations
+            .remove(0);
+        observation.interface = None;
+        actor
+            .registry
+            .observe(observation, RegistryInstant::from_duration(Duration::ZERO))
+            .unwrap();
+        actor.devices = project_devices(&actor.registry).unwrap();
+        actor.selection_generation = OperationGeneration::new(1);
+        actor.selected_device = Some(first_id());
+        actor
+            .accept_selected_snapshot(ResolvedDeviceSnapshot::controller_stream_test_fixture(
+                first_id(),
+                protected,
+                selected_source.parse().unwrap(),
+            ))
+            .unwrap();
+        actor
     }
 
     fn report(device_id: DeviceId, source: &str, tuner_count: u8) -> DiscoveryReport {
@@ -2098,7 +2295,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn selected_device_projects_metadata_and_channels_without_urls() {
         let (discovery, discovery_starts) = ScriptedService::new([ServiceStep::Immediate(Ok(
-            report(first_id(), "192.0.2.10:65001", 4),
+            report(first_id(), "127.0.0.1:65001", 4),
         ))]);
         let (release, release_rx) = oneshot::channel();
         let (cancelled, _cancelled_rx) = std_mpsc::channel();
@@ -2156,9 +2353,124 @@ mod tests {
         assert!(channel.is_drm());
         assert!(channel.is_hd());
         let rendered = format!("{ready:?}");
+        assert!(!rendered.contains("http://"));
+        assert!(!rendered.contains("auto/v5.1"));
+
+        let revision = ready.revision();
+        let response = handle
+            .try_request_stream(StreamSelection::new(
+                channel.key().clone(),
+                ready.selection_generation(),
+            ))
+            .unwrap()
+            .receive()
+            .await;
+        assert!(matches!(response, Err(StreamHandoffError::Protected)));
+        assert_eq!(handle.snapshot().revision(), revision);
+        controller.shutdown().unwrap();
+    }
+
+    #[test]
+    fn stream_handoff_is_current_generation_origin_checked_and_url_redacted() {
+        let actor = ready_stream_actor(false, "127.0.0.1", "127.0.0.1");
+        let key = actor.selected_lineup.channels()[0].key().clone();
+        let revision = actor.revision;
+
+        let handoff = actor
+            .resolve_stream_handoff(StreamSelection::new(
+                key.clone(),
+                actor.selection_generation,
+            ))
+            .unwrap();
+        assert_eq!(handoff.channel_key(), &key);
+        assert_eq!(handoff.selection_generation(), actor.selection_generation);
+        let rendered = format!("{handoff:?}");
+        assert!(rendered.contains("<redacted>"));
         assert!(!rendered.contains("127.0.0.1"));
         assert!(!rendered.contains("auto/v5.1"));
-        controller.shutdown().unwrap();
+        assert_eq!(actor.revision, revision, "handoff must not publish state");
+
+        assert!(matches!(
+            actor.resolve_stream_handoff(StreamSelection::new(
+                key.clone(),
+                OperationGeneration::INITIAL,
+            )),
+            Err(StreamHandoffError::SelectionChanged)
+        ));
+        let cross_device = ChannelKey::new(second_id(), key.guide_number().clone());
+        assert!(matches!(
+            actor.resolve_stream_handoff(StreamSelection::new(
+                cross_device,
+                actor.selection_generation,
+            )),
+            Err(StreamHandoffError::DeviceMismatch)
+        ));
+        let absent = ChannelKey::new(first_id(), crate::domain::GuideNumber::new("99.9").unwrap());
+        assert!(matches!(
+            actor.resolve_stream_handoff(StreamSelection::new(absent, actor.selection_generation,)),
+            Err(StreamHandoffError::ChannelUnavailable)
+        ));
+
+        let protected = ready_stream_actor(true, "127.0.0.1", "127.0.0.1");
+        let protected_key = protected.selected_lineup.channels()[0].key().clone();
+        assert!(matches!(
+            protected.resolve_stream_handoff(StreamSelection::new(
+                protected_key,
+                protected.selection_generation,
+            )),
+            Err(StreamHandoffError::Protected)
+        ));
+
+        let stale_locator = ready_stream_actor(false, "127.0.0.1", "192.0.2.10");
+        let stale_key = stale_locator.selected_lineup.channels()[0].key().clone();
+        assert!(matches!(
+            stale_locator.resolve_stream_handoff(StreamSelection::new(
+                stale_key,
+                stale_locator.selection_generation,
+            )),
+            Err(StreamHandoffError::OriginRejected)
+        ));
+
+        let wrong_origin = ready_stream_actor(false, "192.0.2.10", "192.0.2.10");
+        let wrong_origin_key = wrong_origin.selected_lineup.channels()[0].key().clone();
+        assert!(matches!(
+            wrong_origin.resolve_stream_handoff(StreamSelection::new(
+                wrong_origin_key,
+                wrong_origin.selection_generation,
+            )),
+            Err(StreamHandoffError::OriginRejected)
+        ));
+    }
+
+    #[test]
+    fn stream_url_revalidation_rejects_every_origin_and_path_escape() {
+        let key = ChannelKey::new(first_id(), crate::domain::GuideNumber::new("5.1").unwrap());
+        let source = "192.0.2.10".parse().unwrap();
+        assert!(stream_url_matches(
+            &reqwest::Url::parse("http://192.0.2.10:5004/auto/v5.1").unwrap(),
+            source,
+            &key,
+        ));
+
+        for rejected in [
+            "https://192.0.2.10:5004/auto/v5.1",
+            "http://fixture.invalid:5004/auto/v5.1",
+            "http://192.0.2.11:5004/auto/v5.1",
+            "http://192.0.2.10/auto/v5.1",
+            "http://192.0.2.10:5005/auto/v5.1",
+            "http://user@192.0.2.10:5004/auto/v5.1",
+            "http://192.0.2.10:5004/auto/v5.1?token=private",
+            "http://192.0.2.10:5004/auto/v5.1#private",
+            "http://192.0.2.10:5004/auto/v5.2",
+            "http://192.0.2.10:5004/not-auto/v5.1",
+            "http://192.0.2.10:5004/auto/v%35.1",
+        ] {
+            assert!(!stream_url_matches(
+                &reqwest::Url::parse(rejected).unwrap(),
+                source,
+                &key,
+            ));
+        }
     }
 
     #[test]
@@ -2232,17 +2544,27 @@ mod tests {
             snapshots,
         );
 
-        actor.selected_snapshot = Some(ResolvedDeviceSnapshot::controller_test_fixture(first_id()));
+        actor.selected_snapshot = Some(retained_fixture(first_id()));
         assert_eq!(
             actor.validate_selection_retention(),
             Err(ControllerRuntimeError::SelectionSnapshotInvariant)
         );
         actor.selected_device = Some(first_id());
-        actor.selected_lineup =
-            SelectedLineupState::ready(first_id(), OperationGeneration::INITIAL, []).unwrap();
+        actor.selected_lineup = SelectedLineupState::ready(
+            first_id(),
+            OperationGeneration::INITIAL,
+            [ChannelSummary::new(
+                ChannelKey::new(first_id(), crate::domain::GuideNumber::new("5.1").unwrap()),
+                "private channel".to_owned(),
+                true,
+                true,
+                true,
+            )
+            .unwrap()],
+        )
+        .unwrap();
         assert_eq!(actor.validate_selection_retention(), Ok(()));
-        actor.selected_snapshot =
-            Some(ResolvedDeviceSnapshot::controller_test_fixture(second_id()));
+        actor.selected_snapshot = Some(retained_fixture(second_id()));
         assert_eq!(
             actor.validate_selection_retention(),
             Err(ControllerRuntimeError::SelectionSnapshotInvariant)
@@ -2310,6 +2632,7 @@ mod tests {
         fn assert_send<T: Send>() {}
         assert_send::<ControllerRuntime>();
         assert_send::<ControllerHandle>();
+        assert_send::<StreamHandoff>();
 
         let controller = ControllerRuntime::start_default().unwrap();
         assert_eq!(
@@ -2338,11 +2661,23 @@ mod tests {
             controller.try_send(ControllerCommand::CancelDiscovery),
             Err(ControllerCommandError::Full)
         );
+        let selection = StreamSelection::new(
+            ChannelKey::new(first_id(), crate::domain::GuideNumber::new("5.1").unwrap()),
+            OperationGeneration::INITIAL,
+        );
+        assert!(matches!(
+            controller.try_request_stream(selection.clone()),
+            Err(ControllerCommandError::Full)
+        ));
         shutdown.cancel();
         assert_eq!(
             controller.try_send(ControllerCommand::RefreshLocalDiscovery),
             Err(ControllerCommandError::ShuttingDown)
         );
+        assert!(matches!(
+            controller.try_request_stream(selection),
+            Err(ControllerCommandError::ShuttingDown)
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]

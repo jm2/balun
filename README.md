@@ -17,8 +17,10 @@ available program information, and a live-video area.
 > device address, load the selected device's lineup, and report whether the
 > optional GStreamer playback foundation is available. A process-isolated
 > Linux smoke also decodes and renders a checked-in synthetic MPEG-2 transport
-> stream. Hostname entry, EPG, private tuner-stream handoff, production
-> playback ownership, and live-device rendering remain unimplemented.
+> stream. The controller also provides a generation-bound, URL-redacted
+> tuner-stream handoff which no player consumes yet. Hostname entry, EPG,
+> production playback ownership, and live-device rendering remain
+> unimplemented.
 
 ## Current foundation
 
@@ -110,8 +112,14 @@ available program information, and a live-video area.
   initialization errors, and an immutable startup snapshot of the exact seven
   structural factories needed for the first playback experiment. Missing
   components disable playback readiness without disabling device discovery or
-  lineup inspection; no pipeline, stream URL, audio sink, decoder, or tuner is
+  lineup inspection; no pipeline, audio sink, production decoder, or tuner is
   owned yet.
+- An actor-private stream handoff which accepts only a URL-free ChannelKey and
+  selected-snapshot generation, revalidates the current DeviceID, responder
+  address, port, channel path, and protection state, and returns one opaque
+  zeroizing value through a private one-shot response. URLs never enter the
+  immutable GTK-facing snapshots or public debug/error text, and no desktop
+  action or pipeline consumes the handoff yet.
 - A bounded, display-backed Linux acceptance test which feeds a deterministic,
   video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
   `gtk4paintablesink`, requires multiple rendered frames and paintable updates,
@@ -204,8 +212,8 @@ cargo run --locked --features desktop --bin balun
 
 At startup the player pane checks `playbin3`, `uridecodebin3`, `decodebin3`,
 `souphttpsrc`, `tsdemux`, `deinterlace`, and `gtk4paintablesink`. These are
-structural checks only: the complete codec and audio-sink contract, private
-stream handoff, generation-owned playback, and live tuning remain open. Fedora
+structural checks only: the complete codec and audio-sink contract,
+generation-owned playback, and live tuning remain open. Fedora
 commonly supplies this development/runtime foundation through
 `gstreamer1-devel`, the base/good/bad-free plugin packages, and
 `gstreamer1-plugin-gtk4`; its Linux-only synthetic CI smoke additionally uses
