@@ -1,5 +1,7 @@
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+#[cfg(all(test, feature = "desktop"))]
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use reqwest::header::ACCEPT;
@@ -42,8 +44,8 @@ impl DeviceEndpoint {
             locator.advertised_base_url(),
             locator.advertised_lineup_url(),
         )?;
-        require_port(&endpoint.base_url, UrlRole::Base, 80)?;
-        require_port(&endpoint.lineup_url, UrlRole::Lineup, 80)?;
+        ensure_metadata_port(&endpoint.base_url, UrlRole::Base)?;
+        ensure_metadata_port(&endpoint.lineup_url, UrlRole::Lineup)?;
         Ok(endpoint)
     }
 
@@ -131,6 +133,63 @@ fn require_port(url: &Url, role: UrlRole, expected: u16) -> Result<(), EndpointE
         });
     }
     Ok(())
+}
+
+/// Enforce the production metadata-port policy.
+///
+/// The effective port must be 80. Test builds additionally exempt exactly one
+/// installed loopback fake-device port, because an unprivileged test process
+/// cannot bind port 80; only that exact port on loopback is accepted, and
+/// production URLs and neighboring fixtures keep their fixed behavior.
+fn ensure_metadata_port(url: &Url, role: UrlRole) -> Result<(), EndpointError> {
+    let actual = url
+        .port_or_known_default()
+        .expect("validated HTTP URLs always have a known effective port");
+    if actual == 80 {
+        return Ok(());
+    }
+    #[cfg(all(test, feature = "desktop"))]
+    if actual == TEST_METADATA_PORT.load(Ordering::SeqCst) && is_loopback_host(url) {
+        return Ok(());
+    }
+    Err(EndpointError::UnexpectedPort {
+        role,
+        expected: 80,
+        actual,
+    })
+}
+
+#[cfg(all(test, feature = "desktop"))]
+fn is_loopback_host(url: &Url) -> bool {
+    url.host_str() == Some("127.0.0.1")
+}
+
+#[cfg(all(test, feature = "desktop"))]
+static TEST_METADATA_PORT: AtomicU16 = AtomicU16::new(0);
+
+/// A process-wide test-only loopback metadata-port exemption.
+///
+/// The guard serializes nothing by itself; every holder must also serialize
+/// the fake device and controller it applies to. Restoring the prior value on
+/// drop keeps leaked references from silently weakening later tests.
+#[cfg(all(test, feature = "desktop"))]
+pub(crate) struct MetadataPortOverride {
+    prior: u16,
+}
+
+#[cfg(all(test, feature = "desktop"))]
+impl MetadataPortOverride {
+    pub(crate) fn install(port: u16) -> Self {
+        let prior = TEST_METADATA_PORT.swap(port, Ordering::SeqCst);
+        Self { prior }
+    }
+}
+
+#[cfg(all(test, feature = "desktop"))]
+impl Drop for MetadataPortOverride {
+    fn drop(&mut self) {
+        TEST_METADATA_PORT.store(self.prior, Ordering::SeqCst);
+    }
 }
 
 fn validate_source(source: SocketAddr) -> Result<(), EndpointError> {
@@ -797,12 +856,20 @@ mod tests {
         base_url: Option<&str>,
         lineup_url: Option<&str>,
     ) -> Result<DeviceEndpoint, EndpointError> {
+        endpoint_from_registry_source_urls("192.0.2.10:65001", base_url, lineup_url)
+    }
+
+    fn endpoint_from_registry_source_urls(
+        source: &str,
+        base_url: Option<&str>,
+        lineup_url: Option<&str>,
+    ) -> Result<DeviceEndpoint, EndpointError> {
         let mut registry = DeviceRegistry::default();
         registry
             .observe(
                 DiscoveryObservation {
                     device_id: expected_id(),
-                    source: "192.0.2.10:65001".parse().unwrap(),
+                    source: source.parse().unwrap(),
                     method: DiscoveryMethod::Targeted,
                     interface: None,
                     device_types: vec![1],
@@ -879,6 +946,50 @@ mod tests {
                 role: UrlRole::Base,
                 expected: 80,
                 actual: 8080,
+            })
+        ));
+    }
+
+    #[cfg(all(test, feature = "desktop"))]
+    #[test]
+    fn loopback_fake_device_metadata_port_is_exempt_exactly_while_installed() {
+        let loopback_urls =
+            |base: &str| endpoint_from_registry_source_urls("127.0.0.1:65001", Some(base), None);
+        assert!(matches!(
+            loopback_urls("http://127.0.0.1:49151"),
+            Err(EndpointError::UnexpectedPort {
+                role: UrlRole::Base,
+                expected: 80,
+                actual: 49151,
+            })
+        ));
+        let _ports = crate::hdhr::fake_device::hold_fake_device_ports();
+        {
+            let _exemption = super::MetadataPortOverride::install(49151);
+            assert!(loopback_urls("http://127.0.0.1:49151").is_ok());
+            assert!(matches!(
+                loopback_urls("http://127.0.0.1:49152"),
+                Err(EndpointError::UnexpectedPort {
+                    role: UrlRole::Base,
+                    expected: 80,
+                    actual: 49152,
+                })
+            ));
+            assert!(matches!(
+                endpoint_from_registry_urls(Some("http://fixture.invalid:49151"), None),
+                Err(EndpointError::UnexpectedPort {
+                    role: UrlRole::Base,
+                    expected: 80,
+                    actual: 49151,
+                })
+            ));
+        }
+        assert!(matches!(
+            loopback_urls("http://127.0.0.1:49151"),
+            Err(EndpointError::UnexpectedPort {
+                role: UrlRole::Base,
+                expected: 80,
+                actual: 49151,
             })
         ));
     }

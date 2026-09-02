@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fake HDHomeRun end-to-end coverage** — Add a complete loopback fake
+  HDHomeRun device: a UDP discovery responder on the fixed discovery port with
+  a checksum-valid identity, identity-checked `discover.json`/`lineup.json`
+  metadata on an ephemeral loopback port, and an MPEG-TS stream server on the
+  fixed device stream port that records per-connection open/close evidence.
+  A headless end-to-end test drives the real controller from local discovery
+  through device selection and lineup authorization against it, proves a DRM
+  row is refused without ever contacting a tuner, and feeds the real private
+  handoff through the production `appsrc` source policy and transport to
+  natural EOS with bounded joined teardown and observed tuner release. A
+  separate isolated display-backed lifecycle smoke runs the real production
+  session through tune, channel switching with the predecessor connection
+  released and observed before the successor opens, natural EOS settlement,
+  and explicit Stop. Both smokes keep endpoints out of public state and
+  errors, and a test-only exact-port loopback exemption replaces the
+  production port-80 metadata policy only for that fake's lifetime.
 - **Installed-runtime playback probes** — Add a fixed-purpose
   `--probe-playback` (Linux and macOS) and `-ProbePlayback` (Windows) helper
   mode that applies the runtime plugin-file gate and then runs the two

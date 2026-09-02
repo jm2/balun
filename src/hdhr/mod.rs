@@ -1,5 +1,7 @@
 //! HDHomeRun protocol support.
 
+#[cfg(all(test, feature = "desktop"))]
+pub(crate) mod fake_device;
 mod fallback;
 mod http;
 mod inspection;
