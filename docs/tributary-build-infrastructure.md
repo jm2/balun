@@ -67,11 +67,12 @@ final artifact reopening for that format.
 | `build-windows.ps1` | Adapted to Tributary's desktop-default flag semantics: no flags auto-detect MSYS2 CLANG64, require the GTK/libadwaita/GStreamer development floors and the structural GStreamer runtime plugin DLLs (Tributary's runtime-plugin gate adapted to Balun's factory contract, with a gst-libav warning), and build a locked release `balun.exe` without launching, `-Run` is the sole desktop launch route, `-Diagnostic` selects the GTK-free tool, and the new-purpose `-InspectLocal` builds, validates, and runs only its fixed local inspection; every compiling route pins its Rust target and repository-local output while bundle, ZIP, Inno, and update paths remain fail-closed |
 | `macos-icon-bundle-policy.sh` | Adapted preparatory helper with Balun identity/temp names |
 | `macos-package-policy.sh` | Adapted inspection-only core with bounded Mach-O output and completed-tree checks; broad copy-any-allowed-plugin staging API removed |
-| `sync_rust_toolchain.py` | Port independently against Balun's actual MSRV declarations |
+| `sync_rust_toolchain.py` | Ported against Balun's MSRV declarations and wired into CI and the release-candidate workflow |
 | `sync_fuzz_lock.py` | Defer until Balun has a separate fuzz workspace and lockfile |
 | `test-macos-icon-bundle-policy.sh` | Adapted synthetic test for the icon helper |
 | `test-macos-package-policy.sh` | Adapted synthetic test; denied fixtures are derived from the shared policy |
 | `test_dependency_update_policy.py` | Split by feature: the applicable compiler portion is `test_rust_toolchain_policy.py`; fuzz and automerge tests remain deferred or inapplicable until their owners exist |
+| `hooks/pre-commit` (repository root, outside `scripts/`) | Ported without Tributary's fuzz-manifest formatting check; opt in with `git config core.hooksPath hooks` |
 
 Balun additionally has deterministic command-routing tests for the Linux,
 macOS, and Windows desktop/diagnostic routes.
@@ -97,7 +98,17 @@ providing package for any missing file, adapting Tributary's Windows
 runtime-plugin gate to Balun's factory contract; libav decoders only warn
 because M0.10 has not frozen the decoder contract, and quick modes plus the
 diagnostic route skip the plugin check. The helpers still do not mistake these
-checks for a complete codec or bundle runtime probe. Linux and macOS retain the
+checks for a complete codec or bundle runtime probe. A 2026-09-02 parity audit
+against Tributary's helpers restored the release-profile Clippy pass in every
+lint mode, the actionable cargo, rustc, GNU readelf, and development-package
+install hints, and a read-only Windows check that the gnullvm Rust target is
+installed with a `rustup target add` hint in place of Tributary's automatic
+installation. Deliberate remaining differences are documented in each helper's
+help text: `-Test` runs the debug profile because CI runs both, only the
+x86_64 CLANG64 environment is supported until ARM64 Windows is exercised,
+Homebrew's pkg-config resolves its own prefix so the macOS helper never
+queries Homebrew, and `cargo update` is run directly instead of through a
+helper mode. Linux and macOS retain the
 GTK- and GStreamer-free tool behind
 `--diagnostic`; Windows uses `-Diagnostic`. Tributary defines an explicit launch
 flag only for its Windows PowerShell helper, so Balun preserves `-Run` there and

@@ -372,6 +372,10 @@ cargo test --all-targets --locked
 cargo test --release --all-targets --locked
 ```
 
+Optionally enable the formatting pre-commit hook with
+`git config core.hooksPath hooks`; it runs the same `cargo fmt` check before
+each commit.
+
 CI verifies the declared Rust 1.98 minimum across the desktop feature, runs
 strict Linux GTK-free debug and release checks, tests the optional GTK-free
 playback capability layer, compiles, links, and lints the Linux desktop shell,

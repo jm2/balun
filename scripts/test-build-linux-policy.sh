@@ -388,11 +388,11 @@ expect_log $'rustc <--print> <host-tuple>\ncargo <check> <--all-targets> <--lock
 
 run_helper --clippy
 expect_status 0
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <clippy> <--all-targets> <--all-features> <--locked> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'> <--> <-D> <warnings>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <clippy> <--all-targets> <--all-features> <--locked> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'> <--> <-D> <warnings>\ncargo <clippy> <--release> <--all-targets> <--all-features> <--locked> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'> <--> <-D> <warnings>'
 
 run_helper --diagnostic --clippy
 expect_status 0
-expect_log $'rustc <--print> <host-tuple>\ncargo <clippy> <--all-targets> <--locked> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'> <--> <-D> <warnings>'
+expect_log $'rustc <--print> <host-tuple>\ncargo <clippy> <--all-targets> <--locked> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'> <--> <-D> <warnings>\ncargo <clippy> <--release> <--all-targets> <--locked> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'> <--> <-D> <warnings>'
 
 run_helper --coverage
 expect_status 0

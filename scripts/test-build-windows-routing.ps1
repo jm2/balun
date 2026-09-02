@@ -22,6 +22,7 @@ $Runner = Join-Path $TemporaryRoot 'runner.ps1'
 $CommandLog = Join-Path $TemporaryRoot 'commands.log'
 $EnvironmentLog = Join-Path $TemporaryRoot 'environment.log'
 $PkgConfigLog = Join-Path $TemporaryRoot 'pkg-config.log'
+$TargetProbeLog = Join-Path $TemporaryRoot 'rustc-target-probe.log'
 $RestrictedPath = Join-Path $TemporaryRoot 'empty-command-path'
 $FakeMsysRoot = Join-Path $TemporaryRoot 'MSYS2 root with spaces'
 $FakeMsysPrefix = Join-Path $FakeMsysRoot 'clang64'
@@ -36,12 +37,14 @@ $EnvironmentNames = @(
     'BALUN_WINDOWS_TEST_LOG',
     'BALUN_WINDOWS_TEST_ENV_LOG',
     'BALUN_WINDOWS_TEST_PKG_LOG',
+    'BALUN_WINDOWS_TEST_TARGET_PROBE_LOG',
     'BALUN_WINDOWS_FAKE_CARGO_STATUS',
     'BALUN_WINDOWS_FAKE_CARGO_AVAILABLE',
     'BALUN_WINDOWS_FAKE_COVERAGE_VERSION',
     'BALUN_WINDOWS_FAKE_RUSTC_STATUS',
     'BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE',
     'BALUN_WINDOWS_FAKE_RUSTC_HOST_TUPLE',
+    'BALUN_WINDOWS_FAKE_TARGET_LIBDIR',
     'BALUN_WINDOWS_FAKE_PKG_STATUS',
     'BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE',
     'BALUN_WINDOWS_FAKE_SKIP_BINARY',
@@ -77,7 +80,7 @@ function Assert-RoutingTestFailure {
     )
     [Console]::Error.WriteLine("status: $script:LastStatus")
     [Console]::Error.WriteLine("output:`n$script:LastOutput")
-    foreach ($Log in @($CommandLog, $EnvironmentLog, $PkgConfigLog)) {
+    foreach ($Log in @($CommandLog, $EnvironmentLog, $PkgConfigLog, $TargetProbeLog)) {
         if (Test-Path -LiteralPath $Log -PathType Leaf) {
             [Console]::Error.WriteLine(
                 "$([System.IO.Path]::GetFileName($Log)):`n$([System.IO.File]::ReadAllText($Log))"
@@ -91,7 +94,7 @@ function Invoke-TestHelper {
     param([string[]]$Arguments)
 
     $script:LastArguments = @($Arguments)
-    foreach ($Log in @($CommandLog, $EnvironmentLog, $PkgConfigLog)) {
+    foreach ($Log in @($CommandLog, $EnvironmentLog, $PkgConfigLog, $TargetProbeLog)) {
         [System.IO.File]::WriteAllText($Log, '')
     }
     if (Test-Path -LiteralPath $FixtureTargetRoot) {
@@ -160,6 +163,17 @@ function Assert-ExpectedPkgConfigGtkAdwaitaProbes {
         $Lines[0] -cne 'pkg-config <--atleast-version> <4.16> <gtk4>' -or
         $Lines[1] -cne 'pkg-config <--atleast-version> <1.6> <libadwaita-1>') {
         Assert-RoutingTestFailure 'unexpected pkg-config probes before libadwaita rejection'
+    }
+}
+
+function Assert-DesktopTargetProbe {
+    <#
+    .SYNOPSIS
+        Require exactly one recorded rustc target probe for the desktop target.
+    #>
+    $Lines = @([System.IO.File]::ReadAllLines($TargetProbeLog))
+    if ($Lines.Count -ne 1 -or $Lines[0] -cne "target-libdir <$DesktopTarget>") {
+        Assert-RoutingTestFailure "unexpected Rust target probe: $($Lines -join '; ')"
     }
 }
 
@@ -270,6 +284,25 @@ $ErrorActionPreference = 'Stop'
 $env:PATH = $env:BALUN_WINDOWS_TEST_RESTRICTED_PATH
 
 function global:rustc {
+    if ($args -contains 'target-libdir') {
+        # Read-only target probes are recorded separately from command routing
+        # so desktop routes can assert which target they verified.
+        $ProbeArguments = @($args)
+        $TargetIndex = [array]::IndexOf($ProbeArguments, '--target')
+        $ProbedTarget = if ($TargetIndex -ge 0 -and $TargetIndex + 1 -lt $ProbeArguments.Count) {
+            [string]$ProbeArguments[$TargetIndex + 1]
+        }
+        else {
+            '<missing>'
+        }
+        [System.IO.File]::AppendAllText(
+            $env:BALUN_WINDOWS_TEST_TARGET_PROBE_LOG,
+            "target-libdir <$ProbedTarget>`n"
+        )
+        Write-Output $env:BALUN_WINDOWS_FAKE_TARGET_LIBDIR
+        $global:LASTEXITCODE = 0
+        return
+    }
     $RenderedArguments = @($args | ForEach-Object { "<$($_.ToString())>" }) -join ' '
     [System.IO.File]::AppendAllText(
         $env:BALUN_WINDOWS_TEST_LOG,
@@ -378,7 +411,7 @@ if ([int]$env:BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE -ne 1) {
 exit $global:LASTEXITCODE
 '@
     [System.IO.File]::WriteAllText($Runner, $RunnerSource)
-    foreach ($Log in @($CommandLog, $EnvironmentLog, $PkgConfigLog)) {
+    foreach ($Log in @($CommandLog, $EnvironmentLog, $PkgConfigLog, $TargetProbeLog)) {
         [System.IO.File]::WriteAllText($Log, '')
     }
 
@@ -386,12 +419,14 @@ exit $global:LASTEXITCODE
     $env:BALUN_WINDOWS_TEST_LOG = $CommandLog
     $env:BALUN_WINDOWS_TEST_ENV_LOG = $EnvironmentLog
     $env:BALUN_WINDOWS_TEST_PKG_LOG = $PkgConfigLog
+    $env:BALUN_WINDOWS_TEST_TARGET_PROBE_LOG = $TargetProbeLog
     $env:BALUN_WINDOWS_FAKE_CARGO_STATUS = '0'
     $env:BALUN_WINDOWS_FAKE_CARGO_AVAILABLE = '1'
     $env:BALUN_WINDOWS_FAKE_COVERAGE_VERSION = 'cargo-llvm-cov 0.8.7'
     $env:BALUN_WINDOWS_FAKE_RUSTC_STATUS = '0'
     $env:BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE = '1'
     $env:BALUN_WINDOWS_FAKE_RUSTC_HOST_TUPLE = 'x86_64-pc-windows-msvc'
+    $env:BALUN_WINDOWS_FAKE_TARGET_LIBDIR = $FixtureRoot
     $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '0'
     $env:BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE = ''
     $env:BALUN_WINDOWS_FAKE_SKIP_BINARY = '0'
@@ -562,6 +597,7 @@ exit $global:LASTEXITCODE
     Assert-ExpectedOutput 'GStreamer runtime plugin checks passed'
     Assert-ExpectedLog $DesktopBuildCommand
     Assert-ExpectedPkgConfigProbeSet
+    Assert-DesktopTargetProbe
     Assert-DesktopEnvironment
 
     # The desktop build fails closed before any Cargo work when a structural
@@ -618,8 +654,36 @@ exit $global:LASTEXITCODE
     Assert-ExpectedLog (
         'cargo <clippy> <--all-targets> <--all-features> <--locked> ' +
         "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget> " +
+        "<--> <-D> <warnings>`n" +
+        'cargo <clippy> <--release> <--all-targets> <--all-features> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget> " +
         '<--> <-D> <warnings>'
     )
+
+    # The desktop routes verify the gnullvm Rust target read-only before any
+    # MSYS2, pkg-config, or Cargo work; diagnostic routes never probe it.
+    $env:BALUN_WINDOWS_FAKE_TARGET_LIBDIR = Join-Path $TemporaryRoot 'missing-target-libdir'
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput "Rust target $DesktopTarget is not installed"
+    Assert-ExpectedOutput 'this helper never installs targets'
+    Assert-DesktopTargetProbe
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+    Invoke-TestHelper -Arguments @('-Check')
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput "Rust target $DesktopTarget is not installed"
+    Assert-DesktopTargetProbe
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+    Invoke-TestHelper -Arguments @('-Diagnostic', '-Check')
+    Assert-ExpectedStatus 0
+    Assert-ExpectedLog (
+        'cargo <check> <--all-targets> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
+    )
+    Assert-EmptyLog $TargetProbeLog 'Rust target probe'
+    $env:BALUN_WINDOWS_FAKE_TARGET_LIBDIR = $FixtureRoot
 
     Invoke-TestHelper -Arguments @('-Test')
     Assert-ExpectedStatus 0

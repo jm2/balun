@@ -6,11 +6,25 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+/// Serializes every test that decodes through `playbin3` autoplugging with
+/// every test that overrides registry decoder ranks, so a temporary rank
+/// demotion can never be observed by another pipeline in the same process.
+static DECODER_SELECTION: Mutex<()> = Mutex::new(());
+
+/// Hold the decoder-selection lock for the caller's lifetime. A test that
+/// panicked while holding it has already restored any rank override, so a
+/// poisoned lock carries no stale state.
+pub(super) fn hold_decoder_selection() -> MutexGuard<'static, ()> {
+    DECODER_SELECTION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// The checked-in, video-only synthetic MPEG-2 transport stream.
 pub(super) const FIXTURE_BYTES: &[u8] = include_bytes!("../../tests/fixtures/synthetic-mpeg2.ts");
