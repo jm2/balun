@@ -236,8 +236,14 @@ initializes GStreamer, enforces the native 1.20 runtime floor, and retains one
 path-free startup capability snapshot. The default library and diagnostic still
 exclude both GTK and GStreamer. M2.5 adds a generation-bound, actor-private
 one-shot stream handoff which revalidates the current responder and never
-publishes its zeroizing URI through application snapshots. No production
-pipeline consumes it yet. M0.5 separately exercises a pinned local MPEG-2 fixture through a
+publishes its zeroizing URI through application snapshots. M2.6 adds the sole
+library-owned consumer: a main-context session assigns a separate tune
+generation before the actor wait, serializes replacement and terminal bus
+events on its exact default context without reentrant borrow panics, and settles
+each exact predecessor to `NULL` before a successor can be constructed. The
+desktop does not submit a channel to that owner until the M2.7-M2.8 rendering
+and activation work.
+M0.5 separately exercises a pinned local MPEG-2 fixture through a
 process-isolated Linux GTK pipeline; see the detailed
 [playback foundation](playback.md).
 
@@ -472,14 +478,18 @@ main-context-owned runtime checks the loaded native GStreamer version against a
 Initialization failures use fixed, path-free copy. Missing factories disable
 playback readiness but do not disable discovery, device selection, or lineup
 inspection. Registry presence alone does not prove construction, negotiation,
-decoding, rendering, EOS, or teardown. The production foundation creates no
-pipeline and allocates no tuner. The M2.5 controller can separately authorize
-one opaque, revalidated stream handoff, but no player consumes it. The completed M0.5
-experiment separately proves a bounded, display-backed Linux path from one
+decoding, rendering, EOS, or teardown. The M2.5 controller authorizes one
+opaque, revalidated stream handoff. M2.6's main-context session is its only URI
+consumer: it assigns a tune generation before the actor wait, constructs
+`playbin3` plus a private `gtk4paintablesink` only for the current response,
+exposes only the URI-opaque GDK paintable, tags bus work, and requires bounded
+predecessor teardown to `NULL` before replacement. No desktop signal invokes
+that session yet, so the application still allocates no tuner. The completed
+M0.5 experiment separately proves a bounded, display-backed Linux path from one
 checked-in video-only MPEG-2 transport stream through explicit `playbin3` and
 `gtk4paintablesink`, including multiple rendered frames and paintable updates,
 EOS, and teardown to `NULL`. It opens no network source or tuner. Audio sinks,
-parser/decoder set, the full M0.10 plugin contract, and M2.6 and later player
+parser/decoder set, the full M0.10 plugin contract, and M2.7 and later player
 work remain open. The detailed boundary is recorded in
 [`playback.md`](playback.md).
 
@@ -759,12 +769,15 @@ Implementation status: standard desktop local discovery, bounded numeric
 exact-address entry, the DeviceID registry, selected-device lineup loading, both
 virtualized sidebars, and the optional GStreamer initialization/capability
 foundation are implemented. The player pane retains its main-context owner and
-reports missing structural components without disabling discovery, but it does
-not create a production pipeline or tune. A separate Linux-only M0.5 smoke
+reports missing structural components without disabling discovery. The
+generation-owned library session can consume one private handoff, construct
+`playbin3` with its library-private GTK sink, and serialize bus events plus
+bounded teardown without exposing the URI-bearing GStreamer graph, but the pane
+does not invoke it yet. A separate Linux-only M0.5 smoke
 proves bounded rendering and teardown for a checked-in synthetic MPEG-2
-transport stream. The actor-private stream handoff is implemented but remains
-unconsumed. Hostname admission, generation-owned playback, controls, the complete codec/audio-sink contract,
-packaged-runtime probes, and live-platform validation remain open, so this
+transport stream. Hostname admission, GTK playback activation, controls, the
+complete codec/audio-sink contract, packaged-runtime probes, and live-platform
+validation remain open, so this
 milestone is not yet complete. Initial Windows desktop trials exposed
 inconsistent IPv4 broadcast discovery and an unusable-only locator path; the
 local endpoint projection now follows Windows limited-broadcast behavior,

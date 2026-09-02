@@ -23,7 +23,7 @@ outcomes belong in [`../CHANGELOG.md`](../CHANGELOG.md).
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **19/64 (29.7%)** implementation records complete. This is a
+Current status: **20/64 (31.3%)** implementation records complete. This is a
 dependency ledger, not an effort estimate; packaging and cross-platform
 playback records are substantially larger than most completed foundation work.
 
@@ -38,15 +38,16 @@ desktop now owns one main-context runtime/capability snapshot. A separate,
 process-isolated Linux smoke proves a pinned local MPEG-2 fixture can decode,
 render multiple frames, update its GTK paintable, reach EOS, and tear down to
 `NULL`. The controller can now authorize one generation-bound, URL-redacted
-stream handoff from its current complete selected snapshot, but no production
-pipeline consumes it yet.
+stream handoff from its current complete selected snapshot. The playback
+library owns the sole consumer: a separate tune generation serializes actor
+responses, pipeline replacement, bus events, terminal settlement, and bounded
+teardown. Channel activation and the GTK paintable are not connected yet.
 
 The shortest path to the first live-TV test is:
 
 1. Re-run Windows local discovery and selected-device lineup loading.
-2. Add one generation-owned tune session which consumes the private handoff.
-3. Render one unprotected ATSC 1.0 channel through `gtk4paintablesink`.
-4. Prove channel switch, Stop, device loss, and window close release the tuner.
+2. Render one unprotected ATSC 1.0 channel through `gtk4paintablesink`.
+3. Prove channel switch, Stop, device loss, and window close release the tuner.
 
 The first playback target is a clear ATSC 1.0 channel on an accessible CONNECT
 or CONNECT 4K. ATSC 3.0 codec/audio support and protected PRIME channels are
@@ -179,7 +180,7 @@ compatibility/error-path work, not prerequisites for that first picture.
   only from the current complete selected snapshot, revalidate its device and
   URL origin, and never publish or log the URL through GTK-facing state.
 
-- [ ] **M2.6 — Implement one generation-owned tune session.** Serialize start,
+- [x] **M2.6 — Implement one generation-owned tune session.** Serialize start,
   replacement, cancellation, bus messages, and terminal settlement so stale
   pipeline events cannot affect a successor channel.
 

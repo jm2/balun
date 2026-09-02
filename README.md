@@ -18,9 +18,10 @@ available program information, and a live-video area.
 > optional GStreamer playback foundation is available. A process-isolated
 > Linux smoke also decodes and renders a checked-in synthetic MPEG-2 transport
 > stream. The controller also provides a generation-bound, URL-redacted
-> tuner-stream handoff which no player consumes yet. Hostname entry, EPG,
-> production playback ownership, and live-device rendering remain
-> unimplemented.
+> tuner-stream handoff, and the playback library now owns its generation-safe
+> `playbin3` lifecycle. Channel activation is not connected yet, so no desktop
+> action opens a tuner or renders live-device video. Hostname entry and EPG
+> also remain unimplemented.
 
 ## Current foundation
 
@@ -112,14 +113,24 @@ available program information, and a live-video area.
   initialization errors, and an immutable startup snapshot of the exact seven
   structural factories needed for the first playback experiment. Missing
   components disable playback readiness without disabling device discovery or
-  lineup inspection; no pipeline, audio sink, production decoder, or tuner is
-  owned yet.
+  lineup inspection.
 - An actor-private stream handoff which accepts only a URL-free ChannelKey and
   selected-snapshot generation, revalidates the current DeviceID, responder
   address, port, channel path, and protection state, and returns one opaque
   zeroizing value through a private one-shot response. URLs never enter the
-  immutable GTK-facing snapshots or public debug/error text, and no desktop
-  action or pipeline consumes the handoff yet.
+  immutable GTK-facing snapshots or public debug/error text.
+- A default-main-context playback session which assigns a separate monotonic
+  tune generation before awaiting that private response, consumes the URI only
+  inside the desktop-enabled library while constructing `playbin3` and its
+  private `gtk4paintablesink`, and exposes only the URI-opaque GDK paintable.
+  Every bus event carries the tune generation, and late successful responses
+  are dropped for immediate zeroization. Replacement, Stop, EOS, native
+  failure, shutdown, and owner drop detach the predecessor's watch and request
+  a bounded transition to `NULL`; a teardown failure quarantines that owner and
+  blocks every successor. Bus reductions and public calls share the exact
+  default main context, with fixed errors instead of reentrant borrow panics.
+  The desktop pane does not invoke this owner or present its paintable until
+  channel activation/rendering lands.
 - A bounded, display-backed Linux acceptance test which feeds a deterministic,
   video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
   `gtk4paintablesink`, requires multiple rendered frames and paintable updates,
@@ -213,7 +224,7 @@ cargo run --locked --features desktop --bin balun
 At startup the player pane checks `playbin3`, `uridecodebin3`, `decodebin3`,
 `souphttpsrc`, `tsdemux`, `deinterlace`, and `gtk4paintablesink`. These are
 structural checks only: the complete codec and audio-sink contract,
-generation-owned playback, and live tuning remain open. Fedora
+desktop activation, and live tuning remain open. Fedora
 commonly supplies this development/runtime foundation through
 `gstreamer1-devel`, the base/good/bad-free plugin packages, and
 `gstreamer1-plugin-gtk4`; its Linux-only synthetic CI smoke additionally uses

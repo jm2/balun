@@ -1,11 +1,12 @@
 # Playback foundation
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-02
 
 This document records Balun's implemented M2.4 GStreamer boundary, M2.5 private
-stream handoff, and the remaining work before a live-TV stream can be opened. The product and milestone
-scope remains authoritative in [`plan-v0.1.md`](plan-v0.1.md), while countable
-completion is tracked in [`task.md`](task.md).
+stream handoff, M2.6 generation-owned tune session, and the remaining work
+before a live-TV stream can be opened from the desktop. The product and
+milestone scope remains authoritative in [`plan-v0.1.md`](plan-v0.1.md), while
+countable completion is tracked in [`task.md`](task.md).
 
 ## Current status
 
@@ -18,14 +19,16 @@ loading, and the two sidebars remain usable. The native core library is still a
 dynamic dependency of a desktop build and must be present for that executable
 to start.
 
-The production application does not yet create a pipeline, open an HDHomeRun
-HTTP stream, allocate a tuner, select an audio sink, or render a channel. Its
-controller can authorize one opaque stream handoff from a current complete
-selected snapshot, but the desktop cannot inspect or consume its URI. M0.5 is
+The desktop-enabled playback library now has one main-context session capable
+of consuming an opaque actor handoff and constructing `playbin3` with a
+library-owned `gtk4paintablesink`.
+The desktop cannot inspect the URI and does not yet invoke that session, so the
+application still does not open an HDHomeRun HTTP stream, allocate a tuner,
+select an audio sink, or render a channel. M0.5 is
 demonstrated separately by a process-isolated Linux test
 which decodes a pinned local fixture into a real GTK paintable. That bounded
 test does not complete the full runtime/plugin contract in M0.10 or the
-generation-owned player work in M2.6 and later.
+GTK activation, paintable, and live-source work in M2.7 and later.
 
 ## Feature and version boundary
 
@@ -36,7 +39,7 @@ have these roles:
 | --- | --- | --- |
 | default | Neither GTK nor GStreamer | Core library, tests, and `balun-discover` |
 | `playback` | Optional `gstreamer` Rust binding only | GTK-free playback capability code and tests |
-| `desktop` | GTK 4, libadwaita, and `playback` | Balun desktop application |
+| `desktop` | GTK 4, libadwaita, `playback`, and the tune session | Balun desktop application |
 
 The optional dependency is the Rust `gstreamer` 0.25 series with default Cargo
 features disabled and its `v1_20` API feature enabled. Balun also checks the
@@ -123,9 +126,50 @@ HTTP, numeric host, port 5004, absent credentials/query/fragment, and the exact
 
 `StreamHandoff` is non-cloneable, has no public URI accessor or `Display`, uses
 a custom URL-redacted `Debug`, and zeroizes its private URI bytes on drop. The
-desktop can hold and move the opaque type but cannot inspect the URI. M2.6 will
-add a library-owned, generation-scoped playback constructor which consumes it;
-until then channel rows remain inert and no stream is opened.
+desktop can hold and move the opaque type but cannot inspect the URI. Its sole
+crate-private exposure is a consuming higher-ranked closure used by the M2.6
+pipeline constructor; the borrow cannot escape that closure. Channel rows
+remain inert, so no stream is opened yet.
+
+## Generation-owned tune session
+
+`PlaybackSession` owns the GStreamer runtime and exactly one serialized tune
+lane on the default GLib main context. Its public accessors and mutations fail
+with fixed URL-free errors when that context is not owned or a native callback
+reenters an in-progress borrow; they do not panic. `begin_tune` first assigns the
+successor's `TuneGeneration`, making every predecessor callback stale, then
+detaches the predecessor's bus watch and requires it to reach `NULL` within
+five seconds before any controller wait. A teardown failure quarantines the
+owner and permanently blocks construction of a successor. Terminal shutdown
+can retry the retained owner, while the failure remains visible. The returned
+`TuneRequest` contains only that generation and the URL-free `StreamSelection`.
+
+Only a response matching the exact pending tune can construct `playbin3`.
+Successful responses from superseded attempts are dropped immediately so their
+Rust-owned URI storage is zeroized. The URI is copied directly into the native
+pipeline property inside the core library and is never returned to the desktop
+crate. The same library constructs and retains `gtk4paintablesink`; it exposes
+only the GDK paintable, not a GStreamer element whose parent graph can reach
+`playbin3`. Exposed request, state, failure, and session debug output is
+URL-free.
+
+Each installed bus watch closes over its tune generation and is attached to
+the session's exact default-main-context handle. Playing, buffering, EOS, and
+native error messages are deferred out of the native callback and reduced on
+that same context only when that generation still owns the active pipeline; a
+nested-loop reentry retries there instead of losing a terminal event. Native
+error/debug text is ignored. Terminal events, explicit Stop, replacement,
+terminal shutdown, and Drop all retire only the exact owner. Tests use an
+injected pipeline backend and custom main context to prove late resolution,
+late predecessor EOS/error, replacement ordering, clean and quarantined start
+failure, synchronous native callbacks, teardown poison, Stop/shutdown
+idempotence, handoff mismatch, and generation exhaustion without opening a
+network source.
+
+The desktop pane has not yet presented the paintable or connected channel
+activation. M2.7 will bind it into the `GtkPicture` and complete deinterlacing;
+M2.8-M2.10 will connect activation, controls, user-visible state, and full
+teardown paths.
 
 ## Synthetic display-backed acceptance
 
@@ -172,7 +216,7 @@ to exercise the fallback on a developer host.
 This is a Linux development/CI acceptance record only. It does not prove native
 macOS or Windows rendering, audio, physical MPEG-TS variants, live-source
 behavior, channel switching, tuner release, or packaged-runtime relocation.
-Those claims remain in M0.6, M0.10, M1.10, and M2.6 through M2.12.
+Those claims remain in M0.6, M0.10, M1.10, and M2.7 through M2.12.
 
 ## Development runtime examples
 
@@ -224,9 +268,8 @@ provenance, and distribution review.
 
 ## Next acceptance steps
 
-1. M2.6-M2.10: consume the private handoff in one generation-scoped tune
-   session and own its paintable, controls,
-   errors, and deterministic tuner release.
+1. M2.7-M2.10: connect the generation-scoped tune session and own its
+   paintable, controls, errors, and deterministic tuner release.
 2. M0.10: freeze the complete tested factory and platform package contract,
    including codecs and audio sinks.
 3. M2.11-M2.12: run fake-device, development-runtime, packaged-runtime, and

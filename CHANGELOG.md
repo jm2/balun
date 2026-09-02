@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Generation-owned tune session** — Add one default-main-context playback
+  owner which assigns a monotonic tune generation before waiting for the
+  actor-private stream response, consumes the opaque URI only inside the core
+  library while constructing `playbin3`, and tags every state, buffering, EOS,
+  and native-error bus event. Replacement invalidates the predecessor first,
+  detaches its watch, and requires a bounded transition to `NULL` before a
+  successor can be constructed. Stop, terminal bus events, shutdown, and Drop
+  likewise settle the exact owner; stale responses and events cannot mutate a
+  successor, and successful stale handoffs are dropped for zeroization. All
+  bus reductions and public calls use the exact default main context, and
+  reentrant access fails with fixed errors instead of panicking. Exposed states
+  and failures remain URL-free. The library constructs and retains
+  `gtk4paintablesink` itself and exposes only its URI-opaque GDK paintable,
+  never a GStreamer element whose parents reveal the playbin URI. Channel
+  activation and presentation are left to the next playback slice, so no
+  desktop action opens a tuner yet.
 - **Actor-private stream handoff** — Add a URL-free channel intent containing
   the complete ChannelKey and selected-snapshot generation, resolve it in the
   controller's existing bounded FIFO only against the current complete private
@@ -18,9 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generations, cross-device or absent channels, protected rows, and any stream
   scheme, host, port, credential, query, fragment, or channel-path mismatch.
   The non-cloneable handoff has no public URI accessor or `Display`, redacts its
-  custom `Debug`, and zeroizes its private URI bytes on drop. This slice opens
-  no HTTP stream or tuner and creates no GStreamer pipeline; those lifetimes
-  remain generation-owned M2.6 and later work.
+  custom `Debug`, and zeroizes its private URI bytes on drop. The later M2.6
+  session is its only URI consumer; the handoff itself performs no HTTP or
+  GStreamer work.
 - **Optional GStreamer playback foundation** — Add a GTK-free `playback`
   feature using the optional Rust `gstreamer` 0.25 binding with its `v1_20` API
   surface, and make the desktop feature include it while leaving the default

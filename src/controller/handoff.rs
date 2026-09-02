@@ -44,7 +44,7 @@ impl StreamSelection {
 ///
 /// This value never enters [`super::ApplicationSnapshot`]. Its debug
 /// representation is URL-free, and its owned URI bytes are zeroized when the
-/// handoff drops. The future player owner should expose the URI only while
+/// handoff drops. The playback-session owner exposes the URI only while
 /// constructing its generation-scoped pipeline.
 pub struct StreamHandoff {
     channel_key: ChannelKey,
@@ -75,6 +75,25 @@ impl StreamHandoff {
     #[must_use]
     pub const fn selection_generation(&self) -> OperationGeneration {
         self.selection_generation
+    }
+
+    /// Expose the authorized URI only to one library-owned consuming closure.
+    ///
+    /// The higher-ranked input lifetime prevents the closure from returning a
+    /// borrow of the URI. The desktop binary cannot call this crate-private
+    /// method; it can only move the opaque handoff into Balun's player owner.
+    #[cfg(feature = "desktop")]
+    pub(crate) fn with_uri<R>(self, consume: impl for<'a> FnOnce(&'a str) -> R) -> R {
+        consume(self.uri.as_str())
+    }
+
+    #[cfg(all(test, feature = "desktop"))]
+    pub(crate) fn test_fixture(
+        channel_key: ChannelKey,
+        selection_generation: OperationGeneration,
+        uri: &str,
+    ) -> Self {
+        Self::new(channel_key, selection_generation, uri)
     }
 }
 
