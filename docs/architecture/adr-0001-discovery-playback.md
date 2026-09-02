@@ -93,8 +93,9 @@ Implementation status: the `appsrc` transport replaced the intermediate
 cancellation, rapid-replacement, and joined-teardown tests plus a `playbin3`
 decode of the checked-in fixture from the constant URI on Linux. The macOS
 lane runs the same loopback suite, and all three lanes run the helpers'
-installed-runtime probes for the constant-URI `appsrc` contract, so M2.9 is
-recorded complete; packaged-runtime probes remain M2.11 work.
+installed-runtime probes for the constant-URI `appsrc` contract, so the
+transport record (archived M2.9) is complete; packaged-runtime probes are P3
+work in [`task.md`](../task.md).
 
 ## Consequences and required evidence
 

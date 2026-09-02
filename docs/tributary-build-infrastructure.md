@@ -84,7 +84,7 @@ renamed upstream ports. The `--probe-playback` (Linux and macOS) and
 fixed-argument routes: they apply the plugin-file gate and run the two
 installed-runtime playback probes in the release profile, and all three CI
 lanes invoke them after the helper desktop build. The lifecycle helper now runs the ordinary Linux
-close/join smoke and the M0.5 checked-in MPEG-2 render/EOS/`NULL` smoke in
+close/join smoke and the checked-in MPEG-2 render/EOS/`NULL` smoke in
 separate, bounded headless-Wayland/session-bus processes; Weston is the default
 CI route and Xvfb is only an optional local fallback. CI explicitly requires
 the Wayland route and does not install Xvfb; the helper's `auto`, `wayland`, and
@@ -100,7 +100,7 @@ desktop build, each helper additionally checks the plugin files behind Balun's
 seven structural factories in the runtime's plugin directory and names the
 providing package for any missing file, adapting Tributary's Windows
 runtime-plugin gate to Balun's factory contract; libav decoders only warn
-because M0.10 has not frozen the decoder contract, and quick modes plus the
+because P0.5 has not frozen the decoder contract, and quick modes plus the
 diagnostic route skip the plugin check. The helpers still do not mistake these
 checks for a complete codec or bundle runtime probe. A 2026-09-02 parity audit
 against Tributary's helpers restored the release-profile Clippy pass in every

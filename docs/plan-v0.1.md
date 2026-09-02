@@ -1,1221 +1,405 @@
-# Balun v0.1 Implementation Plan
+# Balun v0.1 implementation plan
 
 - Status: Active
 - Target: v0.1.0-alpha.1
 - Last updated: 2026-09-02
 
-The countable done/remaining execution ledger is maintained in
-[`task.md`](task.md); this document remains the authoritative scope,
-architecture, and acceptance contract.
+This is the scope, architecture, and delivery-order contract for the first
+alpha. The countable ledger is [`task.md`](task.md); sanitized hardware
+evidence is in [`compatibility-v0.1.md`](compatibility-v0.1.md); user-visible
+outcomes are in [`../CHANGELOG.md`](../CHANGELOG.md); decisions are in
+[ADR-0001](architecture/adr-0001-discovery-playback.md) and
+[ADR-0002](architecture/adr-0002-scope-and-diagnostics.md). The original
+milestone plan and its ledger are archived in
+[`task-foundation-2026-09.md`](task-foundation-2026-09.md).
 
 ## 1. Product direction
 
-Balun is a lightweight cross-platform HDHomeRun live TV viewer built
-with Rust, GTK 4, libadwaita, and GStreamer.
+Balun is a lightweight, cross-platform HDHomeRun live TV viewer built with
+Rust, GTK 4, libadwaita, and GStreamer. v0.1 does one job: find HDHomeRun
+tuners, keep each device's lineup separate, and play unprotected channels
+reliably. It is not a DVR, a tuner administration tool, or a guide service.
 
-The first release will concentrate on one job: discover one or more HDHomeRun
-tuners, keep their lineups separate, and begin reliable unprotected live
-playback with minimal delay. It will not attempt to be a DVR, tuner
-configuration utility, or universal television platform.
+The end goal for v0.1.0-alpha.1: a user on Linux, macOS, or Windows installs a
+package, sees local tuners and any remembered remote tuner, picks a device and a
+channel, watches it with sound, switches channels, and quits without leaving a
+tuner allocated. On Linux, an explicitly approved routed scan can also find
+tuners across a tunnel.
 
-Balun takes structural and release-engineering lessons from Tributary while
-remaining a much narrower application. In particular, it will reuse
-Tributary's proven GTK/Tokio separation, stable-identity model, GStreamer
-packaging knowledge, and release validation patterns. It will not copy
-Tributary's music-specific models, database stack, source-registry
-complexity, or large UI and engine coordinators.
+Primary goals:
 
-### 1.1 Primary goals
-
-- Discover HDHomeRun tuners on ordinary local networks.
-- Find tuners across routed networks such as WireGuard without depending on
-  broadcast or multicast forwarding.
+- Discover HDHomeRun tuners on ordinary local networks with a fixed packet
+  budget and no traffic while idle.
+- Reach tuners across routed networks such as WireGuard by exact address or
+  hostname, and on Linux by a bounded, user-approved routed scan.
 - Keep every device's lineup visibly and structurally separate.
-- Start, switch, and stop live TV streams predictably without leaking tuner
+- Start, switch, and stop live TV predictably without leaking tuner
   allocations.
-- Show useful channel and program information from sources that are legal,
-  privacy-respecting, and freely available to the user.
-- Support Linux, macOS, and Windows as real tested targets.
-- Establish documentation, CI, packaging, and release discipline before the
-  codebase becomes difficult to reshape.
+- Report unreachable devices, busy tuners, stale channels, protected channels,
+  and missing codecs in plain language that names the device.
+- Ship Linux, macOS, and Windows as tested targets with real packages.
 
-### 1.2 Product success criteria
-
-The compatibility spike will establish measured targets, but v0.1 should
-demonstrate:
-
-- A responsive warm launch with no network work on the GTK main thread.
-- Near-zero idle CPU when no stream or discovery operation is active.
-- A fixed and inspectable packet budget for every discovery run.
-- Cancellation of an in-progress discovery or tune request.
-- Complete release of the old tuner before a new channel is opened.
-- No merged channel identity or lineup state across devices.
-- Actionable errors for unreachable devices, busy tuners, stale channels,
-  protected channels, and missing codecs.
-- Reproducible behavior on all three desktop platforms.
-
-"Lightweight" refers primarily to launch latency, idle CPU and memory,
-channel-change latency, discovery traffic, and responsiveness. Self-contained
-GTK and GStreamer application bundles will not necessarily be small.
+"Lightweight" means launch latency, idle CPU and memory, channel-change
+latency, discovery traffic, and responsiveness. Self-contained GTK and GStreamer
+bundles will not be small.
 
 ## 2. v0.1 scope
 
-### 2.1 Included
+Included:
 
-- Standard IPv4 and IPv6 HDHomeRun tuner discovery.
-- Manual device address or hostname entry.
-- Cached-address targeted rediscovery.
-- Bounded, user-approved routed/tunnel discovery.
-- Multiple devices with a dedicated device sidebar.
-- A separate channel list for the selected device.
-- Lineup number, name, favorite status, DRM status, and device information.
-- Playback of unprotected streams supported by the installed or bundled
-  GStreamer runtime.
-- Volume, mute, fullscreen, buffering state, and useful playback errors.
-- Opportunistic guide information from the stream already being watched
-  where the device and broadcast preserve it.
-- User-configured XMLTV file or URL import after the basic playback slice.
-- Versioned settings and bounded lineup/guide caches.
-- Linux, macOS, and Windows CI coverage.
-- Initial Flatpak, Windows x86_64, and macOS arm64 release packages.
+- IPv4 broadcast and non-link-local IPv6 multicast tuner discovery.
+- Exact IP address entry, hostname entry, and remembered targets rediscovered
+  at startup.
+- Bounded, user-approved routed discovery on Linux; exact and hostname targets
+  on macOS and Windows.
+- Multiple devices in a device sidebar, one selected device's lineup in a
+  channel sidebar, with favorite, HD, and protected badges.
+- Playback of unprotected channels with the installed or bundled GStreamer
+  runtime, including audio.
+- Stop, volume, mute, fullscreen, connecting and failure states.
+- Channel search, a favorites filter, and keyboard navigation.
+- Versioned settings for remembered devices and window state.
+- Linux, macOS, and Windows CI plus Flatpak, Windows x86_64, and macOS arm64
+  packages.
 
-### 2.2 Explicitly deferred
+Explicitly deferred:
 
+- Program guide data of any kind (in-band PSIP/EIT, XMLTV, the HDHomeRun XMLTV
+  API): v0.2 candidate, gated on the P0.8 spike.
 - Recording, DVR scheduling, timeshift, and trick-play.
 - Protected or DRM channel playback.
+- AC-4 audio; ATSC 3.0 channels that carry it fail closed with a clear message.
 - Channel scanning, antenna setup, firmware updates, or tuner administration.
 - A merged "all devices" channel list.
-- Transcoding or relaying streams to other clients.
-- General remote-internet streaming.
+- Transcoding, relaying, or general remote-internet streaming.
 - Background EPG harvesting that consumes an otherwise unused tuner.
-- Bundled third-party guide scrapers.
-- Guaranteed ATSC 3.0, AC-4, or protected-content support.
-- Windows arm64 and native distribution packages until they are exercised
-  regularly.
+- Windows arm64 and native Linux distribution packages until they are
+  exercised regularly.
+- SBOM, build provenance, fuzzing, and a coverage ratchet: beta.
 
-## 3. User experience
+## 3. Current baseline (2026-09-02)
 
-### 3.1 Main window
+Built and tested:
 
-The desktop layout has two left sidebars and one player:
+- Safe-Rust HDHomeRun discovery framing, TLV, CRC, and DeviceID validation;
+  per-interface local discovery; exact-address probes; an approved-range
+  runner used by the diagnostic.
+- A bounded DeviceID registry that keeps every locator and origin without
+  merging devices or channels.
+- Responder-pinned `discover.json` and `lineup.json` fetching, lineup parsing,
+  and a cancellation-aware inspection service behind `balun-discover`.
+- A controller on one Tokio worker publishing immutable, URL-free snapshots;
+  device selection resolves one lineup without tuning.
+- The adaptive three-pane GTK 4 / libadwaita window with virtualized device and
+  channel sidebars and the live-TV pane.
+- A generation-owned `playbin3` session behind a library-private
+  `gtk4paintablesink`, fed through the constant `appsrc://balun` URI by Balun's
+  own no-proxy HTTP transport, with Stop, volume, mute, fullscreen, and fixed
+  failure categories.
+- A loopback fake HDHomeRun device driving the real controller, transport, and
+  session end to end, plus a synthetic MPEG-2 acceptance test under headless
+  Wayland.
+- Tributary-derived build helpers with a runtime plugin gate, installed-runtime
+  playback probes, five CI lanes, a release-candidate workflow, and preparatory
+  packaging validators.
+- Linux route inspection, a keyed approval policy, a durable approval store,
+  and route/store observers, present but not connected to any sender.
+- Live TV verified by the owner on the Windows development build against real
+  tuners: ATSC 1.0 channels play with audio; ATSC 3.0 channels fail closed on
+  AC-4 ([compatibility notes](compatibility-v0.1.md)).
 
-~~~text
-┌──────────────┬──────────────────────────┬────────────────────────────┐
-│ HDHR devices │ Channels for one device  │ Live video                 │
-│              │                          │                            │
-│ Living room  │ 5.1  WXYZ   Now...       │ Player overlay             │
-│ Basement     │ 7.1  WABC   News...      │ channel / errors / volume  │
-│ VPN device   │ 11.2 WXQZ   No guide     │                            │
-└──────────────┴──────────────────────────┴────────────────────────────┘
-~~~
-
-The outer device sidebar should be narrow and show:
-
-- Friendly device name, with a stable DeviceID suffix where useful.
-- Reachability and last-seen state.
-- Tuner count and current address.
-- Refresh, add-device, and routed-search actions.
-
-The channel sidebar should show only the selected device's lineup:
-
-- Natural-sorted virtual channel number and channel name.
-- Favorite and unavailable/DRM indicators.
-- Optional now-playing title, time, and progress when guide data exists.
-- Search and filtering without changing device identity.
-- A compact now/next or channel-information area.
-
-The player area should contain:
-
-- Video rendered as a GdkPaintable in GtkPicture.
-- A minimal overlay for channel identity, buffering, errors, mute, volume,
-  and fullscreen.
-- A clear empty state when no channel is selected.
-- A clear offline state without automatically tuning the last channel.
-
-Nested AdwNavigationSplitView containers should keep all three panes visible
-at normal desktop widths and collapse them into sensible navigation at smaller
-widths. Lists should use Gio ListStore, Gtk SingleSelection, and
-SignalListItemFactory with strict recycled-row reset and unbind behavior.
-
-### 3.2 Interaction rules
-
-- Selecting a device never starts playback.
-- Selecting a device atomically replaces the channel model.
-- Activating a channel starts a generation-scoped tune request.
-- A second activation cancels and tears down the first request.
-- Device or channel disappearance does not silently switch the user to a
-  different device or channel.
-- Protected channels remain visible but are disabled with an explanation.
-- Discovery and routed scans expose progress and cancellation.
+Not yet done: Linux and macOS live-device acceptance, measured tune and
+teardown budgets, a frozen per-platform codec contract, settings persistence,
+hostname and remembered targets, the routed sender and its UX, search and
+favorites, packages, and the alpha release.
 
 ## 4. Architecture
 
-### 4.1 Design principles
+Principles:
 
-- Library-first: protocol, discovery, domain, guide, and controller logic must
-  be usable without GTK.
+- Library first: protocol, discovery, domain, and controller logic are usable
+  without GTK, and the default Cargo feature set carries neither GTK nor
+  GStreamer.
 - Stable identity is separate from network location.
-- GTK objects do not cross into core services.
+- GTK objects never cross into core services; the controller publishes
+  immutable snapshots.
 - Network data is untrusted and bounded at every parser boundary.
 - Long-running work is cancellable and has a deadline.
 - Async results are generation-scoped so stale work cannot update the UI.
-- Platform-specific behavior lives behind narrow interfaces.
-- One stream is owned at a time in v0.1.
-- Settings and caches are replaceable details, not domain identity.
+- One stream is owned at a time.
+- Platform-specific behavior lives behind narrow interfaces and fails closed
+  where its proof obligations are unmet.
+- Settings and caches are replaceable details, not identity.
 
-### 4.2 Initial module shape
+Module map as built:
 
 ~~~text
 src/
-  main.rs
-  lib.rs
-  app.rs
-  domain/
-    identity.rs
-    device.rs
-    channel.rs
-    guide.rs
-  hdhr/
-    protocol.rs
-    client.rs
-    lineup.rs
-    stream.rs
-  discovery/
-    standard.rs
-    routed.rs
-    manual.rs
-    registry.rs
-    routes.rs
-  guide/
-    provider.rs
-    broadcast.rs
-    xmltv.rs
-    cache.rs
-  controller/
-    commands.rs
-    events.rs
-    state.rs
-  playback/
-    mod.rs
-    runtime.rs
-    pipeline.rs
-    runtime_probe.rs
-  ui/
-    window.rs
-    device_sidebar.rs
-    channel_sidebar.rs
-    player_view.rs
-    preferences.rs
-  platform/
-    mod.rs
-    linux.rs
-    macos.rs
-    windows.rs
-    bundle.rs
+  lib.rs, main.rs, app.rs      GTK-free core; thin desktop entry; app lifecycle
+  bin/balun-discover.rs        GTK-free diagnostic
+  domain/                      DeviceID and device-scoped ChannelKey
+  hdhr/                        protocol, device HTTP, lineup, inspection, resolver, fake device
+  discovery/                   client, local, manual, registry, routed, routes, approval
+  controller/                  runtime actor, snapshots, stream handoff
+  playback/                    GStreamer runtime, session, source policy, transport, failures
+  ui/                          window, device sidebar, channel sidebar, address dialog, player
 ~~~
 
-This is a module boundary, not a requirement to create empty files before
-they have behavior.
+Runtime and concurrency:
 
-### 4.3 Runtime and concurrency
+- GTK and the GStreamer pipeline live on the GLib main thread.
+- One named Tokio worker owns UDP, HTTP, route inspection, and timers.
+- Bounded typed channels carry commands and coalesced immutable snapshots.
+- Shutdown cancels network work, moves the pipeline to `NULL`, joins the
+  transport and controller within a fixed bound, and exits.
+- Device selection and tune requests use monotonically increasing generations.
 
-- GTK and GStreamer pipeline ownership stay on the GLib main thread.
-- A Tokio runtime handles UDP, HTTP, route inspection, timers, XMLTV, and
-  cache I/O.
-- Typed bounded channels carry commands, immutable snapshots, and events.
-- Bursty status changes should be coalesced rather than creating unbounded
-  queues.
-- Application shutdown cancels discovery and HTTP work, moves the pipeline
-  to NULL, waits for bounded cleanup, and exits normally.
-- Device selection, lineup refresh, guide refresh, and tune requests each use
-  monotonically increasing generations.
-
-Implementation status: M2.4 introduces an optional, GTK-free `playback` Cargo
-feature and makes the desktop feature include it. Its default-main-context owner
-initializes GStreamer, enforces the native 1.20 runtime floor, and retains one
-path-free startup capability snapshot. The default library and diagnostic still
-exclude both GTK and GStreamer. M2.5 adds a generation-bound, actor-private
-one-shot stream handoff which revalidates the current responder and never
-publishes its zeroizing URI through application snapshots. M2.6 adds the sole
-library-owned consumer: a main-context session assigns a separate tune
-generation before the actor wait, serializes replacement and terminal bus
-events on its exact default context without reentrant borrow panics, and settles
-each exact predecessor to `NULL` before a successor can be constructed. The
-desktop pane now owns that session plus its URI-opaque paintable
-binding/clearing boundary. Layered display-backed tests complete M2.7 by
-proving decoded-frame/EOS behavior, the real production session's opaque
-paintable and `NULL` shutdown, and production-pane binding without weakening
-the handoff boundary. M2.8 completes the essential control set: exact-generation
-double-click/Enter activation, synchronous Stop, process-local normalized
-volume and independent mute with a cubic UI-to-linear playbin gain, and
-compositor-confirmed fullscreen through a labeled button, F11, and Escape.
-Fullscreen forces the player and protects both nested Back paths, then restores
-the exact prior pages, pop permissions, and focus. Layered fake-backend,
-property, widget, production-session, ListView, and isolated Wayland tests cover
-the implementation without claiming audible output, complete codec/audio-sink
-packaging, native-platform runtime acceptance, live hardware, or the broader
-M4.6 accessibility audit. M2.9 replaces the intermediate HTTP element with an
-application-owned direct transport: `playbin3` receives only the constant
-`appsrc://balun` URI, the source policy accepts exactly one built-in `appsrc`,
-and a private no-proxy `reqwest` reader plus blocking feeder move the stream
-through a bounded channel, with failures reduced to fixed categories and both
-workers joined inside the teardown bound.
-M0.5 separately exercises a pinned local MPEG-2 fixture through a
-process-isolated Linux GTK pipeline; see the detailed
-[playback foundation](playback.md).
-
-### 4.4 Domain identity
+Identity:
 
 - DeviceKey is the validated HDHomeRun DeviceID.
-- DeviceLocator contains an address, base URL, discovery origin, and
-  observation time.
+- A DeviceLocator is an address, origin, and observation time; a device keeps
+  several and loses none while another is valid.
 - ChannelKey is DeviceKey plus the device-native GuideNumber.
-- Stream URLs are resolved at tune time and are never used as identity.
-- Guide mappings are scoped to ChannelKey, not just a channel number or call
-  sign.
+- Stream URLs are resolved at tune time and are never identity.
 
-The compact DeviceRegistry aggregates observations from broadcast, cached,
-manual, neighbor-assisted, and routed discovery. Loss of one locator does not
-remove a device while another valid observation remains.
+## 5. Discovery policy
 
-## 5. HDHomeRun discovery
+Order of authority, least to most expansive: remembered and explicit targets,
+local broadcast and multicast, then a user-approved bounded routed scan.
 
-### 5.1 Standard discovery
+Local discovery:
 
-Normal discovery will:
+- Send the documented tuner-only request from each eligible interface-bound
+  socket: limited broadcast on Windows, directed subnet broadcast elsewhere,
+  scoped site-local multicast for supported IPv6.
+- Accept replies only from the probed prefix and discovery port; validate
+  framing, CRC, packet type, DeviceID, and string lengths.
+- Deduplicate by DeviceID while retaining each locator and origin.
+- Fetch bounded device and lineup metadata only from accepted responders.
+- Link-local IPv6 stays excluded until lineup HTTP can preserve its scope.
 
-1. Probe previously successful and manually configured targets.
-2. Send the documented tuner-only IPv4 broadcast request on eligible
-   interface-bound sockets. Use limited broadcast on Windows for compatibility
-   with the vendor implementation and directed subnet broadcast elsewhere;
-   validate every reply against the attached prefix either way.
-3. Perform supported non-link-local IPv6 local discovery. Do not advertise a
-   link-local-only result until lineup HTTP can retain and use its scope ID.
-4. Collect replies for the documented bounded discovery window.
-5. Validate framing, CRC, packet type, DeviceID, string lengths, and reply
-   origin.
-6. Deduplicate by DeviceID while retaining every valid locator and discovery
-   origin.
-7. Fetch bounded device and lineup metadata only from accepted responders.
+Exact and hostname targets:
 
-Discovery sockets should be reused during a run, and repeated create/destroy
-cycles should be avoided.
+- One numeric IPv4 or unscoped IPv6 address, or one hostname resolved to a
+  bounded number of usable unicast addresses; never a URL, port, or range.
+- At most two request datagrams with 200 ms windows, 16 received datagrams,
+  and one accepted identity per operation; at most 32 distinct addresses per
+  session.
+- A successful target binds to its first DeviceID; remembered targets are
+  probed again at startup and never become scan authority.
 
-### 5.2 Routed and WireGuard discovery
+Approved routed discovery:
 
-A routed layer-3 tunnel supplies routes but no remote service directory.
-Balun therefore uses the following order:
+- Consider only private IPv4 space behind an active tunnel route or a range
+  the user typed; exclude public, default, loopback, link-local, multicast, and
+  directly connected LAN routes.
+- Enumerate at most one `/24` and 256 candidates; never enumerate IPv6.
+- Send only HDHomeRun UDP discovery frames at 64 datagrams per second with
+  bounded concurrency, jitter, a 15-second default deadline, progress, and
+  immediate cancellation.
+- Require remembered approval bound to a keyed, topology-redacted fingerprint
+  of the targets, tunnel, routes, and budget; revoke it when that fingerprint,
+  the route table, or the durable store changes.
+- Apply cooldown and exponential backoff after empty runs; rerun on a debounced
+  network change or explicit refresh, never on a timer.
+- Run approved tunnel discovery even when a local tuner exists.
 
-1. Exact targeted probes for cached, manual, DNS, and high-confidence neighbor
-   candidates.
-2. Inspection of active tunnel routes through a platform RouteProvider.
-3. A remembered, user-approved bounded scan of an eligible route.
-4. Manual address or smaller-range entry for routes that cannot be scanned
-   safely.
+Native providers: Linux uses rtnetlink and recognizes WireGuard and other
+unambiguous tunnel links. macOS and Windows providers stay unavailable with a
+fixed reason until a safe route-table wrapper, a provable routing domain, and a
+stable tunnel identity exist; exact and hostname targets are the supported path
+there.
 
-The route policy is:
-
-- Consider only private IPv4 or IPv6 ULA space associated with a tunnel, or a
-  range the user explicitly selected.
-- Exclude public, default, loopback, link-local, multicast, and already
-  covered directly connected LAN routes.
-- Automatically enumerate no more than one /24 and 256 total IPv4 candidates.
-- Never enumerate an IPv6 prefix. IPv6 requires exact cached, manual, DNS, or
-  neighbor-derived targets.
-- Send only HDHomeRun targeted UDP discovery packets to candidates.
-- Do not TCP-scan, HTTP-probe, or send directed broadcast to nonresponders.
-- Begin with a 64-datagram-per-second token bucket, small jitter, bounded
-  concurrency, and an overall deadline. Tune these values only from measured
-  hardware behavior.
-- Show progress and allow immediate cancellation.
-- Apply a 15-to-30-minute cooldown and exponential backoff after empty
-  automatic runs.
-- Re-run on a debounced network change or explicit refresh, not on a permanent
-  timer.
-- Run approved tunnel discovery even if a local tuner was found, because
-  local and remote devices may coexist.
-- Invalidate remembered route approval when the network fingerprint changes
-  materially.
-
-The initial desktop manual path is intentionally narrower than automatic
-routed discovery. It accepts one numeric IPv4 or unscoped IPv6 address, never
-resolves DNS or accepts a URL, port, or range, and never enumerates neighbors or
-falls back to broadcast. Each operation uses at most two request datagrams,
-200 ms response windows, 16 received datagrams, and one accepted identity. A
-controller-private ledger admits at most 32 distinct exact addresses per
-application session, including targets that fail or yield no accepted reply,
-while a successful target becomes bound to its first DeviceID. Local and
-successful exact-address observations are retained as independently
-replaceable source batches and rebuilt atomically into the DeviceID registry.
-Exact no-response removes only that target's current evidence; transport or
-validation failure retains the last-good registry.
-
-Initial route providers:
-
-- Linux: netlink interface and route data, including WireGuard link kind.
-- macOS: routing APIs and getifaddrs, including utun interfaces.
-- Windows: GetIpForwardTable2 and GetAdaptersAddresses, including tunnel
-  interface types.
-
-Implementation status: the platform-neutral candidate policy, bounded routed
-target runner, conservative Linux rtnetlink provider, and pure remembered
-approval policy are present. The strict durable store retains only keyed
-fingerprints and bounded policy metadata, with private key storage,
-cross-process locking, atomic durability barriers, global run sequencing,
-quarantine, and topology-free revocation. Unix store operations are bound to
-one validated directory descriptor, while a separate Linux inotify observer
-uses that same identity and brackets exact store rereads with complete bounded
-drains. The Linux route monitor now consumes itself across a final bounded
-drain, synchronous activation callback, and continuous live loop, so callers
-cannot split the clean barrier from activation. A platform-neutral combined
-observer coordinator mints only one source-bound route-and-store health epoch;
-an event, failure, replacement, or drop from either source synchronously
-cancels all registrations. Its no-await rendezvous accepts each pre-read token
-only from that source's final clean callback, and dropping its sole owner
-revokes authority even while a callback is completing. Linux preparation and
-live-session bridges now own subscribe-before-read ordering, blocking snapshot
-or exact-reread work, coalesced reconciliation, cancellation, and joined actor
-shutdown for both sources. A Linux whole-pair owner now prepares the route
-observer first, supplies that monitored snapshot inside the exact store-reread
-sandwich, retains the activation and both actors, coalesces child events into
-one replacement request, and retires authority synchronously before returning
-its concurrent join future. A partial start or failed combined activation also
-awaits destruction of every actor it started before returning an error; a
-cancelled cleanup retains the synchronous fail-closed poison-and-abort
-fallback. Confirmed reservation publication likewise returns only a non-
-cloneable, redacted typestate which retains the raw permit until a fresh store
-reread exactly matches the complete ledger and immutable key binding. These
-pieces remain internal foundations: no production controller yet replaces and
-rebaselines the pair, so they cannot authorize traffic. The store-owned fresh-
-snapshot gate
-requires the exact active fingerprint and run, rebuilds the complete proposal,
-permits only a transient interface-ID replacement, and caps work to the
-remaining lease. The Linux socket factory now performs one interface pin plus
-matching name/index readbacks before and after local bind, then seals the
-nonblocking socket behind a non-cloneable capability with no I/O escape. The
-packet-free admission boundary registers invalidation before reserve, obtains
-the fresh snapshot, rejects clock rollback or store-time clamping, and maps the
-authority onto one non-extending monotonic deadline. Post-reserve failure or
-abandonment deliberately retains the crash-conservative durable reservation.
-
-Route-derived execution remains disconnected from the diagnostic. Production
-wiring still requires one controller actor to own and join the non-cloneable
-observer pair, split admission at every store publication, replace and exactly
-rebaseline both observers before proceeding, consume the published-reservation
-typestate and revalidate its route inside the fresh store-observer sandwich,
-retain combined health through the run, perform final socket/route/deadline
-validation immediately before each send, and use a consuming runner which
-stops all packet work before completing the exact durable run with a fresh
-paired clock sample. No partial implementation may fall back to an unpinned or
-unmonitored socket.
-
-Native macOS and Windows automatic providers are intentionally unavailable,
-not merely stubbed. macOS needs a separately audited safe wrapper for bounded
-raw route data plus a conservative answer for scoped and per-application route
-policy. Windows needs a safe owned route-table wrapper, a supported way to
-prove the socket routing compartment, and LUID-bound tunnel identity; a
-mutable adapter name or generic virtual-adapter type is insufficient. Exact
-address and explicitly supplied private-range discovery remain available on
-those platforms. Neither provider may broaden or silently fall back when these
-proof obligations are unmet.
-
-For wider routed sites, the supported solutions are an exact address,
-operator-provided DNS record, explicit smaller range, or a future
-administrator-operated discovery relay.
-
-### 5.3 Discovery implementation decision
-
-[ADR-0001](architecture/adr-0001-discovery-playback.md) selects Balun's safe
-Rust implementation of the documented discovery packet, TLV, CRC, and DeviceID
-protocol behind the existing narrow discovery boundary. This keeps packet
-budgets and route authority explicit and avoids adding a C build and LGPL
-distribution surface. The official `libhdhomerun` remains a compatibility
-fallback if sanitized hardware evidence exposes a gap in the documented
-protocol.
-
-The same decision record freezes the bounded local/exact/approved-routed order
-and the application-owned HTTP transport direction for playback, including the
-rejected scan, ambient-proxy, global-resolver, loopback-relay, and custom-source
-alternatives.
-
-### 5.4 Network security
+Network rules:
 
 - Treat discovery replies, JSON, channel names, and returned URLs as hostile.
-- Validate DeviceID checksums and reply-source consistency.
-- Apply strict packet, response, object-count, row-count, and string limits.
-- Apply connect, headers, body, and wall-clock deadlines.
-- Accept device HTTP only from an approved locator.
-- Reject URL credentials and unexpected schemes.
-- Bind or normalize advertised hosts to the accepted responder.
-- Require the observed device metadata and stream ports; do not follow
-  responder-supplied arbitrary ports.
-- Reject cross-host redirects; use no redirects unless a same-origin case is
-  explicitly validated.
-- Send no Referer and redact URLs or query values from logs.
-- Never persist or log DeviceAuth in v0.1.
-- Strip unsafe control characters from display strings.
-- Discovery is read-only and never initiates channel scans, configuration
-  changes, firmware operations, or tuner locks.
-- Do not use undocumented cloud discovery by default.
+- Apply strict packet, response, row-count, and string limits, plus connect,
+  header, body, and wall-clock deadlines.
+- Accept device HTTP only from an accepted locator on the observed metadata and
+  stream ports; rebind advertised hosts to the responder.
+- Reject URL credentials, unexpected schemes, and every redirect; send no
+  Referer; use no proxy and no DNS for device HTTP.
+- Never deserialize, persist, or print `DeviceAuth`; redact query values.
+- Device addresses and names may appear in errors and diagnostics (ADR-0002);
+  stream URLs stay out of GTK-facing snapshots.
+- Discovery is read-only: no channel scans, configuration changes, firmware
+  operations, or tuner locks.
+- No cloud discovery, telemetry, or analytics.
 
-## 6. Lineups and playback
+## 6. Playback
 
-### 6.1 Lineup handling
+Implemented path:
 
-Balun will fetch the device-provided lineup URL and use:
+- `playbin3` with a library-private `gtk4paintablesink` shown through
+  `GtkPicture`, adaptive deinterlacing, and forced aspect preservation.
+- The constant `appsrc://balun` URI; a schema-validated `source-setup` handler
+  accepts exactly one built-in `appsrc` and configures a live MPEG-TS byte feed
+  with a 4 MiB queue.
+- Balun's own `reqwest` transport: no proxy, no redirects, no Referer, HTTP/1.1,
+  connect, header, and idle-read deadlines, bounded 64 KiB buffers through an
+  eight-slot channel to a blocking feeder.
+- Failures reduce to seven fixed categories: tuner busy (503), channel missing
+  (404), rejected (other status), offline (connect, stall, truncation), missing
+  codec or plugin, protected, internal.
 
-- GuideNumber.
-- UTF-8 GuideName.
-- Tags such as favorite and drm, including current firmware's equivalent
-  dedicated `Favorite`, `DRM`, and `HD` sentinel fields.
-- The device-supplied stream path and port, with its host pinned to the
-  validated responder.
-
-Unknown JSON fields are ignored, while malformed known fields, oversized
-responses, unsafe URLs, and excessive rows are rejected. Lineups remain
-partitioned by DeviceID. A cached lineup may be shown as stale when a device
-is offline, but it must not imply that the device is currently playable.
-
-### 6.2 GStreamer MVP
-
-The implemented M2.4 foundation uses the optional Rust `gstreamer` 0.25 binding
-with default Cargo features disabled and the `v1_20` API feature selected. Its
-main-context-owned runtime checks the loaded native GStreamer version against a
-1.20.0 floor and records these exact structural factories in stable order:
-
-- `playbin3`.
-- `uridecodebin3`.
-- `decodebin3`.
-- `appsrc`.
-- `tsdemux`.
-- `deinterlace`.
-- `gtk4paintablesink`.
-
-Initialization failures use fixed, path-free copy. Missing factories disable
-playback readiness but do not disable discovery, device selection, or lineup
-inspection. Registry presence alone does not prove construction, negotiation,
-decoding, rendering, EOS, or teardown. The M2.5 controller authorizes one
-opaque, revalidated stream handoff. M2.6's main-context session is its only URI
-consumer: it assigns a tune generation before the actor wait, constructs
-`playbin3` plus a private `gtk4paintablesink` only for the current response,
-exposes only the URI-opaque GDK paintable, tags bus work, and requires bounded
-predecessor teardown to `NULL` before replacement. Standard activation of an
-unprotected row now invokes that session with the exact applied lineup
-generation, so a development build can allocate a tuner and bind the resulting
-opaque paintable. The completed
-M0.5 experiment separately proves a bounded, display-backed Linux path from one
-checked-in video-only MPEG-2 transport stream through explicit `playbin3` and
-`gtk4paintablesink`, including multiple rendered frames and paintable updates,
-EOS, and teardown to `NULL`. M2.7 additionally proves the real production
-session and production pane as separate URI-confined display processes. M2.8
-adds process-local volume/mute property ownership plus native playback and
-compositor-confirmed fullscreen controls. M2.9 adds the application-owned
-direct transport behind the constant `appsrc://balun` URI. Audio decoding and
-audible output, audio sinks, the parser/decoder set, the full M0.10 plugin
-contract, and M2.10 through M2.12 player acceptance remain open; the helpers'
-installed-runtime probes prove the constant-URI `appsrc` contract on all three
-development runtimes. The detailed boundary is recorded in
-[`playback.md`](playback.md).
-
-The implemented first player path uses:
-
-- playbin3.
-- gtk4paintablesink exposed through GtkPicture.
-- The constant endpoint-free `appsrc://balun` URI, whose built-in `appsrc` is
-  fed by Balun's own no-proxy HTTP transport from the validated,
-  responder-pinned device stream URL.
-- GStreamer bus handling for error, EOS, state, buffering, stream collection,
-  missing-plugin, and Balun's bounded transport-failure messages.
-- Deinterlacing support suitable for normal 1080i broadcast content.
-- Generation-scoped bus watches and state changes.
-
-On every channel change:
+Every channel change:
 
 1. Invalidate the previous tune generation.
-2. Set the previous pipeline to NULL.
-3. Wait for bounded teardown and detach stale bus work.
-4. Create or reconfigure the pipeline for the new stream.
-5. Expose buffering or actionable failure state.
+2. Cancel the previous transport, then move its pipeline to `NULL`.
+3. Join the transport workers and pipeline within five seconds; a failure
+   quarantines the owner instead of starting a successor.
+4. Construct the new pipeline for the authorized handoff.
+5. Publish connecting, playing, or a failure category.
 
-Expected device HTTP behavior:
+Device HTTP semantics: closing the stream releases the tuner; 404 means an
+unknown or stale channel and should prompt a lineup refresh; 503 means busy
+tuners or a tuning failure and must not trigger aggressive retries.
 
-- Closing the stream releases the allocated tuner.
-- HTTP 404 indicates an unknown or stale virtual channel and should prompt a
-  lineup refresh.
-- HTTP 503 can indicate that all tuners are busy or authorization/tuning
-  failed. It should not trigger aggressive retries.
+Codec policy:
 
-If measurements show long-running drift or unstable live buffering, the next
-step is a controlled pipeline based on the same `appsrc` feed, mpegtslivesrc,
-tsdemux, and decodebin3. That complexity is not part of the MVP unless the
-spike proves playbin3 inadequate.
+- MPEG-2, H.264, AC-3, and AAC over MPEG-TS are the v0.1 contract; Windows has
+  demonstrated it against real ATSC 1.0 channels, and P0 records the exact
+  per-platform plugin set for packaging.
+- HEVC decodes where gst-libav or a platform decoder is installed and is
+  reported as a capability, not promised.
+- AC-4 has no open decoder; those channels fail closed with a message that names
+  the missing codec (P1.4 decides whether video-only playback is offered).
+- DRM-tagged channels stay visible but disabled.
+- The shared [release component policy](release-component-policy.md) keeps
+  optical-disc decryption and proprietary DRM components out of every package;
+  ordinary codecs need their own compatibility and licensing review.
 
-### 6.3 Codec policy
+If measured live streams show drift or unstable buffering, the fallback is a
+controlled `appsrc ! tsdemux ! decodebin3` graph. That is not part of v0.1
+unless the evidence demands it.
 
-The compatibility spike must cover representative:
+## 7. State and diagnostics
 
-- MPEG-2 and H.264 video.
-- Interlaced and progressive content.
-- AC-3 and AAC audio.
-- MPEG-TS demultiplexing and clock behavior.
+Persisted state is atomic, versioned JSON:
 
-HEVC, E-AC-3, ATSC 3.0, AC-4, captions, and alternate audio tracks should be
-reported through runtime capabilities. They are not promised until real
-cross-platform probes pass.
-
-DRM-tagged channels remain visible but unavailable. Balun's shared
-[release component policy](release-component-policy.md) excludes dedicated
-optical-disc copy-control and proprietary-DRM components that this application
-does not use. The current repository/input gate is in CI; it is not a completed
-package claim and does not broadly deny ordinary codecs, containers, TLS, or
-general-purpose cryptography. A broad development/runtime package is never
-authority to stage libdvdcss, a DRM module, or any other optical-disc
-copy-control/circumvention component. Self-contained bundles must instead use a
-reviewed capability-derived plugin and native-library closure while retaining
-the shared deny policy as defense in depth.
-
-## 7. Guide data
-
-GuideService uses ordered providers while preserving source and freshness:
-
-1. Lineup metadata is always available.
-2. In-band ATSC PSIP or DVB EIT is read opportunistically from the stream
-   already being watched.
-3. A user-configured XMLTV file or URL can supply broader listings.
-4. The official subscription-backed HDHomeRun XMLTV API may be added later.
-
-### 7.1 In-band guide rules
-
-- Never allocate a second tuner solely to harvest guide data by default.
-- Verify during the spike whether the device's virtual-channel HTTP PID
-  filter preserves guide tables.
-- Accept that completeness and horizon vary by broadcaster.
-- Store events against the multiplex and mapped ChannelKey with explicit
-  freshness.
-- Do not present best-effort data as a complete schedule.
-- Treat GStreamer's MPEG-TS section API as a compatibility risk until it is
-  exercised with captured streams.
-
-### 7.2 XMLTV rules
-
-- Support a user-owned local file or explicitly configured URL.
-- Do not bundle website scrapers or questionable listings providers.
-- Require explicit per-device channel mapping.
-- Preserve source attribution and retrieval time.
-- Bound download size, decompressed size, document depth, event count, and
-  time range.
-- Handle time zones and daylight-saving transitions through fixtures.
-- Refresh according to the source's terms, with backoff and conditional HTTP
-  requests where available.
-
-The official HDHomeRun 14-day XMLTV API requires a tuner and paid DVR guide
-subscription. If later supported, DeviceAuth must be fetched fresh, never
-logged, and handled according to SiliconDust's randomized refresh guidance.
-
-## 8. State, privacy, and diagnostics
-
-Initial persisted state uses atomic, versioned JSON:
-
-- Friendly device names.
-- Manual endpoints and last successful locators.
-- Approved routed discovery ranges and their network fingerprints.
-- Discovery budgets and preferences.
-- Guide provider configuration and channel mappings.
+- Friendly device names and remembered exact or hostname targets.
+- Approved routed ranges and their fingerprints (Linux).
 - Window geometry and UI preferences.
 
-Lineup and guide caches are stored separately with schema versions, bounded
-size, and expiration. SQLite should be introduced only if guide query volume
-demonstrates that flat bounded caches are inadequate.
-
-Diagnostics should report:
-
-- DeviceID suffix, discovery origin, address family, and reachability.
-- Discovery strategy, candidate count, packet budget, elapsed time, and
-  cancellation.
-- Lineup and guide freshness.
-- Required and missing GStreamer capabilities.
-- High-level playback state and sanitized error details.
-
-Diagnostics must not include DeviceAuth, full sensitive URLs, or unrelated
-network inventory.
-
-Implementation status: the Windows helper's explicit `-InspectLocal` mode
-builds and validates the GTK-free diagnostic at its exact native-target path,
-then invokes only `--inspect --local`. This avoids manual path handling without
-turning the desktop default into a network operation or accepting arbitrary
-diagnostic arguments.
-
-## 9. Cross-platform policy
-
-Development may be Linux-led, but architectural changes are not complete
-until macOS and Windows compile and smoke tests pass.
-
-The first compatibility spike will choose and record:
-
-- Rust MSRV.
-- GTK and libadwaita API floors.
-- GStreamer runtime floor and required plugin set.
-- Linux native-versus-Flatpak support expectations.
-- macOS local-network privacy declarations and any entitlement requirements.
-- Windows firewall and local-network diagnostics.
-
-Tributary's currently proven GTK 4.16/libadwaita 1.6 and platform bundle
-setup are the initial reference. Balun may lower that floor if its smaller UI
-can do so without fragmenting the bundle and CI matrix.
-
-Implementation status: the first desktop shell declares GTK 4.16, libadwaita
-1.6, and GStreamer 1.20 as its native API/runtime floors. The Rust `gstreamer`
-0.25 dependency is optional behind a GTK-free `playback` feature, while
-`desktop` includes GTK, libadwaita, and playback. The feature-gated binary is
-compiled and linted in a Fedora desktop job while default library and diagnostic
-builds remain GTK- and GStreamer-free. Native macOS arm64 and Windows x86_64 CI
-lanes also link the shell against their toolkit/media SDKs while continuing to
-prove the dependency-light core. The Windows developer helper now auto-detects
-an installed MSYS2 CLANG64 environment and makes a locked, build-only release
-desktop build its no-flag operation; `-Run` explicitly builds and launches,
-while `-Diagnostic` retains
-the GTK-free path. `-InspectLocal` is a separate Windows-only, fixed-argument
-diagnostic operation. Linux, macOS, and Windows helpers bind every compiling
-route to an explicit validated Rust target and repository-local target tree.
-This removes manual compiler, `pkg-config`, Rust-target, and Cargo-output path
-handling without making a portable bundle or installer claim. A local Linux
-GTK 4 Broadway smoke has verified display initialization and event-loop entry,
-and isolated Linux headless-Wayland/D-Bus processes cover joined close plus the
-M0.5 local MPEG-2 decode/render/EOS/`NULL` lifecycle, production audio-control
-state, exact channel activation, and a compositor-confirmed fullscreen
-enter/exit round trip with nested-navigation and focus restoration. The helper
-retains Xvfb only as an optional local fallback when a headless Wayland
-compositor is unavailable; X11 is not the default or a runtime requirement.
-The fixture is video-only and does not prove audible output. Native macOS and
-Windows runtime activation/close/render smokes remain pending.
-
-The Fedora smoke installs `gstreamer1-plugin-libav` as a development/CI decoder
-for that pinned fixture only. It does not add libav broadly to a package
-allowlist, freeze the M0.10 runtime contract, or relax the libdvdcss,
-optical-disc, DRM, and circumvention exclusions in section 6.3.
-
-Every completed package must run an exact runtime probe for:
-
-- GTK and libadwaita initialization.
-- playbin3.
-- HTTP source.
-- MPEG-TS demuxer.
-- Expected decoders and parsers.
-- Platform audio sink.
-- gtk4paintablesink and a tiny synthetic video path.
-
-The M2.4 startup snapshot covers only the seven structural factories listed in
-section 6.2. It is not this completed package probe: audio sinks and codecs are
-still unselected, and the Linux development fixture has not been relocated into
-or run from a packaged artifact.
-
-## 10. Delivery milestones
-
-### Milestone 0: Compatibility and protocol spike
-
-Deliverables:
-
-- Sanitized discover, device, lineup, error, and stream fixtures from
-  representative hardware.
-- Discovery implementation comparison and ADR-0001.
-- Proven local and targeted discovery.
-- A minimal playbin3 plus gtk4paintablesink playback experiment.
-- MPEG-2, H.264, interlace, AC-3, and AAC observations.
-- Rapid tune/teardown measurements.
-- A WireGuard or equivalent routed test where broadcast fails and targeted
-  discovery succeeds.
-- An in-band guide-table availability report.
-- Recorded Rust, GTK, libadwaita, and GStreamer floors.
-
-Exit criteria:
-
-- The core discovery and playback approach is demonstrated on real hardware.
-- Major codec or EPG gaps are reflected honestly in v0.1 scope.
-- Platform and licensing decisions needed for scaffolding are recorded.
-
-### Milestone 1: Repository foundation
-
-Deliverables:
-
-- Cargo package with a thin binary and GTK-free library.
-- Application ID io.github.jm2.Balun used consistently.
-- Minimal adaptive three-pane window.
-- Tokio/GLib bridge with bounded channels and clean shutdown.
-- Domain identity types and immutable controller state.
-- Versioned settings foundation.
-- README, changelog, contributing, security, issue/PR templates, and release
-  documentation.
-- Checksum-pinned shared release-component policy plus deterministic, bounded
-  repository and packaging-input validation.
-- Fast Linux CI and macOS/Windows compile smoke jobs.
-
-Exit criteria:
-
-- The application opens and shuts down cleanly on all targets.
-- Core modules can be unit-tested without GTK.
-- Formatting, strict linting, locked tests, metadata checks, and audit pass.
-
-Implementation status: an opt-in thin desktop binary now constructs the exact
-Balun application identity and an adaptive nested device/channel/player shell.
-Construction is packet-free; Refresh explicitly starts bounded local discovery
-and an adjacent action admits one bounded numeric exact-address request without
-DNS, range scanning, or fallback. Selecting one DeviceID resolves only that
-registry device's metadata and lineup without tuning. The GTK-free controller
-owns discovery and independent selection lanes on a named current-thread Tokio
-worker, cancels and joins superseded work, retains complete URL-bearing
-selected snapshots only inside the actor, and publishes coalesced URL-free
-projections through a bounded watch boundary. A GLib reducer applies complete
-snapshots to virtualized device and channel models, preserves stable identity
-across replacement, and never merges lineups. The ordinary window close path
-cancels and joins the controller and is covered by an isolated Linux
-headless-Wayland/D-Bus smoke; Xvfb is only an optional local fallback. The
-default library and diagnostic remain GTK-free, Linux desktop/MSRV
-compilation is enforced in CI, and native macOS and Windows desktop link checks
-are also enforced. Versioned settings and native desktop runtime smoke remain
-required to complete this milestone; playback remains a Milestone 2 concern.
-
-### Milestone 2: Playable vertical slice
-
-Deliverables:
-
-- Standard discovery and manual address entry.
-- Device registry and one selected-device lineup.
-- Device and channel sidebars with virtualized models.
-- Unprotected live playback.
-- Volume, mute, fullscreen, buffering, and errors.
-- Deterministic pipeline teardown and cancellation.
-- Exact packaged-runtime capability probe.
-
-Exit criteria:
-
-- A user can launch Balun, find a local tuner, choose a device and channel,
-  watch it, switch channels, and exit without a leaked tuner allocation.
-- 404, 503, protected channel, missing codec, and offline-device paths are
-  covered by tests or fixtures.
-- Linux, macOS, and Windows smoke validation passes.
-
-Implementation status: standard desktop local discovery, bounded numeric
-exact-address entry, the DeviceID registry, selected-device lineup loading, both
-virtualized sidebars, and the optional GStreamer initialization/capability
-foundation are implemented. The player pane retains its main-context owner and
-reports missing structural components without disabling discovery. The
-generation-owned library session can consume one private handoff, construct
-`playbin3` with its library-private GTK sink, and serialize bus events plus
-bounded teardown without exposing the URI-bearing GStreamer graph. The pane
-owns its opaque presentation and terminal-shutdown boundary. Completed M2.8
-controls submit channel activation through the bounded controller lane, provide
-synchronous Stop, retain normalized volume and independent mute across
-successors with a cubic UI-to-linear playbin gain, and follow compositor-
-confirmed fullscreen while protecting and restoring nested navigation. A
-separate Linux-only M0.5 smoke
-proves bounded rendering and teardown for a checked-in synthetic MPEG-2
-transport stream. Hostname admission, buffering/error projection, the complete
-codec/audio-sink contract, audible-output proof, deterministic live-tuner
-release acceptance, packaged-runtime probes, and live-platform validation
-remain open, so this
-milestone is not yet complete. Initial Windows desktop trials exposed
-inconsistent IPv4 broadcast discovery and an unusable-only locator path; the
-local endpoint projection now follows Windows limited-broadcast behavior,
-consumes the direct
-on-link prefix length, and omits link-local IPv6 until scoped HTTP is supported.
-Real-host regression testing remains required.
-
-### Milestone 3: Multi-device and routed discovery
-
-Deliverables:
-
-- Multiple locator claims per stable DeviceID.
-- Fully separate lineups and ChannelKeys for every device.
-- Cached exact-address rediscovery.
-- Safe native RouteProvider implementations where the platform proof
-  obligations can be met, with an explicit unavailable reason and no broader
-  fallback everywhere else.
-- Approved, bounded tunnel scans with progress, cancel, cooldown, and backoff.
-- Debounced network-change handling.
-- Useful device and discovery diagnostics.
-
-Exit criteria:
-
-- Local and remote tuners coexist without merged channel state.
-- The same tuner discovered through multiple paths appears once.
-- Loss of one locator does not remove a device with another valid claim.
-- A routed test on every enabled provider demonstrates discovery within the
-  documented traffic budget; Linux is required for v0.1.
-- Route exclusions, candidate caps, and cancellation have deterministic tests.
-
-### Milestone 4: Guide and usability
-
-Deliverables:
-
-- Now/next presentation where data is available.
-- Proven active-stream ATSC/DVB guide extraction, or a documented reason it
-  is unavailable for a device class.
-- XMLTV file and URL support with explicit mappings.
-- Search, favorites, keyboard navigation, accessibility, and polished empty
-  and error states.
-- Bounded guide cache with source and freshness.
-
-Exit criteria:
-
-- Missing guide data degrades to clear lineup information.
-- Guide data cannot merge channels across devices accidentally.
-- XMLTV limits, mappings, time zones, and refresh behavior are tested.
-- No background guide behavior consumes an unexpected tuner.
-
-### Milestone 5: Packaging and release candidate
-
-Deliverables:
-
-- Flatpak x86_64 and aarch64.
-- Windows x86_64 portable ZIP and installer.
-- macOS arm64 DMG.
-- Runtime dependency closure and packaged probes.
-- Capability-derived GStreamer staging for self-contained bundles: include
-  only the reviewed HTTP, MPEG-TS, parser/decoder, and platform sink plugin
-  closure instead of copying a whole plugin distribution. Distribution-owned
-  and shared runtimes remain documented external boundaries, not an allowlist
-  claim.
-- Per-platform denied-component checks before staging, throughout native-import
-  dependency closure, over each completed app tree, and after reopening every
-  final artifact.
-- Exact artifact inventory, checksums, SBOM, and provenance.
-- Draft-release automation and release-check command.
-- User-focused release notes and known limitations.
-
-Exit criteria:
-
-- Every artifact is reopened and tested after packaging.
-- Every platform loads the shared denied-component policy and fails closed if
-  its staging, import, tree, or reopened-artifact inspector cannot complete.
-- Tag, Cargo, lockfile, changelog, AppStream, and package versions agree.
-- No release is publicly visible until every required artifact validates.
-- Only the final publication job has release-write permission.
-
-### Milestone 6: v0.1.0-alpha.1 validation
-
-Deliverables:
-
-- Real-hardware compatibility matrix.
-- Wayland, X11, macOS, and Windows smoke results.
-- Startup, idle resource, discovery traffic, tune latency, and teardown
-  measurements.
-- Security/privacy review of discovery and guide behavior.
-- Signed annotated prerelease tag and final artifact publication.
-
-Exit criteria:
-
-- All declared v0.1 behavior is supported by tests and release evidence.
-- Unsupported hardware, codecs, guide sources, and platforms are documented.
-- No known issue can allocate unexpected tuners, scan unapproved networks,
-  disclose secrets, or mix device identities.
-
-## 11. Verification strategy
-
-### 11.1 Unit and property tests
-
-- Discovery framing, TLV parsing, CRC, unknown tags, truncated packets, and
-  oversized fields.
-- DeviceID validation and duplicate replies.
-- Address classification, tunnel route filtering, range caps, token-bucket
-  accounting, cooldowns, and cancellation.
-- Lineup missing fields, tags, natural channel sorting, row limits, and
-  hostile URLs.
-- Redirect, same-origin, credential, scheme, and response-body policies.
-- Registry claims and locator expiry.
-- Generation handling for device, lineup, guide, and tune races.
-- XMLTV mappings, decompression limits, time zones, and daylight-saving
-  boundaries.
-- Versioned state migration and atomic persistence.
-
-### 11.2 Integration tests
-
-- A fake UDP and HTTP HDHomeRun server.
-- Discovery plus device and lineup metadata.
-- Duplicate multi-interface replies.
-- Slow, chunked, truncated, malformed, oversized, and redirected responses.
-- HTTP 404, 503, disconnect, and tune cancellation.
-- The pinned local synthetic MPEG-TS fixture through explicit `playbin3` and
-  `gtk4paintablesink`, with multiple frame observations, EOS, and bounded
-  teardown.
-- Rapid channel switching and application shutdown.
-- A fake RouteProvider for every platform.
-- A routed-network fixture where broadcast cannot cross the boundary but a
-  bounded targeted probe can.
-
-### 11.3 Fuzzing
-
-- Unauthenticated HDHomeRun discovery packet parser.
-- Lineup and device JSON boundary.
-- XMLTV parser or event-normalization boundary.
-- MPEG-TS parsing remains GStreamer's responsibility, but Balun-owned section
-  conversion should be fuzzed if custom parsing is added.
-
-### 11.4 Real hardware
-
-The initial owner-provided hardware lab is:
-
-| Site | Quantity | Owner description / expected model ID | Initial validation role |
-| --- | ---: | --- | --- |
-| Primary | 1 | CONNECT Duo, HDHR4-US / likely HDHR4-2US | Two-tuner ATSC 1.0 and clear-QAM compatibility, including interlaced MPEG-TS |
-| Primary | 1 | Non-FLEX CONNECT 4K / HDHR5-4K | Local ATSC 1.0/3.0, modern codec, lineup, and playback validation |
-| Secondary | 1 | HDHR3-PRIME / HDHR3-CC | Generation-3 PRIME, three-tuner CableCARD/QAM, clear-channel, tuner-busy, and protected-channel error behavior |
-| Secondary | 1 | Non-FLEX CONNECT 4K / HDHR5-4K | Routed ATSC 1.0/3.0 discovery and same-model cross-site identity validation |
-| Deferred, Australia | 2 | CONNECT QUATRO / likely HDHR5-4DT | Four-tuner DVB-T/T2 and DVB-C regional compatibility when accessible |
-| Deferred | Several | Older unspecified units | Opportunistic regression coverage only |
-
-The expected model IDs and capabilities above come from SiliconDust's current
-model documentation. Milestone 0 must confirm the exact ModelNumber,
-DeviceID, firmware, tuner count, and capabilities reported by each physical
-unit before naming fixtures. In particular:
-
-- HDHR3-CC is an older hardware generation but remains in the current
-  channel-management and HTTP-capable family; it should not be treated as a
-  legacy-protocol device without observed evidence.
-- HDHR5-4K tuners 0 and 1 support ATSC 3.0 or ATSC 1.0, while tuners 2 and 3
-  are ATSC 1.0-only.
-- HDHR5-4DT DVB-C support can depend on firmware, making a firmware capture
-  part of the later Australian validation.
-- The published HTTP development guide predates ATSC 3.0, so the actual
-  HDHR5-4K payload, container, codecs, guide sections, and failure behavior
-  remain hardware observations rather than documentation assumptions.
-
-The units are split across two sites that are expected to be joined with
-UniFi Site Magic. Balun will treat this as a generic routed multi-site
-network, not a product-specific discovery path. Once the mesh is available,
-the hardware matrix will capture:
-
-- A client at the primary site discovering the local CONNECT and 4K through
-  normal discovery and the remote PRIME and 4K through routed discovery.
-- A client at the secondary site discovering the local PRIME and 4K through
-  normal discovery and the remote CONNECT and 4K through routed discovery.
-- The two HDHR5-4K units remaining distinct by DeviceID despite sharing a
-  model and appearing through different discovery paths.
-- Client operating system and site.
-- Device site, address, subnet, and whether the address or DNS name is stable.
-- Routes visible to the client before and after the mesh is enabled.
-- Whether ordinary HDHomeRun broadcast or IPv6 discovery crosses the mesh.
-- Exact-address targeted discovery behavior.
-- Neighbor and route-derived candidate quality.
-- Bounded routed-scan packet count, completion time, cooldown, and
-  cancellation.
-- Simultaneous discovery of local and remote devices without lineup merging.
-- Route-change, site-disconnect, device-restart, and stale-cache behavior.
-
-Until the mesh exists, local networks and a controlled routed fixture can
-develop and verify the same strategy interfaces. No implementation should
-assume that Site Magic forwards broadcast, exposes a particular tunnel type,
-or uses one fixed route layout.
-
-Maintain sanitized fixtures and a manual matrix covering:
-
-- Device model and firmware.
-- Broadcast standard and region.
-- Number of tuners.
-- Video and audio codecs.
-- Interlaced content.
-- Local and routed/WireGuard access.
-- Multiple simultaneous devices.
-- Tuner-busy and device-restart behavior.
-
-Hardware tests complement rather than replace deterministic fake-device
-tests. Sanitized observations from completed rows are maintained in
-[`compatibility-v0.1.md`](compatibility-v0.1.md).
-
-## 12. CI, dependency, and release policy
-
-### 12.1 Initial CI
-
-- Cargo formatting check.
-- Strict Clippy with warnings denied.
-- Locked checks and tests for all targets and relevant features.
-- Exact MSRV job.
-- Dependency audit and policy checks.
-- Shared release-component policy integrity and repository/packaging-input
-  validation. Every new input family extends the classifier and its negative
-  fixtures in the same change. This is the current pre-package enforcement
-  boundary.
-- Desktop entry and AppStream validation.
-- Markdown, TOML, YAML, and GitHub Actions linting.
-- Linux debug and release tests.
-- Linux GTK desktop compile and strict-lint checks.
-- macOS and Windows GTK-free compile plus native desktop link smoke tests.
-- Linux, macOS, and Windows desktop builds through the same no-option,
-  build-only helpers used by developers, with GTK-free diagnostics selected
-  explicitly for release; only Windows retains Tributary's existing `-Run`.
-- Concurrency cancellation for superseded branch runs.
-
-Add full packaging jobs, coverage ratchets, weekly fuzzing, and expensive GUI
-smoke tests after the playable vertical slice makes them meaningful.
-Dependabot should begin with grouped weekly pull requests and manual merging.
-Automatic merging waits until required checks and branch protection are
-deployed and tested.
-
-### 12.2 Release contract
-
-- Accept only a v-prefixed Semantic Version tag.
-- Use prerelease versions such as v0.1.0-alpha.1 while the release is alpha.
-- Require a signed annotated tag on an approved main-branch commit.
-- Resolve the tag once and build every package from that immutable SHA.
-- Use locked Rust dependencies and pinned build tools/actions where practical.
-- Generate a draft release first.
-- Require an exact expected artifact inventory with no missing, extra, or
-  duplicate files.
-- Reopen and validate every completed package.
-- Apply the shared component policy before staging, during native-import
-  traversal, to the completed app-owned tree, and again to the reopened final
-  package. These gates become mandatory in the same change that adds each
-  platform package.
-- Generate checksums, SBOM, and build provenance.
-- Grant write permission only to a final publication job that checks out no
-  project source.
-- Publish useful release notes rather than only a comparison link.
-- Add Apple notarization and Windows code signing as distribution broadens.
-
-An xtask release-check command should semantically compare Cargo, lockfile,
-changelog, AppStream, packaging metadata, and the proposed tag.
-
-### 12.3 Tributary build-infrastructure port
-
-Treat Tributary's `scripts/` and `build-aux/` trees as Balun's release-
-engineering baseline and maintain a file-by-file port ledger. Generic,
-identity-neutral helpers should stay as close to upstream as practical;
-application-facing helpers must replace Tributary's identity and music-library
-assumptions with `balun`, `Balun`, `io.github.jm2.Balun`, network/video runtime
-needs, and the exact product tagline.
-
-An equivalent port keeps Tributary's filename. Balun uses a different filename
-only when a helper has a materially new or split responsibility, with that
-decision recorded in the port ledger. Product-named recipes replace only the
-Tributary identity portion of their filenames.
-
-The port lands in dependency order:
-
-1. Vendored tool provenance, source-generation helpers, and synthetic policy
-   validators that are useful before a desktop package exists.
-2. Cross-platform developer build/check helpers, dependency-update policy, and
-   fuzz-lock coordination once their referenced workspaces exist.
-3. Flatpak, native Linux, Windows, and macOS recipes together with the GTK
-   binary, desktop metadata, icons, runtime probes, and real package tests they
-   describe.
-
-Generated dependency snapshots are always rebuilt from Balun's lockfiles.
-Music-library permissions, MPRIS behavior, Rhythmbox compatibility, audio-file
-associations, and Tributary artifact names are not portable. Package recipes
-must never land in a state that claims a desktop executable or asset Balun does
-not yet produce. Every real package adds bounded traversal/extraction,
-containment and link checks, stable completed-tree inspection, and reopened
-final-artifact enforcement in the same change.
-The maintained file-by-file status is in
+No credentials, stream URLs, or incidental topology are persisted. Lineup
+caches are added only when an offline device needs a visibly stale lineup, and
+SQLite only if a guide feature later proves flat caches inadequate.
+
+Diagnostics report device name and address, DeviceID suffix, discovery origin,
+reachability, probe counts and packet budget, required and missing GStreamer
+capabilities, and the playback failure category. They never include
+`DeviceAuth`.
+
+## 8. Cross-platform, CI, and release
+
+Floors: Rust 1.98, GTK 4.16, libadwaita 1.6, GStreamer 1.20 with the base,
+good, bad, and gst-plugins-rs (gtk4) plugins. Development is Linux-led, but a
+change is not complete until macOS and Windows pass.
+
+CI on every push and pull request: Linux quality (policy tests, fmt, strict
+Clippy, debug and release tests), MSRV, Linux desktop (build, installed-runtime
+probes, Wayland lifecycle smokes), and macOS and Windows compile smoke lanes
+that build the desktop through the same helpers developers use. A manual
+release-candidate workflow builds an immutable tag on all three platforms.
+
+Release contract:
+
+- Accept only a signed, annotated, v-prefixed Semantic Version tag on `main`.
+- Build every package from that one SHA with locked dependencies and pinned
+  actions.
+- Stage only a capability-derived GStreamer closure into self-contained
+  bundles; apply the component policy before staging, during native-import
+  traversal, over the completed tree, and after reopening the final artifact.
+- Require an exact artifact inventory and checksums; create a draft release;
+  give write permission only to a final publication job that checks out no
+  source.
+- Keep tag, Cargo, changelog, AppStream, and package versions in agreement.
+
+The Tributary port ledger for `scripts/` and `build-aux/` is
 [`tributary-build-infrastructure.md`](tributary-build-infrastructure.md).
 
-## 13. Documentation plan
+## 9. Implementation order
 
-The README should remain user-focused and substantially shorter than
-Tributary's current README:
+Phases are dependency order, not a release promise. Hardware evidence comes
+first because it decides the codec contract that packaging depends on.
 
-- Product description and screenshot.
-- Supported devices, platforms, codecs, and limitations.
-- Installation.
-- Short architecture diagram.
-- Build and test commands.
-- Discovery, network, and privacy summary.
-- Guide-data behavior.
-- License and third-party notices.
+**P0 — Evidence and contract.** Record the Windows result, repeat live TV on
+Linux and macOS, measure first-frame, switch, and tuner-release times, freeze
+the per-platform plugin contract, land sanitized fixtures, and run a one-day
+in-band guide spike. Exit: every supported desktop has played a real channel
+with audio, the numbers are written down, and the guide decision is made.
 
-Detailed contracts belong in:
+**P1 — Viewer completion.** Versioned settings, remembered targets and
+hostname entry, errors that name the device, the missing-codec message,
+search and favorites, keyboard navigation. Exit: a user can set up two sites'
+tuners once and use the viewer without the diagnostic.
 
-- docs/architecture.md
-- docs/discovery.md
-- docs/playback.md
-- docs/epg.md
-- docs/security.md
-- docs/packaging.md
-- docs/releasing.md
+**P2 — Routed discovery (Linux).** Connect the monitored runner to the existing
+approval store and observers, add the approval and progress UX, reconcile
+network changes, expose diagnostics, and prove one routed case plus two-site
+multi-device validation. Exit: local and remote tuners coexist within the
+documented traffic budget with deterministic cancellation and revocation.
 
-CHANGELOG.md will follow Keep a Changelog and Semantic Versioning with an
-Unreleased section and the standard Added, Changed, Deprecated, Removed,
-Fixed, and Security headings. Privacy is added when network or guide behavior
-changes. Entries describe user-visible outcomes; implementation detail stays
-in pull requests and design documents.
+**P3 — Packages.** Desktop metadata and assets, then Flatpak, Windows ZIP and
+installer, and macOS DMG with the capability-derived closure and all four
+component gates, release automation, and the CI hardening packages make
+meaningful. Exit: every artifact is reopened, probed, and validated before
+upload.
 
-The repository should also gain:
+**P4 — v0.1.0-alpha.1.** Validate the packaged artifacts on every platform,
+complete the hardware matrix and budgets, run the security and privacy review,
+publish the support and limitations matrix, and cut the prerelease.
 
-- CONTRIBUTING.md
-- SECURITY.md
-- CODE_OF_CONDUCT.md
-- SUPPORT.md
-- Issue forms.
-- Pull-request template.
-- Third-party provenance and license notices.
+v0.2 candidates: in-band now/next if the P0.8 spike shows PSIP/EIT survives
+the device PID filter; XMLTV file or URL with explicit mappings; native macOS
+and Windows route providers; SBOM, provenance, fuzzing, and a coverage
+ratchet; conduct, support, and issue-form governance once contributors exist.
 
-## 14. Decisions and owner input
+## 10. Verification strategy
 
-### 14.1 Confirmed decisions and test inventory
+Unit and property tests: discovery framing and hostile packets; DeviceID
+validation and duplicates; address classification, route filtering, budgets,
+cooldowns, and cancellation; lineup fields, tags, sorting, and hostile URLs;
+device HTTP redirect, credential, scheme, and body policy; registry claims and
+expiry; generation races; settings migration.
 
-- Application ID: io.github.jm2.Balun.
-- License expression: GPL-3.0-or-later.
-- Primary-site hardware: one HDHR4-US CONNECT Duo and one non-FLEX HDHR5-4K.
-- Secondary-site hardware: one HDHR3-PRIME and one non-FLEX HDHR5-4K.
-- Deferred Australian hardware: two HDHR5-DT Quatro units that are not
-  currently accessible.
-- The initial real deployment spans two sites that are expected to be joined
-  with UniFi Site Magic.
+Integration tests: the loopback fake HDHomeRun device through discovery,
+lineup, DRM refusal, tuning, switching, 404 and 503, cancellation, and
+shutdown; the synthetic MPEG-2 fixture through `playbin3` and
+`gtk4paintablesink` under headless Wayland; fake route providers; installed-
+and packaged-runtime probes.
 
-The following working defaults allow implementation to begin without waiting:
+Real hardware complements rather than replaces those tests. Results are
+recorded in [`compatibility-v0.1.md`](compatibility-v0.1.md) without device
+IDs, addresses, channel names, or credentials.
 
-- Primary development environment: Linux, with macOS and Windows kept green.
-- Initial release packages: Flatpak x86_64/aarch64, Windows x86_64, and
-  macOS arm64.
-- Guide baseline: lineup metadata plus opportunistic in-band data, followed
-  by user-provided XMLTV.
-- No cloud discovery, website scraping, DRM, or background tuner consumption.
-- Routed discovery requires remembered user approval before enumerating a
-  prefix.
-- No merged lineup view.
+| Site | Qty | Device | Validation role |
+| --- | ---: | --- | --- |
+| Primary | 1 | HDHR4-2US CONNECT Duo | Two-tuner ATSC 1.0, interlaced MPEG-TS |
+| Primary | 1 | HDHR5-4K (non-FLEX) | Local ATSC 1.0/3.0, modern codecs |
+| Secondary | 1 | HDHR3-PRIME | CableCARD/QAM, tuner-busy and protected-channel paths |
+| Secondary | 1 | HDHR5-4K (non-FLEX) | Routed ATSC 1.0/3.0, cross-site identity |
+| Deferred | 2 | HDHR5-4DT (Australia) | DVB-T/T2/C when accessible |
 
-Milestone 1 must apply GPL-3.0-or-later consistently in Cargo, AppStream,
-package metadata, source notices, and documentation, while preserving license
-and provenance notices for adapted Tributary or third-party code.
+The two sites are expected to be joined with UniFi Site Magic; Balun treats
+that as a generic routed network. The matrix records which discovery path
+found each device, that the two HDHR5-4K units stay distinct, routed packet
+counts and timings, and route-change, site-disconnect, and device-restart
+behavior.
 
-### 14.2 Remaining non-blocking input
+## 11. Primary risks
 
-1. Firmware versions and available channel/codec types on each accessible
-   unit.
-2. Site subnets, visible route sizes, client platforms, and whether tuner
-   addresses or DNS names will be stable.
-3. Whether Linux should remain the primary user experience or all three
-   platforms should carry equal release priority from the first alpha.
-4. Any XMLTV source already used by the intended testers.
-5. When the Australian HDHR5-DT units become accessible for regional
-   validation.
+- Real devices may differ from the documented discovery and HTTP behavior.
+- GStreamer codec availability differs between system and bundled runtimes.
+- AC-4 and protected ATSC 3.0 channels have no distributable playback path.
+- Packaging breadth can outpace feature work; the phase order guards this.
+- macOS and Windows local-network permissions may hide discovery failures.
+- A broad tunnel route contains too many hosts for friendly enumeration.
+- Rapid channel changes can consume multiple tuners if teardown ownership
+  slips.
+- In-band guide tables may not survive the device's PID filter.
 
-These inputs refine the spike and support matrix; they do not block the
-repository foundation.
-
-## 15. Primary risks
-
-- Real device generations may differ from the current documented discovery
-  and HTTP behavior.
-- Cross-platform C FFI packaging may outweigh libhdhomerun's compatibility
-  benefit.
-- Virtual-channel streams may omit the guide tables needed for free in-band
-  EPG.
-- GStreamer codec availability differs significantly among system and bundled
-  runtimes.
-- AC-4 and protected ATSC 3.0 channels may not have a generally distributable
-  playback path.
-- macOS and Windows local-network permissions may make discovery behavior
-  less transparent than on Linux.
-- A broad tunnel route contains too many hosts for silent, friendly
-  enumeration.
-- Rapid channel changes can consume multiple tuners if teardown ownership is
-  not strict.
-- Packaging breadth can outpace the small application's feature development.
-
-Each risk is attached to an early spike, an explicit scope boundary, or a
-release exit criterion above.
-
-## 16. References
+## 12. References
 
 - [HDHomeRun Device Discovery API](https://info.hdhomerun.com/info/discovery_api)
 - [HDHomeRun HTTP Development Guide](https://www.silicondust.com/hdhomerun/hdhomerun_http_development.pdf)

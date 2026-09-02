@@ -11,9 +11,9 @@ channel lineup in a second, and plays unprotected channels in a live-video pane.
 merged across devices, and no device address or stream URL ever reaches the user interface or the
 media framework.
 
-> **Pre-alpha.** Balun builds and plays on development runtimes, but there are no packages yet,
-> and live-device and packaged-runtime acceptance are still open. The countable status is in
-> [`docs/task.md`](docs/task.md).
+> **Pre-alpha.** Balun plays live TV on development builds (verified on Windows against real
+> tuners), but there are no packages yet and Linux and macOS live-device acceptance is still
+> open. The countable status is in [`docs/task.md`](docs/task.md).
 
 ## Features
 
@@ -25,15 +25,15 @@ media framework.
 | Multiple devices, each with its own channel lineup | ✅ |
 | Device metadata and lineup inspection without allocating a tuner | ✅ |
 | Adaptive three-pane GTK 4 / libadwaita window | ✅ |
-| Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Development runtimes; live-device and packaged-runtime acceptance pending |
+| Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Windows against real tuners; Linux and macOS acceptance pending |
 | Stop, volume, mute, and fullscreen controls | ✅ |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
 | Fixed, endpoint-free playback error messages | ✅ |
-| Windows local discovery | ✅ Pending retest on physical hosts |
-| Route-derived tunnel discovery | 🚧 Foundation only; not connected to the UI |
-| Program guide (in-band PSIP/EIT) | ❌ Planned |
-| Hostname entry | ❌ Planned |
-| Audible output and complete codec contract | 🚧 Volume and mute are wired; audio-sink and codec coverage are not yet proven |
+| Windows local discovery | ✅ |
+| Route-derived tunnel discovery (Linux) | 🚧 Foundation only; not connected to the UI |
+| Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
+| Hostname entry and remembered devices | ❌ Planned |
+| Audible output and complete codec contract | ✅ Windows; Linux and macOS pending |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, DMG, winget) | ❌ Planned |

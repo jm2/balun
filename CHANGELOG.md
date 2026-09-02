@@ -113,16 +113,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limitations
 
-- **No audible-output proof** — Volume and mute are wired, but audio-sink and codec coverage on
-  each platform has not been demonstrated.
-- **No live-device or packaged-runtime acceptance yet** — Playback is proven on development
-  runtimes and against the loopback fake tuner only.
+- **Linux and macOS live-device acceptance pending** — Live TV with audio is verified on a
+  Windows development build against real tuners; the other two desktops have not yet been
+  exercised against real hardware.
+- **No packaged-runtime acceptance yet** — Playback is proven on development runtimes and the
+  loopback fake tuner; the packaged codec closure is not yet frozen.
 - **No packages** — Flatpak, deb, rpm, DMG, and winget packaging are planned; the release workflow
   builds the diagnostic only.
-- **No program guide or hostname entry.**
+- **No program guide or hostname entry** — Guide data is a v0.2 candidate; hostname entry and
+  remembered devices are planned for v0.1.
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
-  decoder, so it cannot be played or transcoded.
-- **Windows discovery retest pending** — The limited-broadcast fix is covered by tests but has not
-  been confirmed on the two physical hosts that first exposed the problem.
+  decoder, so those channels fail closed and cannot be transcoded.
 
 [Unreleased]: https://github.com/jm2/balun/commits/main
