@@ -4,10 +4,12 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use balun::controller::{ControllerHandle, StreamHandoff, StreamHandoffError, StreamSelection};
+use balun::controller::{
+    ControllerCommandError, ControllerHandle, StreamHandoff, StreamHandoffError, StreamSelection,
+};
 use balun::playback::{
     PlaybackCapabilities, PlaybackInitializationError, PlaybackRuntime, PlaybackSession,
-    PlaybackSessionFailure, TuneCompletion, TuneRequest,
+    PlaybackSessionFailure, PlaybackSessionState, TuneCompletion, TuneRequest,
 };
 
 /// Main-context-owned player pane.
@@ -24,11 +26,39 @@ pub(crate) struct PlayerView {
     mute_button: gtk::ToggleButton,
     stop_button: gtk::Button,
     fullscreen_button: gtk::Button,
+    playback_status: gtk::Label,
     idle_title: String,
     idle_description: String,
     session: Option<PlaybackSession>,
     updating_audio_controls: Cell<bool>,
     pending_response: RefCell<Option<gtk::glib::JoinHandle<()>>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PlaybackPresentation {
+    Stopped,
+    Connecting,
+    Playing,
+    Buffering(u8),
+    Failed(PlaybackSessionFailure),
+    ShutDown,
+    Unknown,
+}
+
+impl From<&PlaybackSessionState> for PlaybackPresentation {
+    fn from(state: &PlaybackSessionState) -> Self {
+        match state {
+            PlaybackSessionState::Stopped => Self::Stopped,
+            PlaybackSessionState::Resolving { .. } | PlaybackSessionState::Connecting { .. } => {
+                Self::Connecting
+            }
+            PlaybackSessionState::Playing { .. } => Self::Playing,
+            PlaybackSessionState::Buffering { percent, .. } => Self::Buffering((*percent).min(100)),
+            PlaybackSessionState::Failed { failure, .. } => Self::Failed(*failure),
+            PlaybackSessionState::ShutDown => Self::ShutDown,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -140,6 +170,35 @@ impl PlayerView {
         });
     }
 
+    /// Project every URL-free session transition onto the GTK main context.
+    ///
+    /// The receiver retains only immutable state. Its task captures this view
+    /// weakly, so neither the session nor GTK signal graph can retain the
+    /// playback owner after window shutdown.
+    pub(crate) fn connect_session_state(self: &Rc<Self>) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let Ok(mut states) = session.subscribe_state() else {
+            self.show_playback_failure();
+            return;
+        };
+        let initial = states.borrow_and_update().clone();
+        self.apply_session_state(&initial);
+
+        let player_view = Rc::downgrade(self);
+        let task = gtk::glib::MainContext::default().spawn_local(async move {
+            while states.changed().await.is_ok() {
+                let state = states.borrow_and_update().clone();
+                let Some(player_view) = player_view.upgrade() else {
+                    return;
+                };
+                player_view.apply_session_state(&state);
+            }
+        });
+        drop(task);
+    }
+
     /// Start one URL-free channel intent and consume the actor-private response
     /// only through the generation-owned playback session.
     pub(crate) fn activate_channel(
@@ -170,9 +229,15 @@ impl PlayerView {
 
         let receiver = match controller.try_request_stream(request.selection().clone()) {
             Ok(receiver) => receiver,
-            Err(_) => {
+            Err(error) => {
                 if let Some(session) = self.session.as_ref() {
-                    let _ = session.cancel_tune(request);
+                    let handoff_failure = match error {
+                        ControllerCommandError::Full => StreamHandoffError::Internal,
+                        ControllerCommandError::ShuttingDown => {
+                            StreamHandoffError::ControllerStopped
+                        }
+                    };
+                    let _ = session.complete_tune(request, Err(handoff_failure));
                 }
                 self.stop_button.set_sensitive(false);
                 self.show_playback_failure();
@@ -230,6 +295,54 @@ impl PlayerView {
         let has_video = paintable.is_some();
         self.status.set_visible(!has_video);
         has_video
+    }
+
+    fn apply_session_state(&self, state: &PlaybackSessionState) {
+        match PlaybackPresentation::from(state) {
+            PlaybackPresentation::Stopped => {
+                self.playback_status.set_label("Stopped");
+                self.stop_button.set_sensitive(false);
+                self.apply_paintable(None);
+                self.show_idle();
+            }
+            PlaybackPresentation::Connecting => {
+                self.playback_status.set_label("Connecting");
+                self.stop_button.set_sensitive(true);
+                self.show_connecting();
+            }
+            PlaybackPresentation::Playing => {
+                self.playback_status.set_label("Playing");
+                self.stop_button.set_sensitive(true);
+                self.status.set_visible(false);
+            }
+            PlaybackPresentation::Buffering(percent) => {
+                self.playback_status
+                    .set_label(&format!("Buffering {percent}%"));
+                self.stop_button.set_sensitive(true);
+                self.status.set_title("Buffering");
+                self.status
+                    .set_description(Some(&format!("Live TV is buffering: {percent}%.")));
+                self.status.set_visible(true);
+            }
+            PlaybackPresentation::Failed(failure) => {
+                self.playback_status.set_label("Playback failed");
+                self.stop_button.set_sensitive(false);
+                self.apply_paintable(None);
+                self.show_session_failure(failure);
+            }
+            PlaybackPresentation::ShutDown => {
+                self.playback_status.set_label("Stopped");
+                self.stop_button.set_sensitive(false);
+                self.set_audio_controls_sensitive(false);
+                self.apply_paintable(None);
+            }
+            PlaybackPresentation::Unknown => {
+                self.playback_status.set_label("Playback unavailable");
+                self.stop_button.set_sensitive(false);
+                self.apply_paintable(None);
+                self.show_playback_failure();
+            }
+        }
     }
 
     fn finish_tune(
@@ -471,7 +584,17 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
     controls.append(&volume_scale);
     controls.append(&stop_button);
     controls.append(&fullscreen_button);
+    let playback_status = gtk::Label::builder()
+        .label(if session.is_some() {
+            "Stopped"
+        } else {
+            "Unavailable"
+        })
+        .accessible_role(gtk::AccessibleRole::Status)
+        .tooltip_text("Live TV playback status")
+        .build();
     let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&playback_status));
     header.pack_end(&controls);
 
     let toolbar = adw::ToolbarView::new();
@@ -487,6 +610,7 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         mute_button,
         stop_button,
         fullscreen_button,
+        playback_status,
         idle_title: title.to_owned(),
         idle_description: description,
         session,
@@ -546,6 +670,9 @@ fn empty_state_copy(capabilities: &PlaybackCapabilities) -> (&'static str, Strin
 mod tests {
     use std::cell::Cell;
 
+    use balun::domain::{ChannelKey, DeviceId, GuideNumber};
+    use balun::playback::TuneGeneration;
+
     use super::*;
 
     struct DropProbe(Rc<Cell<bool>>);
@@ -576,6 +703,15 @@ mod tests {
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
         assert_eq!(view.status.title(), "Playback initialization unavailable");
+        assert_eq!(view.playback_status.label(), "Unavailable");
+        assert_eq!(
+            view.playback_status.accessible_role(),
+            gtk::AccessibleRole::Status
+        );
+        assert_eq!(
+            view.playback_status.tooltip_text().as_deref(),
+            Some("Live TV playback status")
+        );
         assert_eq!(
             view.stop_button.icon_name().as_deref(),
             Some("media-playback-stop-symbolic")
@@ -658,6 +794,58 @@ mod tests {
         assert_eq!(view.picture.paintable().as_ref(), Some(&paintable));
         assert!(!view.status.is_visible());
 
+        let generation = TuneGeneration::default();
+        let channel_key = ChannelKey::new(
+            DeviceId::new(0x105A_1232).unwrap(),
+            GuideNumber::new("7.1").unwrap(),
+        );
+        view.apply_session_state(&PlaybackSessionState::Connecting {
+            generation,
+            channel_key: channel_key.clone(),
+        });
+        assert_eq!(view.playback_status.label(), "Connecting");
+        assert!(view.stop_button.is_sensitive());
+        assert!(view.status.is_visible());
+        assert!(view.picture.paintable().is_some());
+
+        view.apply_session_state(&PlaybackSessionState::Buffering {
+            generation,
+            channel_key: channel_key.clone(),
+            percent: 42,
+        });
+        assert_eq!(view.playback_status.label(), "Buffering 42%");
+        assert_eq!(view.status.title(), "Buffering");
+        assert_eq!(
+            view.status.description().as_deref(),
+            Some("Live TV is buffering: 42%.")
+        );
+        assert!(view.picture.paintable().is_some());
+
+        view.apply_session_state(&PlaybackSessionState::Playing {
+            generation,
+            channel_key: channel_key.clone(),
+        });
+        assert_eq!(view.playback_status.label(), "Playing");
+        assert!(!view.status.is_visible());
+        assert!(view.picture.paintable().is_some());
+
+        view.apply_session_state(&PlaybackSessionState::Failed {
+            generation,
+            channel_key,
+            failure: PlaybackSessionFailure::Pipeline,
+        });
+        assert_eq!(view.playback_status.label(), "Playback failed");
+        assert!(view.picture.paintable().is_none());
+        assert!(view.status.is_visible());
+        assert_eq!(view.status.title(), "Unable to play channel");
+        assert!(!view.stop_button.is_sensitive());
+
+        assert!(view.apply_paintable(Some(&paintable)));
+        view.apply_session_state(&PlaybackSessionState::Stopped);
+        assert_eq!(view.playback_status.label(), "Stopped");
+        assert!(view.picture.paintable().is_none());
+        assert_eq!(view.status.title(), "Playback initialization unavailable");
+
         let task_dropped = Rc::new(Cell::new(false));
         let drop_probe = DropProbe(Rc::clone(&task_dropped));
         let task = main_context.spawn_local(async move {
@@ -708,6 +896,7 @@ mod tests {
         assert!(runtime.capabilities().is_foundation_ready());
         let view = Rc::new(build(Ok(runtime)));
         view.connect_audio_controls();
+        view.connect_session_state();
 
         assert!(view.volume_scale.is_sensitive());
         assert!(view.mute_button.is_sensitive());
@@ -720,6 +909,7 @@ mod tests {
                 .volume(),
             1.0
         );
+        assert_eq!(view.playback_status.label(), "Stopped");
 
         view.volume_adjustment.set_value(45.0);
         let audio = view.session.as_ref().unwrap().audio_state().unwrap();
@@ -791,6 +981,62 @@ mod tests {
         assert_ne!(
             PLAYER_ACCESSIBILITY.enter_fullscreen_label,
             PLAYER_ACCESSIBILITY.exit_fullscreen_label
+        );
+    }
+
+    #[test]
+    fn playback_presentation_groups_only_url_free_session_state() {
+        let generation = TuneGeneration::default();
+        let channel_key = ChannelKey::new(
+            DeviceId::new(0x105A_1232).unwrap(),
+            GuideNumber::new("7.1").unwrap(),
+        );
+
+        assert_eq!(
+            PlaybackPresentation::from(&PlaybackSessionState::Stopped),
+            PlaybackPresentation::Stopped
+        );
+        for state in [
+            PlaybackSessionState::Resolving {
+                generation,
+                channel_key: channel_key.clone(),
+            },
+            PlaybackSessionState::Connecting {
+                generation,
+                channel_key: channel_key.clone(),
+            },
+        ] {
+            assert_eq!(
+                PlaybackPresentation::from(&state),
+                PlaybackPresentation::Connecting
+            );
+        }
+        assert_eq!(
+            PlaybackPresentation::from(&PlaybackSessionState::Playing {
+                generation,
+                channel_key: channel_key.clone(),
+            }),
+            PlaybackPresentation::Playing
+        );
+        assert_eq!(
+            PlaybackPresentation::from(&PlaybackSessionState::Buffering {
+                generation,
+                channel_key: channel_key.clone(),
+                percent: u8::MAX,
+            }),
+            PlaybackPresentation::Buffering(100)
+        );
+        assert_eq!(
+            PlaybackPresentation::from(&PlaybackSessionState::Failed {
+                generation,
+                channel_key,
+                failure: PlaybackSessionFailure::Pipeline,
+            }),
+            PlaybackPresentation::Failed(PlaybackSessionFailure::Pipeline)
+        );
+        assert_eq!(
+            PlaybackPresentation::from(&PlaybackSessionState::ShutDown),
+            PlaybackPresentation::ShutDown
         );
     }
 }

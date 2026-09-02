@@ -79,7 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructs and retains `gtk4paintablesink` itself and exposes only its
   URI-opaque GDK paintable, never a GStreamer element whose parents reveal the
   playbin URI. The completed M2.8 controls submit the URL-free intent and consume
-  its response here; live-device and packaged-runtime acceptance remain open.
+  its response here. A deduplicated URL-free latest-state watch now projects
+  connecting, buffering percentage, playing, stopped, EOS, and generic terminal
+  failure onto an accessible GTK status and clears terminal paintables;
+  category-complete native errors, live-device, and packaged-runtime acceptance
+  remain open.
 - **Actor-private stream handoff** — Add a URL-free channel intent containing
   the complete ChannelKey and selected-snapshot generation, resolve it in the
   controller's existing bounded FIFO only against the current complete private

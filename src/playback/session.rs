@@ -9,6 +9,7 @@ use gst::prelude::*;
 use gstreamer as gst;
 use gtk::gdk;
 use thiserror::Error;
+use tokio::sync::watch;
 
 use super::PlaybackRuntime;
 use crate::controller::{OperationGeneration, StreamHandoff, StreamHandoffError, StreamSelection};
@@ -265,6 +266,7 @@ struct SessionCore<B: PipelineBackend> {
     pending: Option<PendingTune>,
     active: Option<ActiveTune<B::Active>>,
     state: PlaybackSessionState,
+    state_sender: watch::Sender<PlaybackSessionState>,
     exhausted: bool,
     teardown_failed: bool,
     shut_down: bool,
@@ -272,13 +274,16 @@ struct SessionCore<B: PipelineBackend> {
 
 impl<B: PipelineBackend> SessionCore<B> {
     fn new(backend: B) -> Self {
+        let state = PlaybackSessionState::Stopped;
+        let (state_sender, _state_receiver) = watch::channel(state.clone());
         Self {
             backend,
             audio: PlaybackAudioState::default(),
             generation: TuneGeneration::INITIAL,
             pending: None,
             active: None,
-            state: PlaybackSessionState::Stopped,
+            state,
+            state_sender,
             exhausted: false,
             teardown_failed: false,
             shut_down: false,
@@ -287,6 +292,18 @@ impl<B: PipelineBackend> SessionCore<B> {
 
     fn state(&self) -> &PlaybackSessionState {
         &self.state
+    }
+
+    fn subscribe_state(&self) -> watch::Receiver<PlaybackSessionState> {
+        self.state_sender.subscribe()
+    }
+
+    fn publish_state(&mut self, state: PlaybackSessionState) {
+        if self.state == state {
+            return;
+        }
+        self.state = state.clone();
+        self.state_sender.send_replace(state);
     }
 
     fn audio_state(&self) -> PlaybackAudioState {
@@ -346,18 +363,18 @@ impl<B: PipelineBackend> SessionCore<B> {
             self.exhausted = true;
             self.pending = None;
             if let Err(failure) = self.retire_active() {
-                self.state = PlaybackSessionState::Failed {
+                self.publish_state(PlaybackSessionState::Failed {
                     generation: self.generation,
                     channel_key,
                     failure,
-                };
+                });
                 return Err(failure);
             }
-            self.state = PlaybackSessionState::Failed {
+            self.publish_state(PlaybackSessionState::Failed {
                 generation: self.generation,
                 channel_key,
                 failure: PlaybackSessionFailure::GenerationExhausted,
-            };
+            });
             return Err(PlaybackSessionFailure::GenerationExhausted);
         };
         // Publish the successor generation before touching the predecessor so
@@ -365,11 +382,11 @@ impl<B: PipelineBackend> SessionCore<B> {
         self.generation = generation;
         self.pending = None;
         if let Err(failure) = self.retire_active() {
-            self.state = PlaybackSessionState::Failed {
+            self.publish_state(PlaybackSessionState::Failed {
                 generation,
                 channel_key,
                 failure,
-            };
+            });
             return Err(failure);
         }
 
@@ -379,10 +396,10 @@ impl<B: PipelineBackend> SessionCore<B> {
             channel_key: channel_key.clone(),
             selection_generation,
         });
-        self.state = PlaybackSessionState::Resolving {
+        self.publish_state(PlaybackSessionState::Resolving {
             generation,
             channel_key,
-        };
+        });
         Ok(TuneRequest {
             generation,
             selection,
@@ -425,11 +442,11 @@ impl<B: PipelineBackend> SessionCore<B> {
         let pipeline = match self.backend.start(generation, handoff, self.audio, events) {
             Ok(pipeline) => pipeline,
             Err(PipelineStartError::Clean(failure)) => {
-                self.state = PlaybackSessionState::Failed {
+                self.publish_state(PlaybackSessionState::Failed {
                     generation,
                     channel_key,
                     failure,
-                };
+                });
                 return Err(failure);
             }
             Err(PipelineStartError::Quarantined(pipeline)) => {
@@ -440,11 +457,11 @@ impl<B: PipelineBackend> SessionCore<B> {
                     channel_key: channel_key.clone(),
                     pipeline,
                 });
-                self.state = PlaybackSessionState::Failed {
+                self.publish_state(PlaybackSessionState::Failed {
                     generation,
                     channel_key,
                     failure,
-                };
+                });
                 return Err(failure);
             }
         };
@@ -453,10 +470,10 @@ impl<B: PipelineBackend> SessionCore<B> {
             channel_key: channel_key.clone(),
             pipeline,
         });
-        self.state = PlaybackSessionState::Connecting {
+        self.publish_state(PlaybackSessionState::Connecting {
             generation,
             channel_key,
-        };
+        });
         Ok(TuneCompletion::Applied)
     }
 
@@ -465,7 +482,7 @@ impl<B: PipelineBackend> SessionCore<B> {
             return false;
         }
         self.pending = None;
-        self.state = PlaybackSessionState::Stopped;
+        self.publish_state(PlaybackSessionState::Stopped);
         true
     }
 
@@ -488,15 +505,15 @@ impl<B: PipelineBackend> SessionCore<B> {
             .map(|active| active.channel_key.clone());
         if let Err(failure) = self.retire_active() {
             if let Some(channel_key) = channel_key {
-                self.state = PlaybackSessionState::Failed {
+                self.publish_state(PlaybackSessionState::Failed {
                     generation: self.generation,
                     channel_key,
                     failure,
-                };
+                });
             }
             return Err(failure);
         }
-        self.state = PlaybackSessionState::Stopped;
+        self.publish_state(PlaybackSessionState::Stopped);
         Ok(())
     }
 
@@ -512,7 +529,7 @@ impl<B: PipelineBackend> SessionCore<B> {
         self.pending = None;
         let prior_teardown_failure = self.teardown_failed;
         let result = self.retire_active();
-        self.state = PlaybackSessionState::ShutDown;
+        self.publish_state(PlaybackSessionState::ShutDown);
         if prior_teardown_failure && result.is_ok() {
             Err(PlaybackSessionFailure::PipelineTeardown)
         } else {
@@ -534,27 +551,27 @@ impl<B: PipelineBackend> SessionCore<B> {
         let channel_key = active.channel_key.clone();
         match event {
             PipelineEvent::Playing => {
-                self.state = PlaybackSessionState::Playing {
+                self.publish_state(PlaybackSessionState::Playing {
                     generation,
                     channel_key,
-                };
+                });
             }
             PipelineEvent::Buffering(percent) => {
-                self.state = PlaybackSessionState::Buffering {
+                self.publish_state(PlaybackSessionState::Buffering {
                     generation,
                     channel_key,
                     percent: percent.min(100),
-                };
+                });
             }
             PipelineEvent::EndOfStream => {
                 if self.retire_active().is_ok() {
-                    self.state = PlaybackSessionState::Stopped;
+                    self.publish_state(PlaybackSessionState::Stopped);
                 } else {
-                    self.state = PlaybackSessionState::Failed {
+                    self.publish_state(PlaybackSessionState::Failed {
                         generation,
                         channel_key,
                         failure: PlaybackSessionFailure::PipelineTeardown,
-                    };
+                    });
                 }
             }
             PipelineEvent::Error => {
@@ -563,11 +580,11 @@ impl<B: PipelineBackend> SessionCore<B> {
                 } else {
                     PlaybackSessionFailure::PipelineTeardown
                 };
-                self.state = PlaybackSessionState::Failed {
+                self.publish_state(PlaybackSessionState::Failed {
                     generation,
                     channel_key,
                     failure,
-                };
+                });
             }
         }
     }
@@ -582,11 +599,11 @@ impl<B: PipelineBackend> SessionCore<B> {
     }
 
     fn fail_pending(&mut self, pending: PendingTune, failure: PlaybackSessionFailure) {
-        self.state = PlaybackSessionState::Failed {
+        self.publish_state(PlaybackSessionState::Failed {
             generation: pending.generation,
             channel_key: pending.channel_key,
             failure,
-        };
+        });
     }
 
     fn retire_active(&mut self) -> Result<(), PlaybackSessionFailure> {
@@ -1038,6 +1055,23 @@ impl PlaybackSession {
             .shut_down()
     }
 
+    /// Subscribe to the latest URL-free state of this playback lane.
+    ///
+    /// State is published only by mutations which own Balun's default main
+    /// context. The initial value is the exact current state, and later
+    /// generation-scoped bus transitions replace it without retaining native
+    /// message text or stream endpoint data.
+    pub fn subscribe_state(
+        &self,
+    ) -> Result<watch::Receiver<PlaybackSessionState>, PlaybackSessionFailure> {
+        self.require_main_context()?;
+        Ok(self
+            .inner
+            .try_borrow()
+            .map_err(|_| PlaybackSessionFailure::SessionBusy)?
+            .subscribe_state())
+    }
+
     /// Clone the URL-free current session state.
     pub fn state(&self) -> Result<PlaybackSessionState, PlaybackSessionFailure> {
         self.require_main_context()?;
@@ -1068,6 +1102,7 @@ impl fmt::Debug for PlaybackSession {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::path::Path;
 
@@ -1814,6 +1849,157 @@ mod tests {
 
         drive_context_until(&main_context, || *value.borrow() == 1);
         assert_eq!(*value.borrow(), 1);
+    }
+
+    #[test]
+    fn state_watch_starts_current_and_publishes_owned_transitions() {
+        let control = FakeControl::default();
+        let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+        let mut states = core.borrow().subscribe_state();
+
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Stopped
+        );
+        assert!(!states.has_changed().unwrap());
+
+        let request = core
+            .borrow_mut()
+            .begin_tune(selection(&first_key(), 71))
+            .unwrap();
+        let generation = request.generation();
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Resolving {
+                generation,
+                channel_key: first_key(),
+            }
+        );
+
+        core.borrow_mut()
+            .complete_tune(request, Ok(handoff(&first_key(), 71)), events_for(&core))
+            .unwrap();
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Connecting {
+                generation,
+                channel_key: first_key(),
+            }
+        );
+
+        control.emit(generation, PipelineEvent::Buffering(37));
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Buffering {
+                generation,
+                channel_key: first_key(),
+                percent: 37,
+            }
+        );
+
+        control.emit(generation, PipelineEvent::Playing);
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Playing {
+                generation,
+                channel_key: first_key(),
+            }
+        );
+
+        core.borrow_mut().stop().unwrap();
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Stopped
+        );
+        core.borrow_mut().stop().unwrap();
+        assert!(!states.has_changed().unwrap());
+
+        core.borrow_mut().shut_down().unwrap();
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::ShutDown
+        );
+        core.borrow_mut().shut_down().unwrap();
+        assert!(!states.has_changed().unwrap());
+    }
+
+    #[test]
+    fn queued_state_watch_ignores_stale_generation_events() {
+        let main_context = gst::glib::MainContext::new();
+        let _owner = main_context.acquire().unwrap();
+        let control = FakeControl::default();
+        let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+
+        let first = core
+            .borrow_mut()
+            .begin_tune(selection(&first_key(), 72))
+            .unwrap();
+        let first_generation = first.generation();
+        core.borrow_mut()
+            .complete_tune(
+                first,
+                Ok(handoff(&first_key(), 72)),
+                queued_events_for(&main_context, &core),
+            )
+            .unwrap();
+
+        let second = core
+            .borrow_mut()
+            .begin_tune(selection(&second_key(), 72))
+            .unwrap();
+        let second_generation = second.generation();
+        core.borrow_mut()
+            .complete_tune(
+                second,
+                Ok(handoff(&second_key(), 72)),
+                queued_events_for(&main_context, &core),
+            )
+            .unwrap();
+        let mut states = core.borrow().subscribe_state();
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Connecting {
+                generation: second_generation,
+                channel_key: second_key(),
+            }
+        );
+
+        control.emit(first_generation, PipelineEvent::Error);
+        let stale_drained = Rc::new(Cell::new(false));
+        let stale_drained_task = Rc::clone(&stale_drained);
+        queue_main_context_work(&main_context, move || {
+            stale_drained_task.set(true);
+            true
+        });
+        drive_context_until(&main_context, || stale_drained.get());
+        assert!(!states.has_changed().unwrap());
+        assert_eq!(
+            core.borrow().state(),
+            &PlaybackSessionState::Connecting {
+                generation: second_generation,
+                channel_key: second_key(),
+            }
+        );
+
+        control.emit(second_generation, PipelineEvent::Buffering(48));
+        drive_context_until(&main_context, || {
+            matches!(
+                core.borrow().state(),
+                PlaybackSessionState::Buffering {
+                    generation,
+                    percent: 48,
+                    ..
+                } if *generation == second_generation
+            )
+        });
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Buffering {
+                generation: second_generation,
+                channel_key: second_key(),
+                percent: 48,
+            }
+        );
     }
 
     #[test]

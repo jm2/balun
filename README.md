@@ -134,7 +134,9 @@ available program information, and a live-video area.
   teardown failure quarantines that owner and blocks every successor. Bus
   reductions and stateful public calls share the exact default main context,
   with fixed errors instead of reentrant borrow panics. The desktop pane owns
-  this session and a URI-opaque paintable binding/clearing path. Exact-
+  this session, subscribes to its deduplicated URL-free latest state, and
+  projects connecting, buffering, playing, stopped, and terminal failure onto
+  an accessible status while clearing a terminal paintable. Exact-
   generation activation of an unprotected channel now requests the private
   handoff, binds an applied paintable, aborts superseded waits, and stops when
   a selected-device change is admitted, with a defensive repeat when its new
@@ -162,8 +164,8 @@ available program information, and a live-video area.
   pointer and keyboard operation; F11 toggles fullscreen and Escape exits it.
   Fullscreen presentation changes only after compositor confirmation, protects
   nested Back navigation, then restores the prior pages and focus. The broader
-  M4.6 accessibility audit remains open. The core library's default build and
-  diagnostic remain GTK-free.
+  M4.6 accessibility audit and category-complete playback error presentation
+  remain open. The core library's default build and diagnostic remain GTK-free.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
 hardware-validation, packaging, and release boundaries, is in

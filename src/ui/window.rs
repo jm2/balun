@@ -264,6 +264,7 @@ pub(crate) fn build(
     let player_view = Rc::new(player_view::build(playback));
     player_view.connect_stop_control();
     player_view.connect_audio_controls();
+    player_view.connect_session_state();
 
     let device_page = adw::NavigationPage::new(device_sidebar.root(), "Devices");
     let channel_page = adw::NavigationPage::new(channel_sidebar.root(), "Channels");

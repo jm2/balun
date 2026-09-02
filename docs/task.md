@@ -237,9 +237,13 @@ compatibility/error-path work, not prerequisites for that first picture.
 - [ ] **M2.9 — Add truthful playback state and errors.** Surface connecting,
   buffering, playing, stopped, tuner-busy/503, missing/404, protected, missing
   codec/plugin, offline, and internal pipeline failures without endpoint data.
-  Activation now has fixed endpoint-free connecting and setup-failure copy,
-  but bus Error/EOS state is not yet projected back into `PlayerView`, so a
-  terminal session can leave its last paintable/status presentation stale.
+  The session now publishes a deduplicated URL-free latest-state watch for
+  every owned transition, and `PlayerView` reduces it weakly on the GTK main
+  context into accessible connecting, buffering-percentage, playing, stopped,
+  and generic failed presentation. Error and EOS transitions clear the stale
+  paintable, while stale-generation events remain unable to overwrite a
+  successor. Fail-closed live-source setup and sanitized category-specific
+  native-error classification remain open.
 
 - [ ] **M2.10 — Prove deterministic teardown.** Rapid switch, device
   reselection, discovery mutation, pipeline error, window close, and process

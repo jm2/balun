@@ -216,13 +216,16 @@ are forced to the player and their Back/pop paths are disabled while fullscreen,
 then their exact pages, pop permissions, and prior focus are restored. Native
 Back choices outside fullscreen remain synchronized, and a valid compact-width
 channel activation presents the player even when setup fails. These controls
-complete M2.8; the broader M4.6 accessibility audit, M2.9 user-visible terminal
-state, and M2.10 teardown acceptance remain open.
+complete M2.8; the broader M4.6 accessibility audit, category-complete M2.9
+errors, and M2.10 teardown acceptance remain open.
 
-Native Error and EOS already retire the session's exact pipeline, but the
-session does not yet notify `PlayerView` to clear or replace its last paintable
-and status copy. That UI projection remains explicit M2.9 work even though the
-tuner-owning pipeline is terminally settled.
+The session publishes every owned transition through a deduplicated,
+URL-free latest-state watch. `PlayerView` consumes it on the GTK main context
+through a weak capture and exposes connecting, buffering percentage, playing,
+stopped, and failed state in an accessible header status. Native Error and EOS
+therefore clear the exact terminal paintable instead of leaving a stale frame.
+The fixed native-error categories and fail-closed network-source contract remain
+M2.9 work.
 
 M2.7's pipeline-side visual contract is now explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the
