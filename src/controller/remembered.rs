@@ -68,6 +68,16 @@ impl ExactTargetTracker {
 pub struct RediscoveryQueue {
     queue: VecDeque<ExactDiscoveryTarget>,
     awaiting: Option<OperationGeneration>,
+    in_flight: Option<ExactDiscoveryTarget>,
+}
+
+/// What one discovery state lets the queue do: report the queued target
+/// whose probe just received a valid reply, and hand out the next target to
+/// send.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RediscoveryStep {
+    pub reachable: Option<ExactDiscoveryTarget>,
+    pub send: Option<ExactDiscoveryTarget>,
 }
 
 impl RediscoveryQueue {
@@ -75,18 +85,21 @@ impl RediscoveryQueue {
     /// remembered-target limit.
     #[must_use]
     pub fn new(targets: impl IntoIterator<Item = ExactDiscoveryTarget>) -> Self {
-        let mut queue = VecDeque::new();
+        let mut queue = Self::default();
+        queue.enqueue(targets);
+        queue
+    }
+
+    /// Append targets, dropping repeats and anything beyond the
+    /// remembered-target limit.
+    pub fn enqueue(&mut self, targets: impl IntoIterator<Item = ExactDiscoveryTarget>) {
         for target in targets {
-            if queue.len() >= MAX_REMEMBERED_TARGETS {
+            if self.queue.len() >= MAX_REMEMBERED_TARGETS {
                 break;
             }
-            if !queue.contains(&target) {
-                queue.push_back(target);
+            if !self.queue.contains(&target) && self.in_flight != Some(target) {
+                self.queue.push_back(target);
             }
-        }
-        Self {
-            queue,
-            awaiting: None,
         }
     }
 
@@ -106,29 +119,42 @@ impl RediscoveryQueue {
     pub fn cancel(&mut self) {
         self.queue.clear();
         self.awaiting = None;
+        self.in_flight = None;
     }
 
-    /// Feed the newest discovery state; returns the next target to send when
-    /// the lane is idle and the previous send has settled.
-    pub fn next(&mut self, discovery: DiscoveryState) -> Option<ExactDiscoveryTarget> {
+    /// Feed the newest discovery state. When the previous send has settled,
+    /// report it as reachable if a newer exact operation reached `Ready`,
+    /// and hand out the next target once the lane is idle.
+    pub fn advance(&mut self, discovery: DiscoveryState) -> RediscoveryStep {
+        let mut step = RediscoveryStep::default();
         if let Some(sent_at) = self.awaiting {
             if discovery.generation() <= sent_at
                 || discovery.status() == DiscoveryStatus::Refreshing
             {
-                return None;
+                return step;
             }
             self.awaiting = None;
+            let settled = self.in_flight.take();
+            if discovery.kind() == DiscoveryKind::Exact
+                && discovery.status() == DiscoveryStatus::Ready
+            {
+                step.reachable = settled;
+            }
         } else if discovery.status() == DiscoveryStatus::Refreshing {
-            return None;
+            return step;
         }
-        let target = self.queue.pop_front()?;
-        self.awaiting = Some(discovery.generation());
-        Some(target)
+        if let Some(target) = self.queue.pop_front() {
+            self.awaiting = Some(discovery.generation());
+            self.in_flight = Some(target);
+            step.send = Some(target);
+        }
+        step
     }
 
     /// Put a target back at the front after its command could not be queued.
     pub fn send_failed(&mut self, target: ExactDiscoveryTarget) {
         self.awaiting = None;
+        self.in_flight = None;
         self.queue.push_front(target);
     }
 }
@@ -231,37 +257,47 @@ mod tests {
     }
 
     #[test]
-    fn queue_sends_one_target_per_settled_operation() {
+    fn queue_sends_one_target_per_settled_operation_and_reports_replies() {
         let mut queue = RediscoveryQueue::new([target(1), target(2)]);
 
         assert_eq!(
-            queue.next(DiscoveryState::idle(generation(0))),
-            Some(target(1))
+            queue.advance(DiscoveryState::idle(generation(0))),
+            RediscoveryStep {
+                reachable: None,
+                send: Some(target(1))
+            }
         );
         assert_eq!(
-            queue.next(DiscoveryState::idle(generation(0))),
-            None,
+            queue.advance(DiscoveryState::idle(generation(0))),
+            RediscoveryStep::default(),
             "the same stale snapshot cannot trigger a second send"
         );
         assert_eq!(
-            queue.next(DiscoveryState::refreshing_for(
+            queue.advance(DiscoveryState::refreshing_for(
                 generation(1),
                 DiscoveryKind::Exact
             )),
-            None
+            RediscoveryStep::default()
         );
         assert_eq!(
-            queue.next(DiscoveryState::exact_no_response(generation(1), 0)),
-            Some(target(2)),
+            queue.advance(DiscoveryState::exact_no_response(generation(1), 0)),
+            RediscoveryStep {
+                reachable: None,
+                send: Some(target(2))
+            },
             "a settled probe releases the next target even without a reply"
         );
         assert_eq!(
-            queue.next(DiscoveryState::ready_for(
+            queue.advance(DiscoveryState::ready_for(
                 generation(2),
                 DiscoveryKind::Exact,
                 0
             )),
-            None
+            RediscoveryStep {
+                reachable: Some(target(2)),
+                send: None
+            },
+            "a valid reply reports the in-flight target"
         );
         assert!(queue.is_settled());
     }
@@ -271,13 +307,41 @@ mod tests {
         let mut queue = RediscoveryQueue::new([target(1)]);
 
         assert_eq!(
-            queue.next(DiscoveryState::refreshing(generation(4))),
-            None,
+            queue.advance(DiscoveryState::refreshing(generation(4))),
+            RediscoveryStep::default(),
             "a local refresh in flight is never superseded"
         );
         assert_eq!(
-            queue.next(DiscoveryState::ready(generation(4), 0)),
+            queue.advance(DiscoveryState::ready(generation(4), 0)).send,
             Some(target(1))
+        );
+        assert_eq!(
+            queue
+                .advance(DiscoveryState::ready_for(
+                    generation(5),
+                    DiscoveryKind::Local,
+                    0
+                ))
+                .reachable,
+            None,
+            "a superseding local result never reports the queued target"
+        );
+    }
+
+    #[test]
+    fn queue_enqueues_later_targets_without_duplicating_the_one_in_flight() {
+        let mut queue = RediscoveryQueue::new([target(1)]);
+        assert_eq!(
+            queue.advance(DiscoveryState::idle(generation(0))).send,
+            Some(target(1))
+        );
+        queue.enqueue([target(1), target(2), target(2)]);
+        assert_eq!(queue.remaining(), 1);
+        assert_eq!(
+            queue
+                .advance(DiscoveryState::exact_no_response(generation(1), 0))
+                .send,
+            Some(target(2))
         );
     }
 
@@ -285,17 +349,21 @@ mod tests {
     fn queue_requeues_a_failed_send_and_cancels_cleanly() {
         let mut queue = RediscoveryQueue::new([target(1), target(2)]);
         let first = queue
-            .next(DiscoveryState::idle(generation(0)))
+            .advance(DiscoveryState::idle(generation(0)))
+            .send
             .expect("first send");
         queue.send_failed(first);
         assert_eq!(queue.remaining(), 2);
         assert_eq!(
-            queue.next(DiscoveryState::idle(generation(0))),
+            queue.advance(DiscoveryState::idle(generation(0))).send,
             Some(target(1))
         );
 
         queue.cancel();
         assert!(queue.is_settled());
-        assert_eq!(queue.next(DiscoveryState::idle(generation(1))), None);
+        assert_eq!(
+            queue.advance(DiscoveryState::idle(generation(1))),
+            RediscoveryStep::default()
+        );
     }
 }

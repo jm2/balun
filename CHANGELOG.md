@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it answers, and Balun probes those addresses again at the next launch so routed tuners
   reappear without retyping. Up to 32 addresses are kept; local discovery still waits for
   Refresh.
+- **Hostname entry** — **Find device by address** also accepts a hostname. It is resolved once
+  on the controller, bounded to five seconds and four usable unicast addresses that are probed
+  one at a time, and remembered by name so it is resolved again at the next launch. A name that
+  cannot be resolved shows a brief notice. The settings schema moves to version 2; version 1
+  files are read and rewritten in place.
 - **Endpoint-free playback errors** — Failures reduce to fixed messages for no tuner available,
   channel unavailable, stream rejected, device or stream unavailable, missing codec or plugin,
   protected channel, and internal error. No native error text, header, or address is retained.

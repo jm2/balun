@@ -29,15 +29,15 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **1/30 (3.3%)** records complete. This is a dependency ledger,
+Current status: **2/30 (6.7%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
 ## Current focus
 
 P0.1 is documentation only and lands first. P0.2 and P0.4 need the Linux
-development host and the accessible primary-site tuners. P1.1 is complete, so
-P1.2 can build on the settings store without a hardware dependency. The
+development host and the accessible primary-site tuners. P1.1 and P1.2 are
+complete. The
 fake-device teardown-release proofs are complete on the test side; P0.4 adds
 the live numbers that were never recorded.
 
@@ -78,7 +78,7 @@ the live numbers that were never recorded.
   names, and window state as atomic, migration-tested JSON; never credentials,
   stream URLs, or incidental topology.
 
-- [ ] **P1.2 — Remember targets and admit hostnames.** Rediscover persisted
+- [x] **P1.2 — Remember targets and admit hostnames.** Rediscover persisted
   exact targets at startup and accept a hostname resolved to a bounded set of
   unicast addresses; neither becomes prefix-scan authority.
 

@@ -112,10 +112,12 @@ Built and tested:
   state and the exact addresses that answered, which are probed again at
   launch; storage for user-assigned names is reserved.
 
+- Hostname entry resolved on the controller to a bounded set of unicast
+  addresses, probed one at a time and remembered by name.
+
 Not yet done: Linux and macOS live-device acceptance, measured tune and
-teardown budgets, a frozen per-platform codec contract, hostname targets,
-the routed sender and its UX, search and favorites, packages, and the alpha
-release.
+teardown budgets, a frozen per-platform codec contract, the routed sender
+and its UX, search and favorites, packages, and the alpha release.
 
 ## 4. Architecture
 
