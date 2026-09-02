@@ -275,6 +275,8 @@ pub enum MalformedSettings {
     TooManyTargets,
     #[error("a device identifier is invalid")]
     DeviceId,
+    #[error("a device identifier is listed twice")]
+    DuplicateDeviceId,
     #[error("a device name is invalid")]
     DeviceName,
     #[error("more than {MAX_DEVICE_NAMES} device names")]
@@ -585,7 +587,11 @@ impl TryFrom<StoredSettingsV1> for Settings {
                 .flatten()
                 .filter(|trimmed| *trimmed == name)
                 .ok_or(MalformedSettings::DeviceName)?;
-            device_names.insert(device, name.to_owned());
+            // The key parser accepts either hexadecimal case, so two stored
+            // keys can name one device; merging them would drop a name.
+            if device_names.insert(device, name.to_owned()).is_some() {
+                return Err(MalformedSettings::DuplicateDeviceId);
+            }
         }
 
         Ok(Self {
@@ -748,7 +754,7 @@ mod tests {
 
     #[test]
     fn malformed_documents_are_reported_and_left_untouched() {
-        let cases: [(&[u8], MalformedSettings); 9] = [
+        let cases: [(&[u8], MalformedSettings); 10] = [
             (b"{\"schema_version\":0}", MalformedSettings::ZeroSchemaVersion),
             (b"{\"schema_version\":1,\"extra\":1}", MalformedSettings::Json),
             (b"{\"schema_version\":1,", MalformedSettings::Json),
@@ -772,6 +778,10 @@ mod tests {
             (
                 b"{\"schema_version\":1,\"device_names\":{\"105A1232\":\"Bad\\u0007name\"}}",
                 MalformedSettings::DeviceName,
+            ),
+            (
+                b"{\"schema_version\":1,\"device_names\":{\"105A1232\":\"One\",\"105a1232\":\"Two\"}}",
+                MalformedSettings::DuplicateDeviceId,
             ),
         ];
 
