@@ -28,6 +28,7 @@ media framework.
 | Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Windows against real tuners; Linux and macOS acceptance pending |
 | Stop, volume, mute, and fullscreen controls | ✅ |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
+| Channel search and favorites-only filter | ✅ |
 | Fixed, endpoint-free playback error messages | ✅ |
 | Windows local discovery | ✅ |
 | Route-derived tunnel discovery (Linux) | 🚧 Foundation only; not connected to the UI |
@@ -399,8 +400,9 @@ blocks the replies, use **Find device by address** with the tuner's IPv4 address
 
 ### Watching a channel
 
-Select a device to load its channel lineup; selecting alone never tunes. Double-click a channel or
-press Enter to play it. Protected channels are listed but cannot be activated. The player header
+Select a device to load its channel lineup; selecting alone never tunes. Type in the search field
+above the list to match a channel number or name, or press the star to show favorites only.
+Double-click a channel or press Enter to play it. Protected channels are listed but cannot be activated. The player header
 has **Stop**, a volume slider, a mute toggle, and a fullscreen button; volume and mute carry across
 channel changes for the running session.
 

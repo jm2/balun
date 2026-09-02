@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Playback controls** — Stop, a volume slider, an independent mute toggle, and fullscreen with
   `F11` and `Escape`. Volume and mute carry across channel changes for the running session, and
   fullscreen presentation follows the compositor's confirmation.
+- **Channel search and favorites filter** — A search field above the channel list matches a
+  channel number prefix or part of a name, and a star toggle shows favorites only. Filtering
+  hides rows without changing device or channel identity, keeps the highlighted channel when it
+  is still visible, clears the search when another device is selected, and explains an empty
+  result.
 - **Endpoint-free playback errors** — Failures reduce to fixed messages for no tuner available,
   channel unavailable, stream rejected, device or stream unavailable, missing codec or plugin,
   protected channel, and internal error. No native error text, header, or address is retained.
