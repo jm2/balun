@@ -108,10 +108,16 @@ Built and tested:
   tuners: ATSC 1.0 channels play with audio; ATSC 3.0 channels fail closed on
   AC-4 ([compatibility notes](compatibility-v0.1.md)).
 
+- Versioned, atomic settings that remember the window size and maximized
+  state and the exact addresses that answered, which are probed again at
+  launch; storage for user-assigned names is reserved.
+
+- Hostname entry resolved on the controller to a bounded set of unicast
+  addresses, probed one at a time and remembered by name.
+
 Not yet done: Linux and macOS live-device acceptance, measured tune and
-teardown budgets, a frozen per-platform codec contract, settings persistence,
-hostname and remembered targets, the routed sender and its UX, search and
-favorites, packages, and the alpha release.
+teardown budgets, a frozen per-platform codec contract, the routed sender
+and its UX, search and favorites, packages, and the alpha release.
 
 ## 4. Architecture
 
@@ -141,6 +147,7 @@ src/
   hdhr/                        protocol, device HTTP, lineup, inspection, resolver, fake device
   discovery/                   client, local, manual, registry, routed, routes, approval
   controller/                  runtime actor, snapshots, stream handoff
+  settings/                    versioned atomic settings.json store
   playback/                    GStreamer runtime, session, source policy, transport, failures
   ui/                          window, device sidebar, channel sidebar, address dialog, player
 ~~~

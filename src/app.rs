@@ -3,11 +3,13 @@
 use adw::prelude::*;
 use balun::controller::ControllerRuntime;
 use balun::playback::PlaybackRuntime;
+use balun::settings::SettingsStore;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::ui;
+use crate::ui::settings_session::SettingsSession;
 
 /// Reverse-DNS application identifier shared by Balun desktop integrations.
 pub(crate) const APPLICATION_ID: &str = "io.github.jm2.Balun";
@@ -61,10 +63,12 @@ where
         // fixed initialization failure remains a player-pane state so device
         // discovery and lineup inspection stay available.
         let playback = PlaybackRuntime::initialize();
+        let settings = SettingsSession::open(SettingsStore::at_default_location());
         let window = ui::window::build(
             application,
             controller,
             playback,
+            settings,
             Rc::clone(&window_shutdown_failed),
         );
         window_ready(&window);

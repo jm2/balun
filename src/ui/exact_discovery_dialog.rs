@@ -1,33 +1,34 @@
-//! Bounded, topology-redacting exact-address discovery admission dialog.
+//! Bounded, topology-redacting address-or-hostname discovery admission dialog.
 
 use adw::prelude::*;
 use balun::discovery::{
-    ExactDiscoveryTarget, InvalidExactDiscoveryTarget, MAX_EXACT_DISCOVERY_TARGET_TEXT_BYTES,
+    DiscoveryEntry, InvalidDiscoveryEntry, InvalidExactDiscoveryTarget, InvalidHostnameTarget,
+    MAX_HOSTNAME_BYTES,
 };
 
 const CANCEL_RESPONSE: &str = "cancel";
 const FIND_RESPONSE: &str = "find";
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Admission {
-    target: Option<ExactDiscoveryTarget>,
+    entry: Option<DiscoveryEntry>,
     validation_message: Option<&'static str>,
 }
 
-/// Present one exact-address admission dialog.
+/// Present one address-or-hostname admission dialog.
 ///
-/// `on_admit` receives only the validated, canonical target. Raw entry text
+/// `on_admit` receives only the validated, canonical entry. Raw entry text
 /// never crosses this module boundary and is never rendered in validation
 /// copy, status text, or logs. `on_closed` runs for every response or dismiss.
 pub(crate) fn present(
     parent: &adw::ApplicationWindow,
-    on_admit: impl Fn(ExactDiscoveryTarget) + 'static,
+    on_admit: impl Fn(DiscoveryEntry) + 'static,
     on_closed: impl Fn() + 'static,
 ) {
     let dialog = adw::AlertDialog::builder()
         .heading("Find device by address")
         .body(
-            "Send one bounded HDHomeRun discovery request to a known IP address; Balun does not scan a range. Example: 192.168.1.20 or fd00::20.",
+            "Send one bounded HDHomeRun discovery request to a known IP address or hostname; Balun does not scan a range. Example: 192.168.1.20, fd00::20, or tuner.example.",
         )
         .close_response(CANCEL_RESPONSE)
         .default_response(FIND_RESPONSE)
@@ -37,10 +38,10 @@ pub(crate) fn present(
     dialog.set_response_appearance(FIND_RESPONSE, adw::ResponseAppearance::Suggested);
     dialog.set_response_enabled(FIND_RESPONSE, false);
 
-    let maximum_length = i32::try_from(MAX_EXACT_DISCOVERY_TARGET_TEXT_BYTES)
-        .expect("exact-address text bound must fit a GTK entry length");
+    let maximum_length =
+        i32::try_from(MAX_HOSTNAME_BYTES).expect("hostname text bound must fit a GTK entry length");
     let entry = adw::EntryRow::builder()
-        .title("IP address")
+        .title("IP address or hostname")
         .activates_default(true)
         .input_hints(gtk::InputHints::NO_EMOJI | gtk::InputHints::NO_SPELLCHECK)
         .max_length(maximum_length)
@@ -97,8 +98,8 @@ pub(crate) fn present(
         let Some(entry) = upgrade_signal_target(&entry_for_response) else {
             return;
         };
-        if let Some(target) = admission(entry.text().as_str()).target {
-            on_admit(target);
+        if let Some(entry) = admission(entry.text().as_str()).entry {
+            on_admit(entry);
         }
     });
     let entry_for_close = entry.downgrade();
@@ -126,7 +127,7 @@ fn apply_admission(
     validation: &gtk::Label,
     admission: Admission,
 ) {
-    dialog.set_response_enabled(FIND_RESPONSE, admission.target.is_some());
+    dialog.set_response_enabled(FIND_RESPONSE, admission.entry.is_some());
     if let Some(message) = admission.validation_message {
         validation.set_label(message);
         validation.set_visible(true);
@@ -139,31 +140,49 @@ fn apply_admission(
 }
 
 fn admission(value: &str) -> Admission {
-    match ExactDiscoveryTarget::parse(value) {
-        Ok(target) => Admission {
-            target: Some(target),
+    match DiscoveryEntry::parse(value) {
+        Ok(entry) => Admission {
+            entry: Some(entry),
             validation_message: None,
         },
-        Err(InvalidExactDiscoveryTarget::Empty) => Admission {
-            target: None,
+        Err(InvalidDiscoveryEntry::Address(InvalidExactDiscoveryTarget::Empty))
+        | Err(InvalidDiscoveryEntry::Hostname(InvalidHostnameTarget::Empty)) => Admission {
+            entry: None,
             validation_message: None,
         },
-        Err(error) => Admission {
-            target: None,
+        Err(InvalidDiscoveryEntry::Address(error)) => Admission {
+            entry: None,
             validation_message: Some(validation_message(error)),
         },
+        Err(InvalidDiscoveryEntry::Hostname(error)) => Admission {
+            entry: None,
+            validation_message: Some(hostname_validation_message(error)),
+        },
+    }
+}
+
+fn hostname_validation_message(error: InvalidHostnameTarget) -> &'static str {
+    match error {
+        InvalidHostnameTarget::Empty => "Enter a device IP address or hostname.",
+        InvalidHostnameTarget::TooLong { .. } | InvalidHostnameTarget::ControlCharacter => {
+            "Enter one hostname of letters, digits, hyphens, and dots."
+        }
+        InvalidHostnameTarget::InvalidSyntax => {
+            "Enter a hostname without a URL, port, path, or range."
+        }
+        InvalidHostnameTarget::IpAddressLiteral => "Enter a usable unicast device address.",
     }
 }
 
 fn validation_message(error: InvalidExactDiscoveryTarget) -> &'static str {
     match error {
-        InvalidExactDiscoveryTarget::Empty => "Enter a device IP address.",
+        InvalidExactDiscoveryTarget::Empty => "Enter a device IP address or hostname.",
         InvalidExactDiscoveryTarget::TooLong { .. }
         | InvalidExactDiscoveryTarget::ControlCharacter => {
             "Enter one usable numeric IPv4 or IPv6 address."
         }
         InvalidExactDiscoveryTarget::InvalidSyntax => {
-            "Enter an IP address without a URL, hostname, port, or range."
+            "Enter an IP address or hostname without a URL, port, or range."
         }
         InvalidExactDiscoveryTarget::UnicastRequired => "Enter a usable unicast device address.",
         InvalidExactDiscoveryTarget::Ipv4MappedIpv6Unsupported => {
@@ -208,23 +227,27 @@ mod tests {
     }
 
     #[test]
-    fn only_parser_approved_addresses_cross_the_dialog_boundary() {
+    fn only_parser_approved_entries_cross_the_dialog_boundary() {
         let valid = admission("  192.0.2.40  ");
-        assert_eq!(valid.target, ExactDiscoveryTarget::parse("192.0.2.40").ok());
+        assert_eq!(valid.entry, DiscoveryEntry::parse("192.0.2.40").ok());
         assert_eq!(valid.validation_message, None);
+        let host = admission("Tuner.Example");
+        assert_eq!(host.entry, DiscoveryEntry::parse("tuner.example").ok());
+        assert_eq!(host.validation_message, None);
 
         for value in [
             "",
-            "tuner.example",
             "http://192.0.2.40/",
             "192.0.2.40:65001",
             "192.0.2.0/24",
             "127.0.0.1",
             "fe80::40%12",
+            "tuner.example:5004",
+            "tuner_example",
         ] {
             assert!(
-                admission(value).target.is_none(),
-                "rejected text crossed dialog admission"
+                admission(value).entry.is_none(),
+                "rejected text crossed dialog admission: {value:?}"
             );
         }
     }
@@ -232,7 +255,7 @@ mod tests {
     #[test]
     fn validation_copy_never_echoes_rejected_entry_text() {
         for value in [
-            "private-tuner-name.example",
+            "private-tuner-name_example",
             "http://198.51.100.247/private-token",
             "198.51.100.247:65001",
         ] {
@@ -248,7 +271,7 @@ mod tests {
 
     #[test]
     fn entry_character_bound_is_derived_from_the_parser_byte_bound() {
-        let gtk_bound = i32::try_from(MAX_EXACT_DISCOVERY_TARGET_TEXT_BYTES).unwrap();
-        assert_eq!(gtk_bound, 128);
+        let gtk_bound = i32::try_from(MAX_HOSTNAME_BYTES).unwrap();
+        assert_eq!(gtk_bound, 253);
     }
 }
