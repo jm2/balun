@@ -98,6 +98,7 @@ application needs `--features desktop`.
 ### Linux
 
 **Debian / Ubuntu:**
+
 ```bash
 sudo apt install libgtk-4-dev libadwaita-1-dev libgstreamer1.0-dev \
   gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
@@ -105,6 +106,7 @@ sudo apt install libgtk-4-dev libadwaita-1-dev libgstreamer1.0-dev \
 ```
 
 **Fedora:**
+
 ```bash
 sudo dnf install gtk4-devel libadwaita-devel gstreamer1-devel \
   gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free \
@@ -112,12 +114,14 @@ sudo dnf install gtk4-devel libadwaita-devel gstreamer1-devel \
 ```
 
 **Arch Linux:**
+
 ```bash
 sudo pacman -S gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-good \
   gst-plugins-bad gst-plugin-gtk4 gst-libav pkgconf base-devel
 ```
 
 Then build:
+
 ```bash
 cargo build --release --locked --features desktop --bin balun
 # or use the helper script:
@@ -159,6 +163,7 @@ pacman -S mingw-w64-clang-x86_64-gtk4 \
 ```
 
 Then, in PowerShell:
+
 ```powershell
 # Ensure Rust's LLVM target is installed:
 rustup target add x86_64-pc-windows-gnullvm
@@ -279,8 +284,12 @@ Weston is unavailable. Set `BALUN_DESKTOP_TEST_BACKEND` to `wayland` or `x11` to
 backend; `auto` is the default, and CI requires Wayland.
 
 CI automatically runs on every push/PR:
+
 - **Linux quality** — release-component, packaging, helper, and toolchain policy tests, then
   `cargo fmt`, strict Clippy, and debug plus release tests
+- **Security audit** — `cargo audit` against the RustSec advisory database
+- **Lint** — markdownlint, taplo (TOML), yamllint, and actionlint with the configs at the
+  repository root
 - **MSRV** — `cargo check --all-features` on the declared Rust 1.98 minimum
 - **Linux desktop** — builds, lints, and tests the desktop shell, runs `--probe-playback`, and
   drives the Wayland lifecycle smokes

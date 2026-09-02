@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **0/30 (0.0%)** records complete. This is a dependency ledger,
+Current status: **1/30 (3.3%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -139,7 +139,7 @@ never recorded.
   create a draft release, and confine release-write authority to the final
   no-source job.
 
-- [ ] **P3.6 — Harden CI for packages.** Add the dependency audit and
+- [x] **P3.6 — Harden CI for packages.** Add the dependency audit and
   Markdown, TOML, YAML, and GitHub Actions linting.
 
 ## P4 — v0.1.0-alpha.1
