@@ -167,6 +167,10 @@ function Assert-ExpectedPkgConfigGtkAdwaitaProbes {
 }
 
 function Assert-DesktopTargetProbe {
+    <#
+    .SYNOPSIS
+        Require exactly one recorded rustc target probe for the desktop target.
+    #>
     $Lines = @([System.IO.File]::ReadAllLines($TargetProbeLog))
     if ($Lines.Count -ne 1 -or $Lines[0] -cne "target-libdir <$DesktopTarget>") {
         Assert-RoutingTestFailure "unexpected Rust target probe: $($Lines -join '; ')"

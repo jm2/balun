@@ -335,6 +335,15 @@ function Resolve-DesktopRustTarget {
 # helper names the missing target and the command to add it, but never
 # installs anything itself.
 function Assert-DesktopRustTargetInstalled {
+    <#
+    .SYNOPSIS
+        Fail closed unless the selected Rust toolchain has the desktop target.
+    .DESCRIPTION
+        Asks rustc for the target's library directory and requires it to exist.
+        Nothing is installed; the error names the rustup command to run.
+    .PARAMETER Target
+        The Rust target triple the desktop build will compile for.
+    #>
     param([string]$Target)
 
     if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
