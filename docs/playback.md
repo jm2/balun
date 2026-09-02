@@ -3,8 +3,8 @@
 Last reviewed: 2026-09-01
 
 This document records Balun's implemented M2.4 GStreamer boundary, M2.5 private
-stream handoff, M2.6 generation-owned tune session, and the remaining work
-before a live-TV stream can be opened from the desktop. The product and
+stream handoff, M2.6 generation-owned tune session, completed M2.7 video
+presentation path, and initial M2.8 activation/Stop controls. The product and
 milestone scope remains authoritative in [`plan-v0.1.md`](plan-v0.1.md), while
 countable completion is tracked in [`task.md`](task.md).
 
@@ -21,14 +21,18 @@ to start.
 
 The desktop-enabled playback library now has one main-context session capable
 of consuming an opaque actor handoff and constructing `playbin3` with a
-library-owned `gtk4paintablesink`.
-The desktop cannot inspect the URI and does not yet invoke that session, so the
-application still does not open an HDHomeRun HTTP stream, allocate a tuner,
-select an audio sink, or render a channel. M0.5 is
-demonstrated separately by a process-isolated Linux test
-which decodes a pinned local fixture into a real GTK paintable. That bounded
-test does not complete the full runtime/plugin contract in M0.10 or the
-GTK activation, paintable, and live-source work in M2.7 and later.
+library-owned `gtk4paintablesink`. Standard activation of an unprotected row
+now submits only its exact applied selection generation, and an applied private
+response can open the HDHomeRun HTTP stream, allocate a tuner, and bind the
+session's URI-opaque paintable into the production pane. The desktop cannot
+inspect the URI or GStreamer graph. Audio remains delegated to playbin's native
+selection until M0.10 freezes the complete codec/audio-sink contract.
+
+Process-isolated Linux tests prove the checked-in MPEG-2 fixture renders into a
+real GTK paintable, the real production session exposes only that paintable and
+settles to `NULL`, and `PlayerView` binds/clears an opaque paintable through its
+production widgets and Stop control. Physical HDHomeRun and packaged-runtime
+acceptance remain M2.11-M2.12 work.
 
 ## Feature and version boundary
 
@@ -128,8 +132,10 @@ HTTP, numeric host, port 5004, absent credentials/query/fragment, and the exact
 a custom URL-redacted `Debug`, and zeroizes its private URI bytes on drop. The
 desktop can hold and move the opaque type but cannot inspect the URI. Its sole
 crate-private exposure is a consuming higher-ranked closure used by the M2.6
-pipeline constructor; the borrow cannot escape that closure. Channel rows
-remain inert, so no stream is opened yet.
+pipeline constructor; the borrow cannot escape that closure. Merely selecting
+a channel row remains inert. Double-clicking or pressing Enter on a valid,
+unprotected row constructs a URL-free `StreamSelection`; only the controller's
+validated opaque handoff can then open the stream through `PlaybackSession`.
 
 ## Generation-owned tune session
 
@@ -196,9 +202,13 @@ URI-free playbin configuration, while the display-backed synthetic acceptance
 checks the native paintable property and `GtkPicture::ContentFit::Contain`
 without network access. A second display-backed smoke exercises the production
 `PlayerView` binding, empty-state transition, clearing, and shutdown boundary.
-The activation lane now joins an actor-authorized response to that boundary,
-but deterministic display proof using an active production session remains
-open, so M2.7 is not yet complete.
+The activation lane now joins an actor-authorized response to that boundary.
+A third display-backed smoke constructs the real production session around the
+checked-in fixture, verifies its URI-opaque paintable in a containment-fit
+picture, clears presentation, and proves bounded terminal `NULL` shutdown.
+Together with the decoded-frame/EOS and production-`PlayerView` smokes, this
+completes M2.7 without exposing a desktop test API capable of forging stream
+handoffs.
 
 ## Synthetic display-backed acceptance
 
@@ -212,10 +222,13 @@ generation command, and SHA-256 digest are committed beside it; it contains no
 audio, external media, device data, or network-derived content and is not an
 application resource.
 
-M2.7 adds a separate ignored display smoke to the same harness for the
-production `PlayerView` paintable boundary. It uses a one-pixel in-memory
-texture, opens no media or network source, and proves presentation and clearing
-without granting the desktop access to the pipeline, sink, or stream URI.
+M2.7 adds two separate ignored display smokes to the same harness. One drives
+the real production session with the checked-in local fixture, verifies its
+opaque paintable, and proves terminal shutdown. The other exercises the
+production `PlayerView` paintable and Stop boundary with a one-pixel in-memory
+texture. Neither grants the desktop access to the pipeline, sink, or stream
+URI; the local fixture path enters only the library's crate-private `cfg(test)`
+handoff constructor.
 
 Within an isolated Linux headless Wayland compositor and session bus, the test:
 
@@ -250,7 +263,7 @@ to exercise the fallback on a developer host.
 This is a Linux development/CI acceptance record only. It does not prove native
 macOS or Windows rendering, audio, physical MPEG-TS variants, live-source
 behavior, channel switching, tuner release, or packaged-runtime relocation.
-Those claims remain in M0.6, M0.10, M1.10, and M2.7 through M2.12.
+Those claims remain in M0.6, M0.10, M1.10, and M2.8 through M2.12.
 
 ## Development runtime examples
 
@@ -302,8 +315,8 @@ provenance, and distribution review.
 
 ## Next acceptance steps
 
-1. M2.7-M2.10: connect the generation-scoped tune session and own its
-   paintable, controls, errors, and deterministic tuner release.
+1. M2.8-M2.10: complete controls, errors, terminal UI projection, and
+   deterministic tuner-release acceptance around the connected session.
 2. M0.10: freeze the complete tested factory and platform package contract,
    including codecs and audio sinks.
 3. M2.11-M2.12: run fake-device, development-runtime, packaged-runtime, and

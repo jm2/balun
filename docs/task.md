@@ -23,7 +23,7 @@ outcomes belong in [`../CHANGELOG.md`](../CHANGELOG.md).
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **20/64 (31.3%)** implementation records complete. This is a
+Current status: **21/64 (32.8%)** implementation records complete. This is a
 dependency ledger, not an effort estimate; packaging and cross-platform
 playback records are substantially larger than most completed foundation work.
 
@@ -192,7 +192,7 @@ compatibility/error-path work, not prerequisites for that first picture.
   replacement, cancellation, bus messages, and terminal settlement so stale
   pipeline events cannot affect a successor channel.
 
-- [ ] **M2.7 — Render live video.** Connect `playbin3` to
+- [x] **M2.7 — Render live video.** Connect `playbin3` to
   `gtk4paintablesink`, own the paintable on the main context, preserve aspect
   ratio, provide deinterlacing suitable for normal 1080i content, and handle
   sink/deinterlacer setup failure without leaking the stream. The pipeline side
@@ -201,8 +201,11 @@ compatibility/error-path work, not prerequisites for that first picture.
   URI. The main-context `PlayerView` now owns the session, binds only the opaque
   paintable, and clears it before joined window shutdown. A display-backed
   smoke covers this production binding boundary, and the initial activation
-  lane invokes it for an applied tune. Deterministic display proof using an
-  active production session remains open, so this record is not yet complete.
+  lane invokes it for an applied tune. Separate display-backed processes prove
+  the real production session's opaque paintable plus bounded `NULL` shutdown,
+  production `PlayerView` binding/clearing, and decoded-frame/EOS behavior.
+  Keeping those proofs layered avoids exposing a URI-forging desktop test API;
+  physical-device and packaged-runtime acceptance remain M2.11-M2.12 work.
 
 - [ ] **M2.8 — Add essential controls.** Implement channel activation, Stop,
   volume, mute, and fullscreen with accessible keyboard and pointer behavior.

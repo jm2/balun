@@ -242,8 +242,11 @@ generation before the actor wait, serializes replacement and terminal bus
 events on its exact default context without reentrant borrow panics, and settles
 each exact predecessor to `NULL` before a successor can be constructed. The
 desktop pane now owns that session plus its URI-opaque paintable
-binding/clearing boundary. M2.7 retains active-session presentation proof;
-M2.8 now has its first exact-generation double-click/Enter activation lane,
+binding/clearing boundary. Layered display-backed tests complete M2.7 by
+proving decoded-frame/EOS behavior, the real production session's opaque
+paintable and `NULL` shutdown, and production-pane binding without weakening
+the handoff boundary. M2.8 now has its first exact-generation
+double-click/Enter activation lane,
 plus an accessible header Stop control which aborts pending resolution and
 settles the exact generation. Volume, mute, fullscreen, and their complete
 accessibility coverage remain open.
@@ -487,17 +490,20 @@ opaque, revalidated stream handoff. M2.6's main-context session is its only URI
 consumer: it assigns a tune generation before the actor wait, constructs
 `playbin3` plus a private `gtk4paintablesink` only for the current response,
 exposes only the URI-opaque GDK paintable, tags bus work, and requires bounded
-predecessor teardown to `NULL` before replacement. No desktop signal invokes
-that session yet, so the application still allocates no tuner. The completed
+predecessor teardown to `NULL` before replacement. Standard activation of an
+unprotected row now invokes that session with the exact applied lineup
+generation, so a development build can allocate a tuner and bind the resulting
+opaque paintable. The completed
 M0.5 experiment separately proves a bounded, display-backed Linux path from one
 checked-in video-only MPEG-2 transport stream through explicit `playbin3` and
 `gtk4paintablesink`, including multiple rendered frames and paintable updates,
-EOS, and teardown to `NULL`. It opens no network source or tuner. Audio sinks,
-parser/decoder set, the full M0.10 plugin contract, and M2.7 and later player
-work remain open. The detailed boundary is recorded in
+EOS, and teardown to `NULL`. M2.7 additionally proves the real production
+session and production pane as separate URI-confined display processes. Audio
+sinks, parser/decoder set, the full M0.10 plugin contract, and M2.8 and later
+player work remain open. The detailed boundary is recorded in
 [`playback.md`](playback.md).
 
-The first player implementation will use:
+The implemented first player path uses:
 
 - playbin3.
 - gtk4paintablesink exposed through GtkPicture.

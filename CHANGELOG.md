@@ -37,8 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   main-context `PlayerView` now owns the session, binds only its URI-opaque
   paintable into a containment-fit `GtkPicture`, clears it during synchronous
   playback shutdown, and remains retained until controller join completes. An
-  applied channel activation now invokes this binding boundary; deterministic
-  display proof using an active production session remains in progress.
+  applied channel activation now invokes this binding boundary. Display-backed
+  tests separately prove the real production session's opaque paintable and
+  bounded `NULL` shutdown, the production `PlayerView` binding/clearing path,
+  and decoded-frame/EOS behavior without adding any URI-forging desktop test
+  API. This completes M2.7's deterministic live-video presentation contract;
+  physical-device and packaged-runtime acceptance remain later milestones.
 - **Generation-owned tune session** — Add one default-main-context playback
   owner which assigns a monotonic tune generation before waiting for the
   actor-private stream response, consumes the opaque URI only inside the core
@@ -54,8 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructs and retains `gtk4paintablesink` itself and exposes only its
   URI-opaque GDK paintable, never a GStreamer element whose parents reveal the
   playbin URI. The initial M2.8 activation lane now submits the URL-free intent
-  and consumes its response here; complete controls and active-session display
-  acceptance remain open.
+  and consumes its response here; complete controls and live-device acceptance
+  remain open.
 - **Actor-private stream handoff** — Add a URL-free channel intent containing
   the complete ChannelKey and selected-snapshot generation, resolve it in the
   controller's existing bounded FIFO only against the current complete private

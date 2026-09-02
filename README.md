@@ -146,11 +146,13 @@ available program information, and a live-video area.
   tuner and establishes neither the production codec contract nor package
   contents.
 - An opt-in GTK 4/libadwaita development shell with adaptive, separate device
-  and channel sidebars plus a live-TV empty state. Construction remains inert;
+  and channel sidebars plus a live-TV player pane. Construction remains inert;
   Refresh explicitly starts local discovery, the adjacent add action admits a
-  bounded exact-address request, selecting one device loads only that device's
-  lineup, and Stop or the joined close path cancels controller work. It does
-  not start playback and keeps the core library and diagnostic GTK-free.
+  bounded exact-address request, and selecting one device loads only that
+  device's lineup. Double-clicking or pressing Enter on an unprotected channel
+  starts its generation-owned playback session. Separate discovery and
+  playback Stop controls, plus the joined close path, cancel their owned work.
+  The core library's default build and diagnostic remain GTK-free.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
 hardware-validation, packaging, and release boundaries, is in
@@ -230,8 +232,9 @@ cargo run --locked --features desktop --bin balun
 
 At startup the player pane checks `playbin3`, `uridecodebin3`, `decodebin3`,
 `souphttpsrc`, `tsdemux`, `deinterlace`, and `gtk4paintablesink`. These are
-structural checks only: the complete codec and audio-sink contract,
-desktop activation, and live tuning remain open. Fedora
+structural checks only: they do not establish the complete packaged codec and
+audio-sink contract. Desktop channel activation is implemented; physical
+HDHomeRun live-tuning and packaged-runtime acceptance remain open. Fedora
 commonly supplies this development/runtime foundation through
 `gstreamer1-devel`, the base/good/bad-free plugin packages, and
 `gstreamer1-plugin-gtk4`; its Linux-only synthetic CI smoke additionally uses
@@ -260,8 +263,10 @@ source and identity validation, that responder's locator appears in the normal
 device projection and sidebar. Use **Stop** to cancel and join either kind of
 active discovery operation.
 Selecting a discovered device fetches its identity-checked metadata and lineup
-for the channel sidebar; it does not tune a channel or allocate a tuner. The
-live-TV pane remains an intentional empty state until playback lands.
+for the channel sidebar; device selection alone does not tune a channel or
+allocate a tuner. Double-clicking or pressing Enter on an unprotected channel
+then requests its private stream handoff and starts playback. Until a channel
+is activated, the live-TV pane retains its fixed idle state.
 
 On Windows, Refresh sends the same bounded request count from each eligible
 interface-bound IPv4 socket using the limited local broadcast. Balun derives
