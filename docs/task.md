@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **1/30 (3.3%)** records complete. This is a dependency ledger,
+Current status: **2/30 (6.7%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -134,7 +134,7 @@ never recorded.
 - [ ] **P3.4 — Build the macOS arm64 app and DMG.** Complete the app tree,
   runtime closure, Mach-O inspection, signing policy, and reopened DMG check.
 
-- [ ] **P3.5 — Complete release automation.** Build every package from one
+- [x] **P3.5 — Complete release automation.** Build every package from one
   signed annotated tag, require an exact artifact inventory and checksums,
   create a draft release, and confine release-write authority to the final
   no-source job.

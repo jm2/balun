@@ -52,6 +52,9 @@ jobs:
           python3 scripts/test_rust_toolchain_policy.py
           python3 scripts/sync_rust_toolchain.py --check
 
+      - name: Test release version agreement policy
+        run: python3 scripts/test_release_check.py
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:

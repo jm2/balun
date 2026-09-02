@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cargo build from generated locked sources, a build-time check that the runtime supplies every
   structural playback factory, and app-payload validation. CI builds and reopens an x86_64
   bundle; the release-candidate workflow builds x86_64 and aarch64 bundles as artifacts.
+- **Release automation** — The release-candidate workflow now checks that the tag agrees with
+  `Cargo.toml`, `Cargo.lock`, the changelog section and compare link, and the AppStream release
+  (`scripts/release_check.py`), requires the exact artifact inventory with SHA-256 sums, and
+  creates a draft GitHub release from a job that checks out no source. Publishing stays manual.
 - **Endpoint-free playback errors** — Failures reduce to fixed messages for no tuner available,
   channel unavailable, stream rejected, device or stream unavailable, missing codec or plugin,
   protected channel, and internal error. No native error text, header, or address is retained.
