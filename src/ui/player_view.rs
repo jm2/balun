@@ -286,7 +286,7 @@ impl PlayerView {
                     self.sync_audio_controls(audio);
                 }
             }
-            Err(_) => self.restore_audio_controls(),
+            Err(failure) => self.handle_audio_failure(failure),
         }
     }
 
@@ -301,7 +301,17 @@ impl PlayerView {
                     self.sync_audio_controls(audio);
                 }
             }
-            Err(_) => self.restore_audio_controls(),
+            Err(failure) => self.handle_audio_failure(failure),
+        }
+    }
+
+    fn handle_audio_failure(&self, failure: PlaybackSessionFailure) {
+        self.restore_audio_controls();
+        if matches!(
+            failure,
+            PlaybackSessionFailure::PipelineTeardown | PlaybackSessionFailure::ShutDown
+        ) {
+            self.set_audio_controls_sensitive(false);
         }
     }
 
@@ -747,6 +757,9 @@ mod tests {
                 .is_muted()
         );
 
+        view.handle_audio_failure(PlaybackSessionFailure::PipelineTeardown);
+        assert!(!view.volume_scale.is_sensitive());
+        assert!(!view.mute_button.is_sensitive());
         view.shut_down().unwrap();
         assert!(!view.volume_scale.is_sensitive());
         assert!(!view.mute_button.is_sensitive());
