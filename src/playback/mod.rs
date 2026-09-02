@@ -4,12 +4,16 @@
 //! owner plus its exact factory-capability snapshot. The `desktop` feature
 //! additionally exposes the generation-owned GTK paintable tune session.
 
+#[cfg(feature = "desktop")]
+mod pipeline_failure;
 mod runtime;
 #[cfg(feature = "desktop")]
 mod session;
 #[cfg(feature = "desktop")]
 mod source_policy;
 
+#[cfg(feature = "desktop")]
+pub use pipeline_failure::PlaybackPipelineFailure;
 pub use runtime::{
     FactoryCapability, GSTREAMER_API_FLOOR, PlaybackCapabilities, PlaybackFactory,
     PlaybackInitializationError, PlaybackRuntime, RuntimeVersion,

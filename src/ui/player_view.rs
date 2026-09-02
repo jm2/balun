@@ -8,8 +8,8 @@ use balun::controller::{
     ControllerCommandError, ControllerHandle, StreamHandoff, StreamHandoffError, StreamSelection,
 };
 use balun::playback::{
-    PlaybackCapabilities, PlaybackInitializationError, PlaybackRuntime, PlaybackSession,
-    PlaybackSessionFailure, PlaybackSessionState, TuneCompletion, TuneRequest,
+    PlaybackCapabilities, PlaybackInitializationError, PlaybackPipelineFailure, PlaybackRuntime,
+    PlaybackSession, PlaybackSessionFailure, PlaybackSessionState, TuneCompletion, TuneRequest,
 };
 
 /// Main-context-owned player pane.
@@ -83,6 +83,64 @@ const PLAYER_ACCESSIBILITY: PlayerAccessibilityPlan = PlayerAccessibilityPlan {
     enter_fullscreen_shortcuts: "F11",
     exit_fullscreen_shortcuts: "F11 Escape",
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PlaybackFailureCopy {
+    title: &'static str,
+    description: &'static str,
+}
+
+const PLAYBACK_FAILURE_DESCRIPTION: &str = "The selected channel could not be started. Device discovery and lineup inspection remain available.";
+
+fn pipeline_failure_copy(failure: PlaybackPipelineFailure) -> PlaybackFailureCopy {
+    let title = match failure {
+        PlaybackPipelineFailure::TunerBusy => "No tuner available",
+        PlaybackPipelineFailure::ChannelMissing => "Channel unavailable",
+        PlaybackPipelineFailure::HttpRejected => "Device rejected the stream",
+        PlaybackPipelineFailure::Offline => "Device or stream unavailable",
+        PlaybackPipelineFailure::MissingCodecOrPlugin => {
+            "Required playback component or codec unavailable"
+        }
+        PlaybackPipelineFailure::Protected => "Protected channel unsupported",
+        PlaybackPipelineFailure::Internal => "Playback failed",
+        _ => "Playback failed",
+    };
+    PlaybackFailureCopy {
+        title,
+        description: PLAYBACK_FAILURE_DESCRIPTION,
+    }
+}
+
+fn handoff_failure_copy(failure: StreamHandoffError) -> PlaybackFailureCopy {
+    let category = match failure {
+        StreamHandoffError::Protected => PlaybackPipelineFailure::Protected,
+        StreamHandoffError::SelectionChanged
+        | StreamHandoffError::DeviceMismatch
+        | StreamHandoffError::ChannelUnavailable => PlaybackPipelineFailure::ChannelMissing,
+        StreamHandoffError::SelectionNotReady | StreamHandoffError::ControllerStopped => {
+            PlaybackPipelineFailure::Offline
+        }
+        StreamHandoffError::OriginRejected => PlaybackPipelineFailure::ChannelMissing,
+        StreamHandoffError::Internal => PlaybackPipelineFailure::Internal,
+        _ => PlaybackPipelineFailure::Internal,
+    };
+    pipeline_failure_copy(category)
+}
+
+fn session_failure_copy(failure: PlaybackSessionFailure) -> Option<PlaybackFailureCopy> {
+    match failure {
+        PlaybackSessionFailure::PipelineTeardown => None,
+        PlaybackSessionFailure::Pipeline(category) => Some(pipeline_failure_copy(category)),
+        PlaybackSessionFailure::Handoff(failure) => Some(handoff_failure_copy(failure)),
+        PlaybackSessionFailure::HandoffMismatch => Some(pipeline_failure_copy(
+            PlaybackPipelineFailure::ChannelMissing,
+        )),
+        PlaybackSessionFailure::ComponentsUnavailable => Some(pipeline_failure_copy(
+            PlaybackPipelineFailure::MissingCodecOrPlugin,
+        )),
+        _ => Some(pipeline_failure_copy(PlaybackPipelineFailure::Internal)),
+    }
+}
 
 impl PlayerView {
     /// Return the widget rooted in the live-TV navigation page.
@@ -238,6 +296,9 @@ impl PlayerView {
                         }
                     };
                     let _ = session.complete_tune(request, Err(handoff_failure));
+                    self.stop_button.set_sensitive(false);
+                    self.show_session_failure(PlaybackSessionFailure::Handoff(handoff_failure));
+                    return;
                 }
                 self.stop_button.set_sensitive(false);
                 self.show_playback_failure();
@@ -467,9 +528,15 @@ impl PlayerView {
 
     fn show_playback_failure(&self) {
         self.status.set_title("Unable to play channel");
-        self.status.set_description(Some(
-            "The selected channel could not be started. Device discovery and lineup inspection remain available.",
-        ));
+        self.status
+            .set_description(Some(PLAYBACK_FAILURE_DESCRIPTION));
+        self.status.set_visible(true);
+    }
+
+    fn show_failure_copy(&self, copy: PlaybackFailureCopy) {
+        self.playback_status.set_label(copy.title);
+        self.status.set_title(copy.title);
+        self.status.set_description(Some(copy.description));
         self.status.set_visible(true);
     }
 
@@ -483,10 +550,9 @@ impl PlayerView {
     }
 
     fn show_session_failure(&self, failure: PlaybackSessionFailure) {
-        if failure == PlaybackSessionFailure::PipelineTeardown {
-            self.show_stop_failure();
-        } else {
-            self.show_playback_failure();
+        match session_failure_copy(failure) {
+            Some(copy) => self.show_failure_copy(copy),
+            None => self.show_stop_failure(),
         }
     }
 }
@@ -683,6 +749,20 @@ mod tests {
         }
     }
 
+    fn assert_failure_copy_is_endpoint_free(copy: PlaybackFailureCopy) {
+        for secret in [
+            "http://",
+            "https://",
+            "192.0.2.44",
+            "5004",
+            "/auto/v7.1",
+            "device-auth-secret",
+        ] {
+            assert!(!copy.title.contains(secret));
+            assert!(!copy.description.contains(secret));
+        }
+    }
+
     /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
     /// compile but skip this display-dependent widget contract.
     #[test]
@@ -831,14 +911,27 @@ mod tests {
 
         view.apply_session_state(&PlaybackSessionState::Failed {
             generation,
-            channel_key,
-            failure: PlaybackSessionFailure::Pipeline,
+            channel_key: channel_key.clone(),
+            failure: PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Internal),
         });
         assert_eq!(view.playback_status.label(), "Playback failed");
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
-        assert_eq!(view.status.title(), "Unable to play channel");
+        assert_eq!(view.status.title(), "Playback failed");
         assert!(!view.stop_button.is_sensitive());
+
+        view.apply_session_state(&PlaybackSessionState::Failed {
+            generation,
+            channel_key,
+            failure: PlaybackSessionFailure::PipelineTeardown,
+        });
+        assert_eq!(view.status.title(), "Unable to stop live TV");
+        assert_eq!(
+            view.status.description().as_deref(),
+            Some(
+                "Playback could not be stopped cleanly. Close Balun before selecting another channel."
+            )
+        );
 
         assert!(view.apply_paintable(Some(&paintable)));
         view.apply_session_state(&PlaybackSessionState::Stopped);
@@ -985,6 +1078,102 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_failure_copy_is_exhaustive_stable_and_endpoint_free() {
+        let expected = [
+            (PlaybackPipelineFailure::TunerBusy, "No tuner available"),
+            (
+                PlaybackPipelineFailure::ChannelMissing,
+                "Channel unavailable",
+            ),
+            (
+                PlaybackPipelineFailure::HttpRejected,
+                "Device rejected the stream",
+            ),
+            (
+                PlaybackPipelineFailure::Offline,
+                "Device or stream unavailable",
+            ),
+            (
+                PlaybackPipelineFailure::MissingCodecOrPlugin,
+                "Required playback component or codec unavailable",
+            ),
+            (
+                PlaybackPipelineFailure::Protected,
+                "Protected channel unsupported",
+            ),
+            (PlaybackPipelineFailure::Internal, "Playback failed"),
+        ];
+
+        for (failure, title) in expected {
+            let copy = pipeline_failure_copy(failure);
+            assert_eq!(copy.title, title);
+            assert_eq!(copy.description, PLAYBACK_FAILURE_DESCRIPTION);
+            assert_failure_copy_is_endpoint_free(copy);
+        }
+    }
+
+    #[test]
+    fn non_pipeline_failure_copy_is_stable_endpoint_free_and_keeps_teardown_distinct() {
+        let expected = [
+            (
+                PlaybackSessionFailure::Handoff(StreamHandoffError::Protected),
+                "Protected channel unsupported",
+            ),
+            (
+                PlaybackSessionFailure::Handoff(StreamHandoffError::SelectionChanged),
+                "Channel unavailable",
+            ),
+            (
+                PlaybackSessionFailure::Handoff(StreamHandoffError::DeviceMismatch),
+                "Channel unavailable",
+            ),
+            (
+                PlaybackSessionFailure::Handoff(StreamHandoffError::ChannelUnavailable),
+                "Channel unavailable",
+            ),
+            (
+                PlaybackSessionFailure::Handoff(StreamHandoffError::SelectionNotReady),
+                "Device or stream unavailable",
+            ),
+            (
+                PlaybackSessionFailure::Handoff(StreamHandoffError::ControllerStopped),
+                "Device or stream unavailable",
+            ),
+            (
+                PlaybackSessionFailure::Handoff(StreamHandoffError::OriginRejected),
+                "Channel unavailable",
+            ),
+            (
+                PlaybackSessionFailure::Handoff(StreamHandoffError::Internal),
+                "Playback failed",
+            ),
+            (
+                PlaybackSessionFailure::HandoffMismatch,
+                "Channel unavailable",
+            ),
+            (
+                PlaybackSessionFailure::ComponentsUnavailable,
+                "Required playback component or codec unavailable",
+            ),
+            (
+                PlaybackSessionFailure::GenerationExhausted,
+                "Playback failed",
+            ),
+        ];
+
+        for (failure, title) in expected {
+            let copy = session_failure_copy(failure).expect("ordinary playback failure copy");
+            assert_eq!(copy.title, title);
+            assert_eq!(copy.description, PLAYBACK_FAILURE_DESCRIPTION);
+            assert_failure_copy_is_endpoint_free(copy);
+        }
+        assert_eq!(
+            session_failure_copy(PlaybackSessionFailure::PipelineTeardown),
+            None
+        );
+    }
+
+    #[test]
     fn playback_presentation_groups_only_url_free_session_state() {
         let generation = TuneGeneration::default();
         let channel_key = ChannelKey::new(
@@ -1030,9 +1219,11 @@ mod tests {
             PlaybackPresentation::from(&PlaybackSessionState::Failed {
                 generation,
                 channel_key,
-                failure: PlaybackSessionFailure::Pipeline,
+                failure: PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Internal),
             }),
-            PlaybackPresentation::Failed(PlaybackSessionFailure::Pipeline)
+            PlaybackPresentation::Failed(PlaybackSessionFailure::Pipeline(
+                PlaybackPipelineFailure::Internal
+            ))
         );
         assert_eq!(
             PlaybackPresentation::from(&PlaybackSessionState::ShutDown),

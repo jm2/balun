@@ -12,6 +12,7 @@ use thiserror::Error;
 use tokio::sync::watch;
 
 use super::PlaybackRuntime;
+use super::pipeline_failure::{self, PlaybackPipelineFailure};
 use super::source_policy::{self, SourcePolicy};
 use crate::controller::{OperationGeneration, StreamHandoff, StreamHandoffError, StreamSelection};
 use crate::domain::ChannelKey;
@@ -124,8 +125,8 @@ pub enum PlaybackSessionFailure {
     #[error("the playback pipeline could not start")]
     PipelineStart,
     /// GStreamer reported a native pipeline failure. Native text is discarded.
-    #[error("the playback pipeline failed")]
-    Pipeline,
+    #[error("the playback pipeline failed: {0}")]
+    Pipeline(PlaybackPipelineFailure),
     /// The exact predecessor did not settle to `NULL` inside the fixed bound.
     #[error("the playback pipeline did not stop cleanly")]
     PipelineTeardown,
@@ -218,7 +219,7 @@ enum PipelineEvent {
     Playing,
     Buffering(u8),
     EndOfStream,
-    Error,
+    Error(PlaybackPipelineFailure),
 }
 
 type EventSink = Rc<dyn Fn(TuneGeneration, PipelineEvent)>;
@@ -575,9 +576,9 @@ impl<B: PipelineBackend> SessionCore<B> {
                     });
                 }
             }
-            PipelineEvent::Error => {
+            PipelineEvent::Error(pipeline_failure) => {
                 let failure = if self.retire_active().is_ok() {
-                    PlaybackSessionFailure::Pipeline
+                    PlaybackSessionFailure::Pipeline(pipeline_failure)
                 } else {
                     PlaybackSessionFailure::PipelineTeardown
                 };
@@ -718,15 +719,19 @@ impl PipelineBackend for GstreamerBackend {
         let bus = pipeline.bus().ok_or(PipelineStartError::Clean(
             PlaybackSessionFailure::BusUnavailable,
         ))?;
+        let source_monitor = source_policy.monitor();
         let watched_pipeline = pipeline.clone();
         let watch = move |_: &gst::Bus, message: &gst::Message| {
             let event = match message.view() {
                 gst::MessageView::Eos(_) => Some(PipelineEvent::EndOfStream),
-                gst::MessageView::Error(_) => Some(PipelineEvent::Error),
+                gst::MessageView::Error(_) | gst::MessageView::Element(_) => {
+                    pipeline_failure::classify_pipeline_message(message, &source_monitor)
+                        .map(PipelineEvent::Error)
+                }
                 gst::MessageView::Application(_)
                     if source_policy::is_rejection_message(message, &watched_pipeline) =>
                 {
-                    Some(PipelineEvent::Error)
+                    Some(PipelineEvent::Error(PlaybackPipelineFailure::Internal))
                 }
                 gst::MessageView::Buffering(buffering) => {
                     let percent = buffering.percent().clamp(0, 100) as u8;
@@ -743,7 +748,7 @@ impl PipelineBackend for GstreamerBackend {
             };
             let terminal = matches!(
                 event,
-                Some(PipelineEvent::EndOfStream | PipelineEvent::Error)
+                Some(PipelineEvent::EndOfStream | PipelineEvent::Error(_))
             );
             if let Some(event) = event {
                 events(generation, event);
@@ -770,13 +775,16 @@ impl PipelineBackend for GstreamerBackend {
             bus_watch: Some(bus_watch),
             armed: true,
         };
-        if active.pipeline.set_state(gst::State::Playing).is_err()
-            || active.source_policy.is_rejected()
-        {
+        let start_result = active.pipeline.set_state(gst::State::Playing);
+        let source_rejected = active.source_policy.is_rejected();
+        let start_failure = if source_rejected {
+            PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Internal)
+        } else {
+            PlaybackSessionFailure::PipelineStart
+        };
+        if start_result.is_err() || source_rejected {
             return match active.stop() {
-                Ok(()) => Err(PipelineStartError::Clean(
-                    PlaybackSessionFailure::PipelineStart,
-                )),
+                Ok(()) => Err(PipelineStartError::Clean(start_failure)),
                 Err(_) => Err(PipelineStartError::Quarantined(active)),
             };
         }
@@ -1976,7 +1984,10 @@ mod tests {
             }
         );
 
-        control.emit(first_generation, PipelineEvent::Error);
+        control.emit(
+            first_generation,
+            PipelineEvent::Error(PlaybackPipelineFailure::Internal),
+        );
         let stale_drained = Rc::new(Cell::new(false));
         let stale_drained_task = Rc::clone(&stale_drained);
         queue_main_context_work(&main_context, move || {
@@ -2045,7 +2056,8 @@ mod tests {
             matches!(core.borrow().state(), PlaybackSessionState::Playing { .. })
         });
 
-        control.0.borrow_mut().event_during_stop = Some(PipelineEvent::Error);
+        control.0.borrow_mut().event_during_stop =
+            Some(PipelineEvent::Error(PlaybackPipelineFailure::Internal));
         core.borrow_mut().stop().unwrap();
         while main_context.pending() {
             main_context.iteration(false);
@@ -2078,7 +2090,10 @@ mod tests {
             .complete_tune(second, Ok(handoff(&second_key(), 4)), events_for(&core))
             .unwrap();
 
-        control.emit(first_generation, PipelineEvent::Error);
+        control.emit(
+            first_generation,
+            PipelineEvent::Error(PlaybackPipelineFailure::Internal),
+        );
         control.emit(first_generation, PipelineEvent::EndOfStream);
         assert_eq!(
             core.borrow().state(),
@@ -2198,7 +2213,10 @@ mod tests {
             .complete_tune(request, Ok(handoff(&first_key(), 8)), events_for(&core))
             .unwrap();
 
-        control.emit(generation, PipelineEvent::Error);
+        control.emit(
+            generation,
+            PipelineEvent::Error(PlaybackPipelineFailure::Internal),
+        );
         control.emit(generation, PipelineEvent::EndOfStream);
         assert_eq!(
             control
@@ -2213,14 +2231,17 @@ mod tests {
             &PlaybackSessionState::Failed {
                 generation,
                 channel_key: first_key(),
-                failure: PlaybackSessionFailure::Pipeline,
+                failure: PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Internal),
             }
         );
     }
 
     #[test]
     fn audio_settings_survive_error_and_end_of_stream_retirement() {
-        for terminal in [PipelineEvent::Error, PipelineEvent::EndOfStream] {
+        for terminal in [
+            PipelineEvent::Error(PlaybackPipelineFailure::Internal),
+            PipelineEvent::EndOfStream,
+        ] {
             let control = FakeControl::default();
             let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
             core.borrow_mut().set_volume(0.45).unwrap();
@@ -2337,7 +2358,10 @@ mod tests {
         ));
         let poisoned = isolated.borrow().state().clone();
         control.emit(generation, PipelineEvent::Playing);
-        control.emit(generation, PipelineEvent::Error);
+        control.emit(
+            generation,
+            PipelineEvent::Error(PlaybackPipelineFailure::Internal),
+        );
         assert_eq!(isolated.borrow().state(), &poisoned);
         assert_eq!(
             control.calls(),

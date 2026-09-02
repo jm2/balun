@@ -22,14 +22,24 @@ struct SourcePolicyState {
     expected_factory: gst::ElementFactory,
     #[cfg(test)]
     test_file_factory: Option<gst::ElementFactory>,
-    accepted_source: Mutex<Option<gst::Object>>,
+    accepted_source: Mutex<Option<AcceptedSource>>,
     rejected: AtomicBool,
+}
+
+struct AcceptedSource {
+    object: gst::Object,
+    trusted_http: bool,
 }
 
 pub(super) struct SourcePolicy {
     state: Arc<SourcePolicyState>,
     playbin: glib::WeakRef<gst::Pipeline>,
     signal_handler: Option<glib::SignalHandlerId>,
+}
+
+#[derive(Clone)]
+pub(super) struct SourcePolicyMonitor {
+    state: Arc<SourcePolicyState>,
 }
 
 impl SourcePolicy {
@@ -95,6 +105,27 @@ impl SourcePolicy {
     pub(super) fn is_rejected(&self) -> bool {
         self.state.rejected.load(Ordering::Acquire)
     }
+
+    pub(super) fn monitor(&self) -> SourcePolicyMonitor {
+        SourcePolicyMonitor {
+            state: Arc::clone(&self.state),
+        }
+    }
+}
+
+impl SourcePolicyMonitor {
+    pub(super) fn is_trusted_http_source(&self, source: &gst::Object) -> bool {
+        if self.state.rejected.load(Ordering::Acquire) {
+            return false;
+        }
+        let matches = self.state.accepted_source.lock().is_ok_and(|accepted| {
+            !self.state.rejected.load(Ordering::Acquire)
+                && accepted
+                    .as_ref()
+                    .is_some_and(|accepted| accepted.trusted_http && accepted.object == *source)
+        });
+        matches && !self.state.rejected.load(Ordering::Acquire)
+    }
 }
 
 impl Drop for SourcePolicy {
@@ -137,9 +168,19 @@ impl SourcePolicyState {
             self.reject(Some(playbin), Some(source));
             return;
         };
+        if self.rejected.load(Ordering::Acquire) {
+            drop(accepted);
+            self.reject(Some(playbin), Some(source));
+            return;
+        }
         match accepted.as_ref() {
-            None => *accepted = Some(source_object),
-            Some(existing) if existing == &source_object => {}
+            None => {
+                *accepted = Some(AcceptedSource {
+                    object: source_object,
+                    trusted_http: production_source,
+                });
+            }
+            Some(existing) if existing.object == source_object => {}
             Some(_) => {
                 drop(accepted);
                 self.reject(Some(playbin), Some(source));
@@ -148,12 +189,13 @@ impl SourcePolicyState {
     }
 
     fn reject(&self, playbin: Option<&gst::Pipeline>, source: Option<&gst::Element>) {
+        let first_rejection = !self.rejected.swap(true, Ordering::AcqRel);
         if let Some(source) = source {
             source.set_locked_state(true);
             let _ = source.set_state(gst::State::Null);
         }
 
-        if self.rejected.swap(true, Ordering::AcqRel) {
+        if !first_rejection {
             return;
         }
         let Some(playbin) = playbin else {
@@ -288,8 +330,23 @@ mod tests {
         assert!(!policy.is_rejected());
         assert!(configure_and_verify(&source));
         assert_eq!(
-            policy.state.accepted_source.lock().unwrap().as_ref(),
+            policy
+                .state
+                .accepted_source
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|accepted| &accepted.object),
             Some(source.upcast_ref::<gst::Object>())
+        );
+        assert!(
+            policy
+                .state
+                .accepted_source
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|accepted| accepted.trusted_http)
         );
     }
 
@@ -344,8 +401,57 @@ mod tests {
 
         assert!(!policy.is_rejected());
         assert_eq!(
-            policy.state.accepted_source.lock().unwrap().as_ref(),
+            policy
+                .state
+                .accepted_source
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|accepted| &accepted.object),
             Some(source.upcast_ref::<gst::Object>())
         );
+    }
+
+    #[test]
+    fn test_only_file_source_is_accepted_but_never_http_trusted() {
+        let Some(playbin) = pipeline() else {
+            return;
+        };
+        let Ok(policy) = SourcePolicy::install(&playbin) else {
+            return;
+        };
+        let Ok(source) = gst::ElementFactory::make("filesrc").build() else {
+            return;
+        };
+
+        playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&source]);
+
+        assert!(!policy.is_rejected());
+        assert!(
+            !policy
+                .monitor()
+                .is_trusted_http_source(source.upcast_ref::<gst::Object>())
+        );
+    }
+
+    #[test]
+    fn later_source_rejection_revokes_the_previously_trusted_identity() {
+        let Some(playbin) = pipeline() else {
+            return;
+        };
+        let Ok(policy) = SourcePolicy::install(&playbin) else {
+            return;
+        };
+        let source = gst::ElementFactory::make("souphttpsrc").build().unwrap();
+        playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&source]);
+        let monitor = policy.monitor();
+        assert!(monitor.is_trusted_http_source(source.upcast_ref::<gst::Object>()));
+
+        let unexpected = gst::ElementFactory::make("fakesrc").build().unwrap();
+        playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&unexpected]);
+
+        assert!(policy.is_rejected());
+        assert!(unexpected.is_locked_state());
+        assert!(!monitor.is_trusted_http_source(source.upcast_ref::<gst::Object>()));
     }
 }
