@@ -365,6 +365,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The Windows CI lane installs the MSYS2 base, good, bad, and gst-plugins-rs
   plugin packages, and the macOS lane now runs the playback transport tests
   and the constant-URI `appsrc` probe.
+- **Developer helper parity with Tributary** — Restore the release-profile
+  Clippy pass in every helper's lint mode, add a read-only Windows check that
+  the `x86_64-pc-windows-gnullvm` Rust target is installed with a
+  `rustup target add` hint instead of Tributary's automatic installation,
+  restore actionable install hints for cargo, rustc, GNU readelf, and the
+  per-distribution or Homebrew development packages, port the formatting
+  pre-commit hook, and document the deliberate remaining differences:
+  debug-profile `-Test`, x86_64-only CLANG64, no Homebrew queries, and no
+  cargo-update mode.
 - **Windows local discovery compatibility** — Derive each attached IPv4
   network from the OS-reported prefix length, use the vendor-compatible limited
   broadcast from each Windows interface-bound socket, and continue to accept

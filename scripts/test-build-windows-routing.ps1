@@ -42,6 +42,7 @@ $EnvironmentNames = @(
     'BALUN_WINDOWS_FAKE_RUSTC_STATUS',
     'BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE',
     'BALUN_WINDOWS_FAKE_RUSTC_HOST_TUPLE',
+    'BALUN_WINDOWS_FAKE_TARGET_LIBDIR',
     'BALUN_WINDOWS_FAKE_PKG_STATUS',
     'BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE',
     'BALUN_WINDOWS_FAKE_SKIP_BINARY',
@@ -270,6 +271,12 @@ $ErrorActionPreference = 'Stop'
 $env:PATH = $env:BALUN_WINDOWS_TEST_RESTRICTED_PATH
 
 function global:rustc {
+    if ($args -contains 'target-libdir') {
+        # Read-only target probes are not part of the asserted command routing.
+        Write-Output $env:BALUN_WINDOWS_FAKE_TARGET_LIBDIR
+        $global:LASTEXITCODE = 0
+        return
+    }
     $RenderedArguments = @($args | ForEach-Object { "<$($_.ToString())>" }) -join ' '
     [System.IO.File]::AppendAllText(
         $env:BALUN_WINDOWS_TEST_LOG,
@@ -392,6 +399,7 @@ exit $global:LASTEXITCODE
     $env:BALUN_WINDOWS_FAKE_RUSTC_STATUS = '0'
     $env:BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE = '1'
     $env:BALUN_WINDOWS_FAKE_RUSTC_HOST_TUPLE = 'x86_64-pc-windows-msvc'
+    $env:BALUN_WINDOWS_FAKE_TARGET_LIBDIR = $FixtureRoot
     $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '0'
     $env:BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE = ''
     $env:BALUN_WINDOWS_FAKE_SKIP_BINARY = '0'
@@ -618,8 +626,32 @@ exit $global:LASTEXITCODE
     Assert-ExpectedLog (
         'cargo <clippy> <--all-targets> <--all-features> <--locked> ' +
         "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget> " +
+        "<--> <-D> <warnings>`n" +
+        'cargo <clippy> <--release> <--all-targets> <--all-features> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget> " +
         '<--> <-D> <warnings>'
     )
+
+    # The desktop routes verify the gnullvm Rust target read-only before any
+    # MSYS2, pkg-config, or Cargo work; diagnostic routes never probe it.
+    $env:BALUN_WINDOWS_FAKE_TARGET_LIBDIR = Join-Path $TemporaryRoot 'missing-target-libdir'
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput "Rust target $DesktopTarget is not installed"
+    Assert-ExpectedOutput 'this helper never installs targets'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+    Invoke-TestHelper -Arguments @('-Check')
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput "Rust target $DesktopTarget is not installed"
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Invoke-TestHelper -Arguments @('-Diagnostic', '-Check')
+    Assert-ExpectedStatus 0
+    Assert-ExpectedLog (
+        'cargo <check> <--all-targets> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
+    )
+    $env:BALUN_WINDOWS_FAKE_TARGET_LIBDIR = $FixtureRoot
 
     Invoke-TestHelper -Arguments @('-Test')
     Assert-ExpectedStatus 0

@@ -32,13 +32,15 @@ Build selector:
 Quick-exit modes (choose at most one):
   --fmt             Run cargo fmt across the workspace.
   --check           Check all targets with desktop features by default.
-  --clippy          Lint all targets with desktop features and warnings denied.
+  --clippy          Lint all targets with desktop features and warnings denied,
+                    in both the debug and release profiles.
   --coverage        Print an all-target coverage summary with desktop features
                     by default; requires cargo-llvm-cov 0.8.7 installed already.
 
 Desktop compilation requires preinstalled, pkg-config-visible GTK 4.16,
 libadwaita 1.6, and GStreamer 1.20 development libraries. The diagnostic and
-format routes do not. The desktop build additionally requires the GStreamer
+format routes do not. Homebrew's pkg-config resolves its own prefix, so the
+helper never queries Homebrew for it. The desktop build additionally requires the GStreamer
 runtime plugin files that provide playbin3, appsrc, tsdemux, deinterlace, and
 gtk4paintablesink, and warns when the libav broadcast decoders are absent.
 Every compilation route requires a preinstalled rustc reporting one native
@@ -84,19 +86,19 @@ usage_error()
 require_command()
 {
     command -v "$1" >/dev/null 2>&1 || \
-        fail "Required command '$1' is unavailable; install it explicitly and retry."
+        fail "Required command '$1' is unavailable; ${2:-install it explicitly} and retry."
 }
 
 require_desktop_dependencies()
 {
-    require_command pkg-config
+    require_command pkg-config 'install the Homebrew pkgconf formula'
 
     pkg-config --atleast-version=4.16 gtk4 >/dev/null 2>&1 || \
-        fail 'gtk4 >= 4.16 was not found through pkg-config; install its development package explicitly and retry.'
+        fail 'gtk4 >= 4.16 was not found through pkg-config; install its development package explicitly (Homebrew formula gtk4) and retry.'
     pkg-config --atleast-version=1.6 libadwaita-1 >/dev/null 2>&1 || \
-        fail 'libadwaita-1 >= 1.6 was not found through pkg-config; install its development package explicitly and retry.'
+        fail 'libadwaita-1 >= 1.6 was not found through pkg-config; install its development package explicitly (Homebrew formula libadwaita) and retry.'
     pkg-config --atleast-version=1.20 gstreamer-1.0 >/dev/null 2>&1 || \
-        fail 'gstreamer-1.0 >= 1.20 was not found through pkg-config; install its development package explicitly and retry.'
+        fail 'gstreamer-1.0 >= 1.20 was not found through pkg-config; install its development package explicitly (Homebrew formula gstreamer) and retry.'
     info 'GTK 4.16, libadwaita 1.6, and GStreamer 1.20 development-library checks passed.'
 }
 
@@ -140,7 +142,7 @@ resolve_native_target()
     local rustc_target_status=0
     export LC_ALL
 
-    require_command rustc
+    require_command rustc 'install Rust from https://rustup.rs'
 
     native_target=$(rustc --print host-tuple 2>/dev/null) \
         || rustc_target_status=$?
@@ -211,7 +213,7 @@ else
 fi
 
 cd "$repository_root"
-require_command cargo
+require_command cargo 'install Rust from https://rustup.rs'
 
 if [ "$mode" = fmt ]; then
     info 'Formatting Balun...'
@@ -250,15 +252,25 @@ case "$mode" in
         exit 0
         ;;
     clippy)
+        # Tributary lints both profiles so cfg(debug_assertions)-gated code
+        # cannot hide from either configuration.
         if $diagnostic; then
             info "Linting all Balun $mode_label targets with locked dependencies..."
             cargo clippy --all-targets --locked \
+                --target "$native_target" --target-dir "$target_directory" \
+                -- -D warnings
+            info "Linting all Balun $mode_label targets in the release profile..."
+            cargo clippy --release --all-targets --locked \
                 --target "$native_target" --target-dir "$target_directory" \
                 -- -D warnings
         else
             require_desktop_dependencies
             info "Linting all Balun $mode_label targets with locked dependencies..."
             cargo clippy --all-targets --all-features --locked \
+                --target "$native_target" --target-dir "$target_directory" \
+                -- -D warnings
+            info "Linting all Balun $mode_label targets in the release profile..."
+            cargo clippy --release --all-targets --all-features --locked \
                 --target "$native_target" --target-dir "$target_directory" \
                 -- -D warnings
         fi

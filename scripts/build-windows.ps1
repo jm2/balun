@@ -11,10 +11,12 @@
     A lightweight cross-platform HDHomeRun live TV viewer
     Application ID: io.github.jm2.Balun
 
-    The helper selects x86_64-pc-windows-gnullvm, discovers a standard MSYS2
-    installation automatically, configures its CLANG64 compiler and pkg-config
-    paths, and checks the GTK 4.16, libadwaita 1.6, and GStreamer 1.20
-    development-library floors. Before a desktop build it also requires the
+    The helper selects x86_64-pc-windows-gnullvm, verifies that Rust target is
+    installed, discovers a standard MSYS2 installation automatically,
+    configures its CLANG64 compiler and pkg-config paths, and checks the GTK
+    4.16, libadwaita 1.6, and GStreamer 1.20 development-library floors. Only
+    the x86_64 CLANG64 environment is supported; ARM64 Windows is not supported
+    yet. Before a desktop build it also requires the
     GStreamer runtime plugin files that provide playbin3, appsrc, tsdemux,
     deinterlace, and gtk4paintablesink, and warns when the libav broadcast
     decoders are absent. Use Msys2Root only for a nonstandard MSYS2
@@ -34,12 +36,14 @@
     desktop feature is included unless Diagnostic is also specified.
 
 .PARAMETER Clippy
-    Lint all targets with locked dependencies and warnings denied, then exit.
-    The desktop feature is included unless Diagnostic is also specified.
+    Lint all targets with locked dependencies and warnings denied in both the
+    debug and release profiles, then exit. The desktop feature is included
+    unless Diagnostic is also specified.
 
 .PARAMETER Test
     Test all targets with Cargo's locked dependency graph, then exit. The
-    desktop feature is included unless Diagnostic is also specified.
+    desktop feature is included unless Diagnostic is also specified. Tests run
+    in the debug profile here; CI additionally runs the release profile.
 
 .PARAMETER Coverage
     Print an all-target coverage summary. Requires preinstalled cargo-llvm-cov
@@ -90,8 +94,8 @@
     mode.
 
 .PARAMETER CargoUpdate
-    Unavailable because this build helper never edits the locked dependency
-    graph or initiates an update.
+    Unavailable. Run cargo update directly when a deliberate dependency update
+    is intended; this build helper never edits the locked dependency graph.
 
 .PARAMETER CargoUpdateArgs
     Unavailable with CargoUpdate.
@@ -325,6 +329,33 @@ function Resolve-DesktopRustTarget {
         )
     }
     return $DesktopRustTarget
+}
+
+# A read-only replacement for Tributary's automatic `rustup target add`: the
+# helper names the missing target and the command to add it, but never
+# installs anything itself.
+function Assert-DesktopRustTargetInstalled {
+    param([string]$Target)
+
+    if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
+        Exit-WithError 'rustc is unavailable; install Rust from https://rustup.rs and retry.'
+    }
+    $global:LASTEXITCODE = 0
+    $libraryDirectories = @(& rustc '--target' $Target '--print' 'target-libdir' 2>$null)
+    $libraryDirectory = if ($libraryDirectories.Count -gt 0) {
+        [string]$libraryDirectories[0]
+    }
+    else {
+        ''
+    }
+    if ($LASTEXITCODE -ne 0 -or
+        [string]::IsNullOrWhiteSpace($libraryDirectory) -or
+        -not (Test-Path -LiteralPath $libraryDirectory -PathType Container)) {
+        Exit-WithError (
+            "Rust target $Target is not installed for the selected toolchain. Add it " +
+            "with 'rustup target add $Target' and retry; this helper never installs targets."
+        )
+    }
 }
 
 function Get-RegularFilePath {
@@ -691,7 +722,10 @@ $CargoTargetRoot = Join-Path $RepositoryRoot 'target'
 $TargetDirectoryArguments = @('--target-dir', $CargoTargetRoot)
 $CargoCommand = Get-Command cargo -ErrorAction SilentlyContinue
 if ($null -eq $CargoCommand) {
-    Exit-WithError 'cargo is unavailable; install and select Rust explicitly, then retry.'
+    Exit-WithError (
+        'cargo is unavailable; install Rust from https://rustup.rs (or the ' +
+        'Rustlang.Rustup winget package), select it explicitly, then retry.'
+    )
 }
 
 Push-Location -LiteralPath $RepositoryRoot
@@ -712,6 +746,7 @@ try {
     $TargetArguments = @('--target', $RustTarget)
 
     if (-not $DiagnosticMode) {
+        Assert-DesktopRustTargetInstalled $RustTarget
         $MsysLayout = Resolve-Msys2Layout
         Initialize-DesktopBuildEnvironment $MsysLayout
         Write-Info "Using MSYS2 CLANG64 at $($MsysLayout.Prefix)."
@@ -746,6 +781,13 @@ try {
         $ModeName = if ($DiagnosticMode) { 'diagnostic' } else { 'desktop' }
         Write-Info "Linting all Balun $ModeName targets with locked dependencies..."
         $CargoArguments = @('clippy', '--all-targets') +
+            $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
+            $TargetArguments + @('--', '-D', 'warnings')
+        Invoke-Cargo $CargoCommand $CargoArguments 'cargo clippy'
+        # Tributary lints both profiles so cfg(debug_assertions)-gated code
+        # cannot hide from either configuration.
+        Write-Info "Linting all Balun $ModeName targets in the release profile..."
+        $CargoArguments = @('clippy', '--release', '--all-targets') +
             $FeatureArguments + @('--locked') + $TargetDirectoryArguments +
             $TargetArguments + @('--', '-D', 'warnings')
         Invoke-Cargo $CargoCommand $CargoArguments 'cargo clippy'

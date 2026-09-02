@@ -38,7 +38,7 @@ Quick-exit modes (choose at most one):
   --fmt             Run cargo fmt across the workspace.
   --check           Check all desktop targets with locked dependencies.
   --clippy          Lint all desktop targets with warnings denied and locked
-                    dependencies.
+                    dependencies, in both the debug and release profiles.
   --coverage        Print an all-target desktop coverage summary; requires
                     cargo-llvm-cov 0.8.7 to be installed already.
 
@@ -85,19 +85,19 @@ usage_error()
 require_command()
 {
     command -v "$1" >/dev/null 2>&1 || \
-        fail "Required command '$1' is unavailable; install it explicitly and retry."
+        fail "Required command '$1' is unavailable; ${2:-install it explicitly} and retry."
 }
 
 require_desktop_dependencies()
 {
-    require_command pkg-config
+    require_command pkg-config 'install pkg-config (Debian/Ubuntu: pkg-config, Fedora: pkgconf-pkg-config, Arch: pkgconf)'
 
     pkg-config --atleast-version=4.16 gtk4 >/dev/null 2>&1 || \
-        fail 'gtk4 >= 4.16 was not found through pkg-config; install its development package explicitly and retry.'
+        fail 'gtk4 >= 4.16 was not found through pkg-config; install its development package explicitly (Debian/Ubuntu: libgtk-4-dev, Fedora: gtk4-devel, Arch: gtk4) and retry.'
     pkg-config --atleast-version=1.6 libadwaita-1 >/dev/null 2>&1 || \
-        fail 'libadwaita-1 >= 1.6 was not found through pkg-config; install its development package explicitly and retry.'
+        fail 'libadwaita-1 >= 1.6 was not found through pkg-config; install its development package explicitly (Debian/Ubuntu: libadwaita-1-dev, Fedora: libadwaita-devel, Arch: libadwaita) and retry.'
     pkg-config --atleast-version=1.20 gstreamer-1.0 >/dev/null 2>&1 || \
-        fail 'gstreamer-1.0 >= 1.20 was not found through pkg-config; install its development package explicitly and retry.'
+        fail 'gstreamer-1.0 >= 1.20 was not found through pkg-config; install its development package explicitly (Debian/Ubuntu: libgstreamer1.0-dev, Fedora: gstreamer1-devel, Arch: gstreamer) and retry.'
     info 'GTK 4.16, libadwaita 1.6, and GStreamer 1.20 development-library checks passed.'
 }
 
@@ -172,7 +172,7 @@ if $show_help; then
 fi
 
 cd "$repository_root"
-require_command cargo
+require_command cargo 'install Rust from https://rustup.rs'
 
 if [ "$mode" = fmt ]; then
     info 'Formatting Balun...'
@@ -186,10 +186,10 @@ if [ "$mode" = build ]; then
         fail "Required repository metadata validator is unavailable or not executable: $metadata_validator"
     [ -x "$artifact_validator" ] || \
         fail "Required Linux artifact validator is unavailable or not executable: $artifact_validator"
-    require_command readelf
+    require_command readelf 'install GNU binutils (Debian/Ubuntu, Fedora, and Arch: binutils); elfutils eu-readelf is not a substitute'
 fi
 
-require_command rustc
+require_command rustc 'install Rust from https://rustup.rs'
 native_target_status=0
 native_target=$(rustc --print host-tuple 2>/dev/null) || native_target_status=$?
 if [ "$native_target_status" -ne 0 ] \
@@ -222,14 +222,24 @@ case "$mode" in
         exit 0
         ;;
     clippy)
+        # Tributary lints both profiles so cfg(debug_assertions)-gated code
+        # cannot hide from either configuration.
         if $diagnostic; then
             info 'Linting all Balun diagnostic targets with locked dependencies...'
             cargo clippy --all-targets --locked \
                 --target-dir "$target_directory" --target "$native_target" \
                 -- -D warnings
+            info 'Linting all Balun diagnostic targets in the release profile...'
+            cargo clippy --release --all-targets --locked \
+                --target-dir "$target_directory" --target "$native_target" \
+                -- -D warnings
         else
             info 'Linting all Balun desktop targets with locked dependencies...'
             cargo clippy --all-targets --all-features --locked \
+                --target-dir "$target_directory" --target "$native_target" \
+                -- -D warnings
+            info 'Linting all Balun desktop targets in the release profile...'
+            cargo clippy --release --all-targets --all-features --locked \
                 --target-dir "$target_directory" --target "$native_target" \
                 -- -D warnings
         fi
