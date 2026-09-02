@@ -30,7 +30,9 @@ Usage:
 With no options, builds the Balun GTK4/libadwaita/GStreamer desktop application
 with Cargo's locked release dependency graph, then applies Balun's repository-
 metadata and Linux ELF policy gates. The helper builds only and never launches
-the application.
+the application. Before building, it requires the GStreamer runtime plugin
+files that provide playbin3, appsrc, tsdemux, deinterlace, and
+gtk4paintablesink, and it warns when the libav broadcast decoders are absent.
 
 Quick-exit modes (choose at most one):
   --fmt             Run cargo fmt across the workspace.
@@ -68,6 +70,11 @@ fail()
     exit 1
 }
 
+warn()
+{
+    printf '[balun] warning: %s\n' "$*" >&2
+}
+
 usage_error()
 {
     printf '[balun] %s\n' "$*" >&2
@@ -92,6 +99,42 @@ require_desktop_dependencies()
     pkg-config --atleast-version=1.20 gstreamer-1.0 >/dev/null 2>&1 || \
         fail 'gstreamer-1.0 >= 1.20 was not found through pkg-config; install its development package explicitly and retry.'
     info 'GTK 4.16, libadwaita 1.6, and GStreamer 1.20 development-library checks passed.'
+}
+
+# Runtime GStreamer plugins are invisible to pkg-config, and the desktop
+# executable checks the same structural factories at startup. Fail before a
+# desktop build whose only outcome would be "playback components unavailable".
+# Package names are Fedora's reference names; the plugin filenames are the
+# portable contract.
+require_playback_runtime()
+{
+    local plugin_directory missing plugin factories package
+    plugin_directory=$(pkg-config --variable=pluginsdir gstreamer-1.0 2>/dev/null) \
+        || plugin_directory=
+    if [ -z "$plugin_directory" ] || [ ! -d "$plugin_directory" ]; then
+        fail 'pkg-config did not report an existing GStreamer plugin directory (pluginsdir); install the GStreamer runtime explicitly and retry.'
+    fi
+    missing=
+    while IFS='|' read -r plugin factories package; do
+        [ -n "$plugin" ] || continue
+        [ -f "$plugin_directory/$plugin.so" ] || \
+            missing="$missing"$'\n'"  $plugin.so ($factories) from $package"
+    done <<'PLUGINS'
+libgstcoreelements|core elements|gstreamer1
+libgstplayback|playbin3, uridecodebin3, decodebin3|gstreamer1-plugins-base
+libgstapp|appsrc|gstreamer1-plugins-base
+libgsttypefindfunctions|stream type detection|gstreamer1-plugins-base
+libgstdeinterlace|deinterlace|gstreamer1-plugins-good
+libgstmpegtsdemux|tsdemux|gstreamer1-plugins-bad-free
+libgstgtk4|gtk4paintablesink|gstreamer1-plugin-gtk4
+PLUGINS
+    if [ -n "$missing" ]; then
+        fail "Required GStreamer playback runtime is incomplete in $plugin_directory:$missing"$'\n'"Install your distribution's equivalent base, good, bad, and gtk4 (gst-plugins-rs) plugin packages explicitly and retry."
+    fi
+    if [ ! -f "$plugin_directory/libgstlibav.so" ]; then
+        warn "libgstlibav.so is missing from $plugin_directory; MPEG-2, H.264, AC-3, and AAC broadcast decoding commonly needs gstreamer1-plugin-libav or your distribution's equivalent. The build continues, but live channels may report a missing codec."
+    fi
+    info 'GStreamer runtime plugin checks passed for the structural playback factories.'
 }
 
 mode=build
@@ -220,6 +263,10 @@ case "$mode" in
         fail "Internal error: unhandled build mode '$mode'."
         ;;
 esac
+
+if ! $diagnostic; then
+    require_playback_runtime
+fi
 
 info 'Validating locked repository metadata...'
 "$metadata_validator"

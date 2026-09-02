@@ -352,6 +352,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Desktop build helpers require the playback runtime** — Before a desktop
+  build, the Linux, macOS, and Windows helpers now verify that the GStreamer
+  plugin files providing `playbin3`, `uridecodebin3`, `decodebin3`, `appsrc`,
+  `tsdemux`, `deinterlace`, and `gtk4paintablesink` exist in the runtime's
+  plugin directory, fail before any Cargo work while naming each missing
+  plugin and the package that provides it, and warn when the libav broadcast
+  decoders are absent. Quick check, lint, test, coverage, and diagnostic routes
+  are unchanged. This restores the runtime-plugin gate that Tributary's
+  Windows helper applied and that the port had dropped, so a development build
+  can no longer succeed and then report missing playback components at launch.
+  The Windows CI lane installs the MSYS2 base, good, bad, and gst-plugins-rs
+  plugin packages, and the macOS lane now runs the playback transport tests
+  and the constant-URI `appsrc` probe.
 - **Windows local discovery compatibility** — Derive each attached IPv4
   network from the OS-reported prefix length, use the vendor-compatible limited
   broadcast from each Windows interface-bound socket, and continue to accept

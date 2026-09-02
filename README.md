@@ -331,18 +331,26 @@ For the Windows desktop build, install Rust with the
 `mingw-w64-clang-x86_64-gtk4`,
 `mingw-w64-clang-x86_64-libadwaita`,
 `mingw-w64-clang-x86_64-gstreamer`,
+`mingw-w64-clang-x86_64-gst-plugins-base`,
+`mingw-w64-clang-x86_64-gst-plugins-good`,
+`mingw-w64-clang-x86_64-gst-plugins-bad`,
+`mingw-w64-clang-x86_64-gst-plugins-rs`,
 `mingw-w64-clang-x86_64-pkg-config`, and
-`mingw-w64-clang-x86_64-toolchain`. Then build the release desktop shell from
-an ordinary PowerShell terminal with one command:
+`mingw-w64-clang-x86_64-toolchain`, plus `mingw-w64-clang-x86_64-gst-libav`
+for the MPEG-2, H.264, AC-3, and AAC broadcast decoders. Then build the
+release desktop shell from an ordinary PowerShell terminal with one command:
 
 ```powershell
 pwsh -NoProfile -File scripts/build-windows.ps1
 ```
 
 The helper detects a standard MSYS2 installation and manages the CLANG64
-compiler, `pkg-config`, target, and output paths. It builds only by default. To
-build and launch the exact validated output, use the existing Tributary-style
-run flag:
+compiler, `pkg-config`, target, and output paths. Before building it verifies
+that the plugin files providing `playbin3`, `appsrc`, `tsdemux`, `deinterlace`,
+and `gtk4paintablesink` are installed, fails while naming each missing plugin
+and its package, and warns when `gst-libav` is absent. It builds only by
+default. To build and launch the exact validated output, use the existing
+Tributary-style run flag:
 
 ```powershell
 pwsh -NoProfile -File scripts/build-windows.ps1 -Run
@@ -401,7 +409,9 @@ Balun preserves `-Run` there and deliberately does not invent `--run` for the
 shell helpers.
 
 On Linux, the default helper checks the GTK 4.16, libadwaita 1.6, and GStreamer
-1.20 development floors, binds Cargo to the validated native Rust host target
+1.20 development floors plus the structural GStreamer runtime plugin files,
+naming the Fedora package for each missing plugin and warning when the libav
+decoders are absent, then binds Cargo to the validated native Rust host target
 and exact repository target directory, builds
 `target/<native-target>/release/balun`, and applies the locked metadata and ELF
 component gates. Its package switches fail before starting build or network
@@ -414,8 +424,9 @@ scripts/build-linux.sh
 scripts/build-linux.sh --diagnostic
 ```
 
-On macOS, the default route likewise checks the desktop development floors,
-binds the native Apple target, builds
+On macOS, the default route likewise checks the desktop development floors and
+the structural GStreamer runtime plugin files supplied by the Homebrew
+`gstreamer` formula, binds the native Apple target, builds
 `target/<native-target>/release/balun`, loads the checksum-pinned component
 policy through system inspection tools, and validates the resulting Mach-O
 without creating an app bundle or DMG. App, DMG, signing, notarization, and

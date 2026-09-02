@@ -27,6 +27,7 @@ $FakeMsysRoot = Join-Path $TemporaryRoot 'MSYS2 root with spaces'
 $FakeMsysPrefix = Join-Path $FakeMsysRoot 'clang64'
 $FakeMsysBin = Join-Path $FakeMsysPrefix 'bin'
 $FakePkgConfigDirectory = Join-Path $FakeMsysPrefix 'lib\pkgconfig'
+$FakePluginDirectory = Join-Path $FakeMsysPrefix 'lib\gstreamer-1.0'
 $IncompleteMsysRoot = Join-Path $TemporaryRoot 'incomplete-msys2'
 $PowerShellExecutable = (Get-Process -Id $PID).Path
 $DesktopTarget = 'x86_64-pc-windows-gnullvm'
@@ -204,6 +205,16 @@ try {
     [System.IO.Directory]::CreateDirectory($RestrictedPath) | Out-Null
     [System.IO.Directory]::CreateDirectory($FakeMsysBin) | Out-Null
     [System.IO.Directory]::CreateDirectory($FakePkgConfigDirectory) | Out-Null
+    [System.IO.Directory]::CreateDirectory($FakePluginDirectory) | Out-Null
+    foreach ($Plugin in @(
+        'libgstcoreelements', 'libgstplayback', 'libgstapp', 'libgsttypefindfunctions',
+        'libgstdeinterlace', 'libgstmpegtsdemux', 'libgstgtk4', 'libgstlibav'
+    )) {
+        [System.IO.File]::WriteAllBytes(
+            (Join-Path $FakePluginDirectory "$Plugin.dll"),
+            [byte[]]@(0x4d, 0x5a)
+        )
+    }
     [System.IO.Directory]::CreateDirectory($IncompleteMsysRoot) | Out-Null
     Copy-Item -LiteralPath $HelperUnderTest -Destination $FixtureHelper
 
@@ -548,9 +559,45 @@ exit $global:LASTEXITCODE
     Assert-ExpectedStatus 0
     Assert-ExpectedOutput 'Desktop output:'
     Assert-ExpectedOutput 'balun.exe'
+    Assert-ExpectedOutput 'GStreamer runtime plugin checks passed'
     Assert-ExpectedLog $DesktopBuildCommand
     Assert-ExpectedPkgConfigProbeSet
     Assert-DesktopEnvironment
+
+    # The desktop build fails closed before any Cargo work when a structural
+    # runtime plugin is missing; quick modes never consult runtime plugins.
+    $FakeGtk4Plugin = Join-Path $FakePluginDirectory 'libgstgtk4.dll'
+    Remove-Item -LiteralPath $FakeGtk4Plugin -Force
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'Required GStreamer playback runtime is incomplete'
+    Assert-ExpectedOutput 'libgstgtk4.dll (gtk4paintablesink) from mingw-w64-clang-x86_64-gst-plugins-rs'
+    Assert-ExpectedPkgConfigProbeSet
+    Assert-EmptyLog $CommandLog 'Cargo'
+
+    Invoke-TestHelper -Arguments @('-Check')
+    Assert-ExpectedStatus 0
+    Assert-ExpectedLog (
+        'cargo <check> <--all-targets> <--all-features> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
+    )
+    [System.IO.File]::WriteAllBytes($FakeGtk4Plugin, [byte[]]@(0x4d, 0x5a))
+
+    $FakeDemuxPlugin = Join-Path $FakePluginDirectory 'libgstmpegtsdemux.dll'
+    Remove-Item -LiteralPath $FakeDemuxPlugin -Force
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'libgstmpegtsdemux.dll (tsdemux) from mingw-w64-clang-x86_64-gst-plugins-bad'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    [System.IO.File]::WriteAllBytes($FakeDemuxPlugin, [byte[]]@(0x4d, 0x5a))
+
+    $FakeLibavPlugin = Join-Path $FakePluginDirectory 'libgstlibav.dll'
+    Remove-Item -LiteralPath $FakeLibavPlugin -Force
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 0
+    Assert-ExpectedOutput 'Desktop output:'
+    Assert-ExpectedLog $DesktopBuildCommand
+    [System.IO.File]::WriteAllBytes($FakeLibavPlugin, [byte[]]@(0x4d, 0x5a))
 
     Invoke-TestHelper -Arguments @('-Msys2Root', $FakeMsysRoot)
     Assert-ExpectedStatus 0
@@ -876,6 +923,8 @@ exit $global:LASTEXITCODE
         "'desktop',",
         "'gstreamer-1.0'",
         "'1.20'",
+        "'libgstgtk4.dll'",
+        "'gst-plugins-rs'",
         '& $BinaryItem.FullName',
         "& `$BinaryItem.FullName '--inspect' '--local'"
     )) {

@@ -417,11 +417,14 @@ bundle manifest:
   `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`, and
   `gst-plugins-rs` packages.
 
-Balun's developer helpers check installed development-library floors; they do
-not install packages or claim a relocatable runtime. If a development machine
-has the core library but lacks one or more structural plugins, the desktop
-continues to support discovery and lineup inspection and reports playback as
-unavailable.
+Balun's developer helpers check installed development-library floors and,
+before a desktop build, the plugin files behind the seven structural
+factories, naming the providing package for each missing file; they warn
+rather than fail when the libav decoders are absent because M0.10 has not
+frozen the decoder contract. They do not install packages or claim a
+relocatable runtime. If a desktop executable built elsewhere starts on a
+machine that lacks one or more structural plugins, it continues to support
+discovery and lineup inspection and reports playback as unavailable.
 
 The libav package used by the Linux smoke is a development/CI system dependency
 only. It is not part of the seven-factory startup snapshot, a package allowlist,

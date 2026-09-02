@@ -65,6 +65,10 @@ ambient-proxy trap and a `playbin3` decode of the checked-in fixture from the
 constant URI, cover the Linux contract; the native macOS and Windows CI lanes
 still need to run the same source-selection checks before M2.9 closes.
 
+A first Windows desktop launch reported `gtk4paintablesink` missing because
+the MSYS2 `gst-plugins-rs` package was not installed; the helpers now fail
+before building in that state and name the missing package.
+
 The shortest path to the first live-TV test is:
 
 1. Re-run Windows local discovery and selected-device lineup loading.
@@ -163,7 +167,9 @@ compatibility/error-path work, not prerequisites for that first picture.
 - [x] **M1.9 — Align developer build helpers.** Keep Tributary-compatible
   script names, make all three no-option routes build the desktop without
   launching, retain explicit diagnostics, validate native-target-qualified
-  outputs, and keep incomplete package modes fail-closed.
+  outputs, and keep incomplete package modes fail-closed. The helpers also
+  fail before a desktop build when a structural GStreamer runtime plugin file
+  is missing, naming its package, and warn when the libav decoders are absent.
 
 - [ ] **M1.10 — Prove native desktop lifecycle on every target.** Retain the
   isolated Linux close/join smoke and add Windows and macOS runtime activation,

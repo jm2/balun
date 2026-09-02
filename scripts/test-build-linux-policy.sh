@@ -101,7 +101,17 @@ printf '\n' >> "$BALUN_TEST_LOG"
 if [ "${2-}" = "$BALUN_FAKE_PKG_CONFIG_FAILURE" ]; then
     exit 1
 fi
+if [ "${1-}" = --variable=pluginsdir ]; then
+    printf '%s\n' "$BALUN_FAKE_PLUGIN_DIRECTORY"
+fi
 EOF
+
+plugin_directory="$fixture/gstreamer-plugins"
+mkdir -p "$plugin_directory"
+for plugin in libgstcoreelements libgstplayback libgstapp libgsttypefindfunctions \
+    libgstdeinterlace libgstmpegtsdemux libgstgtk4 libgstlibav; do
+    : > "$plugin_directory/$plugin.so"
+done
 
 cat > "$fake_bin/readelf" <<'EOF'
 #!/usr/bin/env bash
@@ -153,6 +163,7 @@ valid_native_target='x86_64-unknown-linux-gnu'
 fake_rustc_target=$valid_native_target
 native_release_directory="$fixture/target/$valid_native_target/release"
 fake_pkg_config_failure=
+fake_plugin_directory=$plugin_directory
 fake_metadata_status=0
 fake_artifact_status=0
 fake_skip_binary=0
@@ -176,6 +187,7 @@ run_helper()
         BALUN_FAKE_RUSTC_STATUS="$fake_rustc_status" \
         BALUN_FAKE_RUSTC_TARGET="$fake_rustc_target" \
         BALUN_FAKE_PKG_CONFIG_FAILURE="$fake_pkg_config_failure" \
+        BALUN_FAKE_PLUGIN_DIRECTORY="$fake_plugin_directory" \
         BALUN_FAKE_METADATA_STATUS="$fake_metadata_status" \
         BALUN_FAKE_ARTIFACT_STATUS="$fake_artifact_status" \
         BALUN_FAKE_SKIP_BINARY="$fake_skip_binary" \
@@ -401,11 +413,50 @@ fake_coverage_version='cargo-llvm-cov 0.8.7'
 run_helper
 expect_status 0
 expect_output 'Desktop output:'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>\ncompliance <--elf> <'"$native_release_directory"$'/balun>'
+expect_output 'GStreamer runtime plugin checks passed'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>\ncompliance <--elf> <'"$native_release_directory"$'/balun>'
 [ ! -e "$hostile_target_directory/$valid_native_target/release/balun" ] || \
     fail_test 'hostile CARGO_TARGET_DIR received the desktop output'
 [ ! -e "$fixture/target/$hostile_build_target/release/balun" ] || \
     fail_test 'hostile CARGO_BUILD_TARGET received the desktop output'
+
+# The desktop build fails closed before any Cargo work when a structural
+# runtime plugin is missing; quick modes never consult runtime plugins.
+rm -f -- "$plugin_directory/libgstgtk4.so"
+run_helper
+expect_status 1
+expect_output 'Required GStreamer playback runtime is incomplete'
+expect_output 'libgstgtk4.so (gtk4paintablesink) from gstreamer1-plugin-gtk4'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>'
+run_helper --check
+expect_status 0
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <check> <--all-targets> <--all-features> <--locked> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
+run_helper --diagnostic
+expect_status 0
+expect_output 'Diagnostic output:'
+: > "$plugin_directory/libgstgtk4.so"
+
+rm -f -- "$plugin_directory/libgstmpegtsdemux.so" "$plugin_directory/libgstplayback.so"
+run_helper
+expect_status 1
+expect_output 'libgstplayback.so (playbin3, uridecodebin3, decodebin3) from gstreamer1-plugins-base'
+expect_output 'libgstmpegtsdemux.so (tsdemux) from gstreamer1-plugins-bad-free'
+: > "$plugin_directory/libgstmpegtsdemux.so"
+: > "$plugin_directory/libgstplayback.so"
+
+rm -f -- "$plugin_directory/libgstlibav.so"
+run_helper
+expect_status 0
+expect_output 'warning: libgstlibav.so is missing'
+expect_output 'Desktop output:'
+: > "$plugin_directory/libgstlibav.so"
+
+fake_plugin_directory="$fixture/missing-plugins"
+run_helper
+expect_status 1
+expect_output 'did not report an existing GStreamer plugin directory'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>'
+fake_plugin_directory=$plugin_directory
 
 run_helper --diagnostic
 expect_status 0
@@ -419,13 +470,13 @@ expect_log $'rustc <--print> <host-tuple>\nmetadata\ncargo <build> <--release> <
 fake_metadata_status=23
 run_helper
 expect_status 23
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\nmetadata'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata'
 fake_metadata_status=0
 
 fake_cargo_status=24
 run_helper
 expect_status 24
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
 fake_cargo_status=0
 
 rm -f -- "$native_release_directory/balun"
@@ -433,7 +484,7 @@ fake_skip_binary=1
 run_helper
 expect_status 1
 expect_output 'did not produce the expected nonempty, executable, regular, non-symlink binary'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
 fake_skip_binary=0
 
 rm -f -- "$native_release_directory/balun"
@@ -443,7 +494,7 @@ ln -s "$temp_dir/outside-symlink-target" \
 run_helper
 expect_status 1
 expect_output 'did not produce the expected nonempty, executable, regular, non-symlink binary'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
 rm -f -- "$native_release_directory/balun"
 
 : > "$native_release_directory/balun"
@@ -452,21 +503,21 @@ fake_skip_binary=1
 run_helper
 expect_status 1
 expect_output 'did not produce the expected nonempty, executable, regular, non-symlink binary'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
 
 rm -f -- "$native_release_directory/balun"
 mkdir "$native_release_directory/balun"
 run_helper
 expect_status 1
 expect_output 'did not produce the expected nonempty, executable, regular, non-symlink binary'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
 rmdir "$native_release_directory/balun"
 
 mkfifo "$native_release_directory/balun"
 run_helper
 expect_status 1
 expect_output 'did not produce the expected nonempty, executable, regular, non-symlink binary'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
 rm -f -- "$native_release_directory/balun"
 
 printf 'synthetic ELF\n' > "$native_release_directory/balun"
@@ -474,14 +525,14 @@ chmod -x "$native_release_directory/balun"
 run_helper
 expect_status 1
 expect_output 'did not produce the expected nonempty, executable, regular, non-symlink binary'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>'
 fake_skip_binary=0
 rm -f -- "$native_release_directory/balun"
 
 fake_artifact_status=25
 run_helper
 expect_status 25
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>\ncompliance <--elf> <'"$native_release_directory"$'/balun>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>\ncompliance <--elf> <'"$native_release_directory"$'/balun>'
 
 forbidden_command_pattern='^[[:space:]]*([^[:space:]]*/)?(sudo|curl|wget|git|rustup|apt|apt-get|dnf|yum|pacman|zypper|apk|snap|flatpak|flatpak-builder|brew|port|rpm|dpkg|makepkg)([[:space:]]|$)'
 forbidden_cargo_install_pattern='^[[:space:]]*([^[:space:]]*/)?cargo[[:space:]]+(\+[^[:space:]]+[[:space:]]+)?install([[:space:]]|$)'

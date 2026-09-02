@@ -51,6 +51,12 @@ result is not recorded as a Windows pass until both real hosts are retested.
 Host firewall or network-profile filtering remains a separate possibility if a
 host still receives no valid replies.
 
+A later Windows desktop build launched successfully but reported the
+`gtk4paintablesink` factory missing, because the MSYS2 `gst-plugins-rs`
+package had not been installed alongside the core `gstreamer` package. The
+build helpers now check the structural plugin files before building and name
+the package for each missing one, so that state fails before a launch.
+
 A same-day Linux regression after this endpoint-policy change again discovered
 both accessible primary-site devices over IPv4 and completed identity-checked
 metadata and lineup inspection for both. The 4K device's usable non-link-local

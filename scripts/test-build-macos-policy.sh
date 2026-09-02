@@ -110,7 +110,17 @@ printf '\n' >> "$BALUN_TEST_LOG"
 if [ "${2-}" = "$BALUN_FAKE_PKG_CONFIG_FAILURE" ]; then
     exit 1
 fi
+if [ "${1-}" = --variable=pluginsdir ]; then
+    printf '%s\n' "$BALUN_FAKE_PLUGIN_DIRECTORY"
+fi
 EOF
+
+plugin_directory="$fixture/gstreamer-plugins"
+mkdir -p "$plugin_directory"
+for plugin in libgstcoreelements libgstplayback libgstapp libgsttypefindfunctions \
+    libgstdeinterlace libgstmpegtsdemux libgstgtk4 libgstlibav; do
+    : > "$plugin_directory/$plugin.dylib"
+done
 
 cat > "$fake_bin/uname" <<'EOF'
 #!/usr/bin/env bash
@@ -177,6 +187,7 @@ fake_coverage_version='cargo-llvm-cov 0.8.7'
 fake_cargo_status=0
 fake_rustc_status=0
 fake_pkg_config_failure=
+fake_plugin_directory=$plugin_directory
 fake_policy_status=0
 fake_macho_status=0
 fake_skip_binary=0
@@ -208,6 +219,7 @@ run_helper()
         BALUN_FAKE_RUSTC_STATUS="$fake_rustc_status" \
         BALUN_FAKE_RUSTC_TARGET="$fake_native_target" \
         BALUN_FAKE_PKG_CONFIG_FAILURE="$fake_pkg_config_failure" \
+        BALUN_FAKE_PLUGIN_DIRECTORY="$fake_plugin_directory" \
         BALUN_FAKE_POLICY_STATUS="$fake_policy_status" \
         BALUN_FAKE_MACHO_STATUS="$fake_macho_status" \
         BALUN_FAKE_SKIP_BINARY="$fake_skip_binary" \
@@ -544,7 +556,7 @@ printf '%s\n' \
 run_helper
 expect_status 1
 expect_output 'does not provide macos_validate_macho_copy_control'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>'
 rm -f -- "$policy_helper"
 mv "$policy_helper.saved" "$policy_helper"
 
@@ -571,12 +583,39 @@ mv "$policy_file.saved" "$policy_file"
 run_helper
 expect_status 0
 expect_output 'Application ID: io.github.jm2.Balun'
+expect_output 'GStreamer runtime plugin checks passed'
 expect_output 'Mach-O component policy passed for expected Balun desktop path:'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
 [ ! -e "$hostile_target_directory/$fake_native_target/release/balun" ] || \
     fail_test 'hostile CARGO_TARGET_DIR received the desktop output'
 [ ! -e "$fixture/target/$hostile_build_target/release/balun" ] || \
     fail_test 'hostile CARGO_BUILD_TARGET received the desktop output'
+
+# The desktop build fails closed before policy loading or Cargo work when a
+# structural runtime plugin is missing; quick modes never consult plugins.
+rm -f -- "$plugin_directory/libgstgtk4.dylib"
+run_helper
+expect_status 1
+expect_output 'Required GStreamer playback runtime is incomplete'
+expect_output 'libgstgtk4.dylib (gtk4paintablesink)'
+expect_output 'Homebrew gstreamer formula'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>'
+run_helper --check
+expect_status 0
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\ncargo <check> <--all-targets> <--all-features> <--locked> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+: > "$plugin_directory/libgstgtk4.dylib"
+
+rm -f -- "$plugin_directory/libgstlibav.dylib"
+run_helper
+expect_status 0
+expect_output 'warning: libgstlibav.dylib is missing'
+: > "$plugin_directory/libgstlibav.dylib"
+
+fake_plugin_directory="$fixture/missing-plugins"
+run_helper
+expect_status 1
+expect_output 'did not report an existing GStreamer plugin directory'
+fake_plugin_directory=$plugin_directory
 
 run_helper --diagnostic
 expect_status 0
@@ -591,13 +630,13 @@ fake_policy_status=2
 run_helper
 expect_status 1
 expect_output 'Pinned macOS component policy could not be loaded: synthetic policy failure'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\npolicy-load <'"$fixture"'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>'
 fake_policy_status=0
 
 fake_cargo_status=24
 run_helper
 expect_status 24
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 fake_cargo_status=0
 
 rm -f -- "$desktop_output"
@@ -605,7 +644,7 @@ fake_skip_binary=1
 run_helper
 expect_status 1
 expect_output 'expected nonempty, executable, regular, non-symlink binary'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 fake_skip_binary=0
 
 : > "$desktop_output"
@@ -621,7 +660,7 @@ fake_skip_binary=1
 run_helper
 expect_status 1
 expect_output 'expected nonempty, executable, regular, non-symlink binary'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"'/target>'
 fake_skip_binary=0
 
 rm -f -- "$desktop_output"
@@ -657,7 +696,7 @@ run_helper
 expect_status 1
 expect_output 'failed macOS Mach-O component-policy inspection'
 expect_output 'synthetic Mach-O policy failure'
-expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
 fake_macho_status=0
 
 forbidden_command_pattern='^[[:space:]]*([^[:space:]]*/)?(sudo|curl|wget|git|rustup|brew|port|apt|apt-get|dnf|yum|pacman|zypper|apk|snap|flatpak|hdiutil|create-dmg|productbuild|pkgbuild|codesign|xcrun)([[:space:]]|$)'

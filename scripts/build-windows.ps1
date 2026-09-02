@@ -14,7 +14,10 @@
     The helper selects x86_64-pc-windows-gnullvm, discovers a standard MSYS2
     installation automatically, configures its CLANG64 compiler and pkg-config
     paths, and checks the GTK 4.16, libadwaita 1.6, and GStreamer 1.20
-    development-library floors. Use Msys2Root only for a nonstandard MSYS2
+    development-library floors. Before a desktop build it also requires the
+    GStreamer runtime plugin files that provide playbin3, appsrc, tsdemux,
+    deinterlace, and gtk4paintablesink, and warns when the libav broadcast
+    decoders are absent. Use Msys2Root only for a nonstandard MSYS2
     installation.
 
     The helper never invokes an installer, package manager, dependency update,
@@ -129,6 +132,7 @@ $DesktopBinaryName = 'balun.exe'
 $DiagnosticBinaryName = 'balun-discover.exe'
 $DesktopRustTarget = 'x86_64-pc-windows-gnullvm'
 $MsysEnvironment = 'clang64'
+$MsysPackagePrefix = 'mingw-w64-clang-x86_64'
 $RequiredCoverageVersion = 'cargo-llvm-cov 0.8.7'
 $Msys2RootSpecified = $PSBoundParameters.ContainsKey('Msys2Root')
 
@@ -356,6 +360,7 @@ function Get-Msys2Layout {
     $prefix = Join-Path $resolvedRoot $MsysEnvironment
     $bin = Join-Path $prefix 'bin'
     $pkgConfigDirectory = Join-Path $prefix 'lib\pkgconfig'
+    $pluginDirectory = Join-Path $prefix 'lib\gstreamer-1.0'
     $missing = [System.Collections.Generic.List[string]]::new()
 
     if (-not (Test-Path -LiteralPath $pkgConfigDirectory -PathType Container)) {
@@ -401,6 +406,7 @@ function Get-Msys2Layout {
         Prefix = $prefix
         Bin = $bin
         PkgConfigDirectory = $pkgConfigDirectory
+        PluginDirectory = $pluginDirectory
         PkgConfig = $pkgConfig
         Clang = $clang
         Clangxx = $clangxx
@@ -598,6 +604,57 @@ function Assert-PkgConfigFloor {
     }
 }
 
+# Runtime GStreamer plugins are invisible to pkg-config, and balun.exe checks
+# the same structural factories at startup. Fail before a desktop build whose
+# only outcome would be "playback components unavailable".
+function Assert-PlaybackRuntime {
+    param([pscustomobject]$Layout)
+
+    $pluginDirectory = $Layout.PluginDirectory
+    if (-not (Test-Path -LiteralPath $pluginDirectory -PathType Container)) {
+        Exit-WithError (
+            "GStreamer plugin directory $pluginDirectory is missing. Install the " +
+            "$MsysPackagePrefix-gstreamer, $MsysPackagePrefix-gst-plugins-base, " +
+            "$MsysPackagePrefix-gst-plugins-good, $MsysPackagePrefix-gst-plugins-bad, and " +
+            "$MsysPackagePrefix-gst-plugins-rs packages in MSYS2 CLANG64."
+        )
+    }
+    $required = @(
+        @{ Plugin = 'libgstcoreelements.dll'; Factories = 'core elements'; Package = 'gstreamer' },
+        @{ Plugin = 'libgstplayback.dll'; Factories = 'playbin3, uridecodebin3, decodebin3'; Package = 'gst-plugins-base' },
+        @{ Plugin = 'libgstapp.dll'; Factories = 'appsrc'; Package = 'gst-plugins-base' },
+        @{ Plugin = 'libgsttypefindfunctions.dll'; Factories = 'stream type detection'; Package = 'gst-plugins-base' },
+        @{ Plugin = 'libgstdeinterlace.dll'; Factories = 'deinterlace'; Package = 'gst-plugins-good' },
+        @{ Plugin = 'libgstmpegtsdemux.dll'; Factories = 'tsdemux'; Package = 'gst-plugins-bad' },
+        @{ Plugin = 'libgstgtk4.dll'; Factories = 'gtk4paintablesink'; Package = 'gst-plugins-rs' }
+    )
+    $missing = [System.Collections.Generic.List[string]]::new()
+    foreach ($entry in $required) {
+        $pluginPath = Join-Path $pluginDirectory $entry.Plugin
+        if (-not (Test-Path -LiteralPath $pluginPath -PathType Leaf)) {
+            $missing.Add(
+                "$($entry.Plugin) ($($entry.Factories)) from $MsysPackagePrefix-$($entry.Package)"
+            )
+        }
+    }
+    if ($missing.Count -gt 0) {
+        Exit-WithError (
+            "Required GStreamer playback runtime is incomplete in ${pluginDirectory}: " +
+            ($missing -join '; ') +
+            '. Install the matching packages in MSYS2 CLANG64 and retry.'
+        )
+    }
+    $libavPath = Join-Path $pluginDirectory 'libgstlibav.dll'
+    if (-not (Test-Path -LiteralPath $libavPath -PathType Leaf)) {
+        Write-Warning (
+            "libgstlibav.dll is missing from $pluginDirectory; MPEG-2, H.264, AC-3, and AAC " +
+            "broadcast decoding commonly needs $MsysPackagePrefix-gst-libav. The build " +
+            'continues, but live channels may report a missing codec.'
+        )
+    }
+    Write-Info 'GStreamer runtime plugin checks passed for the structural playback factories.'
+}
+
 function Invoke-Cargo {
     param(
         [System.Management.Automation.CommandInfo]$CargoCommand,
@@ -773,6 +830,7 @@ try {
         exit 0
     }
 
+    Assert-PlaybackRuntime $MsysLayout
     $CargoArguments = @(
         'build',
         '--release',

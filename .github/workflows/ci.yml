@@ -132,6 +132,12 @@ jobs:
           playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation
           -- --ignored --exact
 
+      - name: Probe installed runtime constant-URI appsrc contract
+        run: >-
+          cargo test --locked --features desktop --lib
+          playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc
+          -- --ignored --exact
+
       - name: Smoke desktop and synthetic playback lifecycle
         env:
           BALUN_DESKTOP_TEST_BACKEND: wayland
@@ -192,6 +198,10 @@ jobs:
           install: >-
             mingw-w64-clang-x86_64-gtk4
             mingw-w64-clang-x86_64-gstreamer
+            mingw-w64-clang-x86_64-gst-plugins-base
+            mingw-w64-clang-x86_64-gst-plugins-good
+            mingw-w64-clang-x86_64-gst-plugins-bad
+            mingw-w64-clang-x86_64-gst-plugins-rs
             mingw-w64-clang-x86_64-libadwaita
             mingw-w64-clang-x86_64-pkg-config
             mingw-w64-clang-x86_64-toolchain
@@ -204,6 +214,12 @@ jobs:
 
       - name: Check all targets
         run: cargo check --all-targets --locked
+
+      - name: Test playback transport and appsrc contract on macOS
+        if: runner.os == 'macOS'
+        run: |
+          cargo test --locked --features desktop --lib playback::
+          cargo test --locked --features desktop --lib playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc -- --ignored --exact
 
       - name: Test GTK-free library on Windows
         if: runner.os == 'Windows'

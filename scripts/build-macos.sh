@@ -38,7 +38,9 @@ Quick-exit modes (choose at most one):
 
 Desktop compilation requires preinstalled, pkg-config-visible GTK 4.16,
 libadwaita 1.6, and GStreamer 1.20 development libraries. The diagnostic and
-format routes do not.
+format routes do not. The desktop build additionally requires the GStreamer
+runtime plugin files that provide playbin3, appsrc, tsdemux, deinterlace, and
+gtk4paintablesink, and warns when the libav broadcast decoders are absent.
 Every compilation route requires a preinstalled rustc reporting one native
 Apple Darwin host tuple. The format route does not.
 
@@ -67,6 +69,11 @@ fail()
     exit 1
 }
 
+warn()
+{
+    printf '[balun] warning: %s\n' "$*" >&2
+}
+
 usage_error()
 {
     printf '[balun] %s\n' "$*" >&2
@@ -91,6 +98,40 @@ require_desktop_dependencies()
     pkg-config --atleast-version=1.20 gstreamer-1.0 >/dev/null 2>&1 || \
         fail 'gstreamer-1.0 >= 1.20 was not found through pkg-config; install its development package explicitly and retry.'
     info 'GTK 4.16, libadwaita 1.6, and GStreamer 1.20 development-library checks passed.'
+}
+
+# Runtime GStreamer plugins are invisible to pkg-config, and the desktop
+# executable checks the same structural factories at startup. Fail before a
+# desktop build whose only outcome would be "playback components unavailable".
+require_playback_runtime()
+{
+    local plugin_directory missing plugin factories
+    plugin_directory=$(pkg-config --variable=pluginsdir gstreamer-1.0 2>/dev/null) \
+        || plugin_directory=
+    if [ -z "$plugin_directory" ] || [ ! -d "$plugin_directory" ]; then
+        fail 'pkg-config did not report an existing GStreamer plugin directory (pluginsdir); install the GStreamer runtime explicitly and retry.'
+    fi
+    missing=
+    while IFS='|' read -r plugin factories; do
+        [ -n "$plugin" ] || continue
+        [ -f "$plugin_directory/$plugin.dylib" ] || \
+            missing="$missing"$'\n'"  $plugin.dylib ($factories)"
+    done <<'PLUGINS'
+libgstcoreelements|core elements
+libgstplayback|playbin3, uridecodebin3, decodebin3
+libgstapp|appsrc
+libgsttypefindfunctions|stream type detection
+libgstdeinterlace|deinterlace
+libgstmpegtsdemux|tsdemux
+libgstgtk4|gtk4paintablesink
+PLUGINS
+    if [ -n "$missing" ]; then
+        fail "Required GStreamer playback runtime is incomplete in $plugin_directory:$missing"$'\n'"Install or update the Homebrew gstreamer formula, which supplies the base, good, bad, and gst-plugins-rs (gtk4) plugins, then retry."
+    fi
+    if [ ! -f "$plugin_directory/libgstlibav.dylib" ]; then
+        warn "libgstlibav.dylib is missing from $plugin_directory; MPEG-2, H.264, AC-3, and AAC broadcast decoding commonly needs the libav plugin that the Homebrew gstreamer formula includes. The build continues, but live channels may report a missing codec."
+    fi
+    info 'GStreamer runtime plugin checks passed for the structural playback factories.'
 }
 
 resolve_native_target()
@@ -260,6 +301,7 @@ esac
 
 if ! $diagnostic; then
     require_desktop_dependencies
+    require_playback_runtime
 fi
 
 # shellcheck source=scripts/macos-package-policy.sh
