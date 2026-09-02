@@ -369,19 +369,38 @@ mod tests {
         handoff("http://127.0.0.1:9/auto/v5.1")
     }
 
+    /// Whether a software MPEG-2 decoder can decode the checked-in fixture.
     fn mpeg2_decoder_available() -> bool {
         ["avdec_mpeg2video", "mpeg2dec"]
             .into_iter()
             .any(|factory| gst::ElementFactory::find(factory).is_some())
     }
 
+    /// Restores the original rank of every demoted decoder factory when
+    /// dropped, on every exit path including a panicking assertion, so a later
+    /// pipeline in the same process autoplugs from the registry it started
+    /// with. This is the only rank mutation in the crate's tests.
+    struct DecoderRankGuard {
+        original: Vec<(gst::PluginFeature, gst::Rank)>,
+    }
+
+    impl Drop for DecoderRankGuard {
+        fn drop(&mut self) {
+            for (feature, rank) in self.original.drain(..) {
+                feature.set_rank(rank);
+            }
+        }
+    }
+
     /// Hosted CI virtual machines register hardware MPEG-2 decoders (Apple
     /// VideoToolbox, Direct3D, NVIDIA, Intel, AMD, VA-API) that cannot open a
     /// decoding session without a GPU. This test proves the `appsrc` feed and
     /// demux contract, not hardware decoding, so demote those factories for
-    /// this process only and let `decodebin3` choose the software decoders.
-    fn prefer_software_mpeg2_decoders() {
+    /// the duration of the returned guard and let `decodebin3` choose the
+    /// software decoders.
+    fn prefer_software_mpeg2_decoders() -> DecoderRankGuard {
         let registry = gst::Registry::get();
+        let mut original = Vec::new();
         for name in [
             "vtdec_hw",
             "vtdec",
@@ -397,9 +416,11 @@ mod tests {
             "v4l2slmpeg2dec",
         ] {
             if let Some(feature) = registry.lookup_feature(name) {
+                original.push((feature.clone(), feature.rank()));
                 feature.set_rank(gst::Rank::NONE);
             }
         }
+        DecoderRankGuard { original }
     }
 
     /// Endpoint-free diagnostics for a failed contract run: the native error
@@ -629,7 +650,7 @@ mod tests {
         if !mpeg2_decoder_available() || gst::ElementFactory::find("tsdemux").is_none() {
             return;
         }
-        prefer_software_mpeg2_decoders();
+        let _software_decoders = prefer_software_mpeg2_decoders();
         let server = FixtureStreamServer::start(fixture_response(), StreamBehavior::Close);
         let video_sink = gst::ElementFactory::make("fakesink").build().unwrap();
         let audio_sink = gst::ElementFactory::make("fakesink").build().unwrap();
