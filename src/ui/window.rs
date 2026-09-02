@@ -716,8 +716,14 @@ fn spawn_snapshot_reducer(
             let discovery = candidate.discovery();
             accepted.replace(candidate);
 
-            if let Some(target) = rediscovery.exact_tracker.borrow_mut().observe(discovery) {
-                rediscovery.settings.remember_target(target);
+            if let Some(target) = rediscovery.exact_tracker.borrow_mut().observe(discovery)
+                && let Some(pending_save) = rediscovery.settings.remember_target(target)
+            {
+                // The atomic write flushes files, so it runs on the blocking
+                // worker rather than stalling snapshot reduction.
+                gtk::glib::MainContext::default().spawn_local(async move {
+                    let _ = gtk::gio::spawn_blocking(move || pending_save.write()).await;
+                });
             }
             send_next_rediscovery(&rediscovery.rediscovery, &rediscovery.controller, discovery);
         }

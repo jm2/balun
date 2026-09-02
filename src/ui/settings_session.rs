@@ -58,9 +58,10 @@ impl SettingsSession {
         self.settings.borrow().remembered_targets().to_vec()
     }
 
-    /// Remember a target whose probe received a valid device reply.
-    pub(crate) fn remember_target(&self, target: ExactDiscoveryTarget) {
-        self.update(|settings| settings.remember_target(target));
+    /// Remember a target whose probe received a valid device reply and stage
+    /// the save; the caller runs the write off the main context.
+    pub(crate) fn remember_target(&self, target: ExactDiscoveryTarget) -> Option<PendingSave> {
+        self.stage(|settings| settings.remember_target(target))
     }
 
     /// Window geometry to apply before the window is shown.
@@ -166,9 +167,16 @@ mod tests {
         let target = ExactDiscoveryTarget::parse("192.0.2.9").expect("valid target");
         assert!(session.remembered_targets().is_empty());
 
-        session.remember_target(target);
+        session
+            .remember_target(target)
+            .expect("a new target stages a save")
+            .write();
 
         assert_eq!(session.remembered_targets(), vec![target]);
+        assert!(
+            session.remember_target(target).is_none(),
+            "repeating the newest target stages nothing"
+        );
         let reloaded = SettingsSession::open(Some(store));
         assert_eq!(reloaded.remembered_targets(), vec![target]);
     }
