@@ -376,15 +376,21 @@ mod tests {
             .any(|factory| gst::ElementFactory::find(factory).is_some())
     }
 
-    /// Restores the original rank of every demoted decoder factory when
-    /// dropped, on every exit path including a panicking assertion, so a later
-    /// pipeline in the same process autoplugs from the registry it started
-    /// with. This is the only rank mutation in the crate's tests.
+    /// Serializes every registry rank override in this test binary, so two
+    /// tests cannot interleave a demotion with another test's autoplugging.
+    static DECODER_RANK_OVERRIDE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Holds the rank-override lock and restores the original rank of every
+    /// demoted decoder factory when dropped, on every exit path including a
+    /// panicking assertion, so a later pipeline in the same process autoplugs
+    /// from the registry it started with.
     struct DecoderRankGuard {
         original: Vec<(gst::PluginFeature, gst::Rank)>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl Drop for DecoderRankGuard {
+        /// Restore the recorded ranks before releasing the override lock.
         fn drop(&mut self) {
             for (feature, rank) in self.original.drain(..) {
                 feature.set_rank(rank);
@@ -399,6 +405,11 @@ mod tests {
     /// the duration of the returned guard and let `decodebin3` choose the
     /// software decoders.
     fn prefer_software_mpeg2_decoders() -> DecoderRankGuard {
+        // A test that panicked while holding the lock already restored its
+        // ranks in Drop, so the poisoned state carries no stale override.
+        let lock = DECODER_RANK_OVERRIDE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = gst::Registry::get();
         let mut original = Vec::new();
         for name in [
@@ -420,7 +431,10 @@ mod tests {
                 feature.set_rank(gst::Rank::NONE);
             }
         }
-        DecoderRankGuard { original }
+        DecoderRankGuard {
+            original,
+            _lock: lock,
+        }
     }
 
     /// Endpoint-free diagnostics for a failed contract run: the native error
@@ -642,6 +656,9 @@ mod tests {
         );
     }
 
+    /// Network-free end-to-end contract: `playbin3` must resolve the constant
+    /// URI to the exact built-in `appsrc`, accept the configured feed from the
+    /// loopback transport, decode the checked-in fixture, and reach EOS.
     #[test]
     fn playbin3_resolves_the_constant_uri_to_exact_appsrc_and_plays_a_loopback_fixture() {
         let Some(playbin) = pipeline() else {
