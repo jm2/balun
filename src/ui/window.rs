@@ -1,20 +1,25 @@
 //! Top-level adaptive three-pane window and controller/GLib bridge.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use adw::prelude::*;
 use balun::controller::{
-    ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime,
+    ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryState,
+    ExactTargetTracker, RediscoveryQueue,
+};
+use balun::discovery::{
+    DiscoveryEntry, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget,
 };
 use balun::playback::{PlaybackInitializationError, PlaybackRuntime};
+use balun::settings::RememberedTarget;
 
 use super::objects::DeviceRowObject;
+use super::settings_session::SettingsSession;
 use super::{channel_sidebar, device_sidebar, exact_discovery_dialog, player_view};
 
-const DEFAULT_WIDTH: i32 = 1_200;
-const DEFAULT_HEIGHT: i32 = 720;
 const DEVICE_SIDEBAR_MIN_WIDTH: f64 = 160.0;
 const DEVICE_SIDEBAR_MAX_WIDTH: f64 = 220.0;
 const CHANNEL_SIDEBAR_MIN_WIDTH: f64 = 240.0;
@@ -257,8 +262,11 @@ pub(crate) fn build(
     application: &adw::Application,
     controller: ControllerRuntime,
     playback: Result<PlaybackRuntime, PlaybackInitializationError>,
+    settings: SettingsSession,
     shutdown_failed: Rc<Cell<bool>>,
 ) -> adw::ApplicationWindow {
+    let settings = Rc::new(settings);
+    let window_state = settings.window();
     let device_sidebar = device_sidebar::build();
     let channel_sidebar = channel_sidebar::build();
     let player_view = Rc::new(player_view::build(playback));
@@ -290,13 +298,18 @@ pub(crate) fn build(
         .sidebar_width_unit(adw::LengthUnit::Sp)
         .build();
 
+    let toasts = adw::ToastOverlay::new();
+    toasts.set_child(Some(&device_and_content));
     let window = adw::ApplicationWindow::builder()
         .application(application)
         .title("Balun")
-        .default_width(DEFAULT_WIDTH)
-        .default_height(DEFAULT_HEIGHT)
-        .content(&device_and_content)
+        .default_width(i32::try_from(window_state.width()).unwrap_or(i32::MAX))
+        .default_height(i32::try_from(window_state.height()).unwrap_or(i32::MAX))
+        .content(&toasts)
         .build();
+    if window_state.maximized() {
+        window.maximize();
+    }
     let layout = ResponsiveLayout::new(
         &device_and_content,
         &channel_and_player_page,
@@ -342,10 +355,34 @@ pub(crate) fn build(
     channel_sidebar.apply_snapshot(&initial);
     layout.set_device_selected(initial.selected_device().is_some());
     let accepted = Rc::new(RefCell::new(initial));
+    let exact_tracker = Rc::new(RefCell::new(ExactTargetTracker::new()));
+    let remembered = settings.remembered_targets();
+    let rediscovery = Rc::new(RefCell::new(RediscoveryQueue::new(
+        remembered.iter().filter_map(|target| match target {
+            RememberedTarget::Address(address) => Some(*address),
+            RememberedTarget::Hostname(_) => None,
+        }),
+    )));
+    let wiring = Rc::new(RediscoveryWiring {
+        settings: Rc::clone(&settings),
+        exact_tracker: Rc::clone(&exact_tracker),
+        rediscovery: Rc::clone(&rediscovery),
+        hostnames: Rc::new(RefCell::new(HostnameProbes::default())),
+        controller: handle.clone(),
+        accepted: Rc::clone(&accepted),
+        toasts: toasts.downgrade(),
+    });
 
     connect_refresh(&device_sidebar, &handle);
-    connect_exact_discovery(&window, &device_sidebar, &handle);
-    connect_cancel_discovery(&device_sidebar, &handle);
+    connect_exact_discovery(
+        &window,
+        &device_sidebar,
+        &handle,
+        &accepted,
+        &exact_tracker,
+        &wiring,
+    );
+    connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
     connect_channel_activation(
         &channel_sidebar,
@@ -362,8 +399,18 @@ pub(crate) fn build(
         channel_sidebar,
         layout,
         Rc::downgrade(&player_view),
+        Rc::clone(&wiring),
     );
-    connect_joined_shutdown(&window, controller, player_view, shutdown_failed);
+    // Remembered addresses and names are the only probes Balun sends unasked;
+    // each one waits for the lane to settle so it never supersedes a user
+    // action, and a remembered name is resolved again before it is probed.
+    advance_rediscovery(&wiring, accepted.borrow().discovery());
+    for target in remembered {
+        if let RememberedTarget::Hostname(host) = target {
+            resolve_hostname_into_queue(Rc::clone(&wiring), host, false);
+        }
+    }
+    connect_joined_shutdown(&window, controller, player_view, settings, shutdown_failed);
 
     window
 }
@@ -490,8 +537,14 @@ fn connect_exact_discovery(
     window: &adw::ApplicationWindow,
     sidebar: &device_sidebar::DeviceSidebar,
     controller: &ControllerHandle,
+    accepted: &Rc<RefCell<Arc<ApplicationSnapshot>>>,
+    exact_tracker: &Rc<RefCell<ExactTargetTracker>>,
+    wiring: &Rc<RediscoveryWiring>,
 ) {
     let controller = controller.clone();
+    let accepted = Rc::clone(accepted);
+    let exact_tracker = Rc::clone(exact_tracker);
+    let wiring = Rc::clone(wiring);
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
     let dialog_open = Rc::new(Cell::new(false));
     let refresh_button = sidebar.refresh_button().clone();
@@ -509,13 +562,25 @@ fn connect_exact_discovery(
             };
 
             let admitted_controller = controller.clone();
+            let admitted_accepted = Rc::clone(&accepted);
+            let admitted_tracker = Rc::clone(&exact_tracker);
+            let admitted_wiring = Rc::clone(&wiring);
             let admitted_cancel_button = cancel_discovery_button.clone();
             let admitted_exact_button = button.clone();
             let admitted_refresh_button = refresh_button.clone();
             let closed_dialog_open = Rc::clone(&dialog_open);
             exact_discovery_dialog::present(
                 &window,
-                move |target| {
+                move |entry| {
+                    let target = match entry {
+                        DiscoveryEntry::Address(target) => target,
+                        DiscoveryEntry::Hostname(host) => {
+                            // A name is resolved on the controller runtime and
+                            // its addresses join the paced probe queue.
+                            resolve_hostname_into_queue(Rc::clone(&admitted_wiring), host, true);
+                            return;
+                        }
+                    };
                     // Exact and local discovery share one supersedable lane.
                     // Disable both actions before the Refreshing publication
                     // closes the small re-admission interval.
@@ -523,6 +588,11 @@ fn connect_exact_discovery(
                     admitted_refresh_button.set_sensitive(false);
                     match admitted_controller.try_send(ControllerCommand::DiscoverExact(target)) {
                         Ok(()) => {
+                            // Remember the address only once a newer exact
+                            // operation reports a valid reply from it.
+                            admitted_tracker
+                                .borrow_mut()
+                                .admit(target, admitted_accepted.borrow().discovery().generation());
                             admitted_cancel_button.set_visible(true);
                             admitted_cancel_button.set_sensitive(true);
                         }
@@ -540,12 +610,16 @@ fn connect_exact_discovery(
 fn connect_cancel_discovery(
     sidebar: &device_sidebar::DeviceSidebar,
     controller: &ControllerHandle,
+    rediscovery: &Rc<RefCell<RediscoveryQueue>>,
 ) {
     let controller = controller.clone();
+    let rediscovery = Rc::clone(rediscovery);
     sidebar
         .cancel_discovery_button()
         .connect_clicked(move |button| {
             button.set_sensitive(false);
+            // Stop also drains any launch probes still waiting for the lane.
+            rediscovery.borrow_mut().cancel();
             if controller
                 .try_send(ControllerCommand::CancelDiscovery)
                 .is_err()
@@ -625,6 +699,111 @@ fn restore_device_selection(
     applying_snapshot.set(previous);
 }
 
+/// Main-context state the snapshot reducer needs to remember reachable
+/// addresses and names and to pace queued probes.
+struct RediscoveryWiring {
+    settings: Rc<SettingsSession>,
+    exact_tracker: Rc<RefCell<ExactTargetTracker>>,
+    rediscovery: Rc<RefCell<RediscoveryQueue>>,
+    hostnames: Rc<RefCell<HostnameProbes>>,
+    controller: ControllerHandle,
+    accepted: Rc<RefCell<Arc<ApplicationSnapshot>>>,
+    toasts: gtk::glib::WeakRef<adw::ToastOverlay>,
+}
+
+/// Which queued addresses came from which user-entered hostname, so the
+/// name (not its transient address) is remembered once one of them answers.
+#[derive(Default)]
+struct HostnameProbes {
+    pending: HashMap<ExactDiscoveryTarget, HostnameTarget>,
+}
+
+impl RediscoveryWiring {
+    fn remember(&self, target: RememberedTarget) {
+        if let Some(pending_save) = self.settings.remember_target(target) {
+            // The session's writer runs the flushing write off the main
+            // context, one save at a time, so snapshot reduction never
+            // stalls and no older document can land after this one.
+            self.settings.save(pending_save);
+        }
+    }
+
+    fn toast(&self, text: &str) {
+        if let Some(toasts) = self.toasts.upgrade() {
+            toasts.add_toast(adw::Toast::new(text));
+        }
+    }
+}
+
+/// Feed one discovery state to the probe queue: remember a queued address
+/// (or the name it came from) once its probe answered, then send the next
+/// queued target if the lane is idle.
+fn advance_rediscovery(wiring: &Rc<RediscoveryWiring>, discovery: DiscoveryState) {
+    let step = wiring.rediscovery.borrow_mut().advance(discovery);
+    if let Some(target) = step.reachable {
+        let host = {
+            let mut hostnames = wiring.hostnames.borrow_mut();
+            let host = hostnames.pending.remove(&target);
+            if let Some(host) = &host {
+                hostnames.pending.retain(|_, pending| pending != host);
+            }
+            host
+        };
+        wiring.remember(match host {
+            Some(host) => RememberedTarget::Hostname(host),
+            None => RememberedTarget::Address(target),
+        });
+    }
+    if let Some(target) = step.send
+        && wiring
+            .controller
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .is_err()
+    {
+        wiring.rediscovery.borrow_mut().send_failed(target);
+    }
+}
+
+/// Resolve `host` on the controller runtime and queue its addresses. A
+/// user-entered name is remembered only after one of them answers; a
+/// remembered name is already known, so a failure only shows a notice.
+fn resolve_hostname_into_queue(wiring: Rc<RediscoveryWiring>, host: HostnameTarget, entered: bool) {
+    let receiver = match wiring.controller.try_resolve_hostname(host.clone()) {
+        Ok(receiver) => receiver,
+        Err(_) => {
+            wiring.toast("Balun is busy; try the device name again in a moment.");
+            return;
+        }
+    };
+    gtk::glib::MainContext::default().spawn_local(async move {
+        match receiver.receive().await {
+            Ok(addresses) => {
+                if entered {
+                    let mut hostnames = wiring.hostnames.borrow_mut();
+                    for address in &addresses {
+                        hostnames.pending.insert(*address, host.clone());
+                    }
+                }
+                wiring.rediscovery.borrow_mut().enqueue(addresses);
+                let discovery = wiring.accepted.borrow().discovery();
+                advance_rediscovery(&wiring, discovery);
+            }
+            Err(error) => wiring.toast(resolution_failure_copy(error)),
+        }
+    });
+}
+
+const fn resolution_failure_copy(error: HostnameResolutionError) -> &'static str {
+    match error {
+        HostnameResolutionError::Timeout => "Resolving the device name timed out.",
+        HostnameResolutionError::Lookup(_) => "The device name could not be resolved.",
+        HostnameResolutionError::NoUsableAddress => {
+            "The device name has no usable unicast address."
+        }
+        HostnameResolutionError::ControllerStopped => "Balun is shutting down.",
+    }
+}
+
 fn spawn_snapshot_reducer(
     mut snapshots: tokio::sync::watch::Receiver<Arc<ApplicationSnapshot>>,
     accepted: Rc<RefCell<Arc<ApplicationSnapshot>>>,
@@ -632,6 +811,7 @@ fn spawn_snapshot_reducer(
     channel_sidebar: channel_sidebar::ChannelSidebar,
     layout: ResponsiveLayout,
     player_view: Weak<player_view::PlayerView>,
+    rediscovery: Rc<RediscoveryWiring>,
 ) {
     gtk::glib::MainContext::default().spawn_local(async move {
         while snapshots.changed().await.is_ok() {
@@ -660,7 +840,13 @@ fn spawn_snapshot_reducer(
             device_sidebar.apply_snapshot(&candidate);
             channel_sidebar.apply_snapshot(&candidate);
             layout.set_device_selected(candidate.selected_device().is_some());
+            let discovery = candidate.discovery();
             accepted.replace(candidate);
+
+            if let Some(target) = rediscovery.exact_tracker.borrow_mut().observe(discovery) {
+                rediscovery.remember(RememberedTarget::Address(target));
+            }
+            advance_rediscovery(&rediscovery, discovery);
         }
 
         // The controller watch can also close because its actor failed. Its
@@ -675,6 +861,7 @@ fn connect_joined_shutdown(
     window: &adw::ApplicationWindow,
     controller: ControllerRuntime,
     player_view: Rc<player_view::PlayerView>,
+    settings: Rc<SettingsSession>,
     shutdown_failed: Rc<Cell<bool>>,
 ) {
     let controller = Rc::new(RefCell::new(Some(controller)));
@@ -690,13 +877,18 @@ fn connect_joined_shutdown(
             return gtk::glib::Propagation::Stop;
         }
 
+        // Capture geometry while the window is still mapped and interactive.
+        // The durable write queues on the settings writer behind any save
+        // still in flight, so its file flushes never stall the main loop.
+        if let Some(pending_save) = settings.stage_window(window) {
+            settings.save(pending_save);
+        }
         window.set_sensitive(false);
-        let Some(controller) = controller.borrow_mut().take() else {
-            shutdown_complete.set(true);
-            return gtk::glib::Propagation::Proceed;
-        };
+        let controller = controller.borrow_mut().take();
         let retained_player_view = player_view.borrow_mut().take();
-        controller.begin_shutdown();
+        if let Some(controller) = &controller {
+            controller.begin_shutdown();
+        }
         if retained_player_view
             .as_ref()
             .is_some_and(|player_view| player_view.shut_down().is_err())
@@ -707,12 +899,19 @@ fn connect_joined_shutdown(
 
         let shutdown_complete = Rc::clone(&shutdown_complete);
         let shutdown_failed = Rc::clone(&shutdown_failed);
+        let settings = Rc::clone(&settings);
         let window = window.downgrade();
         gtk::glib::MainContext::default().spawn_local(async move {
             // Retain GTK and playback ownership on this local future while
-            // only the controller join moves to the blocking worker.
+            // only the controller join moves to the blocking worker. The
+            // window closes only after the join and every queued settings
+            // write finish, so the process never exits ahead of a write.
             let _retained_player_view = retained_player_view;
-            match gtk::gio::spawn_blocking(move || controller.join()).await {
+            let worker = gtk::gio::spawn_blocking(move || {
+                controller.map_or(Ok(()), ControllerRuntime::join)
+            });
+            settings.drain().await;
+            match worker.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
                     shutdown_failed.set(true);
@@ -755,6 +954,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
+    use balun::settings::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH};
 
     #[test]
     fn fullscreen_keyboard_contract_filters_modifiers_and_ambient_locks() {
@@ -1512,8 +1712,8 @@ mod tests {
                 let window = adw::ApplicationWindow::builder()
                     .application(application)
                     .title("Balun")
-                    .default_width(DEFAULT_WIDTH)
-                    .default_height(DEFAULT_HEIGHT)
+                    .default_width(i32::try_from(DEFAULT_WINDOW_WIDTH).expect("fits i32"))
+                    .default_height(i32::try_from(DEFAULT_WINDOW_HEIGHT).expect("fits i32"))
                     .content(&device_and_content)
                     .build();
                 let layout = ResponsiveLayout::new(
@@ -1563,10 +1763,30 @@ mod tests {
                 layout.set_device_selected(initial.selected_device().is_some());
                 let accepted = Rc::new(RefCell::new(initial));
                 let poll_snapshots = handle.subscribe();
+                let settings = Rc::new(SettingsSession::open(None));
+                let exact_tracker = Rc::new(RefCell::new(ExactTargetTracker::new()));
+                let rediscovery = Rc::new(RefCell::new(RediscoveryQueue::new([])));
+                let toasts = adw::ToastOverlay::new();
+                let wiring = Rc::new(RediscoveryWiring {
+                    settings: Rc::clone(&settings),
+                    exact_tracker: Rc::clone(&exact_tracker),
+                    rediscovery: Rc::clone(&rediscovery),
+                    hostnames: Rc::new(RefCell::new(HostnameProbes::default())),
+                    controller: handle.clone(),
+                    accepted: Rc::clone(&accepted),
+                    toasts: toasts.downgrade(),
+                });
 
                 connect_refresh(&device_sidebar, &handle);
-                connect_exact_discovery(&window, &device_sidebar, &handle);
-                connect_cancel_discovery(&device_sidebar, &handle);
+                connect_exact_discovery(
+                    &window,
+                    &device_sidebar,
+                    &handle,
+                    &accepted,
+                    &exact_tracker,
+                    &wiring,
+                );
+                connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
                 connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
                 connect_channel_activation(
                     &channel_sidebar,
@@ -1583,11 +1803,13 @@ mod tests {
                     channel_sidebar,
                     layout,
                     Rc::downgrade(&player_view),
+                    Rc::clone(&wiring),
                 );
                 connect_joined_shutdown(
                     &window,
                     controller,
                     Rc::clone(&player_view),
+                    settings,
                     Rc::clone(&shutdown_failed),
                 );
 

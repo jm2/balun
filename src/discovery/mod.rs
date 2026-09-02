@@ -2,6 +2,7 @@
 
 pub(crate) mod approval;
 mod client;
+mod hostname;
 mod local;
 mod manual;
 mod registry;
@@ -12,6 +13,11 @@ mod types;
 pub use client::{
     DiscoveryClient, DiscoveryError, DiscoveryObservation, DiscoveryReport, DiscoveryStats,
     InvalidProbeConfig, ProbeConfig, ProbeIssue,
+};
+pub use hostname::{
+    DiscoveryEntry, HOSTNAME_RESOLUTION_TIMEOUT, HostnameResolutionError, HostnameTarget,
+    InvalidDiscoveryEntry, InvalidHostnameTarget, MAX_HOSTNAME_BYTES, MAX_RESOLVED_ADDRESSES,
+    resolve_hostname,
 };
 pub use local::local_probe_endpoints;
 pub use manual::{
