@@ -88,16 +88,18 @@ print_bounded_log()
 
 start_wayland()
 {
-    local wayland_display=balun-wayland-0
-    local wayland_log="$temporary_root/weston.log"
-    local wayland_probe_log="$temporary_root/wayland-info.log"
+    local weston_shell=${1:-kiosk-shell.so}
+    local wayland_display=${2:-balun-wayland-0}
+    local log_stem=${3:-weston}
+    local wayland_log="$temporary_root/$log_stem.log"
+    local wayland_probe_log="$temporary_root/$log_stem-wayland-info.log"
 
     unset DISPLAY WAYLAND_DEBUG WAYLAND_DISPLAY WAYLAND_SOCKET XAUTHORITY
 
     weston \
         --backend=headless \
         --renderer=pixman \
-        --shell=kiosk-shell.so \
+        --shell="$weston_shell" \
         --socket="$wayland_display" \
         --width=1280 \
         --height=800 \
@@ -300,22 +302,29 @@ dbus-run-session -- \
         ui::channel_sidebar::tests::ready_listview_activation_is_inert_on_selection_and_exact_on_activate -- \
         --exact --ignored --nocapture
 
-# A bare Xvfb server has no window manager to acknowledge fullscreen state.
-# Keep the compositor-confirmed round trip on the preferred/required Wayland
-# route, while the pure key and reducer contracts still run on every platform.
+dbus-run-session -- \
+    timeout --signal=TERM --kill-after=5s 30s \
+    cargo test --locked --features desktop --test playback_synthetic \
+        synthetic_mpeg2_reaches_eos_and_renders_multiple_frames -- \
+        --exact --ignored --nocapture --test-threads=1
+
+# Weston kiosk-shell intentionally keeps every top-level window fullscreen,
+# and a bare Xvfb server has no window manager to acknowledge fullscreen state.
+# Use a fresh headless Wayland desktop shell for the one real enter/exit round
+# trip after all established kiosk lifecycle/video smokes have completed.
 if [ "$selected_backend" = wayland ]; then
+    stop_compositor
+    start_wayland \
+        desktop-shell.so \
+        balun-wayland-fullscreen-0 \
+        weston-fullscreen || \
+        fail "the headless Wayland desktop shell failed its readiness check"
     dbus-run-session -- \
         timeout --signal=TERM --kill-after=5s 30s \
         cargo test --locked --features desktop --bin balun \
             ui::window::tests::wayland_fullscreen_round_trip_protects_and_restores_navigation -- \
             --exact --ignored --nocapture
 fi
-
-dbus-run-session -- \
-    timeout --signal=TERM --kill-after=5s 30s \
-    cargo test --locked --features desktop --test playback_synthetic \
-        synthetic_mpeg2_reaches_eos_and_renders_multiple_frames -- \
-        --exact --ignored --nocapture --test-threads=1
 
 printf '[balun] desktop and synthetic playback lifecycle smoke passed (%s)\n' \
     "$selected_backend"
