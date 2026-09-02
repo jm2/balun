@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
 <!-- Balun application icon: a Tango-style CRT television showing colour bars, with rabbit ears
      joined by a balun block and the name on the bezel. Generated geometry; edit the source
      generator in the packaging notes rather than the letter rectangles by hand. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
   <defs>
     <linearGradient id="bezel" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#888a85"/>
