@@ -70,6 +70,40 @@ jobs:
       - name: Test (release)
         run: cargo test --release --all-targets --locked
 
+  desktop-metadata:
+    name: Desktop metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends appstream desktop-file-utils
+
+      - name: Validate the desktop entry
+        run: |
+          output="$(desktop-file-validate data/io.github.jm2.Balun.desktop 2>&1)"
+          if [ -n "$output" ]; then
+            printf '%s\n' "$output" >&2
+            exit 1
+          fi
+
+      - name: Validate the AppStream metainfo
+        run: appstreamcli validate --no-net data/io.github.jm2.Balun.metainfo.xml
+
+      - name: Check icon sizes
+        run: |
+          for size in 16 24 32 48 64 128 256 512; do
+            test -s "data/icons/hicolor/${size}x${size}/apps/io.github.jm2.Balun.png" \
+              || { echo "missing hicolor ${size}x${size} icon" >&2; exit 1; }
+          done
+          test -s data/icons/hicolor/scalable/apps/io.github.jm2.Balun.svg
+          test -s data/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg
+          test -s data/balun.ico
+
   msrv:
     # Cargo.toml's declared floor is rustc 1.98.
     name: MSRV

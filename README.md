@@ -1,3 +1,5 @@
+<img src="data/icons/hicolor/128x128/apps/io.github.jm2.Balun.png" width="96" alt="Balun icon">
+
 # Balun
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
@@ -281,6 +283,8 @@ backend; `auto` is the default, and CI requires Wayland.
 CI automatically runs on every push/PR:
 - **Linux quality** — release-component, packaging, helper, and toolchain policy tests, then
   `cargo fmt`, strict Clippy, and debug plus release tests
+- **Desktop metadata** — validates the desktop entry and AppStream metainfo and checks the icon
+  set
 - **MSRV** — `cargo check --all-features` on the declared Rust 1.98 minimum
 - **Linux desktop** — builds, lints, and tests the desktop shell, runs `--probe-playback`, and
   drives the Wayland lifecycle smokes
@@ -376,6 +380,13 @@ build-aux/
 ├── linux/                  # Linux package payload and metadata validators
 ├── packaging/              # Shared forbidden-component policy and validator
 └── toolchain/              # Dependabot-tracked Rust floor proposal
+
+data/
+├── io.github.jm2.Balun.desktop      # Desktop entry
+├── io.github.jm2.Balun.metainfo.xml # AppStream metadata
+├── icons/hicolor/          # Application icon (scalable, symbolic, 16-512 px)
+├── balun.iconset/          # macOS icon source
+└── balun.ico               # Windows icon
 
 hooks/pre-commit             # cargo fmt check
 tests/                       # Synthetic MPEG-2 fixture and display-backed playback test

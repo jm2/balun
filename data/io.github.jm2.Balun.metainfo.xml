@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.jm2.Balun</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Balun</name>
+  <summary>A lightweight cross-platform HDHomeRun live TV viewer</summary>
+
+  <description>
+    <p>
+      Balun finds the HDHomeRun tuners on your network, keeps each device's
+      channel lineup separate, and plays unprotected channels with GStreamer.
+      It is a viewer, not a DVR: there is no recording, timeshift, or tuner
+      administration.
+    </p>
+    <ul>
+      <li>Discovers tuners on the local network and remembers tuners you add by address</li>
+      <li>Shows one channel lineup per device, with favorite, HD, and protected badges</li>
+      <li>Plays live TV with stop, volume, mute, and fullscreen controls</li>
+      <li>Talks only to your tuners: no cloud discovery, accounts, or telemetry</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.jm2.Balun.desktop</launchable>
+  <provides>
+    <binary>balun</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/jm2/balun</url>
+  <url type="bugtracker">https://github.com/jm2/balun/issues</url>
+  <url type="vcs-browser">https://github.com/jm2/balun</url>
+
+  <developer id="io.github.jm2">
+    <name>Balun Contributors</name>
+  </developer>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#62a0ea</color>
+    <color type="primary" scheme_preference="dark">#1a5fb4</color>
+  </branding>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0-alpha.1" type="development" date="2026-09-02">
+      <description>
+        <p>Pre-alpha development snapshot: local and exact-address tuner discovery, per-device lineups, and live playback of unprotected channels.</p>
+      </description>
+    </release>
+  </releases>
+
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <internet>always</internet>
+  </recommends>
+</component>
