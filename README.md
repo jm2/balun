@@ -8,8 +8,9 @@ A lightweight, cross-platform **HDHomeRun live TV viewer** written in Rust with 
 
 Balun lists every HDHomeRun on your network in one sidebar, shows the selected device's own
 channel lineup in a second, and plays unprotected channels in a live-video pane. Lineups are never
-merged across devices, and no device address or stream URL ever reaches the user interface or the
-media framework.
+merged across devices, no stream URL ever reaches the user interface, and the media framework
+receives neither a device address nor a stream URL. Playback errors may name the device and its
+address so you know which tuner failed.
 
 > **Pre-alpha.** Balun plays live TV on development builds (verified on Windows against real
 > tuners), but there are no packages yet and Linux and macOS live-device acceptance is still
