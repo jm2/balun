@@ -1373,18 +1373,6 @@ mod tests {
         })
     }
 
-    fn player_status_label(player: &Rc<player_view::PlayerView>) -> Option<gtk::Label> {
-        let mut child = player.root().first_child()?;
-        loop {
-            if let Ok(header) = child.clone().downcast::<adw::HeaderBar>() {
-                return header
-                    .title_widget()
-                    .and_then(|widget| widget.downcast::<gtk::Label>().ok());
-            }
-            child = child.next_sibling()?;
-        }
-    }
-
     fn fail_window_smoke(
         failure: &Rc<RefCell<Option<String>>>,
         application: &adw::Application,
@@ -1660,16 +1648,13 @@ mod tests {
                                 SelectedLineupStatus::Failed(_)
                             ) =>
                         {
-                            match player_status_label(&player_status) {
-                                Some(label) if label.label() == "Stopped" => {}
-                                _ => {
-                                    fail_window_smoke(
-                                        &driver_failure,
-                                        &driver_application,
-                                        "the idle player left its stopped presentation".into(),
-                                    );
-                                    return gtk::glib::ControlFlow::Continue;
-                                }
+                            if player_status.playback_status().label() != "Stopped" {
+                                fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "the idle player left its stopped presentation".into(),
+                                );
+                                return gtk::glib::ControlFlow::Continue;
                             }
                             // User device change: the sidebar signal's
                             // stop-on-admission fires here.
@@ -1713,17 +1698,13 @@ mod tests {
                                 == SelectedLineupStatus::Unselected
                             && refresh_state.load(Ordering::SeqCst) == 2 =>
                         {
-                            match player_status_label(&player_status) {
-                                Some(label) if label.label() == "Stopped" => {}
-                                _ => {
-                                    fail_window_smoke(
-                                        &driver_failure,
-                                        &driver_application,
-                                        "the mutation did not settle the player presentation"
-                                            .into(),
-                                    );
-                                    return gtk::glib::ControlFlow::Continue;
-                                }
+                            if player_status.playback_status().label() != "Stopped" {
+                                fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "the mutation did not settle the player presentation".into(),
+                                );
+                                return gtk::glib::ControlFlow::Continue;
                             }
                             let Some(window) = window_weak.upgrade() else {
                                 fail_window_smoke(

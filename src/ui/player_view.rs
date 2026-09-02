@@ -153,6 +153,14 @@ impl PlayerView {
         &self.fullscreen_button
     }
 
+    /// Return the header-presented playback status copy for smoke
+    /// assertions; production code reaches this label only through the
+    /// session-state presentation it applies itself.
+    #[cfg(test)]
+    pub(crate) const fn playback_status(&self) -> &gtk::Label {
+        &self.playback_status
+    }
+
     /// Reconcile presentation only after the application window reports its
     /// compositor-confirmed fullscreen state.
     pub(crate) fn apply_fullscreen_presentation(&self, fullscreen: bool) {
