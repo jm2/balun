@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a balun, and the name on the bezel, as scalable and symbolic SVG, hicolor PNGs from 16 to
   512 px, a macOS iconset, and a Windows `.ico`, validated by a new CI job. Packages are still to
   come.
+- **Flatpak bundle** — Add the `io.github.jm2.Balun` manifest on the GNOME 50 runtime with the
+  reviewed six-entry permission policy, the Freedesktop ffmpeg-full codec extension, an offline
+  cargo build from generated locked sources, a build-time check that the runtime supplies every
+  structural playback factory, and app-payload validation. CI builds and reopens an x86_64
+  bundle; the release-candidate workflow builds x86_64 and aarch64 bundles as artifacts.
 - **Endpoint-free playback errors** — Failures reduce to fixed messages for no tuner available,
   channel unavailable, stream rejected, device or stream unavailable, missing codec or plugin,
   protected channel, and internal error. No native error text, header, or address is retained.

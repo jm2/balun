@@ -38,7 +38,7 @@ media framework.
 | Audible output and complete codec contract | ✅ Windows; Linux and macOS pending |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, DMG, winget) | ❌ Planned |
+| Packages (Flatpak, deb, rpm, DMG, winget) | 🚧 A Flatpak bundle is built and validated in CI; nothing is published yet |
 | Cross-platform: Linux, macOS, Windows | ✅ Windows verified with real tuners; Linux covered by CI runtime smokes; macOS build-tested only |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
@@ -78,8 +78,9 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 
 ## Installation
 
-No packages are published yet; build from source as described below. The release-candidate
-workflow currently produces only internal diagnostic artifacts.
+No packages are published yet; build from source as described below. CI builds and validates
+a Flatpak bundle on every change, and the release-candidate workflow builds x86_64 and aarch64
+bundles as internal artifacts.
 
 ---
 
@@ -285,6 +286,8 @@ CI automatically runs on every push/PR:
   `cargo fmt`, strict Clippy, and debug plus release tests
 - **Desktop metadata** — validates the desktop entry and AppStream metainfo and checks the icon
   set
+- **Flatpak (x86_64)** — generates locked cargo sources, builds the bundle on the GNOME 50
+  runtime with a build-time playback-factory probe, reopens it, and validates its payload
 - **MSRV** — `cargo check --all-features` on the declared Rust 1.98 minimum
 - **Linux desktop** — builds, lints, and tests the desktop shell, runs `--probe-playback`, and
   drives the Wayland lifecycle smokes
@@ -376,7 +379,7 @@ scripts/
 └── sync_rust_toolchain.py  # Rust floor synchronization
 
 build-aux/
-├── flatpak/                # Pinned Cargo-source generator and permission/bundle validators
+├── flatpak/                # Flatpak manifest, pinned Cargo-source generator, permission/bundle validators
 ├── linux/                  # Linux package payload and metadata validators
 ├── packaging/              # Shared forbidden-component policy and validator
 └── toolchain/              # Dependabot-tracked Rust floor proposal

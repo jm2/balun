@@ -1,0 +1,86 @@
+app-id: io.github.jm2.Balun
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: balun
+finish-args:
+  # Wayland with a reviewed X11 fallback
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  # PulseAudio playback plus its input/MIDI/ALSA boundary
+  - --socket=pulseaudio
+  # Local HDHomeRun discovery, device HTTP, and the live stream
+  - --share=network
+  # Standard GPU/DRI grant for practical UHD decode/presentation
+  - --device=dri
+add-extensions:
+  # The broadcast decoders (MPEG-2, H.264, AC-3, AAC, HEVC) come from the
+  # runtime's gst-libav through this reviewed Freedesktop extension. It stays
+  # outside Balun's app-owned payload and is never copied into the bundle.
+  org.freedesktop.Platform.ffmpeg-full:
+    directory: lib/ffmpeg
+    version: "25.08"
+    add-ld-path: .
+    no-autodownload: false
+    autodelete: false
+cleanup-commands:
+  - mkdir -p /app/lib/ffmpeg
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/balun/cargo
+    CARGO_NET_OFFLINE: "true"
+modules:
+  - name: balun
+    buildsystem: simple
+    build-commands:
+      - cargo build --offline --locked --release --features desktop --bin balun
+      - install -Dm0755 target/release/balun /app/bin/balun
+      - install -Dm0644 data/io.github.jm2.Balun.desktop
+          /app/share/applications/io.github.jm2.Balun.desktop
+      - install -Dm0644 data/io.github.jm2.Balun.metainfo.xml
+          /app/share/metainfo/io.github.jm2.Balun.metainfo.xml
+      - for size in 16 24 32 48 64 128 256 512; do
+          install -Dm0644
+            "data/icons/hicolor/${size}x${size}/apps/io.github.jm2.Balun.png"
+            "/app/share/icons/hicolor/${size}x${size}/apps/io.github.jm2.Balun.png";
+        done
+      - install -Dm0644 data/icons/hicolor/scalable/apps/io.github.jm2.Balun.svg
+          /app/share/icons/hicolor/scalable/apps/io.github.jm2.Balun.svg
+      - install -Dm0644 data/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg
+          /app/share/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg
+      # The runtime must supply every structural playback factory Balun checks
+      # at startup; a runtime that lacks one fails the build instead of
+      # shipping a bundle that reports playback unavailable.
+      - for factory in playbin3 uridecodebin3 decodebin3 appsrc tsdemux deinterlace
+          gtk4paintablesink; do
+          gst-inspect-1.0 --exists "$factory"
+            || { echo "runtime lacks GStreamer factory $factory" >&2; exit 1; };
+        done
+      # Inspect only the app-owned /app payload. The referenced GNOME runtime
+      # and its codec extension remain outside the bundle.
+      - bash build-aux/linux/validate-package-compliance.sh --tree /app
+    sources:
+      - type: dir
+        path: ../..
+        # Directory sources copy the working tree, not just tracked files.
+        # Exclude VCS/agent state and every known generated tree so a host
+        # target directory cannot enter or influence the sandbox build.
+        skip:
+          - .git
+          - .claude
+          - .codex
+          - .flatpak-builder
+          - .venv-flatpak
+          - balun.flatpak
+          - build-dir
+          - cargo-sources.json
+          - coverage
+          - dist
+          - repo
+          - target
+          - build-aux/flatpak/cargo-sources.json
+      - cargo-sources.json

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Pin the Linux dependency inputs that exist in the current Balun tree.
-# Package recipes and manifests must be added here atomically when they land.
+# Package recipes and manifests are added here atomically when they land.
 
 set -eu
 
@@ -10,6 +10,7 @@ validator="$script_dir/validate-package-compliance.sh"
 
 "$validator" --metadata \
     "$repository_root/Cargo.toml" \
-    "$repository_root/Cargo.lock"
+    "$repository_root/Cargo.lock" \
+    "$repository_root/build-aux/flatpak/io.github.jm2.Balun.yml"
 
 echo "Current Linux packaging inputs comply with the reviewed component policy"
