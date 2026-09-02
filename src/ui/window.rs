@@ -880,6 +880,9 @@ mod tests {
                 if activated.replace(true) {
                     return;
                 }
+                gtk::Settings::default()
+                    .expect("fullscreen smoke requires display settings")
+                    .set_gtk_enable_animations(false);
 
                 let channel_focus = gtk::Button::with_label("Channels");
                 let channel_page = adw::NavigationPage::new(&channel_focus, "Channels");
@@ -932,6 +935,7 @@ mod tests {
                     let player_view = Rc::clone(&player_view);
                     let window = window.downgrade();
                     Rc::new(move || {
+                        eprintln!("[balun] fullscreen smoke: prepare normal navigation");
                         let Some(window) = window.upgrade() else {
                             failure.replace(Some(
                                 "fullscreen smoke window disappeared before entry".into(),
@@ -944,6 +948,23 @@ mod tests {
                         if !inner.shows_content() {
                             failure.replace(Some(
                                 "compact channel activation did not present the player".into(),
+                            ));
+                            application.quit();
+                            return;
+                        }
+                        layout.show_channels();
+                        if inner.shows_content() {
+                            failure.replace(Some(
+                                "authoritative device selection did not restore Channels".into(),
+                            ));
+                            application.quit();
+                            return;
+                        }
+                        navigation.show_player();
+                        if !inner.shows_content() {
+                            failure.replace(Some(
+                                "activation after device selection did not restore the player"
+                                    .into(),
                             ));
                             application.quit();
                             return;
@@ -991,8 +1012,16 @@ mod tests {
                     let player_view = Rc::clone(&player_view);
                     let channel_focus = channel_focus.clone();
                     window.connect_fullscreened_notify(move |window| {
+                        eprintln!(
+                            "[balun] fullscreen smoke: notify phase={} fullscreen={}",
+                            phase.get(),
+                            window.is_fullscreen()
+                        );
                         match (phase.get(), window.is_fullscreen()) {
-                            (0, false) => start(),
+                            (0, false) => {
+                                let start = Rc::clone(&start);
+                                gtk::glib::idle_add_local_once(move || start());
+                            }
                             (1, true) => {
                                 if !layout.is_fullscreen()
                                     || !outer.is_collapsed()
@@ -1007,14 +1036,24 @@ mod tests {
                                     failure.replace(Some(
                                         "confirmed fullscreen did not protect navigation and focus the exit control".into(),
                                     ));
-                                    application.quit();
+                                    let application = application.clone();
+                                    gtk::glib::idle_add_local_once(move || application.quit());
                                     return;
                                 }
                                 phase.set(2);
-                                player_view.fullscreen_button().emit_clicked();
+                                let fullscreen_button =
+                                    player_view.fullscreen_button().clone();
+                                gtk::glib::idle_add_local_once(move || {
+                                    eprintln!(
+                                        "[balun] fullscreen smoke: request confirmed exit"
+                                    );
+                                    fullscreen_button.emit_clicked();
+                                });
                             }
                             (2, false) => {
                                 if layout.is_fullscreen()
+                                    || outer.is_collapsed()
+                                    || !outer.shows_content()
                                     || !inner.is_collapsed()
                                     || inner.shows_content()
                                     || outer_content.can_pop()
@@ -1025,12 +1064,22 @@ mod tests {
                                     failure.replace(Some(
                                         "fullscreen exit did not restore navigation and focus exactly".into(),
                                     ));
-                                    application.quit();
+                                    let application = application.clone();
+                                    gtk::glib::idle_add_local_once(move || application.quit());
                                     return;
                                 }
                                 completed.set(true);
-                                window.close();
-                                application.quit();
+                                let application = application.clone();
+                                let window = window.downgrade();
+                                gtk::glib::idle_add_local_once(move || {
+                                    eprintln!(
+                                        "[balun] fullscreen smoke: close after confirmed exit"
+                                    );
+                                    if let Some(window) = window.upgrade() {
+                                        window.close();
+                                    }
+                                    gtk::glib::idle_add_local_once(move || application.quit());
+                                });
                             }
                             _ => {}
                         }

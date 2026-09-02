@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Run Balun's real GTK/libadwaita window and synthetic playback lifecycles under
 # an isolated display compositor. Headless Wayland is preferred and is the CI
-# route; Xvfb remains an optional local fallback. Each Rust smoke gets a
-# separate session bus and bounded process: the first proves clean application
-# shutdown without discovery, the second proves an active production session's
-# URI-opaque paintable and shutdown, the third proves PlayerView binding, and
-# the fourth proves that a checked-in MPEG-2 transport stream reaches EOS after
-# rendering through gtk4paintablesink.
+# route; Xvfb remains an optional local fallback. Every Rust smoke gets a
+# separate session bus and bounded process. Together they cover clean joined
+# shutdown, the production session and PlayerView paintable boundary, audio
+# controls, exact channel activation, synthetic decode/render/EOS, and a real
+# Wayland fullscreen enter/exit round trip with navigation restoration.
 
 set -euo pipefail
 
