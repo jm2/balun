@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use adw::prelude::*;
 use balun::controller::{
-    ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime,
+    ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryState,
+    ExactTargetTracker, RediscoveryQueue,
 };
 use balun::playback::{PlaybackInitializationError, PlaybackRuntime};
 
@@ -347,10 +348,14 @@ pub(crate) fn build(
     channel_sidebar.apply_snapshot(&initial);
     layout.set_device_selected(initial.selected_device().is_some());
     let accepted = Rc::new(RefCell::new(initial));
+    let exact_tracker = Rc::new(RefCell::new(ExactTargetTracker::new()));
+    let rediscovery = Rc::new(RefCell::new(RediscoveryQueue::new(
+        settings.remembered_targets(),
+    )));
 
     connect_refresh(&device_sidebar, &handle);
-    connect_exact_discovery(&window, &device_sidebar, &handle);
-    connect_cancel_discovery(&device_sidebar, &handle);
+    connect_exact_discovery(&window, &device_sidebar, &handle, &accepted, &exact_tracker);
+    connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
     connect_channel_activation(
         &channel_sidebar,
@@ -366,7 +371,16 @@ pub(crate) fn build(
         channel_sidebar,
         layout,
         Rc::downgrade(&player_view),
+        RediscoveryWiring {
+            settings: Rc::clone(&settings),
+            exact_tracker,
+            rediscovery: Rc::clone(&rediscovery),
+            controller: handle.clone(),
+        },
     );
+    // Remembered addresses are the only probes Balun sends unasked; each one
+    // waits for the lane to settle so it never supersedes a user action.
+    send_next_rediscovery(&rediscovery, &handle, accepted.borrow().discovery());
     connect_joined_shutdown(&window, controller, player_view, settings, shutdown_failed);
 
     window
@@ -488,8 +502,12 @@ fn connect_exact_discovery(
     window: &adw::ApplicationWindow,
     sidebar: &device_sidebar::DeviceSidebar,
     controller: &ControllerHandle,
+    accepted: &Rc<RefCell<Arc<ApplicationSnapshot>>>,
+    exact_tracker: &Rc<RefCell<ExactTargetTracker>>,
 ) {
     let controller = controller.clone();
+    let accepted = Rc::clone(accepted);
+    let exact_tracker = Rc::clone(exact_tracker);
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
     let dialog_open = Rc::new(Cell::new(false));
     let refresh_button = sidebar.refresh_button().clone();
@@ -507,6 +525,8 @@ fn connect_exact_discovery(
             };
 
             let admitted_controller = controller.clone();
+            let admitted_accepted = Rc::clone(&accepted);
+            let admitted_tracker = Rc::clone(&exact_tracker);
             let admitted_cancel_button = cancel_discovery_button.clone();
             let admitted_exact_button = button.clone();
             let admitted_refresh_button = refresh_button.clone();
@@ -521,6 +541,11 @@ fn connect_exact_discovery(
                     admitted_refresh_button.set_sensitive(false);
                     match admitted_controller.try_send(ControllerCommand::DiscoverExact(target)) {
                         Ok(()) => {
+                            // Remember the address only once a newer exact
+                            // operation reports a valid reply from it.
+                            admitted_tracker
+                                .borrow_mut()
+                                .admit(target, admitted_accepted.borrow().discovery().generation());
                             admitted_cancel_button.set_visible(true);
                             admitted_cancel_button.set_sensitive(true);
                         }
@@ -538,12 +563,16 @@ fn connect_exact_discovery(
 fn connect_cancel_discovery(
     sidebar: &device_sidebar::DeviceSidebar,
     controller: &ControllerHandle,
+    rediscovery: &Rc<RefCell<RediscoveryQueue>>,
 ) {
     let controller = controller.clone();
+    let rediscovery = Rc::clone(rediscovery);
     sidebar
         .cancel_discovery_button()
         .connect_clicked(move |button| {
             button.set_sensitive(false);
+            // Stop also drains any launch probes still waiting for the lane.
+            rediscovery.borrow_mut().cancel();
             if controller
                 .try_send(ControllerCommand::CancelDiscovery)
                 .is_err()
@@ -623,6 +652,31 @@ fn restore_device_selection(
     applying_snapshot.set(previous);
 }
 
+/// Main-context state the snapshot reducer needs to remember reachable
+/// addresses and pace launch-time probes.
+struct RediscoveryWiring {
+    settings: Rc<SettingsSession>,
+    exact_tracker: Rc<RefCell<ExactTargetTracker>>,
+    rediscovery: Rc<RefCell<RediscoveryQueue>>,
+    controller: ControllerHandle,
+}
+
+fn send_next_rediscovery(
+    queue: &Rc<RefCell<RediscoveryQueue>>,
+    controller: &ControllerHandle,
+    discovery: DiscoveryState,
+) {
+    let Some(target) = queue.borrow_mut().next(discovery) else {
+        return;
+    };
+    if controller
+        .try_send(ControllerCommand::DiscoverExact(target))
+        .is_err()
+    {
+        queue.borrow_mut().send_failed(target);
+    }
+}
+
 fn spawn_snapshot_reducer(
     mut snapshots: tokio::sync::watch::Receiver<Arc<ApplicationSnapshot>>,
     accepted: Rc<RefCell<Arc<ApplicationSnapshot>>>,
@@ -630,6 +684,7 @@ fn spawn_snapshot_reducer(
     channel_sidebar: channel_sidebar::ChannelSidebar,
     layout: ResponsiveLayout,
     player_view: Weak<player_view::PlayerView>,
+    rediscovery: RediscoveryWiring,
 ) {
     gtk::glib::MainContext::default().spawn_local(async move {
         while snapshots.changed().await.is_ok() {
@@ -658,7 +713,18 @@ fn spawn_snapshot_reducer(
             device_sidebar.apply_snapshot(&candidate);
             channel_sidebar.apply_snapshot(&candidate);
             layout.set_device_selected(candidate.selected_device().is_some());
+            let discovery = candidate.discovery();
             accepted.replace(candidate);
+
+            if let Some(target) = rediscovery.exact_tracker.borrow_mut().observe(discovery)
+                && let Some(pending_save) = rediscovery.settings.remember_target(target)
+            {
+                // The session's writer runs the flushing write off the main
+                // context, one save at a time, so snapshot reduction never
+                // stalls and no older document can land after this one.
+                rediscovery.settings.save(pending_save);
+            }
+            send_next_rediscovery(&rediscovery.rediscovery, &rediscovery.controller, discovery);
         }
 
         // The controller watch can also close because its actor failed. Its
@@ -690,9 +756,11 @@ fn connect_joined_shutdown(
         }
 
         // Capture geometry while the window is still mapped and interactive.
-        // The durable write runs on the blocking worker below, so its file
-        // flushes never stall the main loop.
-        let pending_save = settings.stage_window(window);
+        // The durable write queues on the settings writer behind any save
+        // still in flight, so its file flushes never stall the main loop.
+        if let Some(pending_save) = settings.stage_window(window) {
+            settings.save(pending_save);
+        }
         window.set_sensitive(false);
         let controller = controller.borrow_mut().take();
         let retained_player_view = player_view.borrow_mut().take();
@@ -709,19 +777,18 @@ fn connect_joined_shutdown(
 
         let shutdown_complete = Rc::clone(&shutdown_complete);
         let shutdown_failed = Rc::clone(&shutdown_failed);
+        let settings = Rc::clone(&settings);
         let window = window.downgrade();
         gtk::glib::MainContext::default().spawn_local(async move {
             // Retain GTK and playback ownership on this local future while
-            // only the settings write and the controller join move to the
-            // blocking worker. The window closes only after both finish, so
-            // the process never exits ahead of the write.
+            // only the controller join moves to the blocking worker. The
+            // window closes only after the join and every queued settings
+            // write finish, so the process never exits ahead of a write.
             let _retained_player_view = retained_player_view;
             let worker = gtk::gio::spawn_blocking(move || {
-                if let Some(save) = pending_save {
-                    save.write();
-                }
                 controller.map_or(Ok(()), ControllerRuntime::join)
             });
+            settings.drain().await;
             match worker.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
@@ -1574,10 +1641,19 @@ mod tests {
                 layout.set_device_selected(initial.selected_device().is_some());
                 let accepted = Rc::new(RefCell::new(initial));
                 let poll_snapshots = handle.subscribe();
+                let settings = Rc::new(SettingsSession::open(None));
+                let exact_tracker = Rc::new(RefCell::new(ExactTargetTracker::new()));
+                let rediscovery = Rc::new(RefCell::new(RediscoveryQueue::new([])));
 
                 connect_refresh(&device_sidebar, &handle);
-                connect_exact_discovery(&window, &device_sidebar, &handle);
-                connect_cancel_discovery(&device_sidebar, &handle);
+                connect_exact_discovery(
+                    &window,
+                    &device_sidebar,
+                    &handle,
+                    &accepted,
+                    &exact_tracker,
+                );
+                connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
                 connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
                 connect_channel_activation(
                     &channel_sidebar,
@@ -1593,12 +1669,18 @@ mod tests {
                     channel_sidebar,
                     layout,
                     Rc::downgrade(&player_view),
+                    RediscoveryWiring {
+                        settings: Rc::clone(&settings),
+                        exact_tracker,
+                        rediscovery,
+                        controller: handle.clone(),
+                    },
                 );
                 connect_joined_shutdown(
                     &window,
                     controller,
                     Rc::clone(&player_view),
-                    Rc::new(SettingsSession::open(None)),
+                    settings,
                     Rc::clone(&shutdown_failed),
                 );
 

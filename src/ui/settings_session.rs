@@ -1,9 +1,12 @@
 //! Main-context owner of the loaded settings document and its saves.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use adw::prelude::*;
+use balun::discovery::ExactDiscoveryTarget;
 use balun::settings::{Settings, SettingsStore, WindowState};
+use tokio::sync::watch;
 
 /// Loads the settings once and writes back only when the document was
 /// readable, so a malformed or newer file is never overwritten.
@@ -11,6 +14,7 @@ pub(crate) struct SettingsSession {
     store: Option<SettingsStore>,
     settings: RefCell<Settings>,
     writable: Cell<bool>,
+    writer: Rc<SettingsWriter>,
 }
 
 /// One staged write of the whole document. It owns copies of the store and
@@ -24,11 +28,59 @@ pub(crate) struct PendingSave {
 
 impl PendingSave {
     /// Write the staged document atomically. The temporary-file flushes and
-    /// the rename block, so run this off the main context.
-    pub(crate) fn write(self) {
+    /// the rename block, so [`SettingsSession::save`] runs this on the
+    /// blocking worker.
+    fn write(self) {
         if let Err(error) = self.store.save(&self.settings) {
             eprintln!("Balun settings could not be saved: {error}");
         }
+    }
+}
+
+/// Runs staged saves one at a time on the blocking worker. Every save carries
+/// the whole document, so while one write is in flight only the newest
+/// staged document is kept, and an older snapshot can never land after a
+/// newer one.
+struct SettingsWriter {
+    queued: RefCell<Option<PendingSave>>,
+    /// `true` while nothing is queued or in flight.
+    idle: watch::Sender<bool>,
+}
+
+impl SettingsWriter {
+    fn new() -> Self {
+        let (idle, _) = watch::channel(true);
+        Self {
+            queued: RefCell::new(None),
+            idle,
+        }
+    }
+
+    /// Queue `save`. An idle writer starts on the calling thread's main
+    /// context; a busy one picks the newest document up after its current
+    /// write.
+    fn save(self: &Rc<Self>, save: PendingSave) {
+        *self.queued.borrow_mut() = Some(save);
+        if !self.idle.send_replace(false) {
+            return;
+        }
+        let writer = Rc::clone(self);
+        gtk::glib::MainContext::ref_thread_default().spawn_local(async move {
+            loop {
+                // End the borrow before awaiting so a save staged during the
+                // write can replace the queued document.
+                let next = writer.queued.borrow_mut().take();
+                let Some(save) = next else { break };
+                let _ = gtk::gio::spawn_blocking(move || save.write()).await;
+            }
+            writer.idle.send_replace(true);
+        });
+    }
+
+    /// Resolve once every queued save has been written.
+    async fn drain(&self) {
+        // The sender outlives this borrow, so the wait cannot fail.
+        let _ = self.idle.subscribe().wait_for(|idle| *idle).await;
     }
 }
 
@@ -49,7 +101,32 @@ impl SettingsSession {
             store,
             settings: RefCell::new(settings),
             writable: Cell::new(writable),
+            writer: Rc::new(SettingsWriter::new()),
         }
+    }
+
+    /// Queue a staged save on the session's single writer, which runs saves
+    /// one at a time off the main context and keeps only the newest document
+    /// while one is in flight.
+    pub(crate) fn save(&self, save: PendingSave) {
+        self.writer.save(save);
+    }
+
+    /// Resolve once every queued save has been written. The window awaits
+    /// this before it closes, so the process never exits ahead of a write.
+    pub(crate) async fn drain(&self) {
+        self.writer.drain().await;
+    }
+
+    /// Exact-address targets remembered from earlier launches, oldest first.
+    pub(crate) fn remembered_targets(&self) -> Vec<ExactDiscoveryTarget> {
+        self.settings.borrow().remembered_targets().to_vec()
+    }
+
+    /// Remember a target whose probe received a valid device reply and stage
+    /// the save; the caller runs the write off the main context.
+    pub(crate) fn remember_target(&self, target: ExactDiscoveryTarget) -> Option<PendingSave> {
+        self.stage(|settings| settings.remember_target(target))
     }
 
     /// Window geometry to apply before the window is shown.
@@ -103,6 +180,72 @@ mod tests {
         WindowState::new(1_500, 850, true).expect("valid window")
     }
 
+    fn sized(width: u32, height: u32) -> WindowState {
+        WindowState::new(width, height, false).expect("valid window")
+    }
+
+    fn stored_window(store: &SettingsStore) -> WindowState {
+        store
+            .load()
+            .expect("readable document")
+            .expect("written document")
+            .window()
+    }
+
+    #[test]
+    fn saves_keep_only_the_newest_document_and_drain_in_order() {
+        let (_directory, store) = store();
+        let session = SettingsSession::open(Some(store.clone()));
+
+        // A private context stands in for the GTK main context.
+        gtk::glib::MainContext::new().block_on(async {
+            session.drain().await;
+            assert!(
+                *session.writer.idle.borrow(),
+                "an idle writer drains at once"
+            );
+
+            let first = session
+                .stage(|settings| settings.set_window(sized(1_000, 700)))
+                .expect("first save");
+            let second = session
+                .stage(|settings| settings.set_window(sized(1_100, 720)))
+                .expect("second save");
+            let third = session
+                .stage(|settings| settings.set_window(resized()))
+                .expect("third save");
+            session.save(first);
+            session.save(second);
+            assert!(!*session.writer.idle.borrow());
+            assert_eq!(
+                session
+                    .writer
+                    .queued
+                    .borrow()
+                    .as_ref()
+                    .map(|queued| queued.settings.window()),
+                Some(sized(1_100, 720)),
+                "a save queued behind an in-flight write replaces the older queued one"
+            );
+            session.save(third);
+
+            session.drain().await;
+            assert!(session.writer.queued.borrow().is_none());
+            assert_eq!(stored_window(&store), resized());
+
+            let fourth = session
+                .stage(|settings| settings.set_window(sized(900, 600)))
+                .expect("fourth save");
+            session.save(fourth);
+            session.drain().await;
+            assert_eq!(
+                stored_window(&store),
+                sized(900, 600),
+                "a save after the writer went idle starts it again"
+            );
+        });
+    }
+
     #[test]
     fn no_store_runs_with_defaults_and_never_writes() {
         let session = SettingsSession::open(None);
@@ -146,6 +289,27 @@ mod tests {
 
         let reloaded = store.load().expect("load").expect("document");
         assert_eq!(reloaded.window(), resized());
+    }
+
+    #[test]
+    fn remembered_targets_round_trip_through_the_store() {
+        let (_directory, store) = store();
+        let session = SettingsSession::open(Some(store.clone()));
+        let target = ExactDiscoveryTarget::parse("192.0.2.9").expect("valid target");
+        assert!(session.remembered_targets().is_empty());
+
+        session
+            .remember_target(target)
+            .expect("a new target stages a save")
+            .write();
+
+        assert_eq!(session.remembered_targets(), vec![target]);
+        assert!(
+            session.remember_target(target).is_none(),
+            "repeating the newest target stages nothing"
+        );
+        let reloaded = SettingsSession::open(Some(store));
+        assert_eq!(reloaded.remembered_targets(), vec![target]);
     }
 
     #[test]

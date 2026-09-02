@@ -109,13 +109,13 @@ Built and tested:
   AC-4 ([compatibility notes](compatibility-v0.1.md)).
 
 - Versioned, atomic settings that remember the window size and maximized
-  state, with bounded storage reserved for remembered device addresses and
-  user-assigned names.
+  state and the exact addresses that answered, which are probed again at
+  launch; storage for user-assigned names is reserved.
 
 Not yet done: Linux and macOS live-device acceptance, measured tune and
-teardown budgets, a frozen per-platform codec contract, hostname and
-remembered targets, the routed sender and its UX, search and favorites,
-packages, and the alpha release.
+teardown budgets, a frozen per-platform codec contract, hostname targets,
+the routed sender and its UX, search and favorites, packages, and the alpha
+release.
 
 ## 4. Architecture
 
