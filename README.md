@@ -23,9 +23,10 @@ available program information, and a live-video area.
 > channel now enters that path and attempts live-device playback without
 > exposing the stream URI to the UI. The header now provides Stop, process-local
 > volume and mute, and compositor-confirmed fullscreen controls, with native
-> pointer/keyboard behavior and fixed accessible labels. Category-specific
-> playback errors, portable direct/no-system-proxy transport, hostname entry,
-> EPG, audible-output proof, and live-device acceptance remain unimplemented.
+> pointer/keyboard behavior and fixed accessible labels. Playback failures now
+> have fixed endpoint-free categories and presentation. Portable
+> direct/no-system-proxy transport, hostname entry, EPG, audible-output proof,
+> and live-device acceptance remain unimplemented.
 
 ## Current foundation
 
@@ -151,7 +152,13 @@ available program information, and a live-video area.
   HTTP-log settings, and locks an unexpected source to `NULL` before publishing
   one field-free rejection marker. Clearing an explicit element proxy does not
   disable a libsoup/GIO system proxy, so portable direct transport remains an
-  explicit M2.9 requirement.
+  explicit M2.9 requirement. Native bus failures reduce to seven fixed public
+  categories without retaining error, debug, source-name, detail, or endpoint
+  text. Only an exact accepted production source plus a numeric HTTP status can
+  report tuner-busy, missing-channel, or HTTP-rejection state; exact native
+  domains cover offline, missing codec/plugin, and protected streams, with a
+  closed internal fallback. The player maps these and controller-handoff
+  failures to fixed visible and accessible copy.
 - A bounded, display-backed Linux acceptance test which feeds a deterministic,
   video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
   `gtk4paintablesink`, requires multiple rendered frames and paintable updates,

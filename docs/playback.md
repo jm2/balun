@@ -5,9 +5,9 @@ Last reviewed: 2026-09-02
 This document records Balun's implemented M2.4 GStreamer boundary, M2.5 private
 stream handoff, M2.6 generation-owned tune session, completed M2.7 video
 presentation path, completed M2.8 essential controls, and the initial M2.9
-live-source element policy. The product and milestone scope remains
-authoritative in [`plan-v0.1.md`](plan-v0.1.md), while countable completion is
-tracked in [`task.md`](task.md).
+live-source element policy and endpoint-free failure classification. The product
+and milestone scope remains authoritative in [`plan-v0.1.md`](plan-v0.1.md),
+while countable completion is tracked in [`task.md`](task.md).
 
 ## Current status
 
@@ -217,16 +217,35 @@ are forced to the player and their Back/pop paths are disabled while fullscreen,
 then their exact pages, pop permissions, and prior focus are restored. Native
 Back choices outside fullscreen remain synchronized, and a valid compact-width
 channel activation presents the player even when setup fails. These controls
-complete M2.8; the broader M4.6 accessibility audit, category-complete M2.9
-errors, and M2.10 teardown acceptance remain open.
+complete M2.8; the broader M4.6 accessibility audit, portable direct-transport
+completion in M2.9, and M2.10 teardown acceptance remain open.
 
 The session publishes every owned transition through a deduplicated,
 URL-free latest-state watch. `PlayerView` consumes it on the GTK main context
 through a weak capture and exposes connecting, buffering percentage, playing,
 stopped, and failed state in an accessible header status. Native Error and EOS
 therefore clear the exact terminal paintable instead of leaving a stale frame.
-The fixed native-error categories and portable direct-transport contract remain
-M2.9 work.
+Portable direct transport remains M2.9 work.
+
+Native bus failures now reduce immediately to the public, copy-only
+`PlaybackPipelineFailure` categories: tuner busy, channel missing, HTTP
+rejected, offline, missing codec/plugin, protected, or internal. A numeric HTTP
+status has meaning only when it is a `u32` in 100–599, the native domain is
+exactly a resource error, and the message source is the exact production
+`souphttpsrc` identity retained by the still-accepted source policy. Only 503
+means tuner busy and 404 means channel missing; other 3xx–5xx responses are
+HTTP rejection. Trusted NotFound, OpenRead, and Read resource codes mean
+offline. Exact missing-plugin element markers, Core MissingPlugin, Stream
+CodecNotFound, and Stream Decrypt/DecryptNokey cover the remaining specific
+categories; every other condition is internal.
+
+The reducer never formats, logs, or stores native error text, debug text,
+source names, structure fields, extraction errors, or endpoint values.
+Adversarial tests place URI and credential-like secrets in those ignored fields
+and prove the public category, session failure, and failed session-state debug
+output remain fixed. `PlayerView` maps all seven categories and controller
+handoff failures to fixed endpoint-free visible and accessible status text,
+while a teardown failure retains its stronger close-Balun warning.
 
 The initial M2.9 source policy validates `playbin3`'s `source-setup` signal
 schema before URI assignment. Its worker-thread-safe handler requires the exact

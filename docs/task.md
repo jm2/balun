@@ -58,8 +58,10 @@ native-platform runtime acceptance, and the broader M4.6 accessibility audit
 remain separate work. The live-source setup boundary now requires and
 configures an exact production `souphttpsrc`, rejects source mismatches without
 endpoint text, and retains its exact identity for sanitized error reduction.
-Category-specific error projection and a portable direct/no-system-proxy
-transport remain open in M2.9.
+Native failures now reduce to seven fixed categories from exact source identity,
+numeric HTTP status, and native domains only, and the player maps those plus
+handoff failures to fixed visible and accessible copy. A portable
+direct/no-system-proxy transport remains open in M2.9.
 
 The shortest path to the first live-TV test is:
 
@@ -244,19 +246,24 @@ compatibility/error-path work, not prerequisites for that first picture.
   The session now publishes a deduplicated URL-free latest-state watch for
   every owned transition, and `PlayerView` reduces it weakly on the GTK main
   context into accessible connecting, buffering-percentage, playing, stopped,
-  and generic failed presentation. Error and EOS transitions clear the stale
-  paintable, while stale-generation events remain unable to overwrite a
-  successor. A validated, worker-thread-safe `playbin3` `source-setup` handler
-  now requires exact production `souphttpsrc` factory identity, applies and
-  reads back fixed source-property values, retains the accepted source identity,
-  and locks rejected sources to `NULL` before publishing one field-free marker
-  into the generation-owned error/teardown path. Network-free tests cover
-  accepted configuration, deduplicated rejection, and worker-thread delivery.
-  Clearing the source's explicit `proxy` property does not prove
+  and category-specific failed presentation. Error and EOS transitions clear
+  the stale paintable, while stale-generation events remain unable to overwrite
+  a successor. A validated, worker-thread-safe `playbin3` `source-setup` handler
+  requires exact production `souphttpsrc` factory identity, applies and reads
+  back fixed source-property values, retains the accepted source identity, and
+  locks rejected sources to `NULL` before publishing one field-free marker into
+  the generation-owned error/teardown path. Native messages reduce only from
+  exact trusted identity, numeric HTTP status, exact error domains, or an exact
+  missing-plugin marker into fixed tuner-busy, missing, rejected, offline,
+  missing-codec/plugin, protected, and internal categories. The player maps
+  those categories and URL-free handoff failures to fixed visible and
+  accessible copy. Adversarial, network-free tests prove malformed, untrusted,
+  and secret-bearing native fields cannot enter public failure, state, or UI
+  text. Clearing the source's explicit `proxy` property does not prove
   direct/no-system-proxy routing, however, and unsafe `GSimpleProxyResolver`
   registration is explicitly rejected as a workaround. A supported portable
-  direct transport, fail-closed completion of that source contract, and
-  sanitized category-specific native-error classification remain open.
+  direct transport and fail-closed completion of that source contract remain
+  open.
 
 - [ ] **M2.10 — Prove deterministic teardown.** Rapid switch, device
   reselection, discovery mutation, pipeline error, window close, and process

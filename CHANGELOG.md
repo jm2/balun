@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Endpoint-free playback failure categories** — Replace the generic native
+  pipeline error with fixed tuner-busy, channel-missing, HTTP-rejected,
+  offline, missing-codec/plugin, protected, and internal categories. HTTP
+  interpretation requires the exact source identity accepted by the live-source
+  policy, an exact native resource-error domain, and a bounded `u32` status;
+  only 503 and 404 receive special meaning, while other 3xx–5xx responses are
+  rejected and resource busy without 503 remains internal. Exact missing-plugin
+  element markers, core/stream error codes, and decryption codes supply the
+  remaining narrow categories. All other, malformed, wrong-domain, untrusted,
+  or source-policy rejection messages close to internal. The classifier never
+  formats, logs, or retains native error, debug, source-name, details, or
+  endpoint text.
+  `PlayerView` maps every category plus URL-free handoff failures to fixed
+  visible and accessible status copy while preserving the stronger teardown
+  warning. Adversarial tests place URI and credential-like secrets in every
+  ignored native field and prove public category, session-failure, session-state,
+  and UI text remain clean. Portable direct/no-system-proxy transport is still
+  open, so M2.9 remains incomplete.
 - **Initial live-source element policy** — Install a schema-validated,
   worker-thread-safe `playbin3` `source-setup` handler before the authorized URI
   enters native storage. Production playback accepts only the exact
