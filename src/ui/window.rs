@@ -1390,17 +1390,18 @@ mod tests {
     /// Crate-boundary note: the loopback fake *stream* device is a lib-test
     /// module, and the bin target enforces the production metadata-port
     /// policy whose loopback exemption compiles only into lib test builds, so
-    /// this bin-side window proof cannot open a real tuner. It instead drives
-    /// the production window wiring end to end against the real controller
-    /// and a real targeted discovery probe: the sidebar-signal
-    /// stop-on-admission for a user device change, the snapshot reducer's
-    /// accepted-generation stop for the mutation that makes the selected
-    /// device vanish, and the joined close shutdown of the controller and the
-    /// playback session. The real-tuner release proofs for these same window
-    /// stop paths (a live tuner observed `Closed` on device change, mutation,
-    /// and close) live in `playback::fake_device_e2e`, and the sidebar
-    /// admission stop itself is separately covered by the widget tests in
-    /// this crate.
+    /// this bin-side window proof cannot open a real tuner or host active
+    /// playback. It instead drives the production window wiring end to end
+    /// against the real controller and a real targeted discovery probe, and
+    /// observes `PlayerView`'s own test-only stop counter directly: the
+    /// sidebar-signal stop-on-admission for a user device change, the snapshot
+    /// reducer's accepted-generation stop for the mutation that makes the
+    /// selected device vanish, and the joined close shutdown of the controller
+    /// and the playback session. The real-tuner release proofs for these same
+    /// window stop paths (a live tuner observed `Closed` on device change,
+    /// mutation, and close) live in `playback::fake_device_e2e`, and the
+    /// sidebar admission stop itself is separately covered by the widget
+    /// tests in this crate.
     #[test]
     #[ignore = "requires the isolated Wayland compositor and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
     fn fake_device_window_releases_tuners_on_device_change_mutation_and_close() {
@@ -1585,6 +1586,12 @@ mod tests {
                 // Phase-driven state machine mirroring the fullscreen smoke:
                 // bounded phases advance from real controller publications,
                 // with a deadline watchdog and a fixed-copy failure channel.
+                // The stop gates compare `PlayerView::stop` invocations
+                // against a baseline taken while the snapshot reducer has
+                // settled on the observed revision, so each cleanup path must
+                // itself raise the count: the sidebar admission stop for the
+                // user device change and the reducer's accepted-generation
+                // stop for the mutation.
                 let phase = Rc::new(Cell::new(0_u8));
                 let device_selection = device_sidebar.selection().clone();
                 let player_status = Rc::clone(&player_view);
@@ -1594,6 +1601,8 @@ mod tests {
                 let driver_failure = Rc::clone(&failure);
                 let driver_application = application.clone();
                 let window_weak = window.downgrade();
+                let accepted_generation = Rc::clone(&accepted);
+                let stop_baseline = Rc::new(Cell::new(0_u32));
                 let deadline = Instant::now() + WINDOW_SMOKE_PHASE_BOUND;
                 gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
                     if driver_completed.get() || driver_failure.borrow().is_some() {
@@ -1608,6 +1617,8 @@ mod tests {
                         return gtk::glib::ControlFlow::Continue;
                     }
                     let snapshot = Arc::clone(&poll_snapshots.borrow());
+                    let reducer_generation = accepted_generation.borrow().selection_generation();
+                    let stop_calls = player_status.stop_call_count();
                     let row_count = device_selection
                         .model()
                         .map(|model| model.n_items())
@@ -1646,7 +1657,8 @@ mod tests {
                             && matches!(
                                 snapshot.selected_lineup().status(),
                                 SelectedLineupStatus::Failed(_)
-                            ) =>
+                            )
+                            && reducer_generation == snapshot.selection_generation() =>
                         {
                             if player_status.playback_status().label() != "Stopped" {
                                 fail_window_smoke(
@@ -1657,7 +1669,10 @@ mod tests {
                                 return gtk::glib::ControlFlow::Continue;
                             }
                             // User device change: the sidebar signal's
-                            // stop-on-admission fires here.
+                            // stop-on-admission fires here, and only the
+                            // device change can raise the count past this
+                            // reducer-settled baseline.
+                            stop_baseline.set(stop_calls);
                             match device_row_position(
                                 &device_selection,
                                 window_smoke_second_device_id(),
@@ -1676,8 +1691,15 @@ mod tests {
                             && matches!(
                                 snapshot.selected_lineup().status(),
                                 SelectedLineupStatus::Failed(_)
-                            ) =>
+                            )
+                            && reducer_generation == snapshot.selection_generation()
+                            && stop_calls > stop_baseline.get() =>
                         {
+                            // The admission stop (and any fail-safe repeat for
+                            // the new selection generation) has fired. Baseline
+                            // again with the reducer settled, so only the
+                            // mutation's accepted-generation stop can raise it.
+                            stop_baseline.set(stop_calls);
                             if driver_handle
                                 .try_send(ControllerCommand::RefreshLocalDiscovery)
                                 .is_err()
@@ -1696,7 +1718,8 @@ mod tests {
                             && snapshot.selected_device().is_none()
                             && snapshot.selected_lineup().status()
                                 == SelectedLineupStatus::Unselected
-                            && refresh_state.load(Ordering::SeqCst) == 2 =>
+                            && refresh_state.load(Ordering::SeqCst) == 2
+                            && stop_calls > stop_baseline.get() =>
                         {
                             if player_status.playback_status().label() != "Stopped" {
                                 fail_window_smoke(
