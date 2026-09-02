@@ -1,7 +1,7 @@
 # Balun v0.1 Compatibility Notes
 
 - Status: Active
-- Last updated: 2026-09-01
+- Last updated: 2026-09-02
 
 This document records sanitized, reproducible observations that refine the
 v0.1 implementation plan. Device IDs, network addresses, channel names,
@@ -57,12 +57,34 @@ package had not been installed alongside the core `gstreamer` package. The
 build helpers now check the structural plugin files before building and name
 the package for each missing one, so that state fails before a launch.
 
+One of the two Windows hosts has since completed discovery, lineup loading, and
+live playback with the corrected policy (see the trial below); the second host
+remains to be retested.
+
 A same-day Linux regression after this endpoint-policy change again discovered
 both accessible primary-site devices over IPv4 and completed identity-checked
 metadata and lineup inspection for both. The 4K device's usable non-link-local
 IPv6 observations also remained available. This proves the policy did not
 regress the known-good Linux LAN, but it does not predict Windows firewall or
 adapter behavior.
+
+## Windows live-TV trial
+
+On 2026-09-02 the owner exercised the Windows desktop development build
+against the accessible primary-site tuners. Local discovery, device selection,
+and lineup loading worked on that host, confirming the limited-broadcast
+correction above. Activating unprotected ATSC 1.0 channels produced picture and
+audio, and channel switching, Stop, and window close behaved as expected.
+
+ATSC 3.0 channels failed closed with the missing-codec category because the
+tested MSYS2 GStreamer runtime has no AC-4 audio decoder. The open GStreamer
+plugin sets ship an `ac4parse` parser but no decoder, and Balun bundles no
+proprietary one, so this is recorded as a known limitation in the changelog
+rather than a Balun defect.
+
+This is an owner-reported observation. It did not measure first-frame,
+channel-switch, or tuner-release times, and it did not enumerate the exact
+decoder set in use; P0.4 and P0.5 in [`task.md`](task.md) record those.
 
 ## Observed JSON compatibility
 
@@ -110,18 +132,19 @@ not evidence yet for WireGuard or UniFi Site Magic discovery.
 
 ## Boundaries of this result
 
-This probe establishes local discovery, stable device separation, responder
-pinning, metadata identity, lineup parsing, and favorite/DRM compatibility for
-the two listed model/firmware pairs. It does not yet establish:
+These observations establish local discovery, stable device separation,
+responder pinning, metadata identity, lineup parsing, favorite/DRM
+compatibility for the two listed model/firmware pairs, and live ATSC 1.0
+playback with audio on one Windows host. They do not yet establish:
 
-- MPEG-TS playback, channel-change latency, or tuner release behavior.
-- MPEG-2, H.264, HEVC, AC-3, AAC, E-AC-3, or AC-4 runtime support.
-- ATSC 3.0 or protected-channel playback.
+- Channel-change latency or tuner-release timing.
+- The exact per-platform decoder set, or HEVC and E-AC-3 support.
+- Protected-channel playback.
 - In-band PSIP/EIT guide availability.
 - Secondary-site HDHR3-PRIME or HDHR5-4K behavior.
 - UniFi Site Magic, WireGuard, or other routed multi-site discovery.
-- macOS or Windows runtime behavior.
+- Linux or macOS live-TV behavior, or the second Windows host.
 - Deferred Australian HDHR5-4DT compatibility.
 
-Those remain explicit follow-up rows in the real-hardware matrix in
-[`plan-v0.1.md`](plan-v0.1.md).
+Those remain explicit rows in the real-hardware matrix in
+[`plan-v0.1.md`](plan-v0.1.md) and the P0 records in [`task.md`](task.md).

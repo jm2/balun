@@ -2,13 +2,13 @@
 
 Last reviewed: 2026-09-02
 
-This document records Balun's implemented M2.4 GStreamer boundary, M2.5 private
-stream handoff, M2.6 generation-owned tune session, completed M2.7 video
-presentation path, completed M2.8 essential controls, and the M2.9
-application-owned direct stream transport with its endpoint-free failure
-classification. The product and milestone scope remains authoritative in
-[`plan-v0.1.md`](plan-v0.1.md), while countable completion is tracked in
-[`task.md`](task.md).
+This document records Balun's implemented GStreamer boundary, private stream
+handoff, generation-owned tune session, video presentation path, essential
+controls, and application-owned direct stream transport with its failure
+classification. Those landed as archived ledger records M2.4-M2.9 in
+[`task-foundation-2026-09.md`](task-foundation-2026-09.md). The product scope
+remains authoritative in [`plan-v0.1.md`](plan-v0.1.md), and the active
+countable ledger is [`task.md`](task.md).
 
 ## Current status
 
@@ -31,19 +31,19 @@ allocates a tuner, feeds GStreamer's built-in `appsrc` behind the constant
 production pane. Neither the desktop nor the GStreamer graph ever holds the
 device endpoint. The session and native player controls now
 retain a normalized process-local volume plus independent mute setting and
-apply both to the active pipeline and successor tunes. This property contract
-does not establish audible output; playbin's native stream and sink selection,
-the complete codec/audio-sink contract, and package contents remain M0.10 and
-later acceptance work.
+apply both to the active pipeline and successor tunes. Audible live-TV output
+is verified on Windows against real tuners
+([compatibility notes](compatibility-v0.1.md)); Linux and macOS acceptance and
+the frozen per-platform codec/audio-sink contract remain P0 work.
 
 Process-isolated Linux tests prove the checked-in MPEG-2 fixture renders into a
 real GTK paintable, the real production session streams that fixture from a
 loopback HTTP listener through the transport and exact `appsrc` feed to
 PLAYING, natural EOS, and joined `NULL` settlement while exposing only the
 paintable, and `PlayerView` binds/clears an opaque paintable through its
-production widgets and Stop control. Physical HDHomeRun and packaged-runtime
-acceptance remain M2.11-M2.12 work. Additional isolated widget and Wayland
-smokes cover M2.8 audio-control state, exact ListView activation, and a real
+production widgets and Stop control. Linux and macOS live-device acceptance
+(P0.2-P0.3) and packaged-runtime acceptance (P3) remain open. Additional
+isolated widget and Wayland smokes cover the audio-control state, exact ListView activation, and a real
 compositor-confirmed fullscreen round trip without adding a URI-forging test
 surface.
 
@@ -61,7 +61,7 @@ have these roles:
 The optional dependency is the Rust `gstreamer` 0.25 series with default Cargo
 features disabled and its `v1_20` API feature enabled. Balun also checks the
 loaded native runtime and rejects versions older than GStreamer 1.20.0. This
-1.20 floor covers the implemented foundation; M0.10 remains open until real
+1.20 floor covers the implemented foundation; P0.5 remains open until real
 cross-platform testing freezes the complete parser, decoder, platform-audio,
 and packaging contract.
 
@@ -114,11 +114,11 @@ The startup snapshot checks these seven exact registry names in stable order:
 These are structural readiness checks, not a promise that a channel is
 decodable or audible. They deliberately do not yet name MPEG-2, H.264, HEVC,
 AC-3, AAC, E-AC-3, or AC-4 parsers/decoders, nor a Linux, macOS, or Windows audio
-sink. The M0.5 test proves one narrow MPEG-2 fixture path through `playbin3` and
-`gtk4paintablesink`; M0.10 must still record the complete tested factory
-contract. The helpers' `--probe-playback` mode now provides the
+sink. The synthetic acceptance test proves one narrow MPEG-2 fixture path
+through `playbin3` and `gtk4paintablesink`; P0.5 must still record the
+complete tested factory contract. The helpers' `--probe-playback` mode now provides the
 development-runtime probe of this snapshot and of the constant-URI `appsrc`
-contract on all three platforms, and M2.11 must add fake-device and
+contract on all three platforms; the fake-device probes exist and P3 adds
 packaged-runtime probes.
 
 Registry presence also does not prove that a factory can construct, negotiate,
@@ -127,7 +127,7 @@ process-isolated synthetic and fake-device tests in the remaining milestones.
 
 ## Actor-private stream handoff
 
-M2.5 adds a narrow URL-bearing path which is separate from application
+The stream handoff is a narrow URL-bearing path which is separate from application
 snapshots and GStreamer ownership. A `StreamSelection` contains only a complete
 ChannelKey and the selected-lineup generation copied from one immutable
 snapshot. `ControllerHandle::try_request_stream` admits it into the same
@@ -146,7 +146,7 @@ HTTP, numeric host, port 5004, absent credentials/query/fragment, and the exact
 `StreamHandoff` is non-cloneable, has no public URI accessor or `Display`, uses
 a custom URL-redacted `Debug`, and zeroizes its private URI bytes on drop. The
 desktop can hold and move the opaque type but cannot inspect the URI. Its sole
-crate-private exposure is a consuming higher-ranked closure used by the M2.9
+crate-private exposure is a consuming higher-ranked closure used by the
 transport when `playbin3` delivers its exact `appsrc`; the borrow cannot escape
 that closure, and the parsed URL lives only in that transport's reader thread.
 Merely selecting
@@ -227,8 +227,8 @@ are forced to the player and their Back/pop paths are disabled while fullscreen,
 then their exact pages, pop permissions, and prior focus are restored. Native
 Back choices outside fullscreen remain synchronized, and a valid compact-width
 channel activation presents the player even when setup fails. These controls
-complete M2.8; the broader M4.6 accessibility audit and M2.10 teardown
-acceptance remain open.
+are complete; the accessibility pass (P1.6) and live-device teardown evidence
+(P0.4) remain open.
 
 The session publishes every owned transition through a deduplicated,
 URL-free latest-state watch. `PlayerView` consumes it on the GTK main context
@@ -248,7 +248,7 @@ close-Balun warning.
 ## Application-owned direct transport
 
 [ADR-0001](architecture/adr-0001-discovery-playback.md) selected this path,
-and M2.9 implements it: keep `playbin3`, expose only the fixed
+and the transport implements it: keep `playbin3`, expose only the fixed
 `appsrc://balun` URI to GStreamer, and feed its exact built-in `appsrc` from a
 bounded Balun-owned HTTP worker. Production playback therefore never gives the
 media framework a device endpoint, and no libsoup/GIO proxy resolver can be
@@ -314,10 +314,10 @@ fixture to EOS. A child-process trap proves that ambient `http_proxy` and
 The macOS CI lane runs that same loopback suite, and the Linux, macOS, and
 Windows lanes run the helpers' `--probe-playback`/`-ProbePlayback` mode, which
 proves the exact factory snapshot and the constant-URI `appsrc` contract on
-each development runtime. That evidence completes M2.9; packaged-runtime
-probes remain M2.11 work.
+each development runtime. That evidence completed the transport record;
+packaged-runtime probes are P3 work.
 
-M2.7's pipeline-side visual contract is now explicit: Balun validates the
+The pipeline-side visual contract is explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the
 pipeline is still `NULL`; enables playbin's adaptive `deinterlace` flag;
 forces source aspect-ratio preservation; and installs the private GTK paintable
@@ -332,12 +332,12 @@ A third display-backed smoke constructs the real production session around the
 checked-in fixture, verifies its URI-opaque paintable in a containment-fit
 picture, clears presentation, and proves bounded terminal `NULL` shutdown.
 Together with the decoded-frame/EOS and production-`PlayerView` smokes, this
-completes M2.7 without exposing a desktop test API capable of forging stream
+completes the presentation contract without exposing a desktop test API capable of forging stream
 handoffs.
 
 ## Synthetic display-backed acceptance
 
-M0.5 adds one ignored desktop integration test which is compiled by ordinary
+The synthetic acceptance is one ignored desktop integration test which is compiled by ordinary
 all-target test runs and invoked explicitly by
 `scripts/test-desktop-lifecycle.sh`. The test uses the checked-in
 `tests/fixtures/synthetic-mpeg2.ts`: a deterministic, video-only, 160-by-96,
@@ -347,7 +347,7 @@ generation command, and SHA-256 digest are committed beside it; it contains no
 audio, external media, device data, or network-derived content and is not an
 application resource.
 
-M2.7 adds two separate ignored display smokes to the same harness. One drives
+Two separate ignored display smokes share the same harness. One drives
 the real production session with the checked-in fixture served by a loopback
 HTTP listener, verifies its opaque paintable, drives the main context through
 PLAYING and natural EOS, and proves joined terminal shutdown. The other
@@ -356,7 +356,7 @@ one-pixel in-memory texture. Neither grants the desktop access to the
 pipeline, sink, or stream URI; the loopback URL enters only the library's
 crate-private `cfg(test)` handoff constructor.
 
-M2.8 extends the layered harness rather than weakening that boundary. A
+The controls work extends the layered harness rather than weakening that boundary. A
 production `PlayerView` smoke changes volume and mute through the real GTK
 widgets and verifies retained session state and terminal disabling. A ListView
 smoke proves selection remains inert while double-click/Enter activation carries
@@ -402,11 +402,11 @@ to exercise the fallback on a developer host.
 This is a Linux development/CI acceptance record only. It does not prove native
 macOS or Windows rendering, audio, physical MPEG-TS variants, live-device
 behavior, channel switching, tuner release, or packaged-runtime relocation.
-Those claims remain in M0.6, M0.10, M1.10, and M2.10 through M2.12.
+Those claims belong to the P0 evidence records and the P3 packaging records.
 
 ## Fake-device end-to-end acceptance
 
-M2.11's fake-server path is covered by a complete loopback fake HDHomeRun
+The fake-server path is covered by a complete loopback fake HDHomeRun
 device: a UDP discovery responder on the fixed discovery port advertising a
 checksum-valid identity and the fake's metadata origin, identity-checked
 `discover.json`/`lineup.json` responses on an ephemeral loopback port, and an
@@ -449,8 +449,8 @@ itself is a library test module — the bin target enforces the production
 metadata-port policy whose loopback exemption compiles only into library
 test builds — so this proof exercises the window stop wiring, while the
 live-tuner release evidence for those same paths stays with the library
-end-to-end smokes above. These proofs cover fake-tuner release ordering for
-M2.10; live-device and packaged-runtime acceptance remain open.
+end-to-end smokes above. These proofs cover fake-tuner release ordering;
+live-device (P0.4) and packaged-runtime (P3) acceptance remain open.
 
 ## Development runtime examples
 
@@ -473,7 +473,7 @@ bundle manifest:
 Balun's developer helpers check installed development-library floors and,
 before a desktop build, the plugin files behind the seven structural
 factories, naming the providing package for each missing file; they warn
-rather than fail when the libav decoders are absent because M0.10 has not
+rather than fail when the libav decoders are absent because P0.5 has not
 frozen the decoder contract. They do not install packages or claim a
 relocatable runtime. If a desktop executable built elsewhere starts on a
 machine that lacks one or more structural plugins, it continues to support
@@ -482,13 +482,14 @@ discovery and lineup inspection and reports playback as unavailable.
 The libav package used by the Linux smoke is a development/CI system dependency
 only. It is not part of the seven-factory startup snapshot, a package allowlist,
 or authority to copy a broad plugin distribution into Balun. Future packages
-must derive and inspect a minimal runtime closure after M0.10 and M2.11.
+must derive and inspect a minimal runtime closure after P0.5 and the P3
+packaging records.
 
 ## Packaging and protected-content boundary
 
 The seven registry names are also not a self-contained packaging allowlist.
 Autoplugging will require a capability-derived closure based on the formats and
-platform audio/video paths actually proven by M0.6, M0.10, and M2.11. A future
+platform audio/video paths actually proven by the P0 evidence records. A future
 self-contained package must stage only that reviewed plugin and native-library
 closure, traverse native imports, inspect the completed application tree, and
 reopen and validate its final artifact. Copying an entire GStreamer plugin
@@ -505,9 +506,9 @@ provenance, and distribution review.
 
 ## Next acceptance steps
 
-1. M2.10: complete deterministic tuner-release acceptance around the
-   connected session and transport, including live-device evidence.
-2. M0.10: freeze the complete tested factory and platform package contract,
-   including codecs and audio sinks.
-3. M2.11-M2.12: run fake-device, development-runtime, packaged-runtime, and
-   native live-TV smoke coverage on Linux, macOS, and Windows.
+1. P0.1-P0.4: record the Windows live-TV result, repeat it on Linux and
+   macOS, and measure tune, switch, and tuner-release times on real hardware.
+2. P0.5: freeze the per-platform factory, codec, and audio-sink contract from
+   that evidence.
+3. P3: stage the derived runtime closure into each package and run the
+   packaged-runtime probes on Linux, macOS, and Windows.
