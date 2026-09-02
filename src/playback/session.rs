@@ -12,6 +12,7 @@ use thiserror::Error;
 use tokio::sync::watch;
 
 use super::PlaybackRuntime;
+use super::source_policy::{self, SourcePolicy};
 use crate::controller::{OperationGeneration, StreamHandoff, StreamHandoffError, StreamSelection};
 use crate::domain::ChannelKey;
 
@@ -638,6 +639,7 @@ struct GstreamerBackend {
 }
 
 struct GstreamerPipeline {
+    source_policy: SourcePolicy,
     pipeline: gst::Pipeline,
     paintable: gdk::Paintable,
     bus_watch: Option<gst::bus::BusWatchGuard>,
@@ -710,6 +712,8 @@ impl PipelineBackend for GstreamerBackend {
             .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
         configure_playbin_video(&pipeline, &video_sink).map_err(PipelineStartError::Clean)?;
         configure_playbin_audio(&pipeline, audio).map_err(PipelineStartError::Clean)?;
+        let source_policy = SourcePolicy::install(&pipeline)
+            .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
 
         let bus = pipeline.bus().ok_or(PipelineStartError::Clean(
             PlaybackSessionFailure::BusUnavailable,
@@ -719,6 +723,11 @@ impl PipelineBackend for GstreamerBackend {
             let event = match message.view() {
                 gst::MessageView::Eos(_) => Some(PipelineEvent::EndOfStream),
                 gst::MessageView::Error(_) => Some(PipelineEvent::Error),
+                gst::MessageView::Application(_)
+                    if source_policy::is_rejection_message(message, &watched_pipeline) =>
+                {
+                    Some(PipelineEvent::Error)
+                }
                 gst::MessageView::Buffering(buffering) => {
                     let percent = buffering.percent().clamp(0, 100) as u8;
                     Some(PipelineEvent::Buffering(percent))
@@ -755,12 +764,15 @@ impl PipelineBackend for GstreamerBackend {
         // property is assigned, and every later failure owns bounded cleanup.
         handoff.with_uri(|uri| pipeline.set_property("uri", uri));
         let mut active = GstreamerPipeline {
+            source_policy,
             pipeline,
             paintable,
             bus_watch: Some(bus_watch),
             armed: true,
         };
-        if active.pipeline.set_state(gst::State::Playing).is_err() {
+        if active.pipeline.set_state(gst::State::Playing).is_err()
+            || active.source_policy.is_rejected()
+        {
             return match active.stop() {
                 Ok(()) => Err(PipelineStartError::Clean(
                     PlaybackSessionFailure::PipelineStart,

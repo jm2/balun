@@ -23,9 +23,9 @@ available program information, and a live-video area.
 > channel now enters that path and attempts live-device playback without
 > exposing the stream URI to the UI. The header now provides Stop, process-local
 > volume and mute, and compositor-confirmed fullscreen controls, with native
-> pointer/keyboard behavior and fixed accessible labels. Detailed playback-error
-> projection, hostname entry, EPG, audible-output proof, and live-device
-> acceptance remain unimplemented.
+> pointer/keyboard behavior and fixed accessible labels. Category-specific
+> playback errors, portable direct/no-system-proxy transport, hostname entry,
+> EPG, audible-output proof, and live-device acceptance remain unimplemented.
 
 ## Current foundation
 
@@ -144,7 +144,14 @@ available program information, and a live-video area.
   mute preference apply before a URI enters each pipeline, update its active
   owner, and carry into every successor; the UI level is converted to playbin's
   linear gain with a cubic curve. This property contract does not yet prove
-  audible output or a packaged platform audio sink.
+  audible output or a packaged platform audio sink. A worker-thread-safe,
+  schema-validated `source-setup` handler requires the exact `souphttpsrc`
+  factory for production streams, applies and reads back fixed redirect,
+  explicit-proxy, timeout, retry, internet-radio, compression, user-agent, and
+  HTTP-log settings, and locks an unexpected source to `NULL` before publishing
+  one field-free rejection marker. Clearing an explicit element proxy does not
+  disable a libsoup/GIO system proxy, so portable direct transport remains an
+  explicit M2.9 requirement.
 - A bounded, display-backed Linux acceptance test which feeds a deterministic,
   video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
   `gtk4paintablesink`, requires multiple rendered frames and paintable updates,

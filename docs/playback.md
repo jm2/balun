@@ -1,12 +1,13 @@
 # Playback foundation
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-02
 
 This document records Balun's implemented M2.4 GStreamer boundary, M2.5 private
 stream handoff, M2.6 generation-owned tune session, completed M2.7 video
-presentation path, and completed M2.8 essential controls. The product and
-milestone scope remains authoritative in [`plan-v0.1.md`](plan-v0.1.md), while
-countable completion is tracked in [`task.md`](task.md).
+presentation path, completed M2.8 essential controls, and the initial M2.9
+live-source element policy. The product and milestone scope remains
+authoritative in [`plan-v0.1.md`](plan-v0.1.md), while countable completion is
+tracked in [`task.md`](task.md).
 
 ## Current status
 
@@ -224,8 +225,28 @@ URL-free latest-state watch. `PlayerView` consumes it on the GTK main context
 through a weak capture and exposes connecting, buffering percentage, playing,
 stopped, and failed state in an accessible header status. Native Error and EOS
 therefore clear the exact terminal paintable instead of leaving a stale frame.
-The fixed native-error categories and fail-closed network-source contract remain
+The fixed native-error categories and portable direct-transport contract remain
 M2.9 work.
+
+The initial M2.9 source policy validates `playbin3`'s `source-setup` signal
+schema before URI assignment. Its worker-thread-safe handler requires the exact
+`souphttpsrc` factory, validates native property types and mutability, applies
+and reads back fixed redirect, explicit-proxy, timeout, retry, internet-radio,
+compression, user-agent, and HTTP-log settings, and retains the exact accepted
+source identity. An unexpected, repeated, or unconfigurable source is locked
+and requested to `NULL`; a single field-free application marker feeds the
+generation-owned error and bounded teardown path without native or endpoint
+text. Network-free tests cover the configuration, rejection, and callback
+thread boundary. A crate-test-only exact `filesrc` exception preserves the
+checked-in local fixture and does not exist in production builds.
+
+Those checks establish source identity and element setup policy, not how the
+underlying HTTP request is routed. In particular, clearing `souphttpsrc`'s
+`proxy` property does not prove direct transport or prevent fallback to the
+system proxy resolver. Balun explicitly rejects unsafe `GSimpleProxyResolver`
+registration as a workaround. A supported, portable direct/no-system-proxy
+transport remains open, so this partial source-setup contract cannot complete
+M2.9.
 
 M2.7's pipeline-side visual contract is now explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the

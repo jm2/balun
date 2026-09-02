@@ -7,6 +7,8 @@
 mod runtime;
 #[cfg(feature = "desktop")]
 mod session;
+#[cfg(feature = "desktop")]
+mod source_policy;
 
 pub use runtime::{
     FactoryCapability, GSTREAMER_API_FLOOR, PlaybackCapabilities, PlaybackFactory,

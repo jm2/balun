@@ -1,6 +1,6 @@
 # Balun v0.1 implementation backlog
 
-Last audited: 2026-09-01
+Last audited: 2026-09-02
 
 This is the executable work ledger for `v0.1.0-alpha.1`. The product scope,
 architecture, safety constraints, and acceptance rationale remain authoritative
@@ -55,7 +55,11 @@ labeled button, F11, and Escape without letting nested Back navigation escape
 the player. Layered core, widget, production-session, and isolated Wayland tests
 cover this contract. Audible output, the complete codec/audio-sink package,
 native-platform runtime acceptance, and the broader M4.6 accessibility audit
-remain separate work.
+remain separate work. The live-source setup boundary now requires and
+configures an exact production `souphttpsrc`, rejects source mismatches without
+endpoint text, and retains its exact identity for sanitized error reduction.
+Category-specific error projection and a portable direct/no-system-proxy
+transport remain open in M2.9.
 
 The shortest path to the first live-TV test is:
 
@@ -242,8 +246,17 @@ compatibility/error-path work, not prerequisites for that first picture.
   context into accessible connecting, buffering-percentage, playing, stopped,
   and generic failed presentation. Error and EOS transitions clear the stale
   paintable, while stale-generation events remain unable to overwrite a
-  successor. Fail-closed live-source setup and sanitized category-specific
-  native-error classification remain open.
+  successor. A validated, worker-thread-safe `playbin3` `source-setup` handler
+  now requires exact production `souphttpsrc` factory identity, applies and
+  reads back fixed source-property values, retains the accepted source identity,
+  and locks rejected sources to `NULL` before publishing one field-free marker
+  into the generation-owned error/teardown path. Network-free tests cover
+  accepted configuration, deduplicated rejection, and worker-thread delivery.
+  Clearing the source's explicit `proxy` property does not prove
+  direct/no-system-proxy routing, however, and unsafe `GSimpleProxyResolver`
+  registration is explicitly rejected as a workaround. A supported portable
+  direct transport, fail-closed completion of that source contract, and
+  sanitized category-specific native-error classification remain open.
 
 - [ ] **M2.10 — Prove deterministic teardown.** Rapid switch, device
   reselection, discovery mutation, pipeline error, window close, and process

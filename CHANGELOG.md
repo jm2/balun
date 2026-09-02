@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Initial live-source element policy** — Install a schema-validated,
+  worker-thread-safe `playbin3` `source-setup` handler before the authorized URI
+  enters native storage. Production playback accepts only the exact
+  `souphttpsrc` factory, validates every required property's native type and
+  mutability, then applies and reads back disabled redirects, a cleared explicit
+  proxy, a ten-second timeout, zero retries, disabled internet-radio mode and
+  compression, a fixed Balun user agent, and disabled HTTP logging. An
+  unexpected, repeated, or unconfigurable source is locked and requested to
+  `NULL`; one field-free, playbin-sourced application marker enters the existing
+  generation-owned error/teardown path without retaining native or endpoint
+  text. Network-free tests cover accepted configuration, deduplicated rejection,
+  and worker-thread signal delivery; a crate-test-only exact `filesrc` exception
+  preserves the checked-in local playback fixture. This establishes an element
+  setup boundary, not direct routing: clearing `souphttpsrc`'s explicit proxy
+  can still leave a libsoup/GIO system resolver in effect. An unsafe
+  `GSimpleProxyResolver` extension workaround is rejected, and portable
+  direct/no-system-proxy transport remains open in M2.9.
 - **Essential live-TV controls** — Complete M2.8 with native header controls for
   Stop, normalized volume, independent mute, and fullscreen alongside the
   existing exact-generation channel activation. The main-context playback
