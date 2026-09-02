@@ -1,5 +1,9 @@
 name: Release candidate
 
+# Every action this workflow runs is pinned to a full commit SHA (Dependabot
+# keeps the pins and their version comments current) so a release is built
+# and published only by reviewed, immutable code.
+
 on:
   workflow_dispatch:
     inputs:
@@ -36,7 +40,7 @@ jobs:
           fi
           echo "tag=${REQUESTED_TAG}" >> "${GITHUB_OUTPUT}"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ steps.tag.outputs.tag }}
           fetch-depth: 1
@@ -111,7 +115,7 @@ jobs:
             binary: target/x86_64-pc-windows-msvc/release/balun-discover.exe
             artifact: balun-discover-windows-x86_64
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.build_ref }}
           persist-credentials: false
@@ -151,7 +155,7 @@ jobs:
         run: ./scripts/build-windows.ps1 -Diagnostic
 
       - name: Upload internal candidate artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact }}-${{ needs.prepare.outputs.version }}
           path: ${{ matrix.binary }}
@@ -173,7 +177,7 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.build_ref }}
           persist-credentials: false
@@ -205,7 +209,7 @@ jobs:
         run: bash build-aux/flatpak/generate-cargo-sources.sh
 
       - name: Build the Flatpak bundle
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
         with:
           bundle: balun-linux-${{ matrix.arch }}.flatpak
           manifest-path: build-aux/flatpak/io.github.jm2.Balun.yml
@@ -217,7 +221,7 @@ jobs:
         run: build-aux/flatpak/validate-bundle-compliance.sh balun-linux-${{ matrix.arch }}.flatpak
 
       - name: Upload internal candidate bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: balun-linux-${{ matrix.arch }}-flatpak-${{ needs.prepare.outputs.version }}
           path: balun-linux-${{ matrix.arch }}.flatpak
@@ -286,7 +290,7 @@ jobs:
           cat ../release-assets/SHA256SUMS.txt
 
       - name: Upload the verified release set
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-assets-${{ needs.prepare.outputs.version }}
           path: release-assets

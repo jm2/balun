@@ -50,7 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Release automation** — The release-candidate workflow now checks that the tag agrees with
   `Cargo.toml`, `Cargo.lock`, the changelog section and compare link, and the AppStream release
   (`scripts/release_check.py`), requires the exact artifact inventory with SHA-256 sums, and
-  creates a draft GitHub release from a job that checks out no source. Publishing stays manual.
+  creates a draft GitHub release from a job that checks out no source. Every action the workflow
+  runs is pinned to an immutable commit. Publishing stays manual.
 - **Versioned settings** — Balun remembers its window size and maximized state across launches
   in an atomic, schema-versioned `settings.json` under the platform configuration directory.
   The same file reserves bounded, credential-free storage for remembered device addresses and

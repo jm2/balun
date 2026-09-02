@@ -297,7 +297,7 @@ CI automatically runs on every push/PR:
 - **Release candidate** (manual) — verifies an annotated `v` tag against every version
   declaration, builds the diagnostic on all three platforms and the Flatpak bundles, requires the
   exact artifact inventory with SHA-256 sums, and creates a draft release from a job that checks
-  out no source
+  out no source; every action it runs is pinned to an immutable commit
 
 ### Rust toolchain policy
 
