@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bounded discovery and playback transport decision** — Accept ADR-0001,
+  retaining Balun's safe-Rust implementation of documented HDHomeRun discovery
+  with explicit local, exact, and user-approved bounded routed authority rather
+  than linking `libhdhomerun` or implicitly scanning neighbors. For live
+  playback, retain `playbin3` but replace the intermediate `souphttpsrc` route
+  with a fixed endpoint-free `appsrc://balun` source fed by a bounded,
+  application-owned `reqwest` transport with automatic and explicit proxies
+  disabled. Record lifecycle and cross-platform acceptance requirements plus
+  the rejected ambient-proxy, global GIO resolver, loopback relay, custom-source
+  first choice, and direct-native-URI alternatives. M2.9 remains open until the
+  selected transport and its proxy-trap, backpressure, and joined-teardown
+  proofs are implemented.
 - **Endpoint-free playback failure categories** — Replace the generic native
   pipeline error with fixed tuner-busy, channel-missing, HTTP-rejected,
   offline, missing-codec/plugin, protected, and internal categories. HTTP

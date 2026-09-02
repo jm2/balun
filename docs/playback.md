@@ -267,6 +267,16 @@ registration as a workaround. A supported, portable direct/no-system-proxy
 transport remains open, so this partial source-setup contract cannot complete
 M2.9.
 
+[ADR-0001](architecture/adr-0001-discovery-playback.md) selects the completion
+path: keep `playbin3`, expose only the fixed `appsrc://balun` URI to GStreamer,
+and feed its exact built-in `appsrc` from a bounded Balun-owned HTTP worker
+whose `reqwest` client disables automatic and explicit proxies. This removes
+the device endpoint from native URI properties while preserving the current
+decode, synchronization, audio-control, and paintable path. The existing
+`souphttpsrc` policy remains only an intermediate implementation until that
+transport and its proxy-trap, backpressure, cross-platform, and joined-teardown
+proofs land.
+
 M2.7's pipeline-side visual contract is now explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the
 pipeline is still `NULL`; enables playbin's adaptive `deinterlace` flag;

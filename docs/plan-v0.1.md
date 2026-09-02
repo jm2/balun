@@ -420,19 +420,18 @@ administrator-operated discovery relay.
 
 ### 5.3 Discovery implementation decision
 
-ADR-0001 will compare:
+[ADR-0001](architecture/adr-0001-discovery-playback.md) selects Balun's safe
+Rust implementation of the documented discovery packet, TLV, CRC, and DeviceID
+protocol behind the existing narrow discovery boundary. This keeps packet
+budgets and route authority explicit and avoids adding a C build and LGPL
+distribution surface. The official `libhdhomerun` remains a compatibility
+fallback if sanitized hardware evidence exposes a gap in the documented
+protocol.
 
-- SiliconDust's libhdhomerun behind a narrow Rust FFI boundary.
-- A small Rust implementation of the documented discovery packet, TLV, and
-  CRC protocol.
-
-The official library offers mature device compatibility but adds a C build
-and LGPL distribution obligations. A Rust implementation simplifies packet
-budgeting and cross-platform packaging but requires stronger fixture,
-hardware, property, and fuzz validation.
-
-The application will depend on a narrow discovery trait so this choice does
-not leak into the registry, controller, or UI.
+The same decision record freezes the bounded local/exact/approved-routed order
+and the application-owned HTTP transport direction for playback, including the
+rejected scan, ambient-proxy, global-resolver, loopback-relay, and custom-source
+alternatives.
 
 ### 5.4 Network security
 

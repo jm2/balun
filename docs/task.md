@@ -23,7 +23,7 @@ outcomes belong in [`../CHANGELOG.md`](../CHANGELOG.md).
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **22/64 (34.4%)** implementation records complete. This is a
+Current status: **23/64 (35.9%)** implementation records complete. This is a
 dependency ledger, not an effort estimate; packaging and cross-platform
 playback records are substantially larger than most completed foundation work.
 
@@ -86,7 +86,7 @@ compatibility/error-path work, not prerequisites for that first picture.
   reject hostile origins/redirects/credentials, and record sanitized observed
   JSON compatibility.
 
-- [ ] **M0.3 — Land ADR-0001 for discovery and playback choices.** Extract the
+- [x] **M0.3 — Land ADR-0001 for discovery and playback choices.** Extract the
   implemented discovery decision and the selected GStreamer pipeline approach
   into a stable decision record, including rejected alternatives.
 
@@ -263,7 +263,10 @@ compatibility/error-path work, not prerequisites for that first picture.
   direct/no-system-proxy routing, however, and unsafe `GSimpleProxyResolver`
   registration is explicitly rejected as a workaround. A supported portable
   direct transport and fail-closed completion of that source contract remain
-  open.
+  open. ADR-0001 selects a fixed endpoint-free `appsrc://balun` URI backed by a
+  bounded Balun-owned `reqwest` no-proxy worker; implementation, proxy-trap,
+  cross-platform source-selection, backpressure, and joined-teardown proof are
+  still required before this record can close.
 
 - [ ] **M2.10 — Prove deterministic teardown.** Rapid switch, device
   reselection, discovery mutation, pipeline error, window close, and process
