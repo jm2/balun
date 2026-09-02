@@ -11,10 +11,9 @@ use balun::controller::{
 use balun::playback::{PlaybackInitializationError, PlaybackRuntime};
 
 use super::objects::DeviceRowObject;
+use super::settings_session::SettingsSession;
 use super::{channel_sidebar, device_sidebar, exact_discovery_dialog, player_view};
 
-const DEFAULT_WIDTH: i32 = 1_200;
-const DEFAULT_HEIGHT: i32 = 720;
 const DEVICE_SIDEBAR_MIN_WIDTH: f64 = 160.0;
 const DEVICE_SIDEBAR_MAX_WIDTH: f64 = 220.0;
 const CHANNEL_SIDEBAR_MIN_WIDTH: f64 = 240.0;
@@ -257,8 +256,11 @@ pub(crate) fn build(
     application: &adw::Application,
     controller: ControllerRuntime,
     playback: Result<PlaybackRuntime, PlaybackInitializationError>,
+    settings: SettingsSession,
     shutdown_failed: Rc<Cell<bool>>,
 ) -> adw::ApplicationWindow {
+    let settings = Rc::new(settings);
+    let window_state = settings.window();
     let device_sidebar = device_sidebar::build();
     let channel_sidebar = channel_sidebar::build();
     let player_view = Rc::new(player_view::build(playback));
@@ -293,10 +295,13 @@ pub(crate) fn build(
     let window = adw::ApplicationWindow::builder()
         .application(application)
         .title("Balun")
-        .default_width(DEFAULT_WIDTH)
-        .default_height(DEFAULT_HEIGHT)
+        .default_width(i32::try_from(window_state.width()).unwrap_or(i32::MAX))
+        .default_height(i32::try_from(window_state.height()).unwrap_or(i32::MAX))
         .content(&device_and_content)
         .build();
+    if window_state.maximized() {
+        window.maximize();
+    }
     let layout = ResponsiveLayout::new(
         &device_and_content,
         &channel_and_player_page,
@@ -362,7 +367,7 @@ pub(crate) fn build(
         layout,
         Rc::downgrade(&player_view),
     );
-    connect_joined_shutdown(&window, controller, player_view, shutdown_failed);
+    connect_joined_shutdown(&window, controller, player_view, settings, shutdown_failed);
 
     window
 }
@@ -668,6 +673,7 @@ fn connect_joined_shutdown(
     window: &adw::ApplicationWindow,
     controller: ControllerRuntime,
     player_view: Rc<player_view::PlayerView>,
+    settings: Rc<SettingsSession>,
     shutdown_failed: Rc<Cell<bool>>,
 ) {
     let controller = Rc::new(RefCell::new(Some(controller)));
@@ -683,6 +689,8 @@ fn connect_joined_shutdown(
             return gtk::glib::Propagation::Stop;
         }
 
+        // Record geometry while the window is still mapped and interactive.
+        settings.persist_window(window);
         window.set_sensitive(false);
         let Some(controller) = controller.borrow_mut().take() else {
             shutdown_complete.set(true);
@@ -748,6 +756,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
+    use balun::settings::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH};
 
     #[test]
     fn fullscreen_keyboard_contract_filters_modifiers_and_ambient_locks() {
@@ -1505,8 +1514,8 @@ mod tests {
                 let window = adw::ApplicationWindow::builder()
                     .application(application)
                     .title("Balun")
-                    .default_width(DEFAULT_WIDTH)
-                    .default_height(DEFAULT_HEIGHT)
+                    .default_width(i32::try_from(DEFAULT_WINDOW_WIDTH).expect("fits i32"))
+                    .default_height(i32::try_from(DEFAULT_WINDOW_HEIGHT).expect("fits i32"))
                     .content(&device_and_content)
                     .build();
                 let layout = ResponsiveLayout::new(
@@ -1580,6 +1589,7 @@ mod tests {
                     &window,
                     controller,
                     Rc::clone(&player_view),
+                    Rc::new(SettingsSession::open(None)),
                     Rc::clone(&shutdown_failed),
                 );
 
