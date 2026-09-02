@@ -300,6 +300,17 @@ dbus-run-session -- \
         ui::channel_sidebar::tests::ready_listview_activation_is_inert_on_selection_and_exact_on_activate -- \
         --exact --ignored --nocapture
 
+# A bare Xvfb server has no window manager to acknowledge fullscreen state.
+# Keep the compositor-confirmed round trip on the preferred/required Wayland
+# route, while the pure key and reducer contracts still run on every platform.
+if [ "$selected_backend" = wayland ]; then
+    dbus-run-session -- \
+        timeout --signal=TERM --kill-after=5s 30s \
+        cargo test --locked --features desktop --bin balun \
+            ui::window::tests::wayland_fullscreen_round_trip_protects_and_restores_navigation -- \
+            --exact --ignored --nocapture
+fi
+
 dbus-run-session -- \
     timeout --signal=TERM --kill-after=5s 30s \
     cargo test --locked --features desktop --test playback_synthetic \

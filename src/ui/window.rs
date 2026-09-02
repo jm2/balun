@@ -29,6 +29,8 @@ struct ResponsiveLayoutState {
     fullscreen: bool,
     outer_show_content: bool,
     inner_show_content: bool,
+    outer_content_can_pop: bool,
+    inner_content_can_pop: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,6 +39,8 @@ struct ResponsiveLayoutDecision {
     inner_collapsed: bool,
     outer_show_content: bool,
     inner_show_content: bool,
+    outer_content_can_pop: bool,
+    inner_content_can_pop: bool,
 }
 
 impl ResponsiveLayoutState {
@@ -46,6 +50,8 @@ impl ResponsiveLayoutState {
             inner_collapsed: self.compact_width || self.fullscreen,
             outer_show_content: self.fullscreen || self.outer_show_content,
             inner_show_content: self.fullscreen || self.inner_show_content,
+            outer_content_can_pop: !self.fullscreen && self.outer_content_can_pop,
+            inner_content_can_pop: !self.fullscreen && self.inner_content_can_pop,
         }
     }
 }
@@ -54,28 +60,89 @@ impl ResponsiveLayoutState {
 struct ResponsiveLayout {
     state: Rc<Cell<ResponsiveLayoutState>>,
     outer: adw::NavigationSplitView,
+    outer_content: adw::NavigationPage,
     inner: adw::NavigationSplitView,
+    inner_content: adw::NavigationPage,
     player_view: Weak<player_view::PlayerView>,
+}
+
+#[derive(Clone)]
+struct PlayerNavigation {
+    state: Weak<Cell<ResponsiveLayoutState>>,
+    inner: gtk::glib::WeakRef<adw::NavigationSplitView>,
+}
+
+impl PlayerNavigation {
+    fn show_player(&self) {
+        let Some(state) = self.state.upgrade() else {
+            return;
+        };
+        let mut current = state.get();
+        current.inner_show_content = true;
+        state.set(current);
+        if let Some(inner) = self.inner.upgrade() {
+            inner.set_show_content(true);
+        }
+    }
 }
 
 impl ResponsiveLayout {
     fn new(
         outer: &adw::NavigationSplitView,
+        outer_content: &adw::NavigationPage,
         inner: &adw::NavigationSplitView,
+        inner_content: &adw::NavigationPage,
         player_view: &Rc<player_view::PlayerView>,
     ) -> Self {
-        Self {
+        let layout = Self {
             state: Rc::new(Cell::new(ResponsiveLayoutState {
                 medium_width: false,
                 compact_width: false,
                 fullscreen: false,
                 outer_show_content: outer.shows_content(),
                 inner_show_content: inner.shows_content(),
+                outer_content_can_pop: outer_content.can_pop(),
+                inner_content_can_pop: inner_content.can_pop(),
             })),
             outer: outer.clone(),
+            outer_content: outer_content.clone(),
             inner: inner.clone(),
+            inner_content: inner_content.clone(),
             player_view: Rc::downgrade(player_view),
+        };
+
+        // Native back buttons, shortcuts, mouse buttons, and swipe gestures
+        // update show-content directly. Retain those user choices without
+        // allowing fullscreen's forced player-only presentation to replace
+        // the values that must be restored on exit.
+        {
+            let state = Rc::downgrade(&layout.state);
+            layout.outer.connect_show_content_notify(move |outer| {
+                let Some(state) = state.upgrade() else {
+                    return;
+                };
+                let mut current = state.get();
+                if !current.fullscreen {
+                    current.outer_show_content = outer.shows_content();
+                    state.set(current);
+                }
+            });
         }
+        {
+            let state = Rc::downgrade(&layout.state);
+            layout.inner.connect_show_content_notify(move |inner| {
+                let Some(state) = state.upgrade() else {
+                    return;
+                };
+                let mut current = state.get();
+                if !current.fullscreen {
+                    current.inner_show_content = inner.shows_content();
+                    state.set(current);
+                }
+            });
+        }
+
+        layout
     }
 
     fn set_medium_width(&self, active: bool) {
@@ -99,6 +166,20 @@ impl ResponsiveLayout {
         self.apply();
     }
 
+    fn show_channels(&self) {
+        let mut state = self.state.get();
+        state.inner_show_content = false;
+        self.state.set(state);
+        self.apply();
+    }
+
+    fn player_navigation(&self) -> PlayerNavigation {
+        PlayerNavigation {
+            state: Rc::downgrade(&self.state),
+            inner: self.inner.downgrade(),
+        }
+    }
+
     fn set_fullscreen(&self, fullscreen: bool) {
         let mut state = self.state.get();
         if fullscreen && !state.fullscreen {
@@ -107,6 +188,8 @@ impl ResponsiveLayout {
             // preference while fullscreen, and will be applied on exit.
             state.outer_show_content = self.outer.shows_content();
             state.inner_show_content = self.inner.shows_content();
+            state.outer_content_can_pop = self.outer_content.can_pop();
+            state.inner_content_can_pop = self.inner_content.can_pop();
         }
         state.fullscreen = fullscreen;
         self.state.set(state);
@@ -126,6 +209,10 @@ impl ResponsiveLayout {
         self.inner.set_collapsed(decision.inner_collapsed);
         self.outer.set_show_content(decision.outer_show_content);
         self.inner.set_show_content(decision.inner_show_content);
+        self.outer_content
+            .set_can_pop(decision.outer_content_can_pop);
+        self.inner_content
+            .set_can_pop(decision.inner_content_can_pop);
     }
 }
 
@@ -150,7 +237,9 @@ fn fullscreen_key_action(
         & (ModifierType::SHIFT_MASK
             | ModifierType::CONTROL_MASK
             | ModifierType::ALT_MASK
-            | ModifierType::SUPER_MASK);
+            | ModifierType::SUPER_MASK
+            | ModifierType::HYPER_MASK
+            | ModifierType::META_MASK);
     if !effective.is_empty() {
         return FullscreenKeyAction::Ignore;
     }
@@ -207,7 +296,13 @@ pub(crate) fn build(
         .default_height(DEFAULT_HEIGHT)
         .content(&device_and_content)
         .build();
-    let layout = ResponsiveLayout::new(&device_and_content, &channel_and_player, &player_view);
+    let layout = ResponsiveLayout::new(
+        &device_and_content,
+        &channel_and_player_page,
+        &channel_and_player,
+        &player_page,
+        &player_view,
+    );
 
     let medium_breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
@@ -251,7 +346,12 @@ pub(crate) fn build(
     connect_exact_discovery(&window, &device_sidebar, &handle);
     connect_cancel_discovery(&device_sidebar, &handle);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
-    connect_channel_activation(&channel_sidebar, &handle, &player_view);
+    connect_channel_activation(
+        &channel_sidebar,
+        &handle,
+        &player_view,
+        layout.player_navigation(),
+    );
     connect_fullscreen(&window, &player_view, &layout);
     spawn_snapshot_reducer(
         snapshots,
@@ -270,10 +370,14 @@ fn connect_channel_activation(
     sidebar: &channel_sidebar::ChannelSidebar,
     controller: &ControllerHandle,
     player_view: &Rc<player_view::PlayerView>,
+    navigation: PlayerNavigation,
 ) {
     let controller = controller.clone();
     let player_view = Rc::clone(player_view);
     sidebar.connect_channel_activated(move |selection| {
+        // Present the connecting, video, or failure state on compact layouts
+        // instead of leaving the player hidden behind the channel list.
+        navigation.show_player();
         player_view.activate_channel(&controller, selection);
     });
 }
@@ -539,6 +643,12 @@ fn spawn_snapshot_reducer(
                 let _ = player_view.stop();
             }
 
+            if selection_changed {
+                // A newly authoritative device selection starts at its own
+                // channel list even if the previous device was playing.
+                layout.show_channels();
+            }
+
             device_sidebar.apply_snapshot(&candidate);
             channel_sidebar.apply_snapshot(&candidate);
             layout.set_device_selected(candidate.selected_device().is_some());
@@ -616,6 +726,8 @@ fn connect_joined_shutdown(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
@@ -649,6 +761,8 @@ mod tests {
             ModifierType::CONTROL_MASK,
             ModifierType::ALT_MASK,
             ModifierType::SUPER_MASK,
+            ModifierType::HYPER_MASK,
+            ModifierType::META_MASK,
         ] {
             assert_eq!(
                 fullscreen_key_action(Key::F11, modifiers, false),
@@ -677,6 +791,8 @@ mod tests {
             fullscreen: false,
             outer_show_content: true,
             inner_show_content: false,
+            outer_content_can_pop: true,
+            inner_content_can_pop: true,
         };
         assert_eq!(
             state.decision(),
@@ -685,6 +801,8 @@ mod tests {
                 inner_collapsed: false,
                 outer_show_content: true,
                 inner_show_content: false,
+                outer_content_can_pop: true,
+                inner_content_can_pop: true,
             }
         );
 
@@ -697,6 +815,8 @@ mod tests {
                 inner_collapsed: true,
                 outer_show_content: true,
                 inner_show_content: false,
+                outer_content_can_pop: true,
+                inner_content_can_pop: true,
             }
         );
 
@@ -710,6 +830,8 @@ mod tests {
                 inner_collapsed: true,
                 outer_show_content: true,
                 inner_show_content: true,
+                outer_content_can_pop: false,
+                inner_content_can_pop: false,
             }
         );
 
@@ -725,8 +847,244 @@ mod tests {
                 inner_collapsed: false,
                 outer_show_content: false,
                 inner_show_content: false,
+                outer_content_can_pop: true,
+                inner_content_can_pop: true,
             }
         );
+    }
+
+    /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
+    /// compile but skip this compositor-dependent Wayland contract.
+    #[test]
+    #[ignore = "requires the isolated Wayland compositor and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
+    fn wayland_fullscreen_round_trip_protects_and_restores_navigation() {
+        assert_eq!(
+            std::env::var("GDK_BACKEND").as_deref(),
+            Ok("wayland"),
+            "this smoke must exercise GTK's Wayland backend"
+        );
+
+        let application = adw::Application::builder()
+            .application_id("io.github.jm2.Balun.FullscreenSmoke")
+            .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
+            .build();
+        let completed = Rc::new(Cell::new(false));
+        let failure = Rc::new(RefCell::new(None::<String>));
+        let activated = Rc::new(Cell::new(false));
+
+        {
+            let completed = Rc::clone(&completed);
+            let failure = Rc::clone(&failure);
+            let activated = Rc::clone(&activated);
+            application.connect_activate(move |application| {
+                if activated.replace(true) {
+                    return;
+                }
+
+                let channel_focus = gtk::Button::with_label("Channels");
+                let channel_page = adw::NavigationPage::new(&channel_focus, "Channels");
+                let player_view = Rc::new(player_view::build(Err(
+                    PlaybackInitializationError::InitializationFailed,
+                )));
+                let player_page = adw::NavigationPage::new(player_view.root(), "Live TV");
+                let inner = adw::NavigationSplitView::builder()
+                    .sidebar(&channel_page)
+                    .content(&player_page)
+                    .build();
+                let outer_content =
+                    adw::NavigationPage::new(&inner, "Channels and live TV");
+                let device_page =
+                    adw::NavigationPage::new(&gtk::Label::new(Some("Devices")), "Devices");
+                let outer = adw::NavigationSplitView::builder()
+                    .sidebar(&device_page)
+                    .content(&outer_content)
+                    .build();
+                outer.set_show_content(true);
+                inner.set_show_content(false);
+                outer_content.set_can_pop(false);
+                player_page.set_can_pop(true);
+
+                let window = adw::ApplicationWindow::builder()
+                    .application(application)
+                    .title("Balun fullscreen round-trip proof")
+                    .default_width(640)
+                    .default_height(480)
+                    .content(&outer)
+                    .build();
+                let layout = ResponsiveLayout::new(
+                    &outer,
+                    &outer_content,
+                    &inner,
+                    &player_page,
+                    &player_view,
+                );
+                layout.set_compact_width(true);
+                connect_fullscreen(&window, &player_view, &layout);
+
+                let phase = Rc::new(Cell::new(0_u8));
+                let start = {
+                    let application = application.clone();
+                    let failure = Rc::clone(&failure);
+                    let phase = Rc::clone(&phase);
+                    let layout = layout.clone();
+                    let inner = inner.clone();
+                    let channel_focus = channel_focus.clone();
+                    let player_view = Rc::clone(&player_view);
+                    let window = window.downgrade();
+                    Rc::new(move || {
+                        let Some(window) = window.upgrade() else {
+                            failure.replace(Some(
+                                "fullscreen smoke window disappeared before entry".into(),
+                            ));
+                            application.quit();
+                            return;
+                        };
+                        let navigation = layout.player_navigation();
+                        navigation.show_player();
+                        if !inner.shows_content() {
+                            failure.replace(Some(
+                                "compact channel activation did not present the player".into(),
+                            ));
+                            application.quit();
+                            return;
+                        }
+
+                        // Exercise the same native property change emitted by
+                        // Back/pop, then prove it updates the retained reducer
+                        // preference before fullscreen forces the player.
+                        inner.set_show_content(false);
+                        layout.set_medium_width(false);
+                        if inner.shows_content() || layout.state.get().inner_show_content {
+                            failure.replace(Some(
+                                "native Back/pop was not retained outside fullscreen".into(),
+                            ));
+                            application.quit();
+                            return;
+                        }
+                        if !channel_focus.grab_focus()
+                            || gtk::prelude::GtkWindowExt::focus(&window).as_ref()
+                                != Some(channel_focus.upcast_ref())
+                        {
+                            failure.replace(Some(
+                                "channel focus could not be established before fullscreen".into(),
+                            ));
+                            application.quit();
+                            return;
+                        }
+
+                        phase.set(1);
+                        player_view.fullscreen_button().emit_clicked();
+                    }) as Rc<dyn Fn()>
+                };
+
+                {
+                    let application = application.clone();
+                    let completed = Rc::clone(&completed);
+                    let failure = Rc::clone(&failure);
+                    let phase = Rc::clone(&phase);
+                    let start = Rc::clone(&start);
+                    let layout = layout.clone();
+                    let outer = outer.clone();
+                    let outer_content = outer_content.clone();
+                    let inner = inner.clone();
+                    let player_page = player_page.clone();
+                    let player_view = Rc::clone(&player_view);
+                    let channel_focus = channel_focus.clone();
+                    window.connect_fullscreened_notify(move |window| {
+                        match (phase.get(), window.is_fullscreen()) {
+                            (0, false) => start(),
+                            (1, true) => {
+                                if !layout.is_fullscreen()
+                                    || !outer.is_collapsed()
+                                    || !inner.is_collapsed()
+                                    || !outer.shows_content()
+                                    || !inner.shows_content()
+                                    || outer_content.can_pop()
+                                    || player_page.can_pop()
+                                    || gtk::prelude::GtkWindowExt::focus(window).as_ref()
+                                        != Some(player_view.fullscreen_button().upcast_ref())
+                                {
+                                    failure.replace(Some(
+                                        "confirmed fullscreen did not protect navigation and focus the exit control".into(),
+                                    ));
+                                    application.quit();
+                                    return;
+                                }
+                                phase.set(2);
+                                player_view.fullscreen_button().emit_clicked();
+                            }
+                            (2, false) => {
+                                if layout.is_fullscreen()
+                                    || !inner.is_collapsed()
+                                    || inner.shows_content()
+                                    || outer_content.can_pop()
+                                    || !player_page.can_pop()
+                                    || gtk::prelude::GtkWindowExt::focus(window).as_ref()
+                                        != Some(channel_focus.upcast_ref())
+                                {
+                                    failure.replace(Some(
+                                        "fullscreen exit did not restore navigation and focus exactly".into(),
+                                    ));
+                                    application.quit();
+                                    return;
+                                }
+                                completed.set(true);
+                                window.close();
+                                application.quit();
+                            }
+                            _ => {}
+                        }
+                    });
+                }
+
+                {
+                    let start = Rc::clone(&start);
+                    let window_weak = window.downgrade();
+                    window.connect_map(move |_| {
+                        let start = Rc::clone(&start);
+                        let window_weak = window_weak.clone();
+                        gtk::glib::idle_add_local_once(move || {
+                            let Some(window) = window_weak.upgrade() else {
+                                return;
+                            };
+                            if window.is_fullscreen() {
+                                // Normalize kiosk-style compositor policy
+                                // before proving a complete enter/exit cycle.
+                                window.unfullscreen();
+                            } else {
+                                start();
+                            }
+                        });
+                    });
+                }
+
+                {
+                    let application = application.clone();
+                    let completed = Rc::clone(&completed);
+                    let failure = Rc::clone(&failure);
+                    gtk::glib::timeout_add_local_once(Duration::from_secs(10), move || {
+                        if !completed.get() && failure.borrow().is_none() {
+                            failure.replace(Some(
+                                "Wayland compositor did not confirm the fullscreen round trip"
+                                    .into(),
+                            ));
+                            application.quit();
+                        }
+                    });
+                }
+
+                window.present();
+            });
+        }
+
+        let exit_code = application.run_with_args(&["balun-fullscreen-smoke"]);
+        assert_eq!(exit_code, gtk::glib::ExitCode::SUCCESS);
+        assert!(
+            failure.borrow().is_none(),
+            "{}",
+            failure.borrow().as_deref().unwrap_or_default()
+        );
+        assert!(completed.get(), "fullscreen smoke did not complete");
     }
 
     #[test]
