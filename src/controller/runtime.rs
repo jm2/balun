@@ -2370,6 +2370,152 @@ mod tests {
         controller.shutdown().unwrap();
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn actor_returns_one_successful_private_stream_handoff() {
+        let (discovery, discovery_starts) = ScriptedService::new([ServiceStep::Immediate(Ok(
+            report(first_id(), "127.0.0.1:65001", 4),
+        ))]);
+        let (selection, selection_starts) =
+            ScriptedSelectionService::new([SelectionStep::Immediate(Ok(
+                ResolvedDeviceSnapshot::controller_stream_test_fixture(
+                    first_id(),
+                    false,
+                    "127.0.0.1".parse().unwrap(),
+                ),
+            ))]);
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+        let key = ready.selected_lineup().channels()[0].key().clone();
+        let revision = ready.revision();
+
+        let handoff = handle
+            .try_request_stream(StreamSelection::new(
+                key.clone(),
+                ready.selection_generation(),
+            ))
+            .unwrap()
+            .receive()
+            .await
+            .unwrap();
+
+        assert_eq!(handoff.channel_key(), &key);
+        assert_eq!(handoff.selection_generation(), ready.selection_generation());
+        let rendered = format!("{handoff:?}");
+        assert!(rendered.contains("<redacted>"));
+        assert!(!rendered.contains("127.0.0.1"));
+        assert!(!rendered.contains("auto/v5.1"));
+        assert_eq!(handle.snapshot().revision(), revision);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_requests_share_fifo_with_selection_and_clear_commands() {
+        let (discovery, discovery_starts) = ScriptedService::new([ServiceStep::Immediate(Ok(
+            report(first_id(), "127.0.0.1:65001", 4),
+        ))]);
+        let selected_snapshot = || -> Result<_, DeviceSnapshotResolutionError> {
+            Ok(ResolvedDeviceSnapshot::controller_stream_test_fixture(
+                first_id(),
+                false,
+                "127.0.0.1".parse().unwrap(),
+            ))
+        };
+        let (selection, selection_starts) = ScriptedSelectionService::new([
+            SelectionStep::Immediate(selected_snapshot()),
+            SelectionStep::Immediate(selected_snapshot()),
+        ]);
+        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        let first_ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+        let key = first_ready.selected_lineup().channels()[0].key().clone();
+        let first_generation = first_ready.selection_generation();
+
+        let request_before_clear = handle
+            .try_request_stream(StreamSelection::new(key.clone(), first_generation))
+            .unwrap();
+        handle.try_send(ControllerCommand::ClearSelection).unwrap();
+        let handoff = request_before_clear.receive().await.unwrap();
+        assert_eq!(handoff.selection_generation(), first_generation);
+        let cleared = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selection_generation() == OperationGeneration::new(2)
+                && snapshot.selected_lineup().status() == SelectedLineupStatus::Unselected
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        let request_after_select = handle
+            .try_request_stream(StreamSelection::new(
+                key.clone(),
+                cleared.selection_generation(),
+            ))
+            .unwrap();
+        assert!(matches!(
+            request_after_select.receive().await,
+            Err(StreamHandoffError::SelectionChanged)
+        ));
+        recv_selection_start(&selection_starts);
+        let second_ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selection_generation() == OperationGeneration::new(3)
+                && snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+
+        handle.try_send(ControllerCommand::ClearSelection).unwrap();
+        let request_after_clear = handle
+            .try_request_stream(StreamSelection::new(
+                key,
+                second_ready.selection_generation(),
+            ))
+            .unwrap();
+        assert!(matches!(
+            request_after_clear.receive().await,
+            Err(StreamHandoffError::SelectionChanged)
+        ));
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selection_generation() == OperationGeneration::new(4)
+                && snapshot.selected_lineup().status() == SelectedLineupStatus::Unselected
+        })
+        .await;
+        controller.shutdown().unwrap();
+    }
+
     #[test]
     fn stream_handoff_is_current_generation_origin_checked_and_url_redacted() {
         let actor = ready_stream_actor(false, "127.0.0.1", "127.0.0.1");
@@ -2471,6 +2617,15 @@ mod tests {
                 &key,
             ));
         }
+    }
+
+    #[test]
+    fn stream_url_revalidation_accepts_an_ipv6_origin() {
+        let key = ChannelKey::new(first_id(), crate::domain::GuideNumber::new("5.1").unwrap());
+        let source = "2001:db8::10".parse().unwrap();
+        let url = reqwest::Url::parse("http://[2001:db8::10]:5004/auto/v5.1").unwrap();
+
+        assert!(stream_url_matches(&url, source, &key));
     }
 
     #[test]
