@@ -1,27 +1,249 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Balun application icon: an antenna feeding a live picture. -->
+<!-- Balun application icon: a Tango-style CRT television showing colour bars, with rabbit ears
+     joined by a balun block and the name on the bezel. Generated geometry; edit the source
+     generator in the packaging notes rather than the letter rectangles by hand. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
   <defs>
-    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#62a0ea"/>
-      <stop offset="1" stop-color="#1a5fb4"/>
+    <linearGradient id="bezel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#888a85"/>
+      <stop offset="0.35" stop-color="#555753"/>
+      <stop offset="1" stop-color="#2e3436"/>
     </linearGradient>
-    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#deddda"/>
+    <linearGradient id="bezelEdge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.25"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="picture" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#99c1f1"/>
-      <stop offset="1" stop-color="#3584e4"/>
+    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.32"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
+    <radialGradient id="tube" cx="0.5" cy="0.5" r="0.72">
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.45"/>
+    </radialGradient>
+    <linearGradient id="antenna" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eeeeec"/>
+      <stop offset="1" stop-color="#babdb6"/>
+    </linearGradient>
+    <clipPath id="screenClip">
+      <rect x="20" y="38" width="88" height="56" rx="7"/>
+    </clipPath>
   </defs>
-  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#background)"/>
-  <rect x="8" y="8" width="112" height="56" rx="26" fill="#ffffff" opacity="0.08"/>
-  <path d="M42 22 L64 46 L86 22" fill="none" stroke="#1a5fb4" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.35" transform="translate(0 3)"/>
-  <path d="M42 22 L64 46 L86 22" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="64" cy="47" r="7" fill="#ffffff"/>
-  <rect x="24" y="52" width="80" height="54" rx="10" fill="#1a5fb4" opacity="0.35" transform="translate(0 3)"/>
-  <rect x="24" y="52" width="80" height="54" rx="10" fill="url(#screen)"/>
-  <rect x="31" y="59" width="66" height="40" rx="5" fill="url(#picture)"/>
-  <path d="M56 67 L80 79 L56 91 Z" fill="#ffffff"/>
+
+  <!-- drop shadow -->
+  <rect x="12" y="32" width="106" height="92" rx="16" fill="#000000" opacity="0.28"/>
+
+  <!-- rabbit ears with a balun feed block -->
+  <path d="M64 33 L36 8" stroke="#2e3436" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <path d="M64 33 L92 8" stroke="#2e3436" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <path d="M64 33 L36 8" stroke="url(#antenna)" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <path d="M64 33 L92 8" stroke="url(#antenna)" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <circle cx="36" cy="8" r="3.4" fill="#d3d7cf" stroke="#2e3436" stroke-width="1.2"/>
+  <circle cx="92" cy="8" r="3.4" fill="#d3d7cf" stroke="#2e3436" stroke-width="1.2"/>
+  <rect x="57" y="26" width="14" height="9" rx="2.5" fill="#2e3436" stroke="#1c1f20" stroke-width="1"/>
+  <rect x="59" y="28" width="10" height="2" rx="1" fill="#888a85"/>
+
+  <!-- bezel -->
+  <rect x="10" y="30" width="108" height="92" rx="16" fill="url(#bezel)" stroke="#1c1f20" stroke-width="1.5"/>
+  <rect x="11.5" y="31.5" width="105" height="89" rx="14.5" fill="none" stroke="url(#bezelEdge)" stroke-width="1.5"/>
+
+  <!-- tube: colour bars -->
+  <rect x="18.5" y="36.5" width="91" height="59" rx="8.5" fill="#0b0f10"/>
+  <g clip-path="url(#screenClip)">
+    <rect x="20.00" y="38.00" width="12.67" height="37.06" fill="#eeeeec"/>
+    <rect x="32.57" y="38.00" width="12.67" height="37.06" fill="#edd400"/>
+    <rect x="45.14" y="38.00" width="12.67" height="37.06" fill="#39dfe2"/>
+    <rect x="57.71" y="38.00" width="12.67" height="37.06" fill="#73d216"/>
+    <rect x="70.29" y="38.00" width="12.67" height="37.06" fill="#c561c5"/>
+    <rect x="82.86" y="38.00" width="12.67" height="37.06" fill="#cc0000"/>
+    <rect x="95.43" y="38.00" width="12.67" height="37.06" fill="#3465a4"/>
+    <rect x="20.00" y="74.96" width="12.67" height="5.70" fill="#3465a4"/>
+    <rect x="32.57" y="74.96" width="12.67" height="5.70" fill="#0b0f10"/>
+    <rect x="45.14" y="74.96" width="12.67" height="5.70" fill="#c561c5"/>
+    <rect x="57.71" y="74.96" width="12.67" height="5.70" fill="#0b0f10"/>
+    <rect x="70.29" y="74.96" width="12.67" height="5.70" fill="#39dfe2"/>
+    <rect x="82.86" y="74.96" width="12.67" height="5.70" fill="#0b0f10"/>
+    <rect x="95.43" y="74.96" width="12.67" height="5.70" fill="#eeeeec"/>
+    <rect x="20.00" y="80.56" width="15.81" height="13.54" fill="#0f2d5c"/>
+    <rect x="35.71" y="80.56" width="15.81" height="13.54" fill="#eeeeec"/>
+    <rect x="51.43" y="80.56" width="15.81" height="13.54" fill="#3b1b5e"/>
+    <rect x="67.14" y="80.56" width="15.81" height="13.54" fill="#0b0f10"/>
+    <rect x="82.86" y="80.56" width="5.38" height="13.54" fill="#050708"/>
+    <rect x="88.14" y="80.56" width="5.38" height="13.54" fill="#0b0f10"/>
+    <rect x="93.42" y="80.56" width="5.38" height="13.54" fill="#1c1f20"/>
+    <rect x="98.70" y="80.56" width="9.40" height="13.54" fill="#0b0f10"/>
+    <rect x="20" y="38" width="88" height="56" fill="url(#tube)"/>
+    <rect x="20" y="38" width="88" height="56" fill="url(#sheen)"/>
+  </g>
+  <rect x="20" y="38" width="88" height="56" rx="7" fill="none" stroke="#000000" stroke-opacity="0.55" stroke-width="1.2"/>
+
+  <!-- name badge and power light -->
+  <g opacity="0.55" transform="translate(0.6 0.7)">
+    <rect x="40.80" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="42.40" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="44.00" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="45.60" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="40.80" y="102.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="47.20" y="102.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="40.80" y="104.20" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="47.20" y="104.20" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="40.80" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="42.40" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="44.00" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="45.60" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="40.80" y="107.40" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="47.20" y="107.40" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="40.80" y="109.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="47.20" y="109.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="40.80" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="42.40" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="44.00" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="45.60" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="52.00" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="53.60" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="55.20" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="50.40" y="102.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="56.80" y="102.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="50.40" y="104.20" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="56.80" y="104.20" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="50.40" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="52.00" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="53.60" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="55.20" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="56.80" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="50.40" y="107.40" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="56.80" y="107.40" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="50.40" y="109.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="56.80" y="109.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="50.40" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="56.80" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="60.00" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="60.00" y="102.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="60.00" y="104.20" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="60.00" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="60.00" y="107.40" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="60.00" y="109.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="60.00" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="61.60" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="63.20" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="64.80" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="66.40" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="69.60" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="76.00" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="69.60" y="102.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="76.00" y="102.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="69.60" y="104.20" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="76.00" y="104.20" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="69.60" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="76.00" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="69.60" y="107.40" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="76.00" y="107.40" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="69.60" y="109.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="76.00" y="109.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="71.20" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="72.80" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="74.40" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="79.20" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="85.60" y="101.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="79.20" y="102.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="80.80" y="102.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="85.60" y="102.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="79.20" y="104.20" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="82.40" y="104.20" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="85.60" y="104.20" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="79.20" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="84.00" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="85.60" y="105.80" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="79.20" y="107.40" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="85.60" y="107.40" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="79.20" y="109.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="85.60" y="109.00" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="79.20" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+    <rect x="85.60" y="110.60" width="1.80" height="1.80" fill="#000000"/>
+  </g>
+  <g>
+    <rect x="40.80" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="42.40" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="44.00" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="45.60" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="40.80" y="102.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="47.20" y="102.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="40.80" y="104.20" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="47.20" y="104.20" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="40.80" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="42.40" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="44.00" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="45.60" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="40.80" y="107.40" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="47.20" y="107.40" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="40.80" y="109.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="47.20" y="109.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="40.80" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="42.40" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="44.00" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="45.60" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="52.00" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="53.60" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="55.20" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="50.40" y="102.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="56.80" y="102.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="50.40" y="104.20" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="56.80" y="104.20" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="50.40" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="52.00" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="53.60" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="55.20" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="56.80" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="50.40" y="107.40" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="56.80" y="107.40" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="50.40" y="109.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="56.80" y="109.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="50.40" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="56.80" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="60.00" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="60.00" y="102.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="60.00" y="104.20" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="60.00" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="60.00" y="107.40" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="60.00" y="109.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="60.00" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="61.60" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="63.20" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="64.80" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="66.40" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="69.60" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="76.00" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="69.60" y="102.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="76.00" y="102.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="69.60" y="104.20" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="76.00" y="104.20" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="69.60" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="76.00" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="69.60" y="107.40" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="76.00" y="107.40" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="69.60" y="109.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="76.00" y="109.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="71.20" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="72.80" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="74.40" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="79.20" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="85.60" y="101.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="79.20" y="102.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="80.80" y="102.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="85.60" y="102.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="79.20" y="104.20" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="82.40" y="104.20" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="85.60" y="104.20" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="79.20" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="84.00" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="85.60" y="105.80" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="79.20" y="107.40" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="85.60" y="107.40" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="79.20" y="109.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="85.60" y="109.00" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="79.20" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+    <rect x="85.60" y="110.60" width="1.80" height="1.80" fill="#d3d7cf"/>
+  </g>
+  <circle cx="106" cy="106.6" r="2.6" fill="#73d216" stroke="#4e9a06" stroke-width="0.8"/>
 </svg>

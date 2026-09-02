@@ -38,8 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `F11` and `Escape`. Volume and mute carry across channel changes for the running session, and
   fullscreen presentation follows the compositor's confirmation.
 - **Desktop metadata and icon** — Add the `io.github.jm2.Balun` desktop entry, AppStream
-  metainfo, and an application icon (scalable and symbolic SVG, hicolor PNGs from 16 to 512 px,
-  a macOS iconset, and a Windows `.ico`), validated by a new CI job. Packages are still to come.
+  metainfo, and a Tango-style application icon: a CRT showing colour bars, rabbit ears joined by
+  a balun, and the name on the bezel, as scalable and symbolic SVG, hicolor PNGs from 16 to
+  512 px, a macOS iconset, and a Windows `.ico`, validated by a new CI job. Packages are still to
+  come.
 - **Endpoint-free playback errors** — Failures reduce to fixed messages for no tuner available,
   channel unavailable, stream rejected, device or stream unavailable, missing codec or plugin,
   protected channel, and internal error. No native error text, header, or address is retained.
