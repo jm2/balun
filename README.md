@@ -49,7 +49,7 @@ The product plan is [`docs/plan-v0.1.md`](docs/plan-v0.1.md), the countable ledg
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │ GTK 4 / libadwaita UI                                       │
 │ device sidebar · channel sidebar · live-TV player           │
@@ -313,7 +313,7 @@ future enforcement boundary.
 
 ## Project Structure
 
-```
+```text
 src/
 ├── main.rs                 # Desktop application entry point
 ├── lib.rs                  # GTK-free core library
