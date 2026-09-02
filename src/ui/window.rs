@@ -719,11 +719,10 @@ fn spawn_snapshot_reducer(
             if let Some(target) = rediscovery.exact_tracker.borrow_mut().observe(discovery)
                 && let Some(pending_save) = rediscovery.settings.remember_target(target)
             {
-                // The atomic write flushes files, so it runs on the blocking
-                // worker rather than stalling snapshot reduction.
-                gtk::glib::MainContext::default().spawn_local(async move {
-                    let _ = gtk::gio::spawn_blocking(move || pending_save.write()).await;
-                });
+                // The session's writer runs the flushing write off the main
+                // context, one save at a time, so snapshot reduction never
+                // stalls and no older document can land after this one.
+                rediscovery.settings.save(pending_save);
             }
             send_next_rediscovery(&rediscovery.rediscovery, &rediscovery.controller, discovery);
         }
@@ -757,9 +756,11 @@ fn connect_joined_shutdown(
         }
 
         // Capture geometry while the window is still mapped and interactive.
-        // The durable write runs on the blocking worker below, so its file
-        // flushes never stall the main loop.
-        let pending_save = settings.stage_window(window);
+        // The durable write queues on the settings writer behind any save
+        // still in flight, so its file flushes never stall the main loop.
+        if let Some(pending_save) = settings.stage_window(window) {
+            settings.save(pending_save);
+        }
         window.set_sensitive(false);
         let controller = controller.borrow_mut().take();
         let retained_player_view = player_view.borrow_mut().take();
@@ -776,19 +777,18 @@ fn connect_joined_shutdown(
 
         let shutdown_complete = Rc::clone(&shutdown_complete);
         let shutdown_failed = Rc::clone(&shutdown_failed);
+        let settings = Rc::clone(&settings);
         let window = window.downgrade();
         gtk::glib::MainContext::default().spawn_local(async move {
             // Retain GTK and playback ownership on this local future while
-            // only the settings write and the controller join move to the
-            // blocking worker. The window closes only after both finish, so
-            // the process never exits ahead of the write.
+            // only the controller join moves to the blocking worker. The
+            // window closes only after the join and every queued settings
+            // write finish, so the process never exits ahead of a write.
             let _retained_player_view = retained_player_view;
             let worker = gtk::gio::spawn_blocking(move || {
-                if let Some(save) = pending_save {
-                    save.write();
-                }
                 controller.map_or(Ok(()), ControllerRuntime::join)
             });
+            settings.drain().await;
             match worker.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
