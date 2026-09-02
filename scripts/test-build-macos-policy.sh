@@ -353,7 +353,7 @@ for valued_package_mode in --dmg=output.dmg --app=Balun.app --package=pkg; do
     expect_empty_log
 done
 
-for quick_mode in --fmt --check --clippy --coverage; do
+for quick_mode in --fmt --check --clippy --coverage --probe-playback; do
     run_helper "$quick_mode" --dmg
     expect_status 2
     expect_output "Packaging mode '--dmg' is not available yet"
@@ -370,8 +370,8 @@ for quick_mode in --fmt --check --clippy --coverage; do
     expect_empty_log
 done
 
-for first_quick_mode in --fmt --check --clippy --coverage; do
-    for second_quick_mode in --fmt --check --clippy --coverage; do
+for first_quick_mode in --fmt --check --clippy --coverage --probe-playback; do
+    for second_quick_mode in --fmt --check --clippy --coverage --probe-playback; do
         run_helper "$first_quick_mode" "$second_quick_mode"
         expect_status 2
         expect_output 'Quick-exit modes cannot be combined'
@@ -591,9 +591,24 @@ expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <
 [ ! -e "$fixture/target/$hostile_build_target/release/balun" ] || \
     fail_test 'hostile CARGO_BUILD_TARGET received the desktop output'
 
-# The desktop build fails closed before policy loading or Cargo work when a
-# structural runtime plugin is missing; quick modes never consult plugins.
+run_helper --diagnostic --probe-playback
+expect_status 2
+expect_output '--probe-playback exercises the desktop playback runtime and cannot be combined with --diagnostic'
+expect_empty_log
+
+run_helper --probe-playback
+expect_status 0
+expect_output 'Playback runtime probes passed'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\ncargo <test> <--release> <--locked> <--features> <desktop> <--lib> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target> <playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation> <--> <--ignored> <--exact>\ncargo <test> <--release> <--locked> <--features> <desktop> <--lib> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target> <playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc> <--> <--ignored> <--exact>'
+
+# The desktop build and the runtime probes fail closed before policy loading
+# or Cargo work when a structural runtime plugin is missing; other quick
+# modes never consult plugins.
 rm -f -- "$plugin_directory/libgstgtk4.dylib"
+run_helper --probe-playback
+expect_status 1
+expect_output 'Required GStreamer playback runtime is incomplete'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>'
 run_helper
 expect_status 1
 expect_output 'Required GStreamer playback runtime is incomplete'

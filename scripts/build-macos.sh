@@ -36,6 +36,11 @@ Quick-exit modes (choose at most one):
                     in both the debug and release profiles.
   --coverage        Print an all-target coverage summary with desktop features
                     by default; requires cargo-llvm-cov 0.8.7 installed already.
+  --probe-playback  Run the installed-runtime playback probes in the release
+                    profile: the exact structural factory snapshot and the
+                    constant-URI appsrc contract. Requires the desktop
+                    development libraries and runtime plugins; it cannot be
+                    combined with --diagnostic.
 
 Desktop compilation requires preinstalled, pkg-config-visible GTK 4.16,
 libadwaita 1.6, and GStreamer 1.20 development libraries. The diagnostic and
@@ -170,7 +175,7 @@ for argument in "$@"; do
         --diagnostic)
             diagnostic=true
             ;;
-        --fmt|--check|--clippy|--coverage)
+        --fmt|--check|--clippy|--coverage|--probe-playback)
             if [ "$mode" != build ]; then
                 usage_error "Quick-exit modes cannot be combined ('$mode_option' and '$argument')."
             fi
@@ -191,6 +196,10 @@ done
 if $show_help; then
     usage
     exit 0
+fi
+
+if $diagnostic && [ "$mode" = probe-playback ]; then
+    usage_error '--probe-playback exercises the desktop playback runtime and cannot be combined with --diagnostic.'
 fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -302,6 +311,24 @@ case "$mode" in
                 cargo llvm-cov --all-targets --all-features --locked \
                 --target "$native_target" --summary-only
         fi
+        exit 0
+        ;;
+    probe-playback)
+        # The plugin-file gate names missing packages; the probes then prove
+        # the installed runtime satisfies Balun's factory and appsrc contract
+        # through the same release dependency graph the desktop build uses.
+        require_desktop_dependencies
+        require_playback_runtime
+        info 'Probing the installed GStreamer playback runtime (release profile)...'
+        for probe in \
+            playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation \
+            playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc
+        do
+            cargo test --release --locked --features desktop --lib \
+                --target "$native_target" --target-dir "$target_directory" \
+                "$probe" -- --ignored --exact
+        done
+        info 'Playback runtime probes passed.'
         exit 0
         ;;
     build)

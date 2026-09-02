@@ -512,8 +512,9 @@ adds process-local volume/mute property ownership plus native playback and
 compositor-confirmed fullscreen controls. M2.9 adds the application-owned
 direct transport behind the constant `appsrc://balun` URI. Audio decoding and
 audible output, audio sinks, the parser/decoder set, the full M0.10 plugin
-contract, native macOS/Windows source-selection evidence, and M2.10 through
-M2.12 player acceptance remain open. The detailed boundary is recorded in
+contract, and M2.10 through M2.12 player acceptance remain open; the helpers'
+installed-runtime probes prove the constant-URI `appsrc` contract on all three
+development runtimes. The detailed boundary is recorded in
 [`playback.md`](playback.md).
 
 The implemented first player path uses:

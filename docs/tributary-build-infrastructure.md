@@ -79,7 +79,11 @@ macOS, and Windows desktop/diagnostic routes.
 Tributary has no equivalent scripts, so `test-build-linux-policy.sh`,
 `test-build-macos-policy.sh`, `test-build-windows-routing.ps1`, and
 `test-desktop-lifecycle.sh` are new, narrow responsibilities rather than
-renamed upstream ports. The lifecycle helper now runs the ordinary Linux
+renamed upstream ports. The `--probe-playback` (Linux and macOS) and
+`-ProbePlayback` (Windows) helper modes are likewise new-purpose,
+fixed-argument routes: they apply the plugin-file gate and run the two
+installed-runtime playback probes in the release profile, and all three CI
+lanes invoke them after the helper desktop build. The lifecycle helper now runs the ordinary Linux
 close/join smoke and the M0.5 checked-in MPEG-2 render/EOS/`NULL` smoke in
 separate, bounded headless-Wayland/session-bus processes; Weston is the default
 CI route and Xvfb is only an optional local fallback. CI explicitly requires

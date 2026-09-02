@@ -272,6 +272,16 @@ expect_status 2
 expect_output 'Quick-exit modes cannot be combined'
 expect_empty_log
 
+run_helper --probe-playback --check
+expect_status 2
+expect_output 'Quick-exit modes cannot be combined'
+expect_empty_log
+
+run_helper --diagnostic --probe-playback
+expect_status 2
+expect_output '--probe-playback exercises the desktop playback runtime and cannot be combined with --diagnostic'
+expect_empty_log
+
 metadata_validator="$fixture/build-aux/linux/validate-package-metadata.sh"
 artifact_validator="$fixture/build-aux/linux/validate-package-compliance.sh"
 
@@ -420,9 +430,19 @@ expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <
 [ ! -e "$fixture/target/$hostile_build_target/release/balun" ] || \
     fail_test 'hostile CARGO_BUILD_TARGET received the desktop output'
 
-# The desktop build fails closed before any Cargo work when a structural
-# runtime plugin is missing; quick modes never consult runtime plugins.
+run_helper --probe-playback
+expect_status 0
+expect_output 'Playback runtime probes passed'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\ncargo <test> <--release> <--locked> <--features> <desktop> <--lib> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'> <playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation> <--> <--ignored> <--exact>\ncargo <test> <--release> <--locked> <--features> <desktop> <--lib> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'> <playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc> <--> <--ignored> <--exact>'
+
+# The desktop build and the runtime probes fail closed before any Cargo work
+# when a structural runtime plugin is missing; other quick modes never
+# consult runtime plugins.
 rm -f -- "$plugin_directory/libgstgtk4.so"
+run_helper --probe-playback
+expect_status 1
+expect_output 'Required GStreamer playback runtime is incomplete'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>'
 run_helper
 expect_status 1
 expect_output 'Required GStreamer playback runtime is incomplete'

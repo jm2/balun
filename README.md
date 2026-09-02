@@ -406,8 +406,11 @@ install Xvfb, so a compositor regression cannot be hidden by fallback.
 
 The same-named Tributary-derived Linux, macOS, and Windows helpers use desktop
 defaults and are build-only with no options. Their check, Clippy, and coverage
-routes also include desktop features by default. Select the GTK-free diagnostic
-explicitly with `--diagnostic` on Linux/macOS or `-Diagnostic` on Windows.
+routes also include desktop features by default, and their `--probe-playback`
+(`-ProbePlayback` on Windows) route runs the installed-runtime playback probes
+that every native CI lane uses to prove the exact factory snapshot and the
+constant-URI `appsrc` contract. Select the GTK-free diagnostic explicitly with
+`--diagnostic` on Linux/macOS or `-Diagnostic` on Windows.
 Tributary established a launch flag only for its Windows PowerShell helper, so
 Balun preserves `-Run` there and deliberately does not invent `--run` for the
 shell helpers.
@@ -425,6 +428,7 @@ work until their recipes and complete artifact gates exist:
 scripts/test-build-linux-policy.sh
 scripts/build-linux.sh --check
 scripts/build-linux.sh
+scripts/build-linux.sh --probe-playback
 scripts/build-linux.sh --diagnostic
 ```
 
@@ -441,6 +445,7 @@ work:
 scripts/test-build-macos-policy.sh
 /bin/bash scripts/build-macos.sh --check
 /bin/bash scripts/build-macos.sh
+/bin/bash scripts/build-macos.sh --probe-playback
 /bin/bash scripts/build-macos.sh --diagnostic
 ```
 
@@ -456,6 +461,7 @@ On Windows:
 pwsh -NoProfile -File scripts/test-build-windows-routing.ps1
 pwsh -NoProfile -File scripts/build-windows.ps1
 pwsh -NoProfile -File scripts/build-windows.ps1 -Run
+pwsh -NoProfile -File scripts/build-windows.ps1 -ProbePlayback
 pwsh -NoProfile -File scripts/build-windows.ps1 -Diagnostic
 pwsh -NoProfile -File scripts/build-windows.ps1 -InspectLocal
 pwsh -NoProfile -File scripts/build-windows.ps1 -Check
@@ -464,8 +470,11 @@ pwsh -NoProfile -File scripts/build-windows.ps1 -Check
 The no-option and `-Run` modes build the release desktop shell through an
 automatically detected MSYS2 CLANG64 environment; only `-Run` launches it.
 `-Diagnostic` preserves the GTK-free diagnostic route, and can be combined
-with quick modes such as `-Check`. `-InspectLocal` is the separate, explicit
-build-and-run diagnostic with fixed local-inspection arguments. Every compile
+with quick modes such as `-Check`. `-ProbePlayback` applies the runtime plugin
+gate and then runs the two installed-runtime playback probes in the release
+profile: the exact factory snapshot and `playbin3` resolving the constant
+`appsrc://balun` URI to the built-in `appsrc`. `-InspectLocal` is the separate,
+explicit build-and-run diagnostic with fixed local-inspection arguments. Every compile
 route pins an explicit Rust target and repository-local target tree before
 validating the expected output as a nonempty regular, non-reparse file. Bundle,
 ZIP, Inno Setup, and dependency-update switches remain fail-closed before

@@ -91,9 +91,10 @@ settlement quarantines the playback owner rather than starting a successor.
 Implementation status: the `appsrc` transport replaced the intermediate
 `souphttpsrc` policy on 2026-09-02 with proxy-trap, bounded-backpressure,
 cancellation, rapid-replacement, and joined-teardown tests plus a `playbin3`
-decode of the checked-in fixture from the constant URI on Linux. M2.9 records
-completion only once the native macOS and Windows lanes run the same
-source-selection checks.
+decode of the checked-in fixture from the constant URI on Linux. The macOS
+lane runs the same loopback suite, and all three lanes run the helpers'
+installed-runtime probes for the constant-URI `appsrc` contract, so M2.9 is
+recorded complete; packaged-runtime probes remain M2.11 work.
 
 ## Consequences and required evidence
 

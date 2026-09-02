@@ -519,13 +519,24 @@ exit $global:LASTEXITCODE
     Assert-ExpectedOutput 'cannot be combined with -Diagnostic'
     Assert-EmptyLog $CommandLog 'Cargo'
 
+    Invoke-TestHelper -Arguments @('-ProbePlayback', '-Diagnostic')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput '-ProbePlayback exercises the desktop playback runtime and cannot be combined with -Diagnostic'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-ProbePlayback', '-Check')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput 'Quick-exit modes cannot be combined'
+    Assert-EmptyLog $CommandLog 'Cargo'
+
     Invoke-TestHelper -Arguments @('-Run', '-InspectLocal')
     Assert-ExpectedStatus 2
     Assert-ExpectedOutput 'mutually exclusive launch operations'
     Assert-EmptyLog $CommandLog 'Cargo'
     Assert-EmptyLog $PkgConfigLog 'pkg-config'
 
-    foreach ($QuickMode in @('-Fmt', '-Check', '-Clippy', '-Test', '-Coverage')) {
+    foreach ($QuickMode in @('-Fmt', '-Check', '-Clippy', '-Test', '-Coverage', '-ProbePlayback')) {
         Invoke-TestHelper -Arguments @('-InspectLocal', $QuickMode)
         Assert-ExpectedStatus 2
         Assert-ExpectedOutput '-InspectLocal cannot be combined with quick-exit mode'
@@ -600,10 +611,32 @@ exit $global:LASTEXITCODE
     Assert-DesktopTargetProbe
     Assert-DesktopEnvironment
 
-    # The desktop build fails closed before any Cargo work when a structural
-    # runtime plugin is missing; quick modes never consult runtime plugins.
+    $ProbeCommands = (
+        'cargo <test> <--release> <--locked> <--features> <desktop> <--lib> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget> " +
+        "<playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation> <--> <--ignored> <--exact>`n" +
+        'cargo <test> <--release> <--locked> <--features> <desktop> <--lib> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget> " +
+        '<playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc> <--> <--ignored> <--exact>'
+    )
+    Invoke-TestHelper -Arguments @('-ProbePlayback')
+    Assert-ExpectedStatus 0
+    Assert-ExpectedOutput 'GStreamer runtime plugin checks passed'
+    Assert-ExpectedOutput 'Playback runtime probes passed'
+    Assert-ExpectedLog $ProbeCommands
+    Assert-ExpectedPkgConfigProbeSet
+    Assert-DesktopTargetProbe
+    Assert-DesktopEnvironment
+
+    # The desktop build and the runtime probes fail closed before any Cargo
+    # work when a structural runtime plugin is missing; other quick modes
+    # never consult runtime plugins.
     $FakeGtk4Plugin = Join-Path $FakePluginDirectory 'libgstgtk4.dll'
     Remove-Item -LiteralPath $FakeGtk4Plugin -Force
+    Invoke-TestHelper -Arguments @('-ProbePlayback')
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'Required GStreamer playback runtime is incomplete'
+    Assert-EmptyLog $CommandLog 'Cargo'
     Invoke-TestHelper -Arguments @()
     Assert-ExpectedStatus 1
     Assert-ExpectedOutput 'Required GStreamer playback runtime is incomplete'
@@ -989,6 +1022,7 @@ exit $global:LASTEXITCODE
         "'1.20'",
         "'libgstgtk4.dll'",
         "'gst-plugins-rs'",
+        "'playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc'",
         '& $BinaryItem.FullName',
         "& `$BinaryItem.FullName '--inspect' '--local'"
     )) {

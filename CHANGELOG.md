@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Installed-runtime playback probes** — Add a fixed-purpose
+  `--probe-playback` (Linux and macOS) and `-ProbePlayback` (Windows) helper
+  mode that applies the runtime plugin-file gate and then runs the two
+  installed-runtime probes in the release profile: the exact seven-factory
+  snapshot and `playbin3` resolving the constant `appsrc://balun` URI to the
+  built-in `appsrc` through the production source policy and transport. The
+  Linux, macOS, and Windows CI lanes run the mode after their helper desktop
+  builds, so the constant-URI contract is proven on every supported
+  development runtime; together with the macOS loopback transport suite this
+  closes M2.9's remaining evidence. Packaged-runtime probes remain M2.11 work.
 - **Application-owned direct stream transport** — Give `playbin3` only the
   constant endpoint-free `appsrc://balun` URI and feed its exact built-in
   `appsrc` from a Balun-owned HTTP worker. A private `reqwest` client disables
