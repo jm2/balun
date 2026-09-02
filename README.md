@@ -21,9 +21,10 @@ available program information, and a live-video area.
 > tuner-stream handoff, and the playback library now owns its generation-safe
 > `playbin3` lifecycle. Double-clicking or pressing Enter on an unprotected
 > channel now enters that path and attempts live-device playback without
-> exposing the stream URI to the UI. An accessible header Stop button drops a
-> pending private response wait or settles the active generation. Volume, mute,
-> fullscreen, detailed playback errors, hostname entry, EPG, and live-device
+> exposing the stream URI to the UI. The header now provides Stop, process-local
+> volume and mute, and compositor-confirmed fullscreen controls, with native
+> pointer/keyboard behavior and fixed accessible labels. Detailed playback-error
+> projection, hostname entry, EPG, audible-output proof, and live-device
 > acceptance remain unimplemented.
 
 ## Current foundation
@@ -137,7 +138,11 @@ available program information, and a live-video area.
   generation activation of an unprotected channel now requests the private
   handoff, binds an applied paintable, aborts superseded waits, and stops when
   a selected-device change is admitted, with a defensive repeat when its new
-  generation is published.
+  generation is published. A normalized process-local volume and independent
+  mute preference apply before a URI enters each pipeline, update its active
+  owner, and carry into every successor; the UI level is converted to playbin's
+  linear gain with a cubic curve. This property contract does not yet prove
+  audible output or a packaged platform audio sink.
 - A bounded, display-backed Linux acceptance test which feeds a deterministic,
   video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
   `gtk4paintablesink`, requires multiple rendered frames and paintable updates,
@@ -150,9 +155,15 @@ available program information, and a live-video area.
   Refresh explicitly starts local discovery, the adjacent add action admits a
   bounded exact-address request, and selecting one device loads only that
   device's lineup. Double-clicking or pressing Enter on an unprotected channel
-  starts its generation-owned playback session. Separate discovery and
-  playback Stop controls, plus the joined close path, cancel their owned work.
-  The core library's default build and diagnostic remain GTK-free.
+  starts its generation-owned playback session and presents the player when the
+  nested layout is compact, including when setup reports a fixed failure.
+  Separate discovery and playback Stop controls, plus the joined close path,
+  cancel their owned work. Native volume, mute, and fullscreen widgets support
+  pointer and keyboard operation; F11 toggles fullscreen and Escape exits it.
+  Fullscreen presentation changes only after compositor confirmation, protects
+  nested Back navigation, then restores the prior pages and focus. The broader
+  M4.6 accessibility audit remains open. The core library's default build and
+  diagnostic remain GTK-free.
 
 The implementation plan, including the UI, lineup, guide, playback, security,
 hardware-validation, packaging, and release boundaries, is in
@@ -266,7 +277,13 @@ Selecting a discovered device fetches its identity-checked metadata and lineup
 for the channel sidebar; device selection alone does not tune a channel or
 allocate a tuner. Double-clicking or pressing Enter on an unprotected channel
 then requests its private stream handoff and starts playback. Until a channel
-is activated, the live-TV pane retains its fixed idle state.
+is activated, the live-TV pane retains its fixed idle state. The player header
+offers Stop, a focusable volume slider, an independent mute toggle, and a
+fullscreen button. F11 toggles fullscreen and Escape exits it; state-dependent
+button copy and nested-navigation protection follow the window's confirmed
+fullscreen state rather than the request alone. These controls and their
+property-level tests do not yet establish audible output, codec/audio-sink
+coverage, or live-device acceptance.
 
 On Windows, Refresh sends the same bounded request count from each eligible
 interface-bound IPv4 socket using the limited local broadcast. Balun derives
@@ -330,12 +347,14 @@ CI verifies the declared Rust 1.98 minimum across the desktop feature, runs
 strict Linux GTK-free debug and release checks, tests the optional GTK-free
 playback capability layer, compiles, links, and lints the Linux desktop shell,
 exercises its ordinary close/join lifecycle, URI-opaque `PlayerView`
-binding/clearing, and an offline synthetic MPEG-2 decode/render/EOS/`NULL`
-lifecycle under an isolated headless Wayland compositor, links that shell
-against native macOS and Windows toolkit SDKs, and keeps compile-checking the
-GTK-free default code on both platforms. The local smoke helper can fall back
-to an isolated Xvfb server when Wayland is unavailable; X11 is not the default
-or a Balun runtime requirement. CI also
+binding/clearing, accessible audio-control state, compositor-confirmed
+fullscreen/navigation restoration, and an offline synthetic MPEG-2
+decode/render/EOS/`NULL` lifecycle under an isolated headless Wayland
+compositor. These layered tests validate control wiring and playbin properties,
+not audible output. CI links that shell against native macOS and Windows toolkit
+SDKs and keeps compile-checking the GTK-free default code on both platforms.
+The local smoke helper can fall back to an isolated Xvfb server when Wayland is
+unavailable; X11 is not the default or a Balun runtime requirement. CI also
 exercises each platform helper's no-option desktop route. The release candidate
 workflow accepts an existing annotated, v-prefixed Semantic Version tag,
 verifies it against `Cargo.toml` and `CHANGELOG.md`, and builds the exact tag

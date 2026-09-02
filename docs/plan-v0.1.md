@@ -245,11 +245,16 @@ desktop pane now owns that session plus its URI-opaque paintable
 binding/clearing boundary. Layered display-backed tests complete M2.7 by
 proving decoded-frame/EOS behavior, the real production session's opaque
 paintable and `NULL` shutdown, and production-pane binding without weakening
-the handoff boundary. M2.8 now has its first exact-generation
-double-click/Enter activation lane,
-plus an accessible header Stop control which aborts pending resolution and
-settles the exact generation. Volume, mute, fullscreen, and their complete
-accessibility coverage remain open.
+the handoff boundary. M2.8 completes the essential control set: exact-generation
+double-click/Enter activation, synchronous Stop, process-local normalized
+volume and independent mute with a cubic UI-to-linear playbin gain, and
+compositor-confirmed fullscreen through a labeled button, F11, and Escape.
+Fullscreen forces the player and protects both nested Back paths, then restores
+the exact prior pages, pop permissions, and focus. Layered fake-backend,
+property, widget, production-session, ListView, and isolated Wayland tests cover
+the implementation without claiming audible output, complete codec/audio-sink
+packaging, native-platform runtime acceptance, live hardware, or the broader
+M4.6 accessibility audit.
 M0.5 separately exercises a pinned local MPEG-2 fixture through a
 process-isolated Linux GTK pipeline; see the detailed
 [playback foundation](playback.md).
@@ -498,10 +503,12 @@ M0.5 experiment separately proves a bounded, display-backed Linux path from one
 checked-in video-only MPEG-2 transport stream through explicit `playbin3` and
 `gtk4paintablesink`, including multiple rendered frames and paintable updates,
 EOS, and teardown to `NULL`. M2.7 additionally proves the real production
-session and production pane as separate URI-confined display processes. Audio
-sinks, parser/decoder set, the full M0.10 plugin contract, and M2.8 and later
-player work remain open. The detailed boundary is recorded in
-[`playback.md`](playback.md).
+session and production pane as separate URI-confined display processes. M2.8
+adds process-local volume/mute property ownership plus native playback and
+compositor-confirmed fullscreen controls. Audio decoding and audible output,
+audio sinks, the parser/decoder set, the full M0.10 plugin contract, and M2.9
+through M2.12 player acceptance remain open. The detailed boundary is recorded
+in [`playback.md`](playback.md).
 
 The implemented first player path uses:
 
@@ -665,9 +672,12 @@ This removes manual compiler, `pkg-config`, Rust-target, and Cargo-output path
 handling without making a portable bundle or installer claim. A local Linux
 GTK 4 Broadway smoke has verified display initialization and event-loop entry,
 and isolated Linux headless-Wayland/D-Bus processes cover joined close plus the
-M0.5 local MPEG-2 decode/render/EOS/`NULL` lifecycle. The helper retains Xvfb
-only as an optional local fallback when a headless Wayland compositor is
-unavailable; X11 is not the default or a runtime requirement. Native macOS and
+M0.5 local MPEG-2 decode/render/EOS/`NULL` lifecycle, production audio-control
+state, exact channel activation, and a compositor-confirmed fullscreen
+enter/exit round trip with nested-navigation and focus restoration. The helper
+retains Xvfb only as an optional local fallback when a headless Wayland
+compositor is unavailable; X11 is not the default or a runtime requirement.
+The fixture is video-only and does not prove audible output. Native macOS and
 Windows runtime activation/close/render smokes remain pending.
 
 The Fedora smoke installs `gstreamer1-plugin-libav` as a development/CI decoder
@@ -783,14 +793,17 @@ reports missing structural components without disabling discovery. The
 generation-owned library session can consume one private handoff, construct
 `playbin3` with its library-private GTK sink, and serialize bus events plus
 bounded teardown without exposing the URI-bearing GStreamer graph. The pane
-owns its opaque presentation and terminal-shutdown boundary. Initial channel
-activation now submits the URL-free intent through the bounded controller lane
-and invokes paintable binding only after the session applies the response. A
+owns its opaque presentation and terminal-shutdown boundary. Completed M2.8
+controls submit channel activation through the bounded controller lane, provide
+synchronous Stop, retain normalized volume and independent mute across
+successors with a cubic UI-to-linear playbin gain, and follow compositor-
+confirmed fullscreen while protecting and restoring nested navigation. A
 separate Linux-only M0.5 smoke
 proves bounded rendering and teardown for a checked-in synthetic MPEG-2
-transport stream. Hostname admission, complete GTK playback controls, the
-complete codec/audio-sink contract, packaged-runtime probes, and live-platform
-validation remain open, so this
+transport stream. Hostname admission, buffering/error projection, the complete
+codec/audio-sink contract, audible-output proof, deterministic live-tuner
+release acceptance, packaged-runtime probes, and live-platform validation
+remain open, so this
 milestone is not yet complete. Initial Windows desktop trials exposed
 inconsistent IPv4 broadcast discovery and an unusable-only locator path; the
 local endpoint projection now follows Windows limited-broadcast behavior,

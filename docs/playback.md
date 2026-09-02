@@ -4,7 +4,7 @@ Last reviewed: 2026-09-01
 
 This document records Balun's implemented M2.4 GStreamer boundary, M2.5 private
 stream handoff, M2.6 generation-owned tune session, completed M2.7 video
-presentation path, and initial M2.8 activation/Stop controls. The product and
+presentation path, and completed M2.8 essential controls. The product and
 milestone scope remains authoritative in [`plan-v0.1.md`](plan-v0.1.md), while
 countable completion is tracked in [`task.md`](task.md).
 
@@ -25,14 +25,21 @@ library-owned `gtk4paintablesink`. Standard activation of an unprotected row
 now submits only its exact applied selection generation, and an applied private
 response can open the HDHomeRun HTTP stream, allocate a tuner, and bind the
 session's URI-opaque paintable into the production pane. The desktop cannot
-inspect the URI or GStreamer graph. Audio remains delegated to playbin's native
-selection until M0.10 freezes the complete codec/audio-sink contract.
+inspect the URI or GStreamer graph. The session and native player controls now
+retain a normalized process-local volume plus independent mute setting and
+apply both to the active pipeline and successor tunes. This property contract
+does not establish audible output; playbin's native stream and sink selection,
+the complete codec/audio-sink contract, and package contents remain M0.10 and
+later acceptance work.
 
 Process-isolated Linux tests prove the checked-in MPEG-2 fixture renders into a
 real GTK paintable, the real production session exposes only that paintable and
 settles to `NULL`, and `PlayerView` binds/clears an opaque paintable through its
 production widgets and Stop control. Physical HDHomeRun and packaged-runtime
-acceptance remain M2.11-M2.12 work.
+acceptance remain M2.11-M2.12 work. Additional isolated widget and Wayland
+smokes cover M2.8 audio-control state, exact ListView activation, and a real
+compositor-confirmed fullscreen round trip without adding a URI-forging test
+surface.
 
 ## Feature and version boundary
 
@@ -174,6 +181,20 @@ generation-scoped buffering, teardown poison, explicit Stop, shutdown and
 active-owner Drop, handoff mismatch, and generation exhaustion without opening
 a network source.
 
+Audio state belongs to that same serialized owner. Its normalized finite range
+is `0.0..=1.0`, defaults to full volume and unmuted, and survives Stop,
+replacement, EOS, and native-error retirement so every successor inherits the
+last accepted values. Mute remains independent, allowing the unmuted level to
+change while muted. Before assigning a URI, and on every active update, Balun
+validates playbin's readable/writable `volume` and `mute` properties, converts
+the UI level to playbin's linear gain with `level³`, and reads both properties
+back. Invalid or rejected changes leave the retained state unchanged. Teardown
+force-mutes the exact pipeline before its bounded `NULL` wait without changing
+the successor preference; teardown poison and terminal shutdown disable the UI
+controls. Fake-backend and factory-backed tests prove ownership, inheritance,
+failure, and property semantics. The checked-in transport-stream fixture is
+video-only, so none of these tests claims decoded or audible audio.
+
 The main-context desktop pane now owns the session and a narrow presentation
 boundary which can retrieve only its URI-opaque GDK paintable, bind it into the
 `GtkPicture`, and clear it before joined window shutdown. Standard activation
@@ -184,8 +205,19 @@ changes stop the session immediately after successful command admission; the
 published generation repeats that stop before replacing the sidebars as a
 fail-safe. The accessible header Stop control disables immediately, aborts the
 pending private response, clears the paintable, and invokes the same exact-
-generation stop path without yielding. M2.8-M2.10 will complete volume, mute,
-fullscreen, user-visible state, and teardown acceptance.
+generation stop path without yielding. A focusable native slider and toggle
+provide volume and mute through weak, main-context signal closures with stable
+accessible roles and action labels. The fullscreen button supports pointer and
+native Enter/Space activation; unmodified F11 toggles and Escape exits only
+while fullscreen. The desktop does not infer success from a request: it updates
+icons, labels, top-edge presentation, navigation protection, and focus only from
+the window's compositor-confirmed fullscreen property. Both nested split views
+are forced to the player and their Back/pop paths are disabled while fullscreen,
+then their exact pages, pop permissions, and prior focus are restored. Native
+Back choices outside fullscreen remain synchronized, and a valid compact-width
+channel activation presents the player even when setup fails. These controls
+complete M2.8; the broader M4.6 accessibility audit, M2.9 user-visible terminal
+state, and M2.10 teardown acceptance remain open.
 
 Native Error and EOS already retire the session's exact pipeline, but the
 session does not yet notify `PlayerView` to clear or replace its last paintable
@@ -230,6 +262,19 @@ texture. Neither grants the desktop access to the pipeline, sink, or stream
 URI; the local fixture path enters only the library's crate-private `cfg(test)`
 handoff constructor.
 
+M2.8 extends the layered harness rather than weakening that boundary. A
+production `PlayerView` smoke changes volume and mute through the real GTK
+widgets and verifies retained session state and terminal disabling. A ListView
+smoke proves selection remains inert while double-click/Enter activation carries
+the exact applied generation and protected rows fail closed. A separate fresh
+headless Wayland desktop-shell process requests fullscreen through the real
+window, waits for compositor entry and exit notifications, proves nested
+navigation protection plus focus transfer, and verifies exact restoration.
+Pure state and key-filter tests cover responsive layout decisions, F11, Escape,
+and rejected modified shortcuts. The video-only fixture and isolated controls
+still make no audible-output, native macOS/Windows runtime, or live-device
+claim.
+
 Within an isolated Linux headless Wayland compositor and session bus, the test:
 
 - initializes GTK and the existing GStreamer owner on the default main
@@ -263,7 +308,7 @@ to exercise the fallback on a developer host.
 This is a Linux development/CI acceptance record only. It does not prove native
 macOS or Windows rendering, audio, physical MPEG-TS variants, live-source
 behavior, channel switching, tuner release, or packaged-runtime relocation.
-Those claims remain in M0.6, M0.10, M1.10, and M2.8 through M2.12.
+Those claims remain in M0.6, M0.10, M1.10, and M2.9 through M2.12.
 
 ## Development runtime examples
 
@@ -315,7 +360,7 @@ provenance, and distribution review.
 
 ## Next acceptance steps
 
-1. M2.8-M2.10: complete controls, errors, terminal UI projection, and
+1. M2.9-M2.10: complete detailed errors, terminal UI projection, and
    deterministic tuner-release acceptance around the connected session.
 2. M0.10: freeze the complete tested factory and platform package contract,
    including codecs and audio sinks.

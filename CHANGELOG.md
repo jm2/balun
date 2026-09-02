@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Essential live-TV controls** — Complete M2.8 with native header controls for
+  Stop, normalized volume, independent mute, and fullscreen alongside the
+  existing exact-generation channel activation. The main-context playback
+  session retains process-local audio settings across Stop, replacement, EOS,
+  and native error, applies them before each authorized URI enters `playbin3`,
+  and maps the UI level to playbin's linear property with a cubic gain curve.
+  Active updates target only the current owner; failed mutations preserve the
+  last accepted settings, and terminal teardown or shutdown disables the audio
+  widgets. This is a property-level contract, not proof of audible output or a
+  complete codec/audio-sink package. The focusable slider and toggle expose
+  stable accessible roles and labels while retaining native pointer and keyboard
+  behavior. A labeled fullscreen button and unmodified F11 toggle the window;
+  Escape exits only from confirmed fullscreen. Presentation follows the
+  compositor's reported state, forces the player while protecting both nested
+  Back paths, focuses the exit control, and restores the exact prior pages,
+  pop permissions, and focus on exit. Compact channel activation presents the
+  player even for setup failure without retaining a widget/layout cycle.
+  Factory-backed, fake-backend, widget, isolated Wayland fullscreen, and
+  production-session smokes provide layered coverage without claiming the
+  broader M4.6 accessibility audit, native-platform runtime behavior, packaged
+  playback, or physical-device acceptance.
 - **Initial channel-activation lane** — Make standard double-click and keyboard
   activation on an unprotected channel submit only its exact `ChannelKey` and
   applied selected-lineup generation. The main-context player invalidates the
@@ -24,8 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header Stop button is enabled during a pending or applied activation; pointer
   click or native Enter/Space activation disables it immediately, aborts the
   private response task, clears presentation, and synchronously stops the exact
-  session generation. Volume, mute, fullscreen, detailed state/error
-  projection, and live-device acceptance remain open.
+  session generation. Detailed state/error projection and live-device
+  acceptance remain open.
 - **Initial live-video presentation contract** — Configure each private
   `playbin3` with its documented adaptive deinterlace flag, forced source
   aspect-ratio preservation, and the library-owned GTK paintable sink with its
@@ -57,9 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panicking. Exposed states and failures remain URL-free. The library
   constructs and retains `gtk4paintablesink` itself and exposes only its
   URI-opaque GDK paintable, never a GStreamer element whose parents reveal the
-  playbin URI. The initial M2.8 activation lane now submits the URL-free intent
-  and consumes its response here; complete controls and live-device acceptance
-  remain open.
+  playbin URI. The completed M2.8 controls submit the URL-free intent and consume
+  its response here; live-device and packaged-runtime acceptance remain open.
 - **Actor-private stream handoff** — Add a URL-free channel intent containing
   the complete ChannelKey and selected-snapshot generation, resolve it in the
   controller's existing bounded FIFO only against the current complete private

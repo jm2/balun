@@ -23,7 +23,7 @@ outcomes belong in [`../CHANGELOG.md`](../CHANGELOG.md).
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **21/64 (32.8%)** implementation records complete. This is a
+Current status: **22/64 (34.4%)** implementation records complete. This is a
 dependency ledger, not an effort estimate; packaging and cross-platform
 playback records are substantially larger than most completed foundation work.
 
@@ -48,7 +48,14 @@ binds an applied paintable. Superseding activation, device-selection change,
 and window shutdown cancel the appropriate pending or active owner. A device
 change stops immediately after command admission and again on its accepted
 generation publication, so lineup-worker cancellation cannot extend the old
-tuner lifetime.
+tuner lifetime. M2.8's essential controls are now complete: process-local
+volume and independent mute update the active pipeline and every successor with
+a cubic UI-to-linear playbin gain, while compositor-confirmed fullscreen uses a
+labeled button, F11, and Escape without letting nested Back navigation escape
+the player. Layered core, widget, production-session, and isolated Wayland tests
+cover this contract. Audible output, the complete codec/audio-sink package,
+native-platform runtime acceptance, and the broader M4.6 accessibility audit
+remain separate work.
 
 The shortest path to the first live-TV test is:
 
@@ -207,15 +214,25 @@ compatibility/error-path work, not prerequisites for that first picture.
   Keeping those proofs layered avoids exposing a URI-forging desktop test API;
   physical-device and packaged-runtime acceptance remain M2.11-M2.12 work.
 
-- [ ] **M2.8 — Add essential controls.** Implement channel activation, Stop,
+- [x] **M2.8 — Add essential controls.** Implement channel activation, Stop,
   volume, mute, and fullscreen with accessible keyboard and pointer behavior.
-  Double-click and Enter activation now carry only the non-protected row's
+  Double-click and Enter activation carry only the non-protected row's
   exact applied lineup generation into the bounded actor/session path; rapid
-  successors abort the prior wait. An accessible header Stop button supports
+  successors abort the prior wait and compact layouts present the player even
+  when setup fails. An accessible header Stop button supports
   pointer and native Enter/Space activation, disables before aborting the
   response task, clears the paintable, and synchronously stops the exact
-  generation. Volume, mute, fullscreen, and their complete accessibility
-  coverage remain open.
+  generation. A focusable normalized volume slider and independent mute toggle
+  retain process-local settings across Stop and successor tunes, apply them to
+  the current pipeline, and convert the UI level to playbin's linear property
+  with a cubic gain curve. A labeled fullscreen button and unmodified F11 issue
+  toggle requests; Escape exits only while fullscreen. The UI follows the
+  compositor-confirmed state, protects both nested navigation pages and Back
+  paths, then restores the prior pages, pop permissions, and focus. Layered
+  fake-backend/property tests, production widget/session smokes, and an isolated
+  Wayland fullscreen round trip cover these controls without claiming audible
+  output, codec/audio-sink packaging, native-platform runtime acceptance, or the
+  broader M4.6 accessibility audit.
 
 - [ ] **M2.9 — Add truthful playback state and errors.** Surface connecting,
   buffering, playing, stopped, tuner-busy/503, missing/404, protected, missing
