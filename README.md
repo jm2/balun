@@ -123,14 +123,15 @@ available program information, and a live-video area.
   tune generation before awaiting that private response, consumes the URI only
   inside the desktop-enabled library while constructing `playbin3` and its
   private `gtk4paintablesink`, and exposes only the URI-opaque GDK paintable.
-  Every bus event carries the tune generation, and late successful responses
-  are dropped for immediate zeroization. Replacement, Stop, EOS, native
-  failure, shutdown, and owner drop detach the predecessor's watch and request
-  a bounded transition to `NULL`; a teardown failure quarantines that owner and
-  blocks every successor. Bus reductions and public calls share the exact
-  default main context, with fixed errors instead of reentrant borrow panics.
-  The desktop pane does not invoke this owner or present its paintable until
-  channel activation/rendering lands.
+  Every reduced Playing, buffering, EOS, and native-error bus event carries the
+  tune generation, and late successful responses are dropped for immediate
+  zeroization. Replacement, Stop, EOS, native failure, shutdown, and owner drop
+  detach the predecessor's watch and request a bounded transition to `NULL`; a
+  teardown failure quarantines that owner and blocks every successor. Bus
+  reductions and stateful public calls share the exact default main context,
+  with fixed errors instead of reentrant borrow panics. The desktop pane does
+  not invoke this owner or present its paintable until channel
+  activation/rendering lands.
 - A bounded, display-backed Linux acceptance test which feeds a deterministic,
   video-only MPEG-2 transport-stream fixture through explicit `playbin3` and
   `gtk4paintablesink`, requires multiple rendered frames and paintable updates,

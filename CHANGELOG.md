@@ -12,19 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Generation-owned tune session** — Add one default-main-context playback
   owner which assigns a monotonic tune generation before waiting for the
   actor-private stream response, consumes the opaque URI only inside the core
-  library while constructing `playbin3`, and tags every state, buffering, EOS,
-  and native-error bus event. Replacement invalidates the predecessor first,
-  detaches its watch, and requires a bounded transition to `NULL` before a
-  successor can be constructed. Stop, terminal bus events, shutdown, and Drop
-  likewise settle the exact owner; stale responses and events cannot mutate a
-  successor, and successful stale handoffs are dropped for zeroization. All
-  bus reductions and public calls use the exact default main context, and
-  reentrant access fails with fixed errors instead of panicking. Exposed states
-  and failures remain URL-free. The library constructs and retains
-  `gtk4paintablesink` itself and exposes only its URI-opaque GDK paintable,
-  never a GStreamer element whose parents reveal the playbin URI. Channel
-  activation and presentation are left to the next playback slice, so no
-  desktop action opens a tuner yet.
+  library while constructing `playbin3`, and tags every reduced Playing,
+  buffering, EOS, and native-error bus event. Replacement invalidates the
+  predecessor first, detaches its watch, and requires a bounded transition to
+  `NULL` before a successor can be constructed. Stop, terminal bus events,
+  shutdown, and Drop likewise settle the exact owner; stale responses and
+  events cannot mutate a successor, and successful stale handoffs are dropped
+  for zeroization. All bus reductions and stateful public calls use the exact
+  default main context, and reentrant access fails with fixed errors instead of
+  panicking. Exposed states and failures remain URL-free. The library
+  constructs and retains `gtk4paintablesink` itself and exposes only its
+  URI-opaque GDK paintable, never a GStreamer element whose parents reveal the
+  playbin URI. Channel activation and presentation are left to the next
+  playback slice, so no desktop action opens a tuner yet.
 - **Actor-private stream handoff** — Add a URL-free channel intent containing
   the complete ChannelKey and selected-snapshot generation, resolve it in the
   controller's existing bounded FIFO only against the current complete private

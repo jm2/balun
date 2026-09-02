@@ -1,6 +1,6 @@
 # Playback foundation
 
-Last reviewed: 2026-09-02
+Last reviewed: 2026-09-01
 
 This document records Balun's implemented M2.4 GStreamer boundary, M2.5 private
 stream handoff, M2.6 generation-owned tune session, and the remaining work
@@ -134,9 +134,10 @@ remain inert, so no stream is opened yet.
 ## Generation-owned tune session
 
 `PlaybackSession` owns the GStreamer runtime and exactly one serialized tune
-lane on the default GLib main context. Its public accessors and mutations fail
-with fixed URL-free errors when that context is not owned or a native callback
-reenters an in-progress borrow; they do not panic. `begin_tune` first assigns the
+lane on the default GLib main context. Its stateful public accessors and
+mutations fail with fixed URL-free errors when that context is not owned or a
+native callback reenters an in-progress borrow; they do not panic. The immutable
+capability-ready bit remains directly readable. `begin_tune` first assigns the
 successor's `TuneGeneration`, making every predecessor callback stale, then
 detaches the predecessor's bus watch and requires it to reach `NULL` within
 five seconds before any controller wait. A teardown failure quarantines the
@@ -162,9 +163,10 @@ error/debug text is ignored. Terminal events, explicit Stop, replacement,
 terminal shutdown, and Drop all retire only the exact owner. Tests use an
 injected pipeline backend and custom main context to prove late resolution,
 late predecessor EOS/error, replacement ordering, clean and quarantined start
-failure, synchronous native callbacks, teardown poison, Stop/shutdown
-idempotence, handoff mismatch, and generation exhaustion without opening a
-network source.
+failure, current and stale cancellation, synchronous native callbacks,
+generation-scoped buffering, teardown poison, explicit Stop, shutdown and
+active-owner Drop, handoff mismatch, and generation exhaustion without opening
+a network source.
 
 The desktop pane has not yet presented the paintable or connected channel
 activation. M2.7 will bind it into the `GtkPicture` and complete deinterlacing;

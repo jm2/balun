@@ -1082,6 +1082,48 @@ mod tests {
     }
 
     #[test]
+    fn current_cancel_settles_while_stale_cancel_cannot_cancel_a_successor() {
+        let control = FakeControl::default();
+        let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+        let current = core
+            .borrow_mut()
+            .begin_tune(selection(&first_key(), 11))
+            .unwrap();
+        assert!(core.borrow_mut().cancel_tune(current));
+        assert_eq!(core.borrow().state(), &PlaybackSessionState::Stopped);
+
+        let stale = core
+            .borrow_mut()
+            .begin_tune(selection(&first_key(), 12))
+            .unwrap();
+        let successor = core
+            .borrow_mut()
+            .begin_tune(selection(&second_key(), 12))
+            .unwrap();
+        assert!(!core.borrow_mut().cancel_tune(stale));
+        assert_eq!(
+            core.borrow().state(),
+            &PlaybackSessionState::Resolving {
+                generation: successor.generation(),
+                channel_key: second_key(),
+            }
+        );
+        assert_eq!(
+            core.borrow_mut().complete_tune(
+                successor,
+                Ok(handoff(&second_key(), 12)),
+                (),
+                events_for(&core),
+            ),
+            Ok(TuneCompletion::Applied)
+        );
+        assert_eq!(
+            control.calls(),
+            vec![Call::Start(TuneGeneration(3), second_key())]
+        );
+    }
+
+    #[test]
     fn replacement_stops_the_exact_predecessor_before_starting_successor() {
         let control = FakeControl::default();
         let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
@@ -1389,6 +1431,58 @@ mod tests {
                 Call::Start(TuneGeneration(4), second_key()),
                 Call::Stop(1),
             ]
+        );
+    }
+
+    #[test]
+    fn dropping_an_active_owner_retires_its_exact_pipeline() {
+        let control = FakeControl::default();
+        {
+            let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+            let request = core
+                .borrow_mut()
+                .begin_tune(selection(&first_key(), 1))
+                .unwrap();
+            core.borrow_mut()
+                .complete_tune(request, Ok(handoff(&first_key(), 1)), (), events_for(&core))
+                .unwrap();
+        }
+
+        assert_eq!(
+            control.calls(),
+            vec![Call::Start(TuneGeneration(1), first_key()), Call::Stop(0),]
+        );
+    }
+
+    #[test]
+    fn buffering_is_generation_scoped_and_clamped() {
+        let control = FakeControl::default();
+        let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+        let request = core
+            .borrow_mut()
+            .begin_tune(selection(&first_key(), 8))
+            .unwrap();
+        let generation = request.generation();
+        core.borrow_mut()
+            .complete_tune(request, Ok(handoff(&first_key(), 8)), (), events_for(&core))
+            .unwrap();
+
+        core.borrow_mut().handle_event(
+            TuneGeneration(generation.get() + 1),
+            PipelineEvent::Buffering(7),
+        );
+        assert!(matches!(
+            core.borrow().state(),
+            PlaybackSessionState::Connecting { .. }
+        ));
+        control.emit(generation, PipelineEvent::Buffering(u8::MAX));
+        assert_eq!(
+            core.borrow().state(),
+            &PlaybackSessionState::Buffering {
+                generation,
+                channel_key: first_key(),
+                percent: 100,
+            }
         );
     }
 
