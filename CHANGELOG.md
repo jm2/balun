@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Initial live-video presentation contract** — Configure each private
+  `playbin3` with its documented adaptive deinterlace flag, forced source
+  aspect-ratio preservation, and the library-owned GTK paintable sink with its
+  own aspect preservation enabled before the authorized URI enters native
+  storage. Missing properties or flag support fail with fixed
+  pipeline-construction copy while the pipeline is still `NULL`; later start
+  or bus failures retain the generation-owned cleanup path. Factory-backed and
+  display-backed tests verify the configuration without network access.
+  Binding the resulting paintable into the desktop pane remains in progress.
 - **Generation-owned tune session** — Add one default-main-context playback
   owner which assigns a monotonic tune generation before waiting for the
   actor-private stream response, consumes the opaque URI only inside the core

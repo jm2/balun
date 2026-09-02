@@ -15,6 +15,8 @@ use crate::controller::{OperationGeneration, StreamHandoff, StreamHandoffError, 
 use crate::domain::ChannelKey;
 
 const PIPELINE_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const DEINTERLACE_PLAY_FLAG: &str = "deinterlace";
+const PAINTABLE_ASPECT_PROPERTY: &str = "force-aspect-ratio";
 
 /// Monotonic identity for one playback attempt.
 ///
@@ -67,7 +69,7 @@ pub enum PlaybackSessionFailure {
     /// The response did not match the exact pending channel and selection.
     #[error("the stream handoff did not match the pending tune")]
     HandoffMismatch,
-    /// The required paintable sink or `playbin3` pipeline could not be built.
+    /// The required paintable, sink, or `playbin3` video contract could not be built.
     #[error("the playback pipeline could not be constructed")]
     PipelineConstruction,
     /// The pipeline did not expose a message bus.
@@ -597,16 +599,13 @@ impl PipelineBackend for GstreamerBackend {
             .property_value("paintable")
             .get::<gdk::Paintable>()
             .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
-        let element = handoff.with_uri(|uri| {
-            gst::ElementFactory::make("playbin3")
-                .property("uri", uri)
-                .build()
-        });
-        let pipeline = element
+        configure_paintable_aspect(&paintable).map_err(PipelineStartError::Clean)?;
+        let pipeline = gst::ElementFactory::make("playbin3")
+            .build()
             .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?
             .downcast::<gst::Pipeline>()
             .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
-        pipeline.set_property("video-sink", &video_sink);
+        configure_playbin_video(&pipeline, &video_sink).map_err(PipelineStartError::Clean)?;
 
         let bus = pipeline.bus().ok_or(PipelineStartError::Clean(
             PlaybackSessionFailure::BusUnavailable,
@@ -647,6 +646,10 @@ impl PipelineBackend for GstreamerBackend {
             .with_thread_default(|| bus.add_watch_local(watch))
             .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::BusWatch))?
             .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::BusWatch))?;
+        // Make every fallible structural check before the authorized URI
+        // enters native storage. The pipeline remains in NULL while the URI
+        // property is assigned, and every later failure owns bounded cleanup.
+        handoff.with_uri(|uri| pipeline.set_property("uri", uri));
         let mut active = GstreamerPipeline {
             pipeline,
             paintable,
@@ -667,6 +670,50 @@ impl PipelineBackend for GstreamerBackend {
     fn stop(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure> {
         active.stop()
     }
+}
+
+fn configure_playbin_video(
+    pipeline: &gst::Pipeline,
+    video_sink: &gst::Element,
+) -> Result<(), PlaybackSessionFailure> {
+    if ["flags", "force-aspect-ratio", "uri", "video-sink"]
+        .into_iter()
+        .any(|property| !pipeline.has_property(property))
+    {
+        return Err(PlaybackSessionFailure::PipelineConstruction);
+    }
+
+    let flags = pipeline.property_value("flags");
+    let flags_class = gst::glib::FlagsClass::with_type(flags.type_())
+        .ok_or(PlaybackSessionFailure::PipelineConstruction)?;
+    let flags = flags_class
+        .builder_with_value(flags)
+        .and_then(|builder| builder.set_by_nick(DEINTERLACE_PLAY_FLAG).build())
+        .ok_or(PlaybackSessionFailure::PipelineConstruction)?;
+    pipeline.set_property("flags", flags);
+    pipeline.set_property("force-aspect-ratio", true);
+    pipeline.set_property("video-sink", video_sink);
+
+    let configured_flags = pipeline.property_value("flags");
+    let configured_sink = pipeline.property::<Option<gst::Element>>("video-sink");
+    if !flags_class.is_set_by_nick(&configured_flags, DEINTERLACE_PLAY_FLAG)
+        || !pipeline.property::<bool>("force-aspect-ratio")
+        || configured_sink.as_ref() != Some(video_sink)
+    {
+        return Err(PlaybackSessionFailure::PipelineConstruction);
+    }
+    Ok(())
+}
+
+fn configure_paintable_aspect(paintable: &gdk::Paintable) -> Result<(), PlaybackSessionFailure> {
+    if !paintable.has_property(PAINTABLE_ASPECT_PROPERTY) {
+        return Err(PlaybackSessionFailure::PipelineConstruction);
+    }
+    paintable.set_property(PAINTABLE_ASPECT_PROPERTY, true);
+    if !paintable.property::<bool>(PAINTABLE_ASPECT_PROPERTY) {
+        return Err(PlaybackSessionFailure::PipelineConstruction);
+    }
+    Ok(())
 }
 
 fn queue_main_context_work(
@@ -1041,6 +1088,53 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         panic!("the queued main-context work did not settle");
+    }
+
+    #[test]
+    fn available_playbin_video_contract_enables_deinterlacing_and_aspect_ratio() {
+        if gst::init().is_err() {
+            return;
+        }
+        let Some(factory) = gst::ElementFactory::find("playbin3") else {
+            return;
+        };
+        let pipeline = factory
+            .create()
+            .build()
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+        let video_sink = gst::Bin::new().upcast::<gst::Element>();
+        let initial_flags = pipeline.property_value("flags");
+        let initial_flags_class = gst::glib::FlagsClass::with_type(initial_flags.type_()).unwrap();
+        let without_deinterlace = initial_flags_class
+            .builder_with_value(initial_flags)
+            .unwrap()
+            .unset_by_nick(DEINTERLACE_PLAY_FLAG)
+            .build()
+            .unwrap();
+        pipeline.set_property("flags", without_deinterlace);
+        assert!(
+            !initial_flags_class
+                .is_set_by_nick(&pipeline.property_value("flags"), DEINTERLACE_PLAY_FLAG)
+        );
+
+        configure_playbin_video(&pipeline, &video_sink).unwrap();
+
+        let flags = pipeline.property_value("flags");
+        let flags_class = gst::glib::FlagsClass::with_type(flags.type_()).unwrap();
+        assert!(flags_class.is_set_by_nick(&flags, DEINTERLACE_PLAY_FLAG));
+        assert!(flags_class.is_set_by_nick(&flags, "buffering"));
+        assert!(pipeline.property::<bool>("force-aspect-ratio"));
+        assert_eq!(
+            pipeline.property::<Option<gst::Element>>("video-sink"),
+            Some(video_sink)
+        );
+        assert_eq!(
+            pipeline.property::<Option<gst::Element>>("video-filter"),
+            None
+        );
+        assert_eq!(pipeline.property::<Option<String>>("uri"), None);
     }
 
     #[test]

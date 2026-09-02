@@ -173,6 +173,17 @@ activation. M2.7 will bind it into the `GtkPicture` and complete deinterlacing;
 M2.8-M2.10 will connect activation, controls, user-visible state, and full
 teardown paths.
 
+M2.7's pipeline-side visual contract is now explicit: Balun validates the
+`playbin3` flags, aspect-ratio, URI, and video-sink properties while the
+pipeline is still `NULL`; enables playbin's adaptive `deinterlace` flag;
+forces source aspect-ratio preservation; and installs the private GTK paintable
+sink with its own aspect preservation enabled plus the bus watch before copying
+the authorized URI into native storage. A factory-backed unit test proves the
+URI-free playbin configuration, while the display-backed synthetic acceptance
+checks the native paintable property and `GtkPicture::ContentFit::Contain`
+without network access. The session paintable is not bound into the production
+pane yet, so M2.7 remains incomplete.
+
 ## Synthetic display-backed acceptance
 
 M0.5 adds one ignored desktop integration test which is compiled by ordinary

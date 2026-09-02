@@ -91,6 +91,15 @@ fn synthetic_mpeg2_reaches_eos_and_renders_multiple_frames() {
     let audio_sink = make_element("fakesink", "the silent audio sink is unavailable");
 
     let paintable = video_sink.property::<gtk::gdk::Paintable>("paintable");
+    assert!(
+        paintable.has_property("force-aspect-ratio"),
+        "the GTK paintable must expose its aspect-ratio contract"
+    );
+    paintable.set_property("force-aspect-ratio", true);
+    assert!(
+        paintable.property::<bool>("force-aspect-ratio"),
+        "the GTK paintable must retain forced aspect-ratio preservation"
+    );
     let invalidations = Rc::new(Cell::new(0_u32));
     let counted_invalidations = Rc::clone(&invalidations);
     let invalidation_handler = paintable.connect_invalidate_contents(move |_| {
@@ -99,6 +108,8 @@ fn synthetic_mpeg2_reaches_eos_and_renders_multiple_frames() {
 
     let picture = gtk::Picture::for_paintable(&paintable);
     picture.set_can_shrink(true);
+    picture.set_content_fit(gtk::ContentFit::Contain);
+    assert_eq!(picture.content_fit(), gtk::ContentFit::Contain);
     let window = gtk::Window::builder()
         .title("Balun synthetic playback acceptance")
         .default_width(320)

@@ -187,7 +187,10 @@ compatibility/error-path work, not prerequisites for that first picture.
 - [ ] **M2.7 — Render live video.** Connect `playbin3` to
   `gtk4paintablesink`, own the paintable on the main context, preserve aspect
   ratio, provide deinterlacing suitable for normal 1080i content, and handle
-  sink/deinterlacer setup failure without leaking the stream.
+  sink/deinterlacer setup failure without leaking the stream. The pipeline side
+  now validates and sets the private sink, adaptive deinterlace flag, and forced
+  aspect preservation on both playbin and its GTK paintable before assigning a
+  URI; production-pane paintable binding remains open.
 
 - [ ] **M2.8 — Add essential controls.** Implement channel activation, Stop,
   volume, mute, and fullscreen with accessible keyboard and pointer behavior.
