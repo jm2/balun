@@ -375,6 +375,56 @@ mod tests {
             .any(|factory| gst::ElementFactory::find(factory).is_some())
     }
 
+    /// Hosted CI virtual machines register hardware MPEG-2 decoders (Apple
+    /// VideoToolbox, Direct3D, NVIDIA, Intel, AMD, VA-API) that cannot open a
+    /// decoding session without a GPU. This test proves the `appsrc` feed and
+    /// demux contract, not hardware decoding, so demote those factories for
+    /// this process only and let `decodebin3` choose the software decoders.
+    fn prefer_software_mpeg2_decoders() {
+        let registry = gst::Registry::get();
+        for name in [
+            "vtdec_hw",
+            "vtdec",
+            "d3d11mpeg2dec",
+            "d3d12mpeg2dec",
+            "nvmpeg2videodec",
+            "nvmpeg2dec",
+            "qsvmpeg2dec",
+            "msdkmpeg2dec",
+            "amfmpeg2dec",
+            "vampeg2dec",
+            "vaapimpeg2dec",
+            "v4l2slmpeg2dec",
+        ] {
+            if let Some(feature) = registry.lookup_feature(name) {
+                feature.set_rank(gst::Rank::NONE);
+            }
+        }
+    }
+
+    /// Endpoint-free diagnostics for a failed contract run: the native error
+    /// domain and code plus the factory name of the reporting element. No
+    /// error or debug text is rendered.
+    fn native_error_summary(message: &gst::MessageRef) -> String {
+        let gst::MessageView::Error(error) = message.view() else {
+            return String::from("non-error message");
+        };
+        let native = error.error();
+        let factory = message
+            .src()
+            .and_then(|source| source.downcast_ref::<gst::Element>().cloned())
+            .and_then(|element| element.factory())
+            .map_or_else(
+                || String::from("<none>"),
+                |factory| factory.name().to_string(),
+            );
+        format!(
+            "domain={} code={} source_factory={factory}",
+            native.domain().as_str(),
+            native.code()
+        )
+    }
+
     #[test]
     fn appsrc_configuration_is_exact_bounded_and_network_free() {
         if gst::init().is_err() {
@@ -579,6 +629,7 @@ mod tests {
         if !mpeg2_decoder_available() || gst::ElementFactory::find("tsdemux").is_none() {
             return;
         }
+        prefer_software_mpeg2_decoders();
         let server = FixtureStreamServer::start(fixture_response(), StreamBehavior::Close);
         let video_sink = gst::ElementFactory::make("fakesink").build().unwrap();
         let audio_sink = gst::ElementFactory::make("fakesink").build().unwrap();
@@ -601,14 +652,26 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut reached_playing = false;
         let mut terminal = None;
+        let mut diagnostic = String::from("no terminal message within the deadline");
         while terminal.is_none() && Instant::now() < deadline {
             let Some(message) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) else {
                 continue;
             };
             match message.view() {
                 gst::MessageView::Eos(_) => terminal = Some("eos"),
-                gst::MessageView::Error(_) => terminal = Some("error"),
-                gst::MessageView::Application(_) => terminal = Some("application"),
+                gst::MessageView::Error(_) => {
+                    diagnostic = native_error_summary(&message);
+                    terminal = Some("error");
+                }
+                gst::MessageView::Application(application) => {
+                    diagnostic = format!(
+                        "application marker {:?}",
+                        application
+                            .structure()
+                            .map(|structure| structure.name().to_string())
+                    );
+                    terminal = Some("application");
+                }
                 gst::MessageView::StateChanged(changed)
                     if message.src() == Some(playbin.upcast_ref::<gst::Object>())
                         && changed.current() == gst::State::Playing =>
@@ -618,7 +681,7 @@ mod tests {
                 _ => {}
             }
         }
-        assert_eq!(terminal, Some("eos"));
+        assert_eq!(terminal, Some("eos"), "{diagnostic}");
         assert!(
             reached_playing,
             "playbin3 must reach PLAYING from the appsrc feed"
