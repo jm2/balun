@@ -37,7 +37,7 @@ media framework.
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, DMG, winget) | ❌ Planned |
-| Cross-platform: Linux, macOS, Windows | ✅ Linux is the only runtime-tested desktop so far |
+| Cross-platform: Linux, macOS, Windows | ✅ Windows verified with real tuners; Linux covered by CI runtime smokes; macOS build-tested only |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 The product plan is [`docs/plan-v0.1.md`](docs/plan-v0.1.md), the countable ledger is

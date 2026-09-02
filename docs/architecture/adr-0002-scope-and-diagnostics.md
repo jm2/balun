@@ -49,8 +49,10 @@ unreachable tuner reported only "Device or stream unavailable".
 - `PlayerView` failure copy and the diagnostic output change under P1.3; tests
   that asserted endpoint-free text are rewritten to assert only that
   `DeviceAuth` and credentials are absent.
-- The plan document carries no implementation-status paragraphs; status lives
-  in `task.md`, evidence in `compatibility-v0.1.md`, outcomes in the changelog.
+- The plan document keeps one dated "Current baseline" summary, refreshed when
+  records complete, and no other implementation-status prose; countable
+  status lives in `task.md`, evidence in `compatibility-v0.1.md`, and
+  outcomes in the changelog.
 - ADR-0001's discovery and playback decisions stand; only its consequence that
   endpoint data is "never forwarded" is narrowed to `DeviceAuth` and
   credentials.

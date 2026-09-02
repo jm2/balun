@@ -76,10 +76,11 @@ and lineup loading worked on that host, confirming the limited-broadcast
 correction above. Activating unprotected ATSC 1.0 channels produced picture and
 audio, and channel switching, Stop, and window close behaved as expected.
 
-ATSC 3.0 channels failed closed with the missing-codec category because no
-AC-4 audio decoder is available in any current GStreamer distribution. That is
-a platform limitation, not a Balun defect, and is recorded as a known
-limitation in the changelog.
+ATSC 3.0 channels failed closed with the missing-codec category because the
+tested MSYS2 GStreamer runtime has no AC-4 audio decoder. The open GStreamer
+plugin sets ship an `ac4parse` parser but no decoder, and Balun bundles no
+proprietary one, so this is recorded as a known limitation in the changelog
+rather than a Balun defect.
 
 This is an owner-reported observation. It did not measure first-frame,
 channel-switch, or tuner-release times, and it did not enumerate the exact
