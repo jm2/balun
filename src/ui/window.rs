@@ -935,6 +935,9 @@ mod tests {
                     let player_view = Rc::clone(&player_view);
                     let window = window.downgrade();
                     Rc::new(move || {
+                        if phase.replace(1) != 0 {
+                            return;
+                        }
                         eprintln!("[balun] fullscreen smoke: prepare normal navigation");
                         let Some(window) = window.upgrade() else {
                             failure.replace(Some(
@@ -992,8 +995,6 @@ mod tests {
                             application.quit();
                             return;
                         }
-
-                        phase.set(1);
                         player_view.fullscreen_button().emit_clicked();
                     }) as Rc<dyn Fn()>
                 };
