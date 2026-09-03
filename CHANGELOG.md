@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Playback controls** — Stop, a volume slider, an independent mute toggle, and fullscreen with
   `F11` and `Escape`. Volume and mute carry across channel changes for the running session, and
   fullscreen presentation follows the compositor's confirmation.
+- **Dependency audit and repository linting** — CI now runs `cargo audit` and lints Markdown,
+  TOML, YAML, and GitHub Actions workflows with pinned tools and root-level configs.
 - **Desktop metadata and icon** — Add the `io.github.jm2.Balun` desktop entry, AppStream
   metainfo, and a Tango-style application icon: a CRT showing colour bars, rabbit ears joined by
   a balun, and the name on the bezel, as scalable and symbolic SVG, hicolor PNGs from 16 to
@@ -62,7 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files are read and rewritten in place.
 - **Endpoint-free playback errors** — Failures reduce to fixed messages for no tuner available,
   channel unavailable, stream rejected, device or stream unavailable, missing codec or plugin,
-  protected channel, and internal error. No native error text, header, or address is retained.
+  protected channel, and internal error. A missing decoder is named from a closed list, such as
+  AC-4 audio or HEVC video. No native error text, header, or address is retained.
 - **Fake HDHomeRun end-to-end tests** — A loopback fake device with UDP discovery, metadata, and
   an MPEG-TS stream server drives the real controller, transport, and session from discovery
   through lineup, DRM refusal, tuning, channel switching, and observed tuner release.
@@ -160,8 +163,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loopback fake tuner; the packaged codec closure is not yet frozen.
 - **No packages** — Flatpak, deb, rpm, DMG, and winget packaging are planned; the release workflow
   builds the diagnostic only.
-- **No program guide or hostname entry** — Guide data is a v0.2 candidate; hostname entry is
-  planned for v0.1.
+- **No program guide** — Guide data is a v0.2 candidate. The tested HDHomeRun CONNECT's
+  per-channel streams carry no PSIP tables, so an in-band guide needs a full-multiplex crawl or
+  XMLTV.
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
   decoder, so those channels fail closed and cannot be transcoded.
 

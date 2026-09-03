@@ -150,6 +150,29 @@ the first is absent from Fedora's libav plugin build and the second from
 every open plugin set. The Windows and macOS factory sets are still
 unrecorded, so P0.5 in [`task.md`](task.md) stays open.
 
+## In-band guide spike
+
+On 2026-09-03 the HDHomeRun CONNECT's stream forms were each captured for
+about twelve seconds with a plain HTTP client and inventoried by PID and
+table identifier, without decoding any content:
+
+- Per-channel streams (`/auto/v<guide>` and
+  `/tuner<n>/ch<frequency>-<program>`) carry only the PAT, the program's PMT,
+  and its video and audio elementary streams. The PSIP base PID is absent, so
+  no MGT, VCT, STT, EIT, or ETT reaches a player that tunes the way Balun
+  does.
+- Full-multiplex streams (`/tuner<n>/ch<frequency>` and `/auto/ch<frequency>`)
+  carry the whole broadcast at about 19 Mb/s: every program in the multiplex,
+  the PSIP base PID with the MGT, TVCT, and STT, EIT-0 through EIT-3 on their
+  own PIDs, and the matching ETT tables.
+
+On the tested CONNECT, in-band guide data therefore survives only when a
+whole multiplex is requested, which occupies a tuner at the full broadcast
+rate and needs the RF frequency, which the lineup does not expose. A v0.2
+in-band guide would have to crawl each multiplex briefly, or the guide comes
+from XMLTV; a now/next overlay taken from the playing stream is ruled out for
+that device. Other HDHomeRun models and ATSC 3.0 signalling were not examined.
+
 ## Observed JSON compatibility
 
 Both `discover.json` documents exposed the following non-secret fields with
@@ -209,7 +232,6 @@ tune, switch, and release budgets. They do not yet establish:
 
 - The Windows and macOS decoder sets, or HEVC and E-AC-3 playback.
 - Protected-channel playback.
-- In-band PSIP/EIT guide availability.
 - Secondary-site HDHR3-PRIME or HDHR5-4K behavior.
 - UniFi Site Magic, WireGuard, or other routed multi-site discovery.
 - macOS live-TV behavior, or the second Windows host.
