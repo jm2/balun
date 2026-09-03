@@ -104,7 +104,8 @@ Built and tested:
   playback probes, five CI lanes, a release-candidate workflow, and preparatory
   packaging validators.
 - Linux route inspection, a keyed approval policy, a durable approval store,
-  and route/store observers, present but not connected to any sender.
+  and route/store observers, connected into one library runner that no
+  user interface reaches yet.
 - Live TV verified by the owner on the Windows development build against real
   tuners: ATSC 1.0 channels play with audio; ATSC 3.0 channels fail closed on
   AC-4 ([compatibility notes](compatibility-v0.1.md)).
