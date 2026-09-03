@@ -149,6 +149,7 @@ ATSC 3.0 needs `avdec_h265` or a platform HEVC decoder plus an AC-4 decoder;
 the first is absent from Fedora's libav plugin build and the second from
 every open plugin set. The Windows and macOS factory sets are still
 unrecorded, so P0.5 in [`task.md`](task.md) stays open.
+
 ## In-band guide spike
 
 On 2026-09-03 the HDHomeRun CONNECT's stream forms were each captured for
