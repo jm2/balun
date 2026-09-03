@@ -5,7 +5,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use balun::controller::{
-    ApplicationSnapshot, DiscoveryFailure, DiscoveryKind, DiscoveryStatus, RoutedAvailability,
+    ApplicationSnapshot, DiscoveryFailure, DiscoveryKind, DiscoveryStatus, NetworkChangeSummary,
+    RoutedAvailability,
 };
 
 use super::objects::DeviceRowObject;
@@ -33,6 +34,9 @@ pub(crate) struct DeviceSidebar {
     routed_menu_button: gtk::MenuButton,
     refresh_button: gtk::Button,
     applying_snapshot: Rc<Cell<bool>>,
+    /// The last network-change sequence shown, so the notice appears once
+    /// per reconciliation and yields to the next publication.
+    network_sequence: Rc<Cell<u64>>,
 }
 
 /// Window action that forgets every remembered routed approval.
@@ -123,6 +127,13 @@ impl DeviceSidebar {
             discovery.status(),
             !show_status,
         );
+        let network = snapshot.network();
+        if self.network_sequence.replace(network.sequence()) != network.sequence()
+            && let Some(title) = network_change_banner_title(network)
+        {
+            self.terminal_banner.set_title(title);
+            self.terminal_banner.set_revealed(true);
+        }
         self.spinner.set_visible(show_status && refreshing);
         self.spinner.set_spinning(show_status && refreshing);
         apply_empty_presentation(
@@ -248,6 +259,7 @@ pub(crate) fn build() -> DeviceSidebar {
         routed_menu_button,
         refresh_button,
         applying_snapshot: Rc::new(Cell::new(false)),
+        network_sequence: Rc::new(Cell::new(0)),
     }
 }
 
@@ -426,6 +438,21 @@ fn terminal_banner_title(
             Some(routed_failure_banner_title(failure))
         }
         (_, DiscoveryStatus::Idle | DiscoveryStatus::Refreshing | DiscoveryStatus::Ready) => None,
+    }
+}
+
+/// A brief notice for the snapshot that reconciled a network change, shown
+/// only when it retired evidence. The summary carries counts and nothing else.
+fn network_change_banner_title(network: NetworkChangeSummary) -> Option<&'static str> {
+    if network.sequence() == 0 {
+        return None;
+    }
+    if network.removed_devices() > 0 {
+        Some("Network changed; devices that lost every address were removed.")
+    } else if network.expired_locators() > 0 {
+        Some("Network changed; stale device addresses were dropped.")
+    } else {
+        None
     }
 }
 
@@ -623,6 +650,26 @@ impl Drop for SnapshotApplicationGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_change_notice_appears_only_when_evidence_was_retired() {
+        assert_eq!(
+            network_change_banner_title(NetworkChangeSummary::INITIAL),
+            None
+        );
+        assert_eq!(
+            network_change_banner_title(NetworkChangeSummary::new(1, 0, 0)),
+            None
+        );
+        assert_eq!(
+            network_change_banner_title(NetworkChangeSummary::new(2, 0, 3)),
+            Some("Network changed; stale device addresses were dropped.")
+        );
+        assert_eq!(
+            network_change_banner_title(NetworkChangeSummary::new(3, 1, 3)),
+            Some("Network changed; devices that lost every address were removed.")
+        );
+    }
 
     #[test]
     fn discovery_failures_map_to_bounded_user_facing_copy() {

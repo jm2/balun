@@ -36,6 +36,7 @@ address so you know which tuner failed.
 | Channel search and favorites-only filter | ✅ |
 | Fixed, endpoint-free playback error messages | ✅ |
 | Windows local discovery | ✅ |
+| Network-change handling (Linux) | ✅ Stale addresses expire and routed scans stop when adapters or routes change; nothing rescans on its own |
 | Route-derived tunnel discovery (Linux) | ✅ Approve each route set once; live proof on a tunnel pending |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
@@ -383,6 +384,7 @@ src/
 │   ├── local.rs            # Per-interface broadcast and multicast endpoints
 │   ├── manual.rs           # Exact-address target validation
 │   ├── registry.rs         # Device registry with locator claims and expiry
+│   ├── changes.rs          # Debounced network-change coalescing and interface inventory
 │   ├── routed.rs           # Approved-range scan budgets and candidate limits
 │   ├── routed/linux.rs     # Interface-pinned UDP socket construction
 │   ├── routes.rs           # Route snapshot types and providers
@@ -392,6 +394,7 @@ src/
 ├── controller/
 │   ├── runtime.rs          # Controller thread, command ingress, snapshot publishing
 │   ├── state.rs            # Immutable URL-free device and channel projections
+│   ├── network.rs          # Network-change source boundary and Linux watcher thread
 │   └── handoff.rs          # One-shot, URL-redacted stream handoff
 ├── settings/
 │   └── mod.rs              # Versioned, atomic settings.json store

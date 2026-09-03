@@ -15,6 +15,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::network::{NetworkChangeSource, UnavailableNetworkChangeSource};
 use super::resolution::HostnameResolutionReceiver;
 use super::routed::{
     RoutedDiscoveryService, RoutedOriginsReceiver, RoutedProposal, RoutedRunOutcome,
@@ -22,9 +23,9 @@ use super::routed::{
 };
 use super::{
     ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryKind,
-    DiscoveryState, DiscoveryStatus, LineupFailure, OperationGeneration, SelectedLineupState,
-    SelectedLineupStatus, SnapshotRevision, StateError, StreamHandoff, StreamHandoffError,
-    StreamHandoffReceiver, StreamSelection,
+    DiscoveryState, DiscoveryStatus, LineupFailure, NetworkChangeSummary, OperationGeneration,
+    SelectedLineupState, SelectedLineupStatus, SnapshotRevision, StateError, StreamHandoff,
+    StreamHandoffError, StreamHandoffReceiver, StreamSelection,
 };
 use super::{
     RoutedApprovalToken, RoutedAvailability, RoutedDiscoveryState, RoutedProposalState,
@@ -32,8 +33,8 @@ use super::{
 };
 use crate::discovery::{
     DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryMethod, DiscoveryObservation,
-    DiscoveryReport, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget, ProbeConfig,
-    RegistryInstant, resolve_hostname,
+    DiscoveryReport, ExactDiscoveryTarget, ExpirationOutcome, HostnameResolutionError,
+    HostnameTarget, LocatorOrigin, NetworkChange, ProbeConfig, RegistryInstant, resolve_hostname,
 };
 use crate::discovery::{MAX_ROUTED_CANDIDATES, RoutedProposalOriginSummary, RoutedScanTrigger};
 use crate::domain::{ChannelKey, DeviceId};
@@ -184,6 +185,18 @@ fn default_routed_service() -> Arc<dyn RoutedDiscoveryService> {
     ))
 }
 
+/// The production network-change source: the Linux rtnetlink watcher thread,
+/// started only when the actor subscribes, or nothing elsewhere.
+#[cfg(target_os = "linux")]
+fn default_network_change_source() -> Arc<dyn NetworkChangeSource> {
+    Arc::new(super::network::LinuxNetworkChangeSource::new())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn default_network_change_source() -> Arc<dyn NetworkChangeSource> {
+    Arc::new(UnavailableNetworkChangeSource)
+}
+
 fn exact_probe_config() -> ProbeConfig {
     ProbeConfig::new(
         EXACT_DISCOVERY_ATTEMPTS,
@@ -283,6 +296,8 @@ pub enum ControllerRuntimeError {
     SelectionGenerationExhausted,
     #[error("selected-device snapshot retention invariant failed")]
     SelectionSnapshotInvariant,
+    #[error("device registry invariant failed")]
+    RegistryInvariant,
     #[error(transparent)]
     InvalidSnapshot(#[from] StateError),
 }
@@ -324,6 +339,7 @@ impl ControllerRuntime {
             DiscoveryClient::default(),
             DeviceSnapshotResolver::default(),
             default_routed_service(),
+            default_network_change_source(),
             DEFAULT_COMMAND_CAPACITY,
         )
     }
@@ -358,6 +374,7 @@ impl ControllerRuntime {
             Arc::new(UnavailableRoutedDiscovery::new(
                 RoutedUnavailableReason::NotConfigured,
             )),
+            Arc::new(UnavailableNetworkChangeSource),
             command_capacity,
         )
     }
@@ -366,6 +383,7 @@ impl ControllerRuntime {
         discovery_service: D,
         selection_service: S,
         routed_service: Arc<dyn RoutedDiscoveryService>,
+        network_source: Arc<dyn NetworkChangeSource>,
         command_capacity: usize,
     ) -> Result<Self, ControllerStartError>
     where
@@ -402,6 +420,7 @@ impl ControllerRuntime {
                     discovery_service,
                     selection_service,
                     routed_service,
+                    network_source,
                     command_receiver,
                     actor_shutdown,
                     snapshot_sender,
@@ -434,20 +453,23 @@ impl ControllerRuntime {
     }
 
     #[cfg(test)]
-    fn start_with_test_services<D, S, R>(
+    fn start_with_test_services<D, S, R, N>(
         discovery_service: D,
         selection_service: S,
         routed_service: R,
+        network_source: N,
     ) -> Result<Self, ControllerStartError>
     where
         D: DiscoveryService,
         S: SelectedDeviceService,
         R: RoutedDiscoveryService,
+        N: NetworkChangeSource,
     {
         Self::start_with_services_and_capacity(
             discovery_service,
             selection_service,
             Arc::new(routed_service),
+            Arc::new(network_source),
             DEFAULT_COMMAND_CAPACITY,
         )
     }
@@ -596,6 +618,9 @@ struct ControllerActor {
     active_selection: Option<ActiveSelection>,
     routed: RoutedDiscoveryState,
     active_routed_control: Option<ActiveRoutedControl>,
+    network_source: Arc<dyn NetworkChangeSource>,
+    network_changes: Option<mpsc::Receiver<NetworkChange>>,
+    network: NetworkChangeSummary,
 }
 
 impl ControllerActor {
@@ -603,6 +628,7 @@ impl ControllerActor {
         discovery_service: Arc<dyn DiscoveryService>,
         selection_service: Arc<dyn SelectedDeviceService>,
         routed_service: Arc<dyn RoutedDiscoveryService>,
+        network_source: Arc<dyn NetworkChangeSource>,
         commands: mpsc::Receiver<ActorCommand>,
         shutdown: CancellationToken,
         snapshots: watch::Sender<Arc<ApplicationSnapshot>>,
@@ -636,14 +662,24 @@ impl ControllerActor {
             active_selection: None,
             routed: RoutedDiscoveryState::new(availability, RoutedProposalStatus::None, None),
             active_routed_control: None,
+            network_source,
+            network_changes: None,
+            network: NetworkChangeSummary::INITIAL,
         }
     }
 
     async fn run(mut self) -> Result<(), ControllerRuntimeError> {
+        // Subscribing may start a thread but never blocks or sends a packet.
+        self.network_changes = self.network_source.subscribe();
         loop {
             let event = tokio::select! {
                 biased;
                 () = self.shutdown.cancelled() => ActorEvent::Shutdown,
+                // A network change outranks queued commands: stale authority
+                // is cancelled before any new work is admitted.
+                change = recv_optional(self.network_changes.as_mut()) => {
+                    ActorEvent::NetworkChange(change)
+                }
                 command = self.commands.recv() => ActorEvent::Command(command),
                 completion = join_optional(
                     self.active_discovery.as_mut().map(|active| &mut active.task),
@@ -741,8 +777,147 @@ impl ControllerActor {
                 ActorEvent::RoutedControl(completion) => {
                     self.finish_routed_control(completion)?;
                 }
+                ActorEvent::NetworkChange(Some(change)) => {
+                    self.reconcile_network_change(change).await?;
+                }
+                ActorEvent::NetworkChange(None) => {
+                    // The source stopped; from here on the actor behaves as
+                    // it does on a platform without one.
+                    self.network_changes = None;
+                }
             }
         }
+    }
+
+    /// Reconcile one debounced network change, in this order: cancel routed
+    /// authority synchronously, expire evidence that depended on what was
+    /// lost, keep every device that still has another valid locator, and
+    /// publish one snapshot carrying the summary. Nothing is started.
+    async fn reconcile_network_change(
+        &mut self,
+        change: NetworkChange,
+    ) -> Result<(), ControllerRuntimeError> {
+        // (1) Cancel before the first await so no datagram leaves on the old
+        // authority; joining afterwards keeps the lanes deterministic.
+        let cancelled_scope = self.active_discovery.as_ref().map(|active| active.scope);
+        if let Some(active) = &self.active_discovery {
+            active.cancellation.cancel();
+        }
+        if let Some(control) = &self.active_routed_control {
+            control.cancellation.cancel();
+        }
+        self.cancel_active_discovery().await;
+        self.cancel_active_routed_control().await;
+        if self.shutdown.is_cancelled() {
+            return Ok(());
+        }
+        if matches!(
+            self.routed.proposal(),
+            RoutedProposalStatus::Proposing | RoutedProposalStatus::Proposed(_)
+        ) {
+            self.routed = RoutedDiscoveryState::new(
+                self.routed.availability(),
+                RoutedProposalStatus::Failed(DiscoveryFailure::RoutedProposalChanged),
+                self.routed.cooldown_seconds(),
+            );
+        }
+
+        // (2) Expire stale evidence; (3) a device keeps its place while any
+        // locator survives. A selected device whose evidence changed goes
+        // through the same clearing path as any other evidence mutation.
+        let (mut update, expired) = self.build_reconciliation(&change)?;
+        let selected_changed = self.selected_device.is_some_and(|device_id| {
+            self.registry.get(device_id) != update.registry.get(device_id)
+        });
+        if selected_changed {
+            self.cancel_active_selection().await;
+            if self.shutdown.is_cancelled() {
+                return Ok(());
+            }
+        } else if let Some(device_id) = self.selected_device {
+            preserve_device_summary(&self.devices, &mut update.devices, device_id)?;
+        }
+        let devices_changed = update.devices != self.devices;
+        self.commit_discovery_update(update);
+
+        match cancelled_scope {
+            Some(DiscoveryScope::Routed(_)) => {
+                let generation = self.next_discovery_generation()?;
+                self.discovery = DiscoveryState::failed_for(
+                    generation,
+                    DiscoveryKind::Routed,
+                    DiscoveryFailure::RoutedProposalChanged,
+                );
+            }
+            Some(scope) => {
+                let generation = self.next_discovery_generation()?;
+                self.discovery = DiscoveryState::idle_for(generation, scope.kind());
+            }
+            None if devices_changed => {
+                let generation = self.next_discovery_generation()?;
+                self.discovery = self.discovery.with_generation(generation);
+            }
+            None => {}
+        }
+        if selected_changed {
+            let generation = self.next_selection_generation()?;
+            self.selected_device = None;
+            self.selected_lineup = SelectedLineupState::unselected(generation);
+            self.selected_snapshot = None;
+        }
+
+        // (4) One publication with the topology-free summary.
+        self.network = self
+            .network
+            .next(expired.removed_devices.len(), expired.removed_locators);
+        self.publish()
+    }
+
+    /// Filter the retained batches and the live registry with one predicate
+    /// so the next rebuild cannot resurrect what a network change expired.
+    fn build_reconciliation(
+        &self,
+        change: &NetworkChange,
+    ) -> Result<(DiscoveryUpdate, ExpirationOutcome), ControllerRuntimeError> {
+        let lost = change.lost_interfaces();
+        let routed_lost = self.routed_batch.as_ref().is_some_and(|batch| {
+            batch
+                .interfaces
+                .iter()
+                .any(|interface| lost.contains(interface))
+        });
+        let expires = |origin: &LocatorOrigin| origin_expires(origin, lost, routed_lost);
+
+        let local_batch = self.local_batch.as_ref().and_then(|batch| {
+            batch.retain(|observation| {
+                !expires(&LocatorOrigin {
+                    method: observation.method,
+                    interface: observation.interface.clone(),
+                })
+            })
+        });
+        let routed_batch = if routed_lost {
+            None
+        } else {
+            self.routed_batch.clone()
+        };
+        let mut registry = self.registry.clone();
+        let now = RegistryInstant::from_duration(self.registry_epoch.elapsed());
+        let expired = registry
+            .expire_origins(now, expires)
+            .map_err(|_| ControllerRuntimeError::RegistryInvariant)?;
+        let devices =
+            project_devices(&registry).map_err(|()| ControllerRuntimeError::RegistryInvariant)?;
+        Ok((
+            DiscoveryUpdate {
+                local_batch,
+                routed_batch,
+                exact_sources: self.exact_sources.clone(),
+                registry,
+                devices,
+            },
+            expired,
+        ))
     }
 
     /// Build a fresh routed proposal beside the discovery lane.
@@ -911,33 +1086,36 @@ impl ControllerActor {
         let routed_service = Arc::clone(&self.routed_service);
         let task_cancellation = cancellation.clone();
         let task = tokio::spawn(async move {
-            let (result, cooldown) = if task_cancellation.is_cancelled() {
-                (Err(DiscoveryFailure::Internal), None)
+            let mut cooldown = None;
+            let mut routed_interfaces = BTreeSet::new();
+            let result = if task_cancellation.is_cancelled() {
+                Err(DiscoveryFailure::Internal)
             } else {
                 match scope {
-                    DiscoveryScope::Local => {
-                        (service.discover_local(task_cancellation).await, None)
-                    }
-                    DiscoveryScope::Exact(target) => (
+                    DiscoveryScope::Local => service.discover_local(task_cancellation).await,
+                    DiscoveryScope::Exact(target) => {
                         service
                             .discover_exact(target, expected_device, task_cancellation)
-                            .await,
-                        None,
-                    ),
+                            .await
+                    }
                     DiscoveryScope::Routed(trigger) => {
                         match routed_service.run(trigger, task_cancellation).await {
-                            Ok(RoutedRunOutcome::Report(report)) => (Ok(report), None),
+                            Ok(RoutedRunOutcome::Report { report, interfaces }) => {
+                                routed_interfaces = interfaces.into_iter().collect();
+                                Ok(report)
+                            }
                             Ok(RoutedRunOutcome::NeedsApproval) => {
-                                (Err(DiscoveryFailure::RoutedNotApproved), None)
+                                Err(DiscoveryFailure::RoutedNotApproved)
                             }
                             Ok(RoutedRunOutcome::CoolingDown { remaining }) => {
-                                (Err(DiscoveryFailure::RoutedCoolingDown), Some(remaining))
+                                cooldown = Some(remaining);
+                                Err(DiscoveryFailure::RoutedCoolingDown)
                             }
-                            Ok(RoutedRunOutcome::Busy) => (Err(DiscoveryFailure::RoutedBusy), None),
+                            Ok(RoutedRunOutcome::Busy) => Err(DiscoveryFailure::RoutedBusy),
                             Ok(RoutedRunOutcome::Unconfirmed) => {
-                                (Err(DiscoveryFailure::RoutedUnconfirmed), None)
+                                Err(DiscoveryFailure::RoutedUnconfirmed)
                             }
-                            Err(failure) => (Err(failure), None),
+                            Err(failure) => Err(failure),
                         }
                     }
                 }
@@ -947,6 +1125,7 @@ impl ControllerActor {
                 scope,
                 result,
                 cooldown,
+                routed_interfaces,
             }
         });
         self.active_discovery = Some(ActiveDiscovery {
@@ -1036,6 +1215,7 @@ impl ControllerActor {
                 scope: active.scope,
                 result: Err(DiscoveryFailure::Internal),
                 cooldown: None,
+                routed_interfaces: BTreeSet::new(),
             },
         };
         self.apply_discovery_completion(completion).await?;
@@ -1065,7 +1245,11 @@ impl ControllerActor {
             Ok(report) => {
                 let issue_count = u16::try_from(report.issues.len()).unwrap_or(u16::MAX);
                 let no_response = report.observations.is_empty();
-                match self.build_discovery_update(completion.scope, report) {
+                match self.build_discovery_update(
+                    completion.scope,
+                    report,
+                    completion.routed_interfaces,
+                ) {
                     Ok(mut update) => match completion.scope {
                         DiscoveryScope::Local => {
                             let selected_device = self.selected_device;
@@ -1159,6 +1343,7 @@ impl ControllerActor {
         &self,
         scope: DiscoveryScope,
         report: DiscoveryReport,
+        routed_interfaces: BTreeSet<String>,
     ) -> Result<DiscoveryUpdate, ()> {
         let observation_limit = match scope {
             DiscoveryScope::Local => MAX_RETAINED_LOCAL_OBSERVATIONS,
@@ -1180,7 +1365,7 @@ impl ControllerActor {
                 if let Some(batch) = &batch {
                     validate_routed_batch(batch)?;
                 }
-                routed_batch = batch;
+                routed_batch = batch.map(|batch| batch.with_interfaces(routed_interfaces));
             }
             DiscoveryScope::Exact(target) => match batch {
                 Some(batch) => {
@@ -1577,7 +1762,8 @@ impl ControllerActor {
             self.selected_device,
             self.selected_lineup.clone(),
         )?
-        .with_routed(self.routed);
+        .with_routed(self.routed)
+        .with_network(self.network);
         self.revision = revision;
         self.snapshots.send_replace(Arc::new(snapshot));
         Ok(())
@@ -1729,6 +1915,33 @@ async fn join_optional<T>(task: Option<&mut JoinHandle<T>>) -> Result<T, tokio::
     }
 }
 
+/// Receive from an optional channel, or never resolve when there is none.
+async fn recv_optional<T>(receiver: Option<&mut mpsc::Receiver<T>>) -> Option<T> {
+    match receiver {
+        Some(receiver) => receiver.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Whether one locator origin depended on something a network change lost.
+///
+/// Exact and hostname targets are user data and never expire here. Local
+/// broadcast and multicast origins expire with their interface. Routed
+/// origins carry no interface of their own; they expire together when the
+/// tunnel the routed batch was bound to is lost.
+fn origin_expires(origin: &LocatorOrigin, lost: &BTreeSet<String>, routed_lost: bool) -> bool {
+    match origin.method {
+        DiscoveryMethod::Targeted => false,
+        DiscoveryMethod::RoutedTargeted => routed_lost,
+        DiscoveryMethod::Ipv4Broadcast
+        | DiscoveryMethod::Ipv6LinkLocalMulticast
+        | DiscoveryMethod::Ipv6SiteLocalMulticast => origin
+            .interface
+            .as_deref()
+            .is_some_and(|interface| lost.contains(interface)),
+    }
+}
+
 fn project_devices(registry: &DeviceRegistry) -> Result<Vec<DeviceSummary>, ()> {
     registry
         .devices()
@@ -1800,6 +2013,7 @@ enum ActorEvent {
     Discovery(Result<DiscoveryCompletion, tokio::task::JoinError>),
     Selection(Result<SelectionCompletion, tokio::task::JoinError>),
     RoutedControl(Result<RoutedControlCompletion, tokio::task::JoinError>),
+    NetworkChange(Option<NetworkChange>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -1838,6 +2052,9 @@ enum RoutedControlCompletion {
 struct RetainedDiscoveryBatch {
     seen_at: RegistryInstant,
     observations: Vec<DiscoveryObservation>,
+    /// Interfaces every observation depended on beyond its own annotation:
+    /// the tunnel interfaces of a routed run. Empty for other scopes.
+    interfaces: BTreeSet<String>,
 }
 
 impl RetainedDiscoveryBatch {
@@ -1859,6 +2076,31 @@ impl RetainedDiscoveryBatch {
         Some(Self {
             seen_at,
             observations,
+            interfaces: BTreeSet::new(),
+        })
+    }
+
+    fn with_interfaces(mut self, interfaces: BTreeSet<String>) -> Self {
+        self.interfaces = interfaces;
+        self
+    }
+
+    /// The same batch without the observations `keep` rejects, or `None` when
+    /// nothing is left.
+    fn retain(&self, mut keep: impl FnMut(&DiscoveryObservation) -> bool) -> Option<Self> {
+        let observations = self
+            .observations
+            .iter()
+            .filter(|observation| keep(observation))
+            .cloned()
+            .collect::<Vec<_>>();
+        if observations.is_empty() {
+            return None;
+        }
+        Some(Self {
+            seen_at: self.seen_at,
+            observations,
+            interfaces: self.interfaces.clone(),
         })
     }
 }
@@ -1918,6 +2160,8 @@ struct DiscoveryCompletion {
     result: Result<DiscoveryReport, DiscoveryFailure>,
     /// Remaining automatic cooldown reported by a refused routed run.
     cooldown: Option<Duration>,
+    /// Tunnel interfaces a completed routed run was bound to.
+    routed_interfaces: BTreeSet<String>,
 }
 
 struct RetainedSelectedSnapshot {
@@ -2278,6 +2522,7 @@ mod tests {
             Arc::new(UnavailableRoutedDiscovery::new(
                 RoutedUnavailableReason::NotConfigured,
             )),
+            Arc::new(UnavailableNetworkChangeSource),
             receiver,
             CancellationToken::new(),
             snapshots,
@@ -2433,7 +2678,7 @@ mod tests {
         };
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Local, at_local_limit)
+                .build_discovery_update(DiscoveryScope::Local, at_local_limit, BTreeSet::new())
                 .is_ok()
         );
 
@@ -2443,7 +2688,7 @@ mod tests {
         };
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Local, over_local_limit)
+                .build_discovery_update(DiscoveryScope::Local, over_local_limit, BTreeSet::new())
                 .is_err()
         );
 
@@ -2458,7 +2703,7 @@ mod tests {
         };
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Exact(target), exact_one)
+                .build_discovery_update(DiscoveryScope::Exact(target), exact_one, BTreeSet::new())
                 .is_ok()
         );
 
@@ -2468,7 +2713,7 @@ mod tests {
         };
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Exact(target), exact_two)
+                .build_discovery_update(DiscoveryScope::Exact(target), exact_two, BTreeSet::new())
                 .is_err()
         );
     }
@@ -2481,6 +2726,7 @@ mod tests {
             .build_discovery_update(
                 DiscoveryScope::Exact(target),
                 exact_report(target, first_id(), 4),
+                BTreeSet::new(),
             )
             .unwrap();
         actor.commit_discovery_update(valid);
@@ -2489,6 +2735,7 @@ mod tests {
             .build_discovery_update(
                 DiscoveryScope::Exact(ipv6_target),
                 exact_report(ipv6_target, first_id(), 4),
+                BTreeSet::new(),
             )
             .unwrap();
         actor.commit_discovery_update(valid_ipv6);
@@ -2508,7 +2755,7 @@ mod tests {
         for report in [wrong_address, wrong_port, wrong_method, wrong_interface] {
             assert!(
                 actor
-                    .build_discovery_update(DiscoveryScope::Exact(target), report)
+                    .build_discovery_update(DiscoveryScope::Exact(target), report, BTreeSet::new())
                     .is_err()
             );
             assert!(actor.registry == prior_registry);
@@ -2527,7 +2774,11 @@ mod tests {
         source.set_scope_id(7);
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Exact(ipv6_target), scoped_ipv6)
+                .build_discovery_update(
+                    DiscoveryScope::Exact(ipv6_target),
+                    scoped_ipv6,
+                    BTreeSet::new()
+                )
                 .is_err()
         );
         assert!(actor.registry == prior_registry);
@@ -2628,9 +2879,13 @@ mod tests {
         ))]);
         let (selection, _selection_starts) = ScriptedSelectionService::new([]);
         let observed_selection = selection.clone();
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -2683,9 +2938,13 @@ mod tests {
             cancelled,
             cancellation_result: Err(DeviceSnapshotResolutionError::Cancelled),
         }]);
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -2764,9 +3023,13 @@ mod tests {
                     "127.0.0.1".parse().unwrap(),
                 ),
             ))]);
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -2825,9 +3088,13 @@ mod tests {
             SelectionStep::Immediate(selected_snapshot()),
             SelectionStep::Immediate(selected_snapshot()),
         ]);
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -3080,6 +3347,7 @@ mod tests {
             Arc::new(discovery),
             Arc::new(selection),
             Arc::new(unavailable_routed()),
+            Arc::new(UnavailableNetworkChangeSource),
             receiver,
             CancellationToken::new(),
             snapshots,
@@ -3128,9 +3396,13 @@ mod tests {
                 ),
             }]);
         let observed_selection = selection.clone();
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
         handle
@@ -3679,9 +3951,13 @@ mod tests {
         ))]);
         let (selection, _selection_starts) = ScriptedSelectionService::new([]);
         let observed_selection = selection.clone();
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -3716,9 +3992,13 @@ mod tests {
                 ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
             ))]);
         let observed_selection = selection.clone();
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -3781,9 +4061,13 @@ mod tests {
                 ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
             ))]);
         let observed_selection = selection.clone();
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -3837,9 +4121,13 @@ mod tests {
                 ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
             ))]);
         let observed_selection = selection.clone();
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -4056,9 +4344,13 @@ mod tests {
                 ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
             ))]);
         let observed_selection = selection.clone();
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -4122,9 +4414,13 @@ mod tests {
             ))),
         ]);
         let observed_selection = selection.clone();
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -4186,9 +4482,13 @@ mod tests {
                 ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
             ))]);
         let observed_selection = selection.clone();
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
         handle
@@ -4235,9 +4535,13 @@ mod tests {
             report(first_id(), "192.0.2.10:65001", 4),
         ))]);
         let (selection, selection_starts) = ScriptedSelectionService::new([SelectionStep::Panic]);
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
         handle
@@ -4307,6 +4611,7 @@ mod tests {
             Arc::new(service),
             Arc::new(selection),
             Arc::new(unavailable_routed()),
+            Arc::new(UnavailableNetworkChangeSource),
             receiver,
             CancellationToken::new(),
             snapshots,
@@ -4321,6 +4626,7 @@ mod tests {
                     scope: DiscoveryScope::Local,
                     result: Ok(report(first_id(), "192.0.2.10:65001", 4)),
                     cooldown: None,
+                    routed_interfaces: BTreeSet::new(),
                 })
                 .await
                 .unwrap()
@@ -4357,9 +4663,13 @@ mod tests {
                 finish_cancellation: finish_selection_rx,
                 cancellation_result: Err(DeviceSnapshotResolutionError::Cancelled),
             }]);
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
         handle
@@ -4682,6 +4992,16 @@ mod tests {
         }
     }
 
+    fn routed_outcome(
+        observations: Vec<DiscoveryObservation>,
+        interfaces: &[&str],
+    ) -> RoutedRunOutcome {
+        RoutedRunOutcome::Report {
+            report: routed_report(observations),
+            interfaces: interfaces.iter().map(|name| (*name).to_owned()).collect(),
+        }
+    }
+
     fn start_routed(
         routed: ScriptedRoutedService,
     ) -> (
@@ -4693,9 +5013,13 @@ mod tests {
             report(first_id(), "127.0.0.1:65001", 4),
         ))]);
         let (selection, _) = ScriptedSelectionService::new([]);
-        let controller =
-            ControllerRuntime::start_with_test_services(discovery.clone(), selection, routed)
-                .unwrap();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery.clone(),
+            selection,
+            routed,
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
         (controller, discovery, discovery_starts)
     }
 
@@ -4821,10 +5145,13 @@ mod tests {
         .await;
         assert_eq!(refreshing.discovery().kind(), DiscoveryKind::Routed);
         release_run
-            .send(Ok(RoutedRunOutcome::Report(routed_report(vec![
-                routed_observation(first_id(), "172.31.90.9:65001"),
-                routed_observation(second_id(), "172.31.90.10:65001"),
-            ]))))
+            .send(Ok(routed_outcome(
+                vec![
+                    routed_observation(first_id(), "172.31.90.9:65001"),
+                    routed_observation(second_id(), "172.31.90.10:65001"),
+                ],
+                &["synthetic-controller-tunnel"],
+            )))
             .expect("the gated routed run should still be in flight");
         let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
             snapshot.discovery().status() == DiscoveryStatus::Ready
@@ -4846,8 +5173,9 @@ mod tests {
         // A reply that is not a routed reply cannot enter the registry.
         let mut wrong_method = routed_observation(first_id(), "172.31.90.9:65001");
         wrong_method.method = DiscoveryMethod::Targeted;
-        routed.script_run(RoutedStep::Immediate(Ok(RoutedRunOutcome::Report(
-            routed_report(vec![wrong_method]),
+        routed.script_run(RoutedStep::Immediate(Ok(routed_outcome(
+            vec![wrong_method],
+            &["synthetic-controller-tunnel"],
         ))));
         handle
             .try_send(ControllerCommand::RunRoutedDiscovery(
@@ -4915,7 +5243,10 @@ mod tests {
         .await;
         assert_eq!(refreshing.routed().cooldown_seconds(), None);
         release_run
-            .send(Ok(RoutedRunOutcome::Report(routed_report(Vec::new()))))
+            .send(Ok(routed_outcome(
+                Vec::new(),
+                &["synthetic-controller-tunnel"],
+            )))
             .expect("the gated routed run should still be in flight");
         let empty = wait_for_snapshot(&mut snapshots, |snapshot| {
             snapshot.discovery().status() == DiscoveryStatus::NoResponse
@@ -5038,6 +5369,7 @@ mod tests {
                     routed_observation(first_id(), "172.31.90.9:65001"),
                     routed_observation(second_id(), "172.31.90.10:65001"),
                 ]),
+                BTreeSet::new(),
             )
             .unwrap();
         assert_eq!(accepted.devices.len(), 2);
@@ -5047,7 +5379,7 @@ mod tests {
         with_interface.interface = Some("synthetic0".to_owned());
         assert!(
             actor
-                .build_discovery_update(scope, routed_report(vec![with_interface]))
+                .build_discovery_update(scope, routed_report(vec![with_interface]), BTreeSet::new())
                 .is_err()
         );
         assert!(
@@ -5055,6 +5387,7 @@ mod tests {
                 .build_discovery_update(
                     scope,
                     routed_report(vec![routed_observation(first_id(), "172.31.90.9:5004")]),
+                    BTreeSet::new(),
                 )
                 .is_err()
         );
@@ -5066,6 +5399,7 @@ mod tests {
                         routed_observation(first_id(), "172.31.90.9:65001"),
                         routed_observation(first_id(), "172.31.90.9:65001"),
                     ]),
+                    BTreeSet::new(),
                 )
                 .is_err()
         );
@@ -5078,8 +5412,539 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(
             actor
-                .build_discovery_update(scope, routed_report(too_many))
+                .build_discovery_update(scope, routed_report(too_many), BTreeSet::new())
                 .is_err()
         );
+    }
+
+    // ---- network changes ---------------------------------------------------
+
+    use crate::discovery::coalesce_burst;
+
+    /// A change source whose raw events pass through the production
+    /// debouncer on the controller runtime, so bursts coalesce exactly as the
+    /// Linux source coalesces them.
+    struct ScriptedChangeSource {
+        raw: Mutex<Option<mpsc::Receiver<NetworkChange>>>,
+    }
+
+    impl ScriptedChangeSource {
+        fn new() -> (Self, mpsc::Sender<NetworkChange>) {
+            let (sender, receiver) = mpsc::channel(64);
+            (
+                Self {
+                    raw: Mutex::new(Some(receiver)),
+                },
+                sender,
+            )
+        }
+    }
+
+    impl NetworkChangeSource for ScriptedChangeSource {
+        fn subscribe(&self) -> Option<mpsc::Receiver<NetworkChange>> {
+            let mut raw = self.raw.lock().unwrap().take()?;
+            let (changes, receiver) = mpsc::channel(4);
+            tokio::spawn(async move {
+                while let Some(burst) = coalesce_burst(&mut raw, NetworkChange::merge).await {
+                    if changes.send(burst.value).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            Some(receiver)
+        }
+    }
+
+    fn lost(interfaces: &[&str]) -> NetworkChange {
+        NetworkChange::new(interfaces.iter().map(|name| (*name).to_owned()))
+    }
+
+    fn broadcast_observation(
+        device_id: DeviceId,
+        source: &str,
+        interface: &str,
+    ) -> DiscoveryObservation {
+        DiscoveryObservation {
+            device_id,
+            source: source.parse().unwrap(),
+            method: DiscoveryMethod::Ipv4Broadcast,
+            interface: Some(interface.to_owned()),
+            device_types: vec![1],
+            tuner_count: Some(2),
+            advertised_base_url: None,
+            advertised_lineup_url: None,
+        }
+    }
+
+    fn report_of(observations: Vec<DiscoveryObservation>) -> DiscoveryReport {
+        DiscoveryReport {
+            observations,
+            ..DiscoveryReport::default()
+        }
+    }
+
+    type ChangeDrivenController = (
+        ControllerRuntime,
+        std_mpsc::Receiver<ServiceStart>,
+        std_mpsc::Receiver<SelectionStart>,
+        ScriptedSelectionService,
+        mpsc::Sender<NetworkChange>,
+    );
+
+    fn start_with_changes<R: RoutedDiscoveryService>(
+        discovery_steps: impl IntoIterator<Item = ServiceStep>,
+        selection_steps: impl IntoIterator<Item = SelectionStep>,
+        routed: R,
+    ) -> ChangeDrivenController {
+        let (discovery, discovery_starts) = ScriptedService::new(discovery_steps);
+        let (selection, selection_starts) = ScriptedSelectionService::new(selection_steps);
+        let (network, changes) = ScriptedChangeSource::new();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection.clone(),
+            routed,
+            network,
+        )
+        .unwrap();
+        (
+            controller,
+            discovery_starts,
+            selection_starts,
+            selection,
+            changes,
+        )
+    }
+
+    #[test]
+    fn origin_expiry_spares_exact_targets_and_binds_routed_evidence_to_its_tunnel() {
+        let lost = ["eth0".to_owned()].into_iter().collect::<BTreeSet<_>>();
+        let exact = LocatorOrigin {
+            method: DiscoveryMethod::Targeted,
+            interface: None,
+        };
+        let broadcast = |interface: &str| LocatorOrigin {
+            method: DiscoveryMethod::Ipv4Broadcast,
+            interface: Some(interface.to_owned()),
+        };
+        let multicast = LocatorOrigin {
+            method: DiscoveryMethod::Ipv6SiteLocalMulticast,
+            interface: Some("eth0".to_owned()),
+        };
+        let routed = LocatorOrigin {
+            method: DiscoveryMethod::RoutedTargeted,
+            interface: None,
+        };
+
+        assert!(!origin_expires(&exact, &lost, true));
+        assert!(origin_expires(&broadcast("eth0"), &lost, false));
+        assert!(!origin_expires(&broadcast("eth1"), &lost, true));
+        assert!(origin_expires(&multicast, &lost, false));
+        assert!(origin_expires(&routed, &lost, true));
+        assert!(!origin_expires(&routed, &lost, false));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn controller_without_a_change_source_keeps_the_initial_summary() {
+        let (discovery, starts) = ScriptedService::new([ServiceStep::Immediate(Ok(report(
+            first_id(),
+            "192.0.2.10:65001",
+            4,
+        )))]);
+        let controller = ControllerRuntime::start(discovery).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(ready.network(), NetworkChangeSummary::INITIAL);
+        assert_eq!(ready.network().sequence(), 0);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn network_change_cancels_an_active_routed_run_before_anything_else() {
+        let routed = ScriptedRoutedService::new(Vec::new());
+        let token = RoutedApprovalToken::new(3);
+        routed.script_proposal(RoutedStep::Immediate(Ok(RoutedProposal::new(
+            token,
+            tunnel_summary(),
+        ))));
+        let (started, started_rx) = std_mpsc::channel();
+        let (cancelled, cancelled_rx) = std_mpsc::channel();
+        routed.script_run(RoutedStep::UntilCancelled { started, cancelled });
+        let (controller, _starts, _selection_starts, _selection, changes) =
+            start_with_changes([], [], routed.clone());
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::ProposeRoutedDiscovery)
+            .unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            matches!(
+                snapshot.routed().proposal(),
+                RoutedProposalStatus::Proposed(_)
+            )
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        started_rx
+            .recv_timeout(WAIT)
+            .expect("the routed run is in flight before the network changes");
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+
+        changes.try_send(lost(&["wg0"])).unwrap();
+        let reconciled = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 1
+        })
+        .await;
+
+        // The run had already observed its cancellation when the reconciled
+        // snapshot was published; nothing else was called afterwards.
+        cancelled_rx
+            .try_recv()
+            .expect("the routed run is cancelled before the snapshot is published");
+        assert_eq!(reconciled.discovery().kind(), DiscoveryKind::Routed);
+        assert_eq!(
+            reconciled.discovery().status(),
+            DiscoveryStatus::Failed(DiscoveryFailure::RoutedProposalChanged)
+        );
+        assert_eq!(
+            reconciled.discovery_generation(),
+            OperationGeneration::new(2)
+        );
+        assert_eq!(
+            reconciled.routed().proposal(),
+            RoutedProposalStatus::Failed(DiscoveryFailure::RoutedProposalChanged)
+        );
+        assert_eq!(reconciled.network().removed_devices(), 0);
+        assert_eq!(reconciled.network().expired_locators(), 0);
+        assert_eq!(
+            routed.calls(),
+            vec![
+                RoutedCall::Propose,
+                RoutedCall::Run(RoutedScanTrigger::ExplicitRefresh),
+            ]
+        );
+        controller.shutdown().unwrap();
+        assert_eq!(routed.calls().len(), 2, "a change starts no discovery");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn network_change_expires_lost_interface_evidence_and_keeps_surviving_locators() {
+        let target = exact_target(7);
+        let mut exact_source = target.socket_addr();
+        exact_source.set_port(DISCOVERY_UDP_PORT);
+        let (controller, starts, _selection_starts, _selection, changes) = start_with_changes(
+            [
+                ServiceStep::Immediate(Ok(report_of(vec![
+                    broadcast_observation(first_id(), "192.0.2.10:65001", "eth0"),
+                    broadcast_observation(second_id(), "192.0.2.20:65001", "eth0"),
+                ]))),
+                ServiceStep::Immediate(Ok(exact_report(target, first_id(), 4))),
+                ServiceStep::Immediate(Ok(exact_report(target, first_id(), 4))),
+            ],
+            [],
+            unavailable_routed(),
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        recv_start(&starts);
+        let before = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().kind() == DiscoveryKind::Exact
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(before.devices().len(), 2);
+        assert_eq!(before.devices()[0].locator_count(), 2);
+
+        changes.try_send(lost(&["eth0"])).unwrap();
+        let reconciled = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 1
+        })
+        .await;
+
+        assert_eq!(reconciled.devices().len(), 1);
+        let survivor = &reconciled.devices()[0];
+        assert_eq!(survivor.device_id(), first_id());
+        assert_eq!(survivor.locator_count(), 1);
+        assert_eq!(survivor.preferred_locator(), exact_source);
+        assert_eq!(reconciled.network().removed_devices(), 1);
+        assert_eq!(reconciled.network().expired_locators(), 2);
+        // The lane keeps its terminal state in a new generation because the
+        // device projection changed without an operation.
+        assert_eq!(reconciled.discovery().kind(), DiscoveryKind::Exact);
+        assert_eq!(reconciled.discovery().status(), DiscoveryStatus::Ready);
+        assert_eq!(
+            reconciled.discovery_generation(),
+            OperationGeneration::new(3)
+        );
+
+        // A later completion rebuilds from the filtered batches: the expired
+        // broadcast evidence does not come back.
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        recv_start(&starts);
+        let rebuilt = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(4)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(rebuilt.devices().len(), 1);
+        assert_eq!(rebuilt.devices()[0].locator_count(), 1);
+        assert_eq!(rebuilt.network().sequence(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn network_change_expires_routed_evidence_only_when_its_tunnel_is_lost() {
+        let routed = ScriptedRoutedService::new(Vec::new());
+        routed.script_run(RoutedStep::Immediate(Ok(routed_outcome(
+            vec![
+                routed_observation(first_id(), "172.31.90.9:65001"),
+                routed_observation(second_id(), "172.31.90.10:65001"),
+            ],
+            &["wg0"],
+        ))));
+        let (controller, _starts, _selection_starts, _selection, changes) =
+            start_with_changes([], [], routed);
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(ready.devices().len(), 2);
+
+        // An unrelated interface leaves routed evidence and the lane alone.
+        changes.try_send(lost(&["eth0"])).unwrap();
+        let unrelated = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 1
+        })
+        .await;
+        assert_eq!(unrelated.devices().len(), 2);
+        assert_eq!(unrelated.network().removed_devices(), 0);
+        assert_eq!(unrelated.network().expired_locators(), 0);
+        assert_eq!(
+            unrelated.discovery_generation(),
+            OperationGeneration::new(1)
+        );
+
+        // Losing the tunnel expires every locator that run produced.
+        changes.try_send(lost(&["wg0"])).unwrap();
+        let tunnel_lost = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 2
+        })
+        .await;
+        assert!(tunnel_lost.devices().is_empty());
+        assert_eq!(tunnel_lost.network().removed_devices(), 2);
+        assert_eq!(tunnel_lost.network().expired_locators(), 2);
+        assert_eq!(tunnel_lost.discovery().kind(), DiscoveryKind::Routed);
+        assert_eq!(tunnel_lost.discovery().status(), DiscoveryStatus::Ready);
+        assert_eq!(
+            tunnel_lost.discovery_generation(),
+            OperationGeneration::new(2)
+        );
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn network_change_burst_reconciles_once_with_one_summary() {
+        const BURST: usize = 5;
+        let observations = (0..BURST)
+            .map(|index| {
+                broadcast_observation(
+                    first_id(),
+                    &format!("192.0.2.{}:65001", 10 + index),
+                    &format!("if{index}"),
+                )
+            })
+            .collect();
+        let (controller, starts, _selection_starts, _selection, changes) = start_with_changes(
+            [ServiceStep::Immediate(Ok(report_of(observations)))],
+            [],
+            unavailable_routed(),
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(ready.devices()[0].locator_count(), BURST);
+
+        for index in 0..BURST {
+            changes.try_send(lost(&[&format!("if{index}")])).unwrap();
+        }
+        let reconciled = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() >= 1
+        })
+        .await;
+
+        // Had the burst split, the first reconciliation could not have
+        // expired every locator.
+        assert_eq!(reconciled.network().sequence(), 1);
+        assert_eq!(reconciled.network().expired_locators(), BURST as u16);
+        assert_eq!(reconciled.network().removed_devices(), 1);
+        assert!(reconciled.devices().is_empty());
+        assert_eq!(reconciled.discovery().status(), DiscoveryStatus::Ready);
+        assert_eq!(
+            reconciled.discovery_generation(),
+            OperationGeneration::new(2)
+        );
+
+        // A later isolated change opens a new burst and changes nothing.
+        changes.try_send(lost(&["if9"])).unwrap();
+        let quiet = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() >= 2
+        })
+        .await;
+        assert_eq!(quiet.network().sequence(), 2);
+        assert_eq!(quiet.network().expired_locators(), 0);
+        assert_eq!(quiet.network().removed_devices(), 0);
+        assert_eq!(quiet.discovery_generation(), OperationGeneration::new(2));
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn network_change_clears_the_selection_of_a_device_that_lost_every_locator() {
+        let (controller, starts, selection_starts, selection, changes) = start_with_changes(
+            [ServiceStep::Immediate(Ok(report_of(vec![
+                broadcast_observation(first_id(), "192.0.2.10:65001", "eth0"),
+            ])))],
+            [SelectionStep::Immediate(Ok(
+                ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
+            ))],
+            unavailable_routed(),
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+
+        changes.try_send(lost(&["eth0"])).unwrap();
+        let cleared = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 1
+        })
+        .await;
+
+        assert!(cleared.devices().is_empty());
+        assert_eq!(cleared.selected_device(), None);
+        assert_eq!(
+            cleared.selected_lineup().status(),
+            SelectedLineupStatus::Unselected
+        );
+        assert_eq!(cleared.selection_generation(), OperationGeneration::new(2));
+        assert_eq!(cleared.network().removed_devices(), 1);
+        assert_eq!(selection.calls(), 1, "no HTTP is started by a change");
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn network_change_cancels_an_in_flight_local_refresh_into_idle() {
+        let (_release, release_rx) = oneshot::channel();
+        let (cancelled, cancelled_rx) = std_mpsc::channel();
+        let (controller, starts, _selection_starts, _selection, changes) = start_with_changes(
+            [
+                ServiceStep::Immediate(Ok(report_of(vec![broadcast_observation(
+                    first_id(),
+                    "192.0.2.10:65001",
+                    "eth0",
+                )]))),
+                ServiceStep::Gated {
+                    release: release_rx,
+                    cancelled,
+                    cancellation_result: Err(DiscoveryFailure::Internal),
+                },
+            ],
+            [],
+            unavailable_routed(),
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+
+        changes.try_send(lost(&["wlan0"])).unwrap();
+        let reconciled = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 1
+        })
+        .await;
+
+        cancelled_rx
+            .try_recv()
+            .expect("the in-flight refresh is cancelled before publication");
+        assert_eq!(reconciled.discovery().kind(), DiscoveryKind::Local);
+        assert_eq!(reconciled.discovery().status(), DiscoveryStatus::Idle);
+        assert_eq!(
+            reconciled.discovery_generation(),
+            OperationGeneration::new(3)
+        );
+        assert_eq!(reconciled.devices().len(), 1, "unrelated evidence stays");
+        assert_eq!(reconciled.network().expired_locators(), 0);
+        controller.shutdown().unwrap();
     }
 }

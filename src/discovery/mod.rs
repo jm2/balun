@@ -1,6 +1,7 @@
 //! Bounded HDHomeRun discovery orchestration.
 
 pub(crate) mod approval;
+mod changes;
 mod client;
 mod hostname;
 mod local;
@@ -11,6 +12,12 @@ mod routes;
 mod types;
 
 pub use approval::{RoutedProposalOriginSummary, RoutedProposalSummary, RoutedScanTrigger};
+pub use changes::{
+    Coalesced, InterfaceInventory, NETWORK_CHANGE_MAX_DELAY, NETWORK_CHANGE_QUIET_PERIOD,
+    NetworkChange, coalesce_burst,
+};
+#[cfg(target_os = "linux")]
+pub use changes::{LinuxNetworkChangeWatcher, NetworkChangeWatchError};
 pub use client::{
     DiscoveryClient, DiscoveryError, DiscoveryObservation, DiscoveryReport, DiscoveryStats,
     InvalidProbeConfig, ProbeConfig, ProbeFailureClass, ProbeIssue,
