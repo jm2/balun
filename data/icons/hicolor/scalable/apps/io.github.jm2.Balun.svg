@@ -17,10 +17,6 @@
       <stop offset="0.25" stop-color="#ffffff" stop-opacity="0.05"/>
       <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="stand" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#3a3e40"/>
-      <stop offset="1" stop-color="#15181a"/>
-    </linearGradient>
     <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#2c3032"/>
       <stop offset="1" stop-color="#1d2022"/>
@@ -63,7 +59,7 @@
       <stop offset="0" stop-color="#ffffff"/>
       <stop offset="1" stop-color="#9da19b"/>
     </radialGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
       <feGaussianBlur stdDeviation="1.6"/>
     </filter>
     <clipPath id="glass">
@@ -74,7 +70,6 @@
   <!-- soft drop shadow -->
   <g filter="url(#shadow)" opacity="0.32">
     <rect x="9" y="33" width="110" height="88" rx="10" fill="#000000"/>
-    <rect x="35" y="117" width="58" height="8" rx="3" fill="#000000"/>
   </g>
 
   <!-- rabbit ears: thick lower segments, thinner telescoped upper segments, ball tips -->
@@ -163,9 +158,4 @@
     <circle cx="110" cy="106.5" r="1.7" fill="#8ae234" stroke="#3d7a0b" stroke-width="0.6"/>
     <circle cx="109.5" cy="106" r="0.5" fill="#ffffff" fill-opacity="0.8"/>
   </g>
-
-  <!-- swivel stand -->
-  <rect x="52" y="115" width="24" height="5" fill="#15181a"/>
-  <rect x="35" y="118" width="58" height="7" rx="3" fill="url(#stand)" stroke="#0e1011" stroke-width="1"/>
-  <rect x="37" y="119.2" width="54" height="1" rx="0.5" fill="#ffffff" fill-opacity="0.14"/>
 </svg>
