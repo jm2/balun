@@ -102,12 +102,12 @@ table identifier, without decoding any content:
   the PSIP base PID with the MGT, TVCT, and STT, EIT-0 through EIT-3 on their
   own PIDs, and the matching ETT tables.
 
-In-band guide data therefore survives only when a whole multiplex is
-requested, which occupies a tuner at the full broadcast rate and needs the RF
-frequency, which the lineup does not expose. A v0.2 in-band guide would have
-to crawl each multiplex briefly, or the guide comes from XMLTV; a now/next
-overlay taken from the playing stream is ruled out. ATSC 3.0 signalling was
-not examined.
+On the tested CONNECT, in-band guide data therefore survives only when a
+whole multiplex is requested, which occupies a tuner at the full broadcast
+rate and needs the RF frequency, which the lineup does not expose. A v0.2
+in-band guide would have to crawl each multiplex briefly, or the guide comes
+from XMLTV; a now/next overlay taken from the playing stream is ruled out for
+that device. Other HDHomeRun models and ATSC 3.0 signalling were not examined.
 
 ## Observed JSON compatibility
 

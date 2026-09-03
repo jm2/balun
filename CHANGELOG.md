@@ -147,8 +147,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loopback fake tuner; the packaged codec closure is not yet frozen.
 - **No packages** — Flatpak, deb, rpm, DMG, and winget packaging are planned; the release workflow
   builds the diagnostic only.
-- **No program guide** — Guide data is a v0.2 candidate. HDHomeRun per-channel streams carry no
-  PSIP tables, so an in-band guide needs a full-multiplex crawl or XMLTV.
+- **No program guide** — Guide data is a v0.2 candidate. The tested HDHomeRun CONNECT's
+  per-channel streams carry no PSIP tables, so an in-band guide needs a full-multiplex crawl or
+  XMLTV.
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
   decoder, so those channels fail closed and cannot be transcoded.
 

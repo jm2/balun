@@ -1,6 +1,6 @@
 # Balun v0.1 implementation backlog
 
-Last audited: 2026-09-02
+Last audited: 2026-09-03
 
 This is the executable work ledger for `v0.1.0-alpha.1`. Scope, architecture,
 and delivery order are authoritative in [`plan-v0.1.md`](plan-v0.1.md);
