@@ -537,6 +537,71 @@ impl DiscoveryState {
     pub const fn issue_count(self) -> u16 {
         self.issue_count
     }
+
+    /// The same kind, status, and issue count in a new operation generation,
+    /// for a device projection that changed without a discovery operation.
+    #[must_use]
+    pub const fn with_generation(self, generation: OperationGeneration) -> Self {
+        Self { generation, ..self }
+    }
+}
+
+/// Topology-free outcome of the latest network-change reconciliation.
+///
+/// The sequence starts at zero and advances once per reconciliation, so a
+/// consumer can show a brief notice when it changes. Interface names,
+/// addresses, and routes never appear here.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NetworkChangeSummary {
+    sequence: u64,
+    removed_devices: u16,
+    expired_locators: u16,
+}
+
+impl NetworkChangeSummary {
+    /// No network change has been reconciled yet.
+    pub const INITIAL: Self = Self {
+        sequence: 0,
+        removed_devices: 0,
+        expired_locators: 0,
+    };
+
+    #[must_use]
+    pub const fn new(sequence: u64, removed_devices: u16, expired_locators: u16) -> Self {
+        Self {
+            sequence,
+            removed_devices,
+            expired_locators,
+        }
+    }
+
+    /// The summary of the reconciliation following this one.
+    #[must_use]
+    pub fn next(self, removed_devices: usize, expired_locators: usize) -> Self {
+        Self {
+            sequence: self.sequence.saturating_add(1),
+            removed_devices: u16::try_from(removed_devices).unwrap_or(u16::MAX),
+            expired_locators: u16::try_from(expired_locators).unwrap_or(u16::MAX),
+        }
+    }
+
+    /// Number of reconciliations so far; zero until the first network change.
+    #[must_use]
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    /// Devices that lost every locator in the latest reconciliation.
+    #[must_use]
+    pub const fn removed_devices(self) -> u16 {
+        self.removed_devices
+    }
+
+    /// Locators that lost every origin in the latest reconciliation.
+    #[must_use]
+    pub const fn expired_locators(self) -> u16 {
+        self.expired_locators
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -670,6 +735,7 @@ pub struct ApplicationSnapshot {
     selected_device: Option<DeviceId>,
     selected_lineup: SelectedLineupState,
     routed: RoutedDiscoveryState,
+    network: NetworkChangeSummary,
 }
 
 impl ApplicationSnapshot {
@@ -737,6 +803,7 @@ impl ApplicationSnapshot {
             selected_device,
             selected_lineup,
             routed: RoutedDiscoveryState::default(),
+            network: NetworkChangeSummary::INITIAL,
         })
     }
 
@@ -744,6 +811,14 @@ impl ApplicationSnapshot {
     #[must_use]
     pub const fn with_routed(mut self, routed: RoutedDiscoveryState) -> Self {
         self.routed = routed;
+        self
+    }
+
+    /// Attach the latest network-change summary; it carries no generation of
+    /// its own.
+    #[must_use]
+    pub const fn with_network(mut self, network: NetworkChangeSummary) -> Self {
+        self.network = network;
         self
     }
 
@@ -758,6 +833,7 @@ impl ApplicationSnapshot {
             selected_device: None,
             selected_lineup: SelectedLineupState::unselected(OperationGeneration::INITIAL),
             routed: RoutedDiscoveryState::default(),
+            network: NetworkChangeSummary::INITIAL,
         }
     }
 
@@ -799,6 +875,11 @@ impl ApplicationSnapshot {
     #[must_use]
     pub const fn routed(&self) -> RoutedDiscoveryState {
         self.routed
+    }
+
+    #[must_use]
+    pub const fn network(&self) -> NetworkChangeSummary {
+        self.network
     }
 
     /// Whether this publication can safely replace `previous` in a reducer.
@@ -1510,6 +1591,55 @@ mod tests {
             ),
             Err(StateError::ControlCharacter { .. })
         ));
+    }
+
+    #[test]
+    fn network_change_summary_rides_with_the_snapshot_and_saturates() {
+        let initial = ApplicationSnapshot::initial();
+        assert_eq!(initial.network(), NetworkChangeSummary::INITIAL);
+        assert_eq!(initial.network().sequence(), 0);
+
+        let first = NetworkChangeSummary::INITIAL.next(1, 3);
+        assert_eq!(first, NetworkChangeSummary::new(1, 1, 3));
+        let saturated = first.next(usize::MAX, usize::MAX);
+        assert_eq!(saturated.sequence(), 2);
+        assert_eq!(saturated.removed_devices(), u16::MAX);
+        assert_eq!(saturated.expired_locators(), u16::MAX);
+        assert_eq!(
+            NetworkChangeSummary::new(u64::MAX, 0, 0)
+                .next(0, 0)
+                .sequence(),
+            u64::MAX
+        );
+
+        let next = ApplicationSnapshot::new(
+            SnapshotRevision::INITIAL.checked_next().unwrap(),
+            OperationGeneration::INITIAL,
+            OperationGeneration::INITIAL,
+            DiscoveryState::idle(OperationGeneration::INITIAL),
+            [],
+            None,
+            SelectedLineupState::unselected(OperationGeneration::INITIAL),
+        )
+        .unwrap()
+        .with_network(first);
+        assert_eq!(next.network(), first);
+        assert!(
+            next.can_replace(&initial),
+            "the summary carries no generation and never blocks a reducer"
+        );
+        assert!(!format!("{next:?}").contains("eth"));
+    }
+
+    #[test]
+    fn with_generation_keeps_kind_status_and_issue_count() {
+        let ready =
+            DiscoveryState::ready_for(OperationGeneration::new(3), DiscoveryKind::Routed, 2);
+        let moved = ready.with_generation(OperationGeneration::new(4));
+        assert_eq!(moved.generation(), OperationGeneration::new(4));
+        assert_eq!(moved.kind(), DiscoveryKind::Routed);
+        assert_eq!(moved.status(), DiscoveryStatus::Ready);
+        assert_eq!(moved.issue_count(), 2);
     }
 
     #[test]

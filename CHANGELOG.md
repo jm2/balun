@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Playback controls** — Stop, a volume slider, an independent mute toggle, and fullscreen with
   `F11` and `Escape`. Volume and mute carry across channel changes for the running session, and
   fullscreen presentation follows the compositor's confirmation.
+- **Network-change reconciliation** — On Linux, Balun watches for adapter, address, and route
+  changes, coalesces each burst, cancels any routed scan or proposal at once, and drops device
+  addresses that were only ever seen through a lost interface or tunnel. Devices with another
+  valid address stay, remembered addresses are never removed, and a brief notice says what changed.
 - **Dependency audit and repository linting** — CI now runs `cargo audit` and lints Markdown,
   TOML, YAML, and GitHub Actions workflows with pinned tools and root-level configs.
 - **Desktop metadata and icon** — Add the `io.github.jm2.Balun` desktop entry, AppStream

@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **14/30 (46.7%)** records complete. This is a dependency ledger,
+Current status: **16/30 (53.3%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -38,7 +38,8 @@ most evidence records.
 The Linux live-hardware proofs recorded P0.2, P0.4, P0.6, and P0.7 against
 the primary-site tuners on 2026-09-03. P0.3 needs the macOS host, P0.5 waits
 on the Windows and macOS factory sets, and P0.8 is the next hardware record.
-P1.1, P1.2, P1.3, and P1.5 are complete.
+P1.1, P1.2, P1.3, and P1.5 are complete. P2.3 landed the Linux network-change
+reconciliation, so P2.2's approval and progress UX is the next routed record.
 
 ## P0 — Evidence and contract
 
@@ -105,7 +106,7 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
   require explicit approval, and expose progress, cancel, cooldown, backoff,
   and revocation.
 
-- [ ] **P2.3 — Reconcile network changes.** Debounce adapter and route changes,
+- [x] **P2.3 — Reconcile network changes.** Debounce adapter and route changes,
   expire stale evidence, cancel invalid authority synchronously, and keep
   devices that retain another valid locator.
 

@@ -61,10 +61,14 @@ impl fmt::Debug for RoutedProposal {
 }
 
 /// What one routed run did, as the discovery lane needs to know it.
-#[derive(Debug)]
 pub enum RoutedRunOutcome {
-    /// The scan ran to its settled completion with this report.
-    Report(DiscoveryReport),
+    /// The scan ran to its settled completion. `interfaces` names the tunnel
+    /// interfaces the approved proposal was bound to, so a later network
+    /// change can expire exactly this evidence; they never enter a snapshot.
+    Report {
+        report: DiscoveryReport,
+        interfaces: Vec<String>,
+    },
     /// The current proposal has no remembered approval; nothing was sent.
     NeedsApproval,
     /// Automatic runs are cooling down; nothing was sent.
@@ -73,6 +77,26 @@ pub enum RoutedRunOutcome {
     Busy,
     /// The store published a reservation it could not confirm; nothing was sent.
     Unconfirmed,
+}
+
+impl fmt::Debug for RoutedRunOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Report { report, interfaces } => formatter
+                .debug_struct("Report")
+                .field("observations", &report.observations.len())
+                .field("issues", &report.issues.len())
+                .field("interface_count", &interfaces.len())
+                .finish(),
+            Self::NeedsApproval => formatter.write_str("NeedsApproval"),
+            Self::CoolingDown { remaining } => formatter
+                .debug_struct("CoolingDown")
+                .field("remaining", remaining)
+                .finish(),
+            Self::Busy => formatter.write_str("Busy"),
+            Self::Unconfirmed => formatter.write_str("Unconfirmed"),
+        }
+    }
 }
 
 /// Packet-free boundary the controller uses for routed discovery.
@@ -516,13 +540,22 @@ mod linux {
                 .propose(routed_probe_config(), RoutedScanConfig::default())
                 .await
                 .map_err(failure)?;
+            let interfaces = proposal
+                .summary()
+                .origins()
+                .iter()
+                .map(|origin| origin.interface_name().to_owned())
+                .collect::<Vec<_>>();
             let run = runner
                 .run(proposal, trigger, cancellation)
                 .await
                 .map_err(failure)?;
             Ok(match run {
                 MonitoredRoutedRun::Completed(CompletedRoutedRun { result, .. }) => {
-                    RoutedRunOutcome::Report(result.map_err(scan_failure)?)
+                    RoutedRunOutcome::Report {
+                        report: result.map_err(scan_failure)?,
+                        interfaces,
+                    }
                 }
                 MonitoredRoutedRun::NeedsApproval(_) => RoutedRunOutcome::NeedsApproval,
                 MonitoredRoutedRun::CoolingDown { remaining } => {
@@ -730,7 +763,7 @@ mod tests {
             matches!(
                 run,
                 Err(DiscoveryFailure::RoutedNoCandidates)
-                    | Ok(RoutedRunOutcome::NeedsApproval | RoutedRunOutcome::Report(_))
+                    | Ok(RoutedRunOutcome::NeedsApproval | RoutedRunOutcome::Report { .. })
             ),
             "{run:?}"
         );

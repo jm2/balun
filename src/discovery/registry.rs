@@ -504,6 +504,33 @@ impl DeviceRegistry {
         self.check_clock(now)?;
         self.clock = Some(now);
         let cutoff = RegistryInstant(now.0.saturating_sub(max_age));
+        Ok(self.sweep(|_, freshness| freshness.last_seen >= cutoff))
+    }
+
+    /// Remove every origin for which `expires` holds at the monotonic `now`,
+    /// then every locator left without an origin and every device left
+    /// without a locator.
+    ///
+    /// This is how a network change retires evidence that depended on an
+    /// interface or route that is gone while keeping each device that still
+    /// has another valid locator. Freshness is not consulted; the predicate
+    /// sees only the origin's method and interface.
+    pub fn expire_origins(
+        &mut self,
+        now: RegistryInstant,
+        mut expires: impl FnMut(&LocatorOrigin) -> bool,
+    ) -> Result<ExpirationOutcome, RegistryError> {
+        self.check_clock(now)?;
+        self.clock = Some(now);
+        Ok(self.sweep(|origin, _| !expires(origin)))
+    }
+
+    /// Keep only the origins `retain` accepts, then drop empty locators and
+    /// devices, reporting what was removed in stable order.
+    fn sweep(
+        &mut self,
+        mut retain: impl FnMut(&LocatorOrigin, &OriginFreshness) -> bool,
+    ) -> ExpirationOutcome {
         let mut removed_origins = 0;
         let mut stale = Vec::new();
         for (device_id, device) in &mut self.devices {
@@ -511,7 +538,7 @@ impl DeviceRegistry {
                 let before = locator.origins.len();
                 locator
                     .origins
-                    .retain(|_, freshness| freshness.last_seen >= cutoff);
+                    .retain(|origin, freshness| retain(origin, freshness));
                 removed_origins += before - locator.origins.len();
 
                 if locator.origins.is_empty() {
@@ -541,11 +568,11 @@ impl DeviceRegistry {
             self.devices.remove(device_id);
         }
 
-        Ok(ExpirationOutcome {
+        ExpirationOutcome {
             removed_origins,
             removed_locators: stale.len(),
             removed_devices: removed_devices.into_iter().collect(),
-        })
+        }
     }
 
     fn check_clock(&self, attempted: RegistryInstant) -> Result<(), RegistryError> {
@@ -1139,6 +1166,111 @@ mod tests {
                 at(19),
             )
             .unwrap_err();
+
+        assert_eq!(
+            error,
+            RegistryError::TimeWentBackwards {
+                previous: at(20),
+                attempted: at(19),
+            }
+        );
+        assert_eq!(registry, before);
+    }
+
+    #[test]
+    fn expire_origins_removes_matching_origins_then_empty_locators_and_devices() {
+        let first = DeviceId::new(FIRST_ID).unwrap();
+        let second = DeviceId::new(SECOND_ID).unwrap();
+        let mut registry = DeviceRegistry::default();
+        // First device: one locator seen by broadcast on test0 and by an
+        // exact probe; a second locator seen by broadcast only.
+        registry
+            .observe(
+                observation(FIRST_ID, "192.0.2.10:65001", DiscoveryMethod::Ipv4Broadcast),
+                at(10),
+            )
+            .unwrap();
+        let mut exact = observation(FIRST_ID, "192.0.2.10:65001", DiscoveryMethod::Targeted);
+        exact.interface = None;
+        registry.observe(exact, at(20)).unwrap();
+        registry
+            .observe(
+                observation(FIRST_ID, "192.0.2.11:65001", DiscoveryMethod::Ipv4Broadcast),
+                at(30),
+            )
+            .unwrap();
+        // Second device: broadcast on test0 only.
+        registry
+            .observe(
+                observation(
+                    SECOND_ID,
+                    "192.0.2.12:65001",
+                    DiscoveryMethod::Ipv4Broadcast,
+                ),
+                at(30),
+            )
+            .unwrap();
+
+        let expired = registry
+            .expire_origins(at(40), |origin| {
+                origin.method == DiscoveryMethod::Ipv4Broadcast
+                    && origin.interface.as_deref() == Some("test0")
+            })
+            .unwrap();
+
+        assert_eq!(expired.removed_origins, 3);
+        assert_eq!(expired.removed_locators, 2);
+        assert_eq!(expired.removed_devices, vec![second]);
+        assert_eq!(registry.clock(), Some(at(40)));
+        let device = registry.get(first).unwrap();
+        assert_eq!(device.locators().len(), 1);
+        let locator = device.locators().next().unwrap();
+        assert_eq!(locator.source(), "192.0.2.10:65001".parse().unwrap());
+        assert_eq!(locator.origins().len(), 1);
+        assert_eq!(locator.last_seen(), at(20));
+        assert!(registry.get(second).is_none());
+
+        // The expired locator is free to be claimed by another device.
+        let outcome = registry
+            .observe(
+                observation(SECOND_ID, "192.0.2.11:65001", DiscoveryMethod::Targeted),
+                at(50),
+            )
+            .unwrap();
+        assert!(outcome.device_added);
+        assert_eq!(outcome.reassigned_from, None);
+    }
+
+    #[test]
+    fn expire_origins_with_a_false_predicate_changes_nothing_but_the_clock() {
+        let mut registry = DeviceRegistry::default();
+        registry
+            .observe(
+                observation(FIRST_ID, "192.0.2.10:65001", DiscoveryMethod::Ipv4Broadcast),
+                at(10),
+            )
+            .unwrap();
+        let mut before = registry.clone();
+
+        let expired = registry.expire_origins(at(20), |_| false).unwrap();
+
+        assert_eq!(expired, ExpirationOutcome::default());
+        before.clock = Some(at(20));
+        assert_eq!(registry, before);
+    }
+
+    #[test]
+    fn expire_origins_rejects_time_regression_without_mutating_registry() {
+        let mut registry = DeviceRegistry::default();
+        registry
+            .observe(
+                observation(FIRST_ID, "192.0.2.10:65001", DiscoveryMethod::Ipv4Broadcast),
+                at(20),
+            )
+            .unwrap();
+        let before = registry.clone();
+
+        let error = registry.expire_origins(at(19), |_| true).unwrap_err();
 
         assert_eq!(
             error,
