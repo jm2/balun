@@ -656,6 +656,7 @@ impl StoreCommit {
 ///
 /// The binding prevents a proposal retained in memory from being approved
 /// after the key file has been externally replaced.
+#[derive(Clone)]
 pub(crate) struct StoredRoutedProposal {
     proposal: RoutedScanProposal,
     key_binding: [u8; 32],

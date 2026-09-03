@@ -1,8 +1,8 @@
 # Balun v0.1 security and privacy review
 
 Reviewed: 2026-09-03 at main `8c0df0ed94b3f0db49d9baa57ab8820256f7c736` (ledger
-record P4.3). The package section also covers PR #16 (`feat/flatpak-package`) at
-`177cfbf91d5e23191a936aeb0659c7801508d6aa`.
+record P4.3). The package section also covers the Flatpak package as merged
+into main in `946a2ee`.
 
 Contracts audited: [`plan-v0.1.md`](plan-v0.1.md) §5-§8,
 [ADR-0001](architecture/adr-0001-discovery-playback.md),
@@ -210,22 +210,24 @@ review's pull request.
 - Component policy: `forbidden-bundled-components.txt` is pinned by SHA-256 in
   `validate-release-components.sh`; its fixture suite and the Linux, Flatpak,
   and macOS validators run in both workflows.
-- PR #16 at the SHA above: `finish-args` are exactly `wayland`, `fallback-x11`,
-  `ipc`, `pulseaudio`, `network`, and `dri`, enforced in canonical form and
-  count by `validate-permissions.sh`; no filesystem, D-Bus, or `--device=all`
-  grant; decoders come from the `ffmpeg-full` extension outside the app
-  payload; the build is offline and `--locked` from the checksum-pinned
-  generator's sources; `validate-bundle-compliance.sh` reopens the bundle in an
-  isolated OSTree repository, requires one app ref, and runs the metadata and
-  tree validators; `validate-bundle-runtime.sh` probes the installed bundle for
-  the factories; the Flatpak jobs keep `contents: read`.
+- Flatpak package (main `946a2ee`): `finish-args` are exactly `wayland`,
+  `fallback-x11`, `ipc`, `pulseaudio`, `network`, and `dri`, enforced in
+  canonical form and count by `validate-permissions.sh`; no filesystem, D-Bus,
+  or `--device=all` grant; decoders come from the `ffmpeg-full` extension
+  outside the app payload; the build is offline and `--locked` from the
+  checksum-pinned generator's sources; `validate-bundle-compliance.sh` reopens
+  the bundle in an isolated OSTree repository, requires one app ref, and runs
+  the metadata and tree validators; `validate-bundle-runtime.sh` probes the
+  installed bundle for the factories; the Flatpak jobs keep `contents: read`.
 
 ### Findings
 
 - Low, fixed here: `actions/checkout@v7` and `actions/upload-artifact@v7` were
-  floating tags; both are pinned to their v7.0.1 commits.
-- Low, open (PR #16): `flatpak-builder@v6` and the `gnome-50` builder image are
-  tag-pinned, and the new jobs use the floating `@v7` actions; pin after merge.
+  floating tags; every use in both workflows, including the Flatpak jobs, is
+  pinned to the v7.0.1 commit.
+- Low, open: `flatpak/flatpak-github-actions/flatpak-builder@v6` and the
+  `gnome-50` builder image are tag-pinned; it is the only action in either
+  workflow not pinned by commit.
 - Low, accepted: `cargo install cargo-audit --locked` takes the latest release;
   the advisory database is fetched live in any case.
 
@@ -280,8 +282,8 @@ review's pull request.
   positions only.
 - Approval store: document the key threat model and add an unsupported-version
   quarantine reason when P2.2 wires it.
-- Pin the flatpak-builder action, its image, and the new jobs' actions once #16
-  merges; review the publication job with #18 (P3.5).
+- Pin the flatpak-builder action and its `gnome-50` image; review the
+  publication job with #18 (P3.5).
 - Repeat this review when P2.2 connects the routed sender and when the Windows
   and macOS packages land (P3.3, P3.4); add a CI guard so a logging framework
   cannot arrive without a `Debug` re-audit.

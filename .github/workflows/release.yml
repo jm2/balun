@@ -164,3 +164,72 @@ jobs:
           path: ${{ matrix.binary }}
           if-no-files-found: error
           retention-days: 7
+
+  flatpak:
+    name: Flatpak ${{ matrix.arch }} candidate
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.build_ref }}
+          persist-credentials: false
+
+      - name: Install Flatpak natively on the runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils flatpak flatpak-builder ostree python3-pip
+          sudo mkdir -p /etc/polkit-1/rules.d
+          sudo tee /etc/polkit-1/rules.d/99-flatpak.rules << 'EOF'
+          polkit.addRule(function(action, subject) {
+              if (action.id.startsWith("org.freedesktop.Flatpak.") && subject.user === "runner") {
+                  return polkit.Result.YES;
+              }
+          });
+          EOF
+          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Validate the manifest's permission policy
+        run: build-aux/flatpak/validate-permissions.sh build-aux/flatpak/io.github.jm2.Balun.yml
+
+      - name: Install the pinned cargo-source generator dependencies
+        run: |
+          python3 -m pip install --requirement build-aux/flatpak/generator-requirements.txt \
+            --break-system-packages \
+            || python3 -m pip install --requirement build-aux/flatpak/generator-requirements.txt
+
+      - name: Generate cargo-sources.json from the tagged lockfile
+        run: bash build-aux/flatpak/generate-cargo-sources.sh
+
+      - name: Build the Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: balun-linux-${{ matrix.arch }}.flatpak
+          manifest-path: build-aux/flatpak/io.github.jm2.Balun.yml
+          cache-key: flatpak-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          arch: ${{ matrix.arch }}
+          upload-artifact: false
+
+      - name: Reopen and validate the completed bundle
+        run: build-aux/flatpak/validate-bundle-compliance.sh balun-linux-${{ matrix.arch }}.flatpak
+
+      - name: Probe the packaged runtime for the playback factories
+        run: build-aux/flatpak/validate-bundle-runtime.sh balun-linux-${{ matrix.arch }}.flatpak
+
+      - name: Upload internal candidate bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: balun-linux-${{ matrix.arch }}-flatpak-${{ needs.prepare.outputs.version }}
+          path: balun-linux-${{ matrix.arch }}.flatpak
+          if-no-files-found: error
+          retention-days: 7

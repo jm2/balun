@@ -455,6 +455,7 @@ where
             }
             Err(error) => report.issues.push(ProbeIssue {
                 endpoint: routed_endpoint(candidate),
+                class: error.class(),
                 message: error.to_string(),
             }),
         }

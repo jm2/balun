@@ -377,7 +377,30 @@ fn terminal_banner_title(
         (DiscoveryKind::Local, DiscoveryStatus::Failed(_)) => {
             Some("Local device discovery failed.")
         }
+        (DiscoveryKind::Routed, DiscoveryStatus::Ready) => Some("Routed discovery finished."),
+        (DiscoveryKind::Routed, DiscoveryStatus::NoResponse) => {
+            Some("No HDHomeRun replies from the approved routes.")
+        }
+        (DiscoveryKind::Routed, DiscoveryStatus::Failed(failure)) => {
+            Some(routed_failure_banner_title(failure))
+        }
         (_, DiscoveryStatus::Idle | DiscoveryStatus::Refreshing | DiscoveryStatus::Ready) => None,
+    }
+}
+
+fn routed_failure_banner_title(failure: DiscoveryFailure) -> &'static str {
+    match failure {
+        DiscoveryFailure::RoutedNotApproved => "Routed discovery needs your approval.",
+        DiscoveryFailure::RoutedCoolingDown => "Routed discovery is cooling down.",
+        DiscoveryFailure::RoutedBusy => "Another routed scan is still reserved.",
+        DiscoveryFailure::RoutedNoCandidates => "No tunnel route offers addresses to probe.",
+        DiscoveryFailure::RoutedUnavailable => "Routed discovery is not available here.",
+        DiscoveryFailure::RoutedProposalChanged => "The routed proposal changed; review it again.",
+        DiscoveryFailure::RoutedUnconfirmed
+        | DiscoveryFailure::InterfaceEnumeration
+        | DiscoveryFailure::Network
+        | DiscoveryFailure::ExactTargetLimitReached
+        | DiscoveryFailure::Internal => "Routed discovery failed.",
     }
 }
 
@@ -454,11 +477,36 @@ fn discovery_presentation(
             title: "No valid HDHomeRun replies received",
             description: "Check that a tuner is reachable, then refresh again.",
         },
+        (DiscoveryKind::Routed, DiscoveryStatus::Idle) => DiscoveryPresentation {
+            icon_name: "process-stop-symbolic",
+            title: "Routed discovery stopped",
+            description: "No routed discovery request is running.",
+        },
+        (DiscoveryKind::Routed, DiscoveryStatus::Refreshing) => DiscoveryPresentation {
+            icon_name: "network-transmit-receive-symbolic",
+            title: "Searching approved routes",
+            description: "Probing the approved addresses behind your tunnel.",
+        },
+        (DiscoveryKind::Routed, DiscoveryStatus::Ready) => DiscoveryPresentation {
+            icon_name: "network-offline-symbolic",
+            title: "No HDHomeRun devices found behind the tunnel",
+            description: if issue_count == 0 {
+                "Every approved address was probed without a valid reply."
+            } else {
+                "No usable tuner was found; one or more probes were not completed."
+            },
+        },
+        (DiscoveryKind::Routed, DiscoveryStatus::NoResponse) => DiscoveryPresentation {
+            icon_name: "network-offline-symbolic",
+            title: "No HDHomeRun replies from the approved routes",
+            description: "Check that the tunnel is up and the remote tuner is powered.",
+        },
         (kind, DiscoveryStatus::Failed(failure)) => DiscoveryPresentation {
             icon_name: "dialog-error-symbolic",
             title: match kind {
                 DiscoveryKind::Local => "Device discovery failed",
                 DiscoveryKind::Exact => "Device search failed",
+                DiscoveryKind::Routed => "Routed discovery did not run",
             },
             description: discovery_failure_description(kind, failure),
         },
@@ -479,8 +527,35 @@ fn discovery_failure_description(kind: DiscoveryKind, failure: DiscoveryFailure)
         (DiscoveryKind::Exact, DiscoveryFailure::Network) => {
             "The exact-address discovery request could not be completed."
         }
+        (DiscoveryKind::Routed, DiscoveryFailure::InterfaceEnumeration) => {
+            "Balun could not inspect this computer's routes."
+        }
+        (DiscoveryKind::Routed, DiscoveryFailure::Network) => {
+            "The routed discovery scan could not be completed."
+        }
         (_, DiscoveryFailure::ExactTargetLimitReached) => {
             "This session has reached its limit for distinct device addresses."
+        }
+        (_, DiscoveryFailure::RoutedUnavailable) => {
+            "Routed discovery is not available on this system."
+        }
+        (_, DiscoveryFailure::RoutedNoCandidates) => {
+            "No active tunnel route offers an address to probe."
+        }
+        (_, DiscoveryFailure::RoutedNotApproved) => {
+            "Review and approve the routed proposal before it can run."
+        }
+        (_, DiscoveryFailure::RoutedBusy) => {
+            "Wait for the current routed reservation to finish, then try again."
+        }
+        (_, DiscoveryFailure::RoutedCoolingDown) => {
+            "Automatic routed discovery is cooling down; refresh to run it now."
+        }
+        (_, DiscoveryFailure::RoutedUnconfirmed) => {
+            "The approval store could not confirm the reservation; try again shortly."
+        }
+        (_, DiscoveryFailure::RoutedProposalChanged) => {
+            "The routed proposal changed since it was shown; review it again."
         }
         (_, DiscoveryFailure::Internal) => "Device discovery stopped because of an internal error.",
     }
@@ -668,5 +743,64 @@ mod tests {
         assert!(flag.get());
         drop(outer);
         assert!(!flag.get());
+    }
+
+    #[test]
+    fn routed_discovery_copy_is_topology_free_and_names_every_decision() {
+        for status in [
+            DiscoveryStatus::Idle,
+            DiscoveryStatus::Refreshing,
+            DiscoveryStatus::Ready,
+            DiscoveryStatus::NoResponse,
+            DiscoveryStatus::Failed(DiscoveryFailure::RoutedNotApproved),
+        ] {
+            let presentation = discovery_presentation(DiscoveryKind::Routed, status, 0);
+            assert!(!presentation.title.is_empty());
+            assert!(!presentation.description.is_empty());
+            assert!(!presentation.title.to_ascii_lowercase().contains("local"));
+            assert!(!presentation.description.contains("172."));
+        }
+        let failures = [
+            DiscoveryFailure::RoutedUnavailable,
+            DiscoveryFailure::RoutedNoCandidates,
+            DiscoveryFailure::RoutedNotApproved,
+            DiscoveryFailure::RoutedBusy,
+            DiscoveryFailure::RoutedCoolingDown,
+            DiscoveryFailure::RoutedUnconfirmed,
+            DiscoveryFailure::RoutedProposalChanged,
+            DiscoveryFailure::Network,
+        ];
+        let descriptions = failures
+            .iter()
+            .map(|failure| discovery_failure_description(DiscoveryKind::Routed, *failure))
+            .collect::<Vec<_>>();
+        let banners = failures
+            .iter()
+            .map(|failure| routed_failure_banner_title(*failure))
+            .collect::<Vec<_>>();
+        for (description, banner) in descriptions.iter().zip(&banners) {
+            assert!(!description.is_empty());
+            assert!(!banner.is_empty());
+        }
+        assert_eq!(
+            descriptions
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            descriptions.len(),
+            "every routed decision reads differently"
+        );
+        assert_eq!(
+            terminal_banner_title(
+                DiscoveryKind::Routed,
+                DiscoveryStatus::Failed(DiscoveryFailure::RoutedCoolingDown),
+                true
+            ),
+            Some("Routed discovery is cooling down.")
+        );
+        assert_eq!(
+            terminal_banner_title(DiscoveryKind::Routed, DiscoveryStatus::Refreshing, true),
+            None
+        );
     }
 }
