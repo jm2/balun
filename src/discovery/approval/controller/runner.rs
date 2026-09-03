@@ -693,18 +693,21 @@ async fn execute<P: RoutedTargetProber>(
     let admitted = Arc::new(admitted);
 
     // One run token folds the request and invalidation signals so the paced
-    // loop and every in-flight probe stop on either.
+    // loop and every in-flight probe stop on either. The guard cancels it on
+    // every exit from this function, including a dropped future, so the
+    // watcher never outlives the scan it serves.
     let run_token = CancellationToken::new();
+    let run_guard = run_token.clone().drop_guard();
     let watcher = tokio::spawn({
         let request = admitted.request_cancellation().clone();
         let invalidation = admitted.invalidation_cancellation().clone();
-        let run_token = run_token.clone();
+        let observed = run_token.clone();
         async move {
             tokio::select! {
-                () = request.cancelled() => {}
-                () = invalidation.cancelled() => {}
+                () = request.cancelled() => observed.cancel(),
+                () = invalidation.cancelled() => observed.cancel(),
+                () = observed.cancelled() => {}
             }
-            run_token.cancel();
         }
     });
     let authority: PreSendAuthority = {
@@ -739,7 +742,8 @@ async fn execute<P: RoutedTargetProber>(
         Arc::new(probe),
     )
     .await;
-    watcher.abort();
+    drop(run_guard);
+    let _joined = watcher.await;
     let outcome = classify(&result);
     Ok((outcome, result))
 }
