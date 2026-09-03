@@ -231,9 +231,102 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  windows:
+    name: Windows x86_64 package candidate
+    needs: prepare
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    # Cap the job so a hung MSYS2 mirror fails fast and re-runs instead of
+    # stalling to the 6-hour ceiling.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.build_ref }}
+          persist-credentials: false
+
+      - name: Test Windows build helper routing
+        shell: pwsh
+        run: ./scripts/test-build-windows-routing.ps1
+
+      - name: Set up the Windows desktop build environment
+        id: msys2
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        env:
+          __SETUP_MSYS2_USE_MAIN_MIRROR_ONLY: 'true'
+        with:
+          msystem: CLANG64
+          path-type: inherit
+          update: true
+          cache: true
+          install: >-
+            mingw-w64-clang-x86_64-gtk4
+            mingw-w64-clang-x86_64-gstreamer
+            mingw-w64-clang-x86_64-gst-plugins-base
+            mingw-w64-clang-x86_64-gst-plugins-good
+            mingw-w64-clang-x86_64-gst-plugins-bad
+            mingw-w64-clang-x86_64-gst-plugins-rs
+            mingw-w64-clang-x86_64-gst-libav
+            mingw-w64-clang-x86_64-libadwaita
+            mingw-w64-clang-x86_64-pkg-config
+            mingw-w64-clang-x86_64-toolchain
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-gnullvm
+
+      - name: Build the Windows desktop through the helper
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: ./scripts/build-windows.ps1
+
+      - name: Probe the installed playback runtime through the helper
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: ./scripts/build-windows.ps1 -ProbePlayback
+
+      - name: Stage, probe, and archive the Windows package through the helper
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: ./scripts/build-windows.ps1 -Zip -NoCargoBuild
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build the installer from the probed package through the helper
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: ./scripts/build-windows.ps1 -InnoSetup -SkipBundle -NoCargoBuild
+
+      - name: Rename the artifacts for release
+        shell: pwsh
+        run: |
+          Move-Item dist/balun-windows.zip dist/balun-windows-x86_64.zip
+          Move-Item dist/balun-setup.exe dist/balun-windows-x86_64-setup.exe
+
+      - name: Upload internal candidate artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: balun-windows-x86_64-${{ needs.prepare.outputs.version }}
+          path: |
+            dist/balun-windows-x86_64.zip
+            dist/balun-windows-x86_64-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
   checksums:
     name: Verify artifact inventory
-    needs: [prepare, build, flatpak]
+    needs: [prepare, build, flatpak, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -249,10 +342,14 @@ jobs:
           expected_assets=(
             'balun-linux-aarch64.flatpak'
             'balun-linux-x86_64.flatpak'
+            'balun-windows-x86_64-setup.exe'
+            'balun-windows-x86_64.zip'
           )
           release_file_list="$(mktemp)"
           trap 'rm -f "$release_file_list"' EXIT
-          find . -type f -name '*.flatpak' -print0 > "$release_file_list"
+          find . -type f \
+            \( -name '*.flatpak' -o -name '*.zip' -o -name '*-setup.exe' \) \
+            -print0 > "$release_file_list"
           mapfile -d '' release_files < "$release_file_list"
           if (( ${#release_files[@]} == 0 )); then
             echo 'No release artifacts were downloaded' >&2
@@ -326,4 +423,6 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             release-assets/*.flatpak
+            release-assets/*.zip
+            release-assets/*-setup.exe
             release-assets/SHA256SUMS.txt

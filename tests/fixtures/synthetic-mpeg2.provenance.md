@@ -23,8 +23,10 @@ Integrity:
 - SHA-256: `275b423803fff994845dc61b2e3b5e2b474ce10962f37bf8918b62b10c6a8191`
 - BLAKE3: `78a4a8a94c2f928609427ffb8f69274c03bdb1f833ce2ae13e201735a09719c2`
 
-This fixture exists only for the display-backed development/CI playback test.
-It is not a runtime application resource and must not be staged in binary
-application packages; source and test archives may retain it as test data. The
-encoder used to create it is likewise a development tool, not a Balun runtime
-or packaging requirement.
+This fixture exists for the display-backed development/CI playback test and
+for the hidden packaged-runtime probe that the Windows packaging helper runs
+against a staged package, which embeds these bytes in the desktop executable
+for that purpose only. It is not a runtime application resource and must not
+be staged as a separate file in any application package; source and test
+archives may retain it as test data. The encoder used to create it is
+likewise a development tool, not a Balun runtime or packaging requirement.

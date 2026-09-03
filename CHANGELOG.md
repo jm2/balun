@@ -58,6 +58,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime supplies every structural playback factory, and app-payload validation. CI builds
   and reopens an x86_64 bundle; the release-candidate workflow builds x86_64 and aarch64
   bundles as artifacts.
+- **Windows ZIP and installer** — `scripts\build-windows.ps1 -Zip` stages a self-contained
+  `dist\balun-windows` tree in the MSYS2 prefix shape (`bin\balun.exe` beside its DLLs,
+  `lib\gstreamer-1.0`, `libexec\gstreamer-1.0`, `share`) from a reviewed, capability-derived
+  closure of 27 GStreamer plugins and only the DLLs those binaries import, embeds the icon and
+  version resource in `balun.exe`, runs a hidden packaged-runtime probe inside the staged tree
+  with a sanitized environment (the bundled plugin scanner, a fresh registry, and the synthetic
+  MPEG-2 fixture decoded through the production stream transport), reopens the ZIP against the
+  staged tree, and `-InnoSetup` compiles `balun-setup.exe` from a new Inno Setup recipe with a
+  deterministic application GUID. The release component policy is applied at every copy, during
+  import traversal, over the completed tree, and inside the reopened archive. CI builds and
+  reopens the ZIP on every change; the release-candidate workflow adds the ZIP and installer to
+  the exact artifact inventory.
 - **Release automation** — The release-candidate workflow now checks that the tag agrees with
   `Cargo.toml`, `Cargo.lock`, the changelog section and compare link, and the AppStream release
   (`scripts/release_check.py`), requires the exact artifact inventory with SHA-256 sums, and
@@ -149,6 +161,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that the GStreamer plugin files behind `playbin3`, `appsrc`, `tsdemux`, `deinterlace`, and
   `gtk4paintablesink` are installed, names the package for each missing one, and warns when the
   gst-libav decoders are absent.
+- **Windows helper packaging modes** — `-Bundle`, `-Zip`, and `-InnoSetup` (with `-SkipBundle`
+  for an installer-only run and `-NoCargoBuild` to package an existing build) replace the
+  placeholder switches; the default run is still build-only, and `-Package` and `-Installer`
+  are gone.
 - **Helper parity with Tributary** — Restore the release-profile Clippy pass, a read-only check
   that the Windows `x86_64-pc-windows-gnullvm` target is installed, install hints for missing
   tools and development packages, and the formatting pre-commit hook.
@@ -203,10 +219,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **macOS live-device acceptance pending** — Live TV with audio is verified on Windows and Linux
   development builds against real tuners; macOS has not yet been exercised against real hardware.
-- **No packaged-runtime acceptance yet** — Playback is proven on development runtimes and the
-  loopback fake tuner; the packaged codec closure is not yet frozen.
-- **No published packages** — A Flatpak bundle is built and validated but not published; deb,
-  rpm, DMG, and winget packaging are planned.
+- **No live-tuner acceptance of a package yet** — The Windows package proves that its staged
+  runtime decodes the synthetic fixture and launches; tuning real channels from a package is
+  P4.1, and the packaged app shares GStreamer's default per-user registry cache.
+- **No published packages** — The Flatpak bundle and the Windows ZIP and installer are built
+  and validated but not published; deb, rpm, DMG, and winget packaging are planned.
 - **No program guide** — Guide data is a v0.2 candidate. The tested HDHomeRun CONNECT's
   per-channel streams carry no PSIP tables, so an in-band guide needs a full-multiplex crawl or
   XMLTV.

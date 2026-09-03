@@ -225,6 +225,23 @@ review's pull request.
   the bundle in an isolated OSTree repository, requires one app ref, and runs
   the metadata and tree validators; `validate-bundle-runtime.sh` probes the
   installed bundle for the factories; the Flatpak jobs keep `contents: read`.
+- Windows package (P3.3, re-audited 2026-09-03): `build-windows.ps1` stages
+  only the plugin closure named in its `$GStreamerPluginClosure` table and the
+  DLLs those binaries import, applies the pinned deny policy at every copy,
+  during import traversal (a denied import fails the run), over the completed
+  tree, and inside the reopened ZIP, and prunes stale plugins and unreachable
+  DLLs from incremental trees. The packaged runtime probe runs the staged
+  `balun.exe` with every `GST_*`, GIO, and proxy variable removed, `PATH` set to
+  `System32` only, and `GST_REGISTRY` in a fresh temporary cache that is deleted
+  afterwards; the Rust side (`src/playback/platform_runtime.rs`) rejects any
+  other inherited policy key, requires the cache root to be absolute, fresh, and
+  outside the package, and writes its sentinel last. Its loopback fixture server
+  binds `127.0.0.1:0`, serves one connection, and the transport's request is
+  checked for the exact path, host, agent, and the absence of Referer and proxy
+  headers. The probe's `StreamHandoff` constructor is crate-private and Windows
+  only. The package sets no environment variable at launch; GStreamer derives
+  every path from its own DLL. The Windows CI and release jobs keep
+  `contents: read`, and the release inventory now lists the ZIP and installer.
 
 ### Findings
 
@@ -236,12 +253,25 @@ review's pull request.
   workflow not pinned by commit.
 - Low, accepted: `cargo install cargo-audit --locked` takes the latest release;
   the advisory database is fetched live in any case.
+- Low, accepted: the release workflow installs Inno Setup with an unpinned
+  `choco install innosetup`, as Tributary does; the installer payload is the
+  tree validated immediately before compilation, and the compiled installer's
+  version resource is reopened.
+- Low, accepted: the packaged Windows application uses GStreamer's default
+  per-user registry cache under `%LOCALAPPDATA%\gstreamer-1.0`, shared with any
+  other GStreamer on the machine, because safe Rust cannot set `GST_REGISTRY`.
+  The registry holds plugin metadata only, and GStreamer drops entries whose
+  files are not found on the next scan.
+- Low, accepted: `avformat` imports the generic `libbluray`, which the
+  component policy deliberately allows; no decryption component is present.
 
 ### Not covered
 
-- The release publication job with write permission (P3.5, PR #18); Windows and
-  macOS packages do not exist yet; the privileged flathub builder container was
-  reviewed only through its inputs.
+- The release publication job with write permission (P3.5, PR #18); the macOS
+  package does not exist yet; the privileged flathub builder container was
+  reviewed only through its inputs; the Windows installer, compiled locally and
+  by the release workflow's Inno Setup, is inspected only through its version
+  resource.
 
 ## 5. Unexpected tuner-allocation paths
 
@@ -290,6 +320,6 @@ review's pull request.
   quarantine reason when P2.2 wires it.
 - Pin the flatpak-builder action and its `gnome-50` image; review the
   publication job with #18 (P3.5).
-- Repeat this review when P2.2 connects the routed sender and when the Windows
-  and macOS packages land (P3.3, P3.4); add a CI guard so a logging framework
-  cannot arrive without a `Debug` re-audit.
+- Repeat this review when P2.2 connects the routed sender and when the macOS
+  package lands (P3.4); the Windows package (P3.3) was re-audited above. Add a
+  CI guard so a logging framework cannot arrive without a `Debug` re-audit.
