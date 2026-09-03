@@ -103,6 +103,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sanitized device fixtures** — Real `discover.json`, `lineup.json`, and HTTP failure responses
   from a CONNECT and a CONNECT 4K, with identities, addresses, credentials, and channel names
   replaced, now back the parser tests.
+- **Discovery diagnostics** — `balun-discover --providers` reports route-provider availability and
+  bounded tunnel candidate counts without sending a packet or printing a route; every run prints
+  its fixed probe budget, and each probe issue carries a fixed failure class beside its message.
 
 ### Changed
 

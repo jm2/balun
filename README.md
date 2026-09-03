@@ -208,6 +208,9 @@ cargo run --locked --bin balun-discover -- --target 192.168.50.20
 
 # Enumerate one explicitly approved private range:
 cargo run --locked --bin balun-discover -- --approved-range 10.42.7.0/24
+
+# Report route-provider availability and tunnel candidate counts without sending a packet:
+cargo run --locked --bin balun-discover -- --providers
 ```
 
 `--approved-range` accepts only RFC 1918 space no wider than `/24`, caps the scan at 256
