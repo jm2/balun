@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a balun, and the name on the bezel, as scalable and symbolic SVG, hicolor PNGs from 16 to
   512 px, a macOS iconset, and a Windows `.ico`, validated by a new CI job. Packages are still to
   come.
+- **Channel search and favorites filter** — A search field above the channel list matches a
+  channel number prefix or part of a name, and a star toggle shows favorites only. Filtering
+  hides rows without changing device or channel identity, keeps the highlighted channel when it
+  is still visible, clears the search when another device is selected, and explains an empty
+  result.
 - **Versioned settings** — Balun remembers its window size and maximized state across launches
   in an atomic, schema-versioned `settings.json` under the platform configuration directory.
   The same file reserves bounded, credential-free storage for remembered device addresses and
@@ -86,6 +91,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Playback errors name the device and channel** — Failure and connecting messages now say
+  which tuner (friendly name and address) and which channel they refer to, and the diagnostic's
+  inspection line prints the device address. Stream URLs and `DeviceAuth` stay out of every
+  message (ADR-0002).
 - **Build helpers require the playback runtime** — Before a desktop build, every helper checks
   that the GStreamer plugin files behind `playbin3`, `appsrc`, `tsdemux`, `deinterlace`, and
   `gtk4paintablesink` are installed, names the package for each missing one, and warns when the
