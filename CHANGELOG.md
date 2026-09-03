@@ -40,10 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dependency audit and repository linting** — CI now runs `cargo audit` and lints Markdown,
   TOML, YAML, and GitHub Actions workflows with pinned tools and root-level configs.
 - **Desktop metadata and icon** — Add the `io.github.jm2.Balun` desktop entry, AppStream
-  metainfo, and a Tango-style application icon: a CRT showing colour bars, rabbit ears joined by
-  a balun, and the name on the bezel, as scalable and symbolic SVG, hicolor PNGs from 16 to
-  512 px, a macOS iconset, and a Windows `.ico`, validated by a new CI job. Packages are still to
-  come.
+  metainfo, and an application icon: a dark-bezelled Trinitron-style CRT showing colour bars,
+  with rabbit ears joined by a balun, speaker slots, knobs, and a power light, and no text. The
+  SVG is the only source; `scripts/render-icons.py` renders the hicolor sizes from 16 to 512 px,
+  a 1024 px master, the macOS icon set, and the Windows `.ico`, and a CI job validates the set.
+  Packages are still to come.
 - **Flatpak bundle** — Add the `io.github.jm2.Balun` manifest on the GNOME 50 runtime with the
   reviewed six-entry permission policy, the Freedesktop ffmpeg-full codec extension, an offline
   cargo build from generated locked sources, build-time and installed-bundle checks that the
