@@ -14,9 +14,11 @@ This table will name the supported releases once `v0.1.0-alpha.1` is published.
 
 Use GitHub's private vulnerability reporting for
 [jm2/balun](https://github.com/jm2/balun/security/advisories/new). Do not open a public issue or
-pull request for a security problem. Include the affected component, a reproduction, and the
-impact you believe it has. A sanitized packet capture or fixture is welcome; a real device ID,
-address, or `DeviceAuth` value is not.
+pull request for a security problem. If the reporting form is unavailable, open an issue that
+says only that you have a security report and how you can be reached privately, with no detail
+of the problem. Include the affected component, a reproduction, and the impact you believe it
+has. A sanitized packet capture or fixture is welcome; a real device ID, address, or `DeviceAuth`
+value is not.
 
 ## What is in scope
 

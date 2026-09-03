@@ -39,7 +39,7 @@ address so you know which tuner failed.
 | Route-derived tunnel discovery (Linux) | 🚧 Library runner connected; approval UX pending |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
-| Audible output and complete codec contract | ✅ Windows and Linux; macOS pending |
+| Audible output and complete codec contract | ⚠️ Audio verified on Windows and Linux; codec contract open until P0.5, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, DMG, winget) | ❌ Planned |

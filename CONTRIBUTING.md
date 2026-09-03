@@ -32,8 +32,9 @@ root; `npx --yes markdownlint-cli2@0.18.1 "**/*.md"` reproduces the Markdown che
 
 - Work from the earliest unchecked record in [`docs/task.md`](docs/task.md) whose prerequisites
   are satisfied.
-- Tick a record only when its code, deterministic tests, documentation, and changelog entry have
-  all landed; partial work stays unchecked.
+- Tick a record only when every applicable artifact has landed: code, deterministic tests,
+  documentation, and the changelog entry. A documentation record has no code or tests to wait
+  for; partial work stays unchecked.
 - Recount the `Current status` line whenever a record is added, split, completed, or removed.
 - Records stay one to three lines. Evidence, measurements, and status prose go in
   [`docs/compatibility-v0.1.md`](docs/compatibility-v0.1.md), the changelog, or a design document.
