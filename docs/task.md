@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **18/30 (60.0%)** records complete. This is a dependency ledger,
+Current status: **19/30 (63.3%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -37,8 +37,8 @@ most evidence records.
 
 The Linux live-hardware proofs recorded P0.2, P0.4, P0.6, P0.7, and the P0.8
 guide spike on 2026-09-03; P0.3 needs the macOS host and P0.5 waits on the
-Windows and macOS factory sets. P1.1 to P1.5, P2.1, P2.4, P3.2, P3.5, P4.3, and P4.4
-are complete; P2.2 is in review, and P2.3 is in progress.
+Windows and macOS factory sets. P1.1 to P1.5, P2.1, P2.2, P2.4, P3.2, P3.5,
+P4.3, and P4.4 are complete, and P2.3 is in progress.
 
 ## P0 — Evidence and contract
 
@@ -101,7 +101,7 @@ are complete; P2.2 is in review, and P2.3 is in progress.
   the observer pair after store publication, serialize the final pre-send
   check, consume the sealed socket, and settle reservation completion.
 
-- [ ] **P2.2 — Add routed-discovery UX.** Preview candidates and packet budget,
+- [x] **P2.2 — Add routed-discovery UX.** Preview candidates and packet budget,
   require explicit approval, and expose progress, cancel, cooldown, backoff,
   and revocation.
 

@@ -12,13 +12,18 @@ use balun::controller::{
 };
 use balun::discovery::{
     DiscoveryEntry, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget,
+    RoutedScanTrigger,
 };
 use balun::playback::{PlaybackInitializationError, PlaybackRuntime};
 use balun::settings::RememberedTarget;
 
+use super::device_sidebar::FORGET_ROUTED_APPROVALS_ACTION;
 use super::objects::DeviceRowObject;
+use super::routed_flow::{RoutedApprovalFlow, RoutedFlowAction};
 use super::settings_session::SettingsSession;
-use super::{channel_sidebar, device_sidebar, exact_discovery_dialog, player_view};
+use super::{
+    channel_sidebar, device_sidebar, exact_discovery_dialog, player_view, routed_approval_dialog,
+};
 
 const DEVICE_SIDEBAR_MIN_WIDTH: f64 = 160.0;
 const DEVICE_SIDEBAR_MAX_WIDTH: f64 = 220.0;
@@ -383,6 +388,8 @@ pub(crate) fn build(
         &wiring,
     );
     connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
+    let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
+    connect_routed_discovery(&window, &device_sidebar, &routed_ui);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
     connect_channel_activation(
         &channel_sidebar,
@@ -399,7 +406,10 @@ pub(crate) fn build(
         channel_sidebar,
         layout,
         Rc::downgrade(&player_view),
-        Rc::clone(&wiring),
+        SnapshotReactions {
+            rediscovery: Rc::clone(&wiring),
+            routed_ui,
+        },
     );
     // Remembered addresses and names are the only probes Balun sends unasked;
     // each one waits for the lane to settle so it never supersedes a user
@@ -515,11 +525,15 @@ fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &Control
     let controller = controller.clone();
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
     let exact_discovery_button = sidebar.exact_discovery_button().clone();
+    let routed_discovery_button = sidebar.routed_discovery_button().clone();
     sidebar.refresh_button().connect_clicked(move |button| {
         // Close the tiny interval before the Refreshing snapshot arrives so a
-        // fast double-click cannot enqueue redundant supersessions.
+        // fast double-click cannot enqueue redundant supersessions. Local,
+        // exact, and routed discovery share one supersedable lane, so every
+        // start control closes together.
         button.set_sensitive(false);
         exact_discovery_button.set_sensitive(false);
+        routed_discovery_button.set_sensitive(false);
         match controller.try_send(ControllerCommand::RefreshLocalDiscovery) {
             Ok(()) => {
                 cancel_discovery_button.set_visible(true);
@@ -528,6 +542,7 @@ fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &Control
             Err(_) => {
                 button.set_sensitive(true);
                 exact_discovery_button.set_sensitive(true);
+                routed_discovery_button.set_sensitive(true);
             }
         }
     });
@@ -548,6 +563,7 @@ fn connect_exact_discovery(
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
     let dialog_open = Rc::new(Cell::new(false));
     let refresh_button = sidebar.refresh_button().clone();
+    let routed_discovery_button = sidebar.routed_discovery_button().clone();
     let window = window.downgrade();
 
     sidebar
@@ -568,6 +584,7 @@ fn connect_exact_discovery(
             let admitted_cancel_button = cancel_discovery_button.clone();
             let admitted_exact_button = button.clone();
             let admitted_refresh_button = refresh_button.clone();
+            let admitted_routed_button = routed_discovery_button.clone();
             let closed_dialog_open = Rc::clone(&dialog_open);
             exact_discovery_dialog::present(
                 &window,
@@ -581,11 +598,13 @@ fn connect_exact_discovery(
                             return;
                         }
                     };
-                    // Exact and local discovery share one supersedable lane.
-                    // Disable both actions before the Refreshing publication
-                    // closes the small re-admission interval.
+                    // Exact, local, and routed discovery share one
+                    // supersedable lane. Disable every start action before
+                    // the Refreshing publication closes the small
+                    // re-admission interval.
                     admitted_exact_button.set_sensitive(false);
                     admitted_refresh_button.set_sensitive(false);
+                    admitted_routed_button.set_sensitive(false);
                     match admitted_controller.try_send(ControllerCommand::DiscoverExact(target)) {
                         Ok(()) => {
                             // Remember the address only once a newer exact
@@ -599,12 +618,165 @@ fn connect_exact_discovery(
                         Err(_) => {
                             admitted_exact_button.set_sensitive(true);
                             admitted_refresh_button.set_sensitive(true);
+                            admitted_routed_button.set_sensitive(true);
                         }
                     }
                 },
                 move || closed_dialog_open.set(false),
             );
         });
+}
+
+/// Main-context state behind the routed search button: the approval flow,
+/// the window that hosts the approval dialog, and the shared toast and
+/// controller wiring.
+struct RoutedUi {
+    flow: RefCell<RoutedApprovalFlow>,
+    window: gtk::glib::WeakRef<adw::ApplicationWindow>,
+    wiring: Rc<RediscoveryWiring>,
+    dialog_open: Cell<bool>,
+}
+
+impl RoutedUi {
+    fn new(window: &adw::ApplicationWindow, wiring: Rc<RediscoveryWiring>) -> Self {
+        Self {
+            flow: RefCell::new(RoutedApprovalFlow::new()),
+            window: window.downgrade(),
+            wiring,
+            dialog_open: Cell::new(false),
+        }
+    }
+
+    fn send(&self, command: ControllerCommand) -> bool {
+        if self.wiring.controller.try_send(command).is_ok() {
+            true
+        } else {
+            self.wiring
+                .toast("Balun is busy; try the routed search again in a moment.");
+            false
+        }
+    }
+}
+
+/// Connect the routed search button and the forget-approvals action. A
+/// click runs the approved scan; the first refusal opens the approval
+/// dialog through the snapshot reducer.
+fn connect_routed_discovery(
+    window: &adw::ApplicationWindow,
+    sidebar: &device_sidebar::DeviceSidebar,
+    routed_ui: &Rc<RoutedUi>,
+) {
+    let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
+    let exact_discovery_button = sidebar.exact_discovery_button().clone();
+    let refresh_button = sidebar.refresh_button().clone();
+    let ui = Rc::clone(routed_ui);
+    sidebar
+        .routed_discovery_button()
+        .connect_clicked(move |button| {
+            // Routed, exact, and local discovery share one supersedable lane.
+            button.set_sensitive(false);
+            exact_discovery_button.set_sensitive(false);
+            refresh_button.set_sensitive(false);
+            ui.flow.borrow_mut().user_requested_run();
+            if ui.send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            )) {
+                cancel_discovery_button.set_visible(true);
+                cancel_discovery_button.set_sensitive(true);
+            } else {
+                button.set_sensitive(true);
+                exact_discovery_button.set_sensitive(true);
+                refresh_button.set_sensitive(true);
+            }
+        });
+
+    let forget = gtk::gio::SimpleAction::new(FORGET_ROUTED_APPROVALS_ACTION, None);
+    let ui = Rc::clone(routed_ui);
+    forget.connect_activate(move |_, _| {
+        ui.flow.borrow_mut().dialog_dismissed();
+        if ui.send(ControllerCommand::RevokeRoutedApprovals) {
+            ui.wiring
+                .toast("Routed approvals will be forgotten; approve a search to use them again.");
+        }
+    });
+    window.add_action(&forget);
+}
+
+/// Advance the approval flow with one accepted snapshot.
+fn react_to_routed(ui: &Rc<RoutedUi>, snapshot: &ApplicationSnapshot) {
+    let action = ui.flow.borrow_mut().observe(snapshot);
+    match action {
+        RoutedFlowAction::Nothing => {}
+        RoutedFlowAction::Propose => {
+            if !ui.send(ControllerCommand::ProposeRoutedDiscovery) {
+                ui.flow.borrow_mut().dialog_dismissed();
+            }
+        }
+        RoutedFlowAction::Run => {
+            let _ = ui.send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ));
+        }
+        RoutedFlowAction::ShowDialog(proposal) => {
+            if ui.dialog_open.replace(true) {
+                return;
+            }
+            let receiver = match ui
+                .wiring
+                .controller
+                .try_routed_proposal_origins(proposal.token())
+            {
+                Ok(receiver) => receiver,
+                Err(_) => {
+                    ui.dialog_open.set(false);
+                    ui.flow.borrow_mut().dialog_dismissed();
+                    ui.wiring
+                        .toast("Balun is busy; try the routed search again in a moment.");
+                    return;
+                }
+            };
+            let ui = Rc::clone(ui);
+            gtk::glib::MainContext::default().spawn_local(async move {
+                let origins = match receiver.receive().await {
+                    Ok(origins) => origins,
+                    Err(_) => {
+                        ui.dialog_open.set(false);
+                        ui.flow.borrow_mut().dialog_dismissed();
+                        ui.wiring
+                            .toast("The routed proposal changed; try the search again.");
+                        return;
+                    }
+                };
+                let Some(window) = ui.window.upgrade() else {
+                    ui.dialog_open.set(false);
+                    ui.flow.borrow_mut().dialog_dismissed();
+                    return;
+                };
+                let approve_ui = Rc::clone(&ui);
+                let closed_ui = Rc::clone(&ui);
+                routed_approval_dialog::present(
+                    &window,
+                    proposal,
+                    &origins,
+                    move || {
+                        approve_ui
+                            .flow
+                            .borrow_mut()
+                            .dialog_approved(proposal.token());
+                        if !approve_ui
+                            .send(ControllerCommand::ApproveRoutedDiscovery(proposal.token()))
+                        {
+                            approve_ui.flow.borrow_mut().dialog_dismissed();
+                        }
+                    },
+                    move || {
+                        closed_ui.dialog_open.set(false);
+                        closed_ui.flow.borrow_mut().dialog_dismissed();
+                    },
+                );
+            });
+        }
+    }
 }
 
 fn connect_cancel_discovery(
@@ -804,6 +976,12 @@ const fn resolution_failure_copy(error: HostnameResolutionError) -> &'static str
     }
 }
 
+/// Main-context reactions the reducer runs after accepting a snapshot.
+struct SnapshotReactions {
+    rediscovery: Rc<RediscoveryWiring>,
+    routed_ui: Rc<RoutedUi>,
+}
+
 fn spawn_snapshot_reducer(
     mut snapshots: tokio::sync::watch::Receiver<Arc<ApplicationSnapshot>>,
     accepted: Rc<RefCell<Arc<ApplicationSnapshot>>>,
@@ -811,8 +989,12 @@ fn spawn_snapshot_reducer(
     channel_sidebar: channel_sidebar::ChannelSidebar,
     layout: ResponsiveLayout,
     player_view: Weak<player_view::PlayerView>,
-    rediscovery: Rc<RediscoveryWiring>,
+    reactions: SnapshotReactions,
 ) {
+    let SnapshotReactions {
+        rediscovery,
+        routed_ui,
+    } = reactions;
     gtk::glib::MainContext::default().spawn_local(async move {
         while snapshots.changed().await.is_ok() {
             let candidate = Arc::clone(&snapshots.borrow_and_update());
@@ -847,6 +1029,7 @@ fn spawn_snapshot_reducer(
                 rediscovery.remember(RememberedTarget::Address(target));
             }
             advance_rediscovery(&rediscovery, discovery);
+            react_to_routed(&routed_ui, &accepted.borrow());
         }
 
         // The controller watch can also close because its actor failed. Its
@@ -1787,6 +1970,8 @@ mod tests {
                     &wiring,
                 );
                 connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
+                let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
+                connect_routed_discovery(&window, &device_sidebar, &routed_ui);
                 connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
                 connect_channel_activation(
                     &channel_sidebar,
@@ -1803,7 +1988,10 @@ mod tests {
                     channel_sidebar,
                     layout,
                     Rc::downgrade(&player_view),
-                    Rc::clone(&wiring),
+                    SnapshotReactions {
+                        rediscovery: Rc::clone(&wiring),
+                        routed_ui,
+                    },
                 );
                 connect_joined_shutdown(
                     &window,

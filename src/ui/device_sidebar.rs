@@ -4,7 +4,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use balun::controller::{ApplicationSnapshot, DiscoveryFailure, DiscoveryKind, DiscoveryStatus};
+use balun::controller::{
+    ApplicationSnapshot, DiscoveryFailure, DiscoveryKind, DiscoveryStatus, RoutedAvailability,
+};
 
 use super::objects::DeviceRowObject;
 
@@ -27,9 +29,14 @@ pub(crate) struct DeviceSidebar {
     spinner: gtk::Spinner,
     cancel_discovery_button: gtk::Button,
     exact_discovery_button: gtk::Button,
+    routed_discovery_button: gtk::Button,
+    routed_menu_button: gtk::MenuButton,
     refresh_button: gtk::Button,
     applying_snapshot: Rc<Cell<bool>>,
 }
+
+/// Window action that forgets every remembered routed approval.
+pub(crate) const FORGET_ROUTED_APPROVALS_ACTION: &str = "forget-routed-approvals";
 
 impl DeviceSidebar {
     #[must_use]
@@ -50,6 +57,11 @@ impl DeviceSidebar {
     #[must_use]
     pub(crate) fn cancel_discovery_button(&self) -> &gtk::Button {
         &self.cancel_discovery_button
+    }
+
+    #[must_use]
+    pub(crate) fn routed_discovery_button(&self) -> &gtk::Button {
+        &self.routed_discovery_button
     }
 
     #[must_use]
@@ -93,6 +105,11 @@ impl DeviceSidebar {
         self.refresh_button.set_sensitive(actions.start_sensitive);
         self.exact_discovery_button
             .set_sensitive(actions.start_sensitive);
+        let routed_available = snapshot.routed().availability() == RoutedAvailability::Available;
+        self.routed_discovery_button.set_visible(routed_available);
+        self.routed_discovery_button
+            .set_sensitive(actions.start_sensitive);
+        self.routed_menu_button.set_visible(routed_available);
         self.cancel_discovery_button
             .set_sensitive(actions.cancel_sensitive);
         self.cancel_discovery_button
@@ -181,10 +198,32 @@ pub(crate) fn build() -> DeviceSidebar {
         .sensitive(false)
         .visible(false)
         .build();
+    // Routed actions stay hidden until a snapshot says the platform offers
+    // them; the menu holds the one destructive gesture, forgetting approvals.
+    let routed_discovery_button = gtk::Button::builder()
+        .icon_name("network-vpn-symbolic")
+        .tooltip_text("Search routes behind your tunnel")
+        .css_classes(["flat"])
+        .visible(false)
+        .build();
+    let routed_menu = gtk::gio::Menu::new();
+    routed_menu.append(
+        Some("Forget routed approvals"),
+        Some(&format!("win.{FORGET_ROUTED_APPROVALS_ACTION}")),
+    );
+    let routed_menu_button = gtk::MenuButton::builder()
+        .icon_name("view-more-symbolic")
+        .tooltip_text("More discovery options")
+        .css_classes(["flat"])
+        .menu_model(&routed_menu)
+        .visible(false)
+        .build();
     let discovery_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     discovery_actions.append(&exact_discovery_button);
+    discovery_actions.append(&routed_discovery_button);
     discovery_actions.append(&refresh_button);
     discovery_actions.append(&cancel_discovery_button);
+    discovery_actions.append(&routed_menu_button);
     let header = adw::HeaderBar::new();
     header.pack_end(&discovery_actions);
 
@@ -205,6 +244,8 @@ pub(crate) fn build() -> DeviceSidebar {
         spinner,
         cancel_discovery_button,
         exact_discovery_button,
+        routed_discovery_button,
+        routed_menu_button,
         refresh_button,
         applying_snapshot: Rc::new(Cell::new(false)),
     }
