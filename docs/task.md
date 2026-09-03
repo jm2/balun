@@ -1,6 +1,6 @@
 # Balun v0.1 implementation backlog
 
-Last audited: 2026-09-02
+Last audited: 2026-09-03
 
 This is the executable work ledger for `v0.1.0-alpha.1`. Scope, architecture,
 and delivery order are authoritative in [`plan-v0.1.md`](plan-v0.1.md);
@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **9/30 (30.0%)** records complete. This is a dependency ledger,
+Current status: **10/30 (33.3%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -67,7 +67,7 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
 - [x] **P0.7 — Prove the exact-address probe on real hardware.** Exercise and
   document one exact-address probe against an accessible tuner.
 
-- [ ] **P0.8 — Run the in-band guide spike.** In one day, observe whether
+- [x] **P0.8 — Run the in-band guide spike.** In one day, observe whether
   PSIP/EIT tables survive the device PID filter on an active stream and record
   the result; it gates the v0.2 guide candidate.
 
@@ -165,8 +165,9 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
 
 ## Explicitly outside v0.1
 
-- Guide data: in-band now/next, XMLTV, and the HDHomeRun XMLTV API are v0.2
-  candidates gated on P0.8.
+- Guide data: XMLTV, the HDHomeRun XMLTV API, and an in-band crawl of each
+  full multiplex are v0.2 candidates; P0.8 ruled out now/next from the playing
+  stream.
 - Native macOS and Windows automatic route providers.
 - SBOM, build provenance, scheduled fuzzing, and a coverage ratchet: beta.
 - Code of conduct, support policy, and issue forms until there are
