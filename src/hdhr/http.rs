@@ -1260,4 +1260,25 @@ mod tests {
             Err(DeviceHttpError::Cancelled)
         ));
     }
+
+    #[test]
+    fn parses_sanitized_real_device_info() {
+        let connect = parse_device_info(
+            include_bytes!("../../tests/fixtures/hdhr/discover-hdhr4-2us.json"),
+            expected_id(),
+        )
+        .unwrap();
+        assert_eq!(connect.model_number(), Some("HDHR4-2US"));
+        assert_eq!(connect.tuner_count(), Some(2));
+        assert_eq!(connect.firmware_version(), Some("20260313"));
+
+        let flex = parse_device_info(
+            include_bytes!("../../tests/fixtures/hdhr/discover-hdhr5-4k.json"),
+            DeviceId::new(0x105B_1233).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(flex.model_number(), Some("HDHR5-4K"));
+        assert_eq!(flex.tuner_count(), Some(4));
+        assert_eq!(flex.friendly_name(), Some("HDHomeRun CONNECT 4K"));
+    }
 }
