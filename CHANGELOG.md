@@ -92,8 +92,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Synthetic playback acceptance** — A checked-in MPEG-2 transport-stream fixture and an isolated
   headless-Wayland harness prove decoding, rendering, EOS, and teardown on Linux CI.
 - **Installed-runtime playback probes** — `--probe-playback` (`-ProbePlayback` on Windows) checks
-  the seven required GStreamer factories and the constant-URI `appsrc` contract; every native CI
-  lane runs it.
+  the seven required GStreamer factories and the constant-URI `appsrc` contract, then prints the
+  installed decoders for each broadcast stream type and the audio sinks, so each platform's codec
+  contract can be recorded from the same command; every native CI lane runs it.
 - **Routed discovery foundation** — Native Linux route inspection, a keyed and topology-redacted
   approval policy, a durable private approval store, and fail-closed route and store observers.
   None of it is connected to the user interface yet, so no automatic route-derived scan runs.

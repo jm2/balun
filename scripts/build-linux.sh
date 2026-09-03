@@ -284,11 +284,12 @@ case "$mode" in
         info 'Probing the installed GStreamer playback runtime (release profile)...'
         for probe in \
             playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation \
-            playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc
+            playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc \
+            playback::runtime::tests::installed_runtime_reports_the_decoder_and_sink_inventory
         do
             cargo test --release --locked --features desktop --lib \
                 --target-dir "$target_directory" --target "$native_target" \
-                "$probe" -- --ignored --exact
+                "$probe" -- --ignored --exact --nocapture
         done
         info 'Playback runtime probes passed.'
         exit 0

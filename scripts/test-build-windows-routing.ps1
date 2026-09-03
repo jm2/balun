@@ -614,10 +614,13 @@ exit $global:LASTEXITCODE
     $ProbeCommands = (
         'cargo <test> <--release> <--locked> <--features> <desktop> <--lib> ' +
         "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget> " +
-        "<playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation> <--> <--ignored> <--exact>`n" +
+        "<playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation> <--> <--ignored> <--exact> <--nocapture>`n" +
         'cargo <test> <--release> <--locked> <--features> <desktop> <--lib> ' +
         "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget> " +
-        '<playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc> <--> <--ignored> <--exact>'
+        "<playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc> <--> <--ignored> <--exact> <--nocapture>`n" +
+        'cargo <test> <--release> <--locked> <--features> <desktop> <--lib> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget> " +
+        '<playback::runtime::tests::installed_runtime_reports_the_decoder_and_sink_inventory> <--> <--ignored> <--exact> <--nocapture>'
     )
     Invoke-TestHelper -Arguments @('-ProbePlayback')
     Assert-ExpectedStatus 0

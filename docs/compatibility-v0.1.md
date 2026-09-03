@@ -150,6 +150,28 @@ the first is absent from Fedora's libav plugin build and the second from
 every open plugin set. The Windows and macOS factory sets are still
 unrecorded, so P0.5 in [`task.md`](task.md) stays open.
 
+### Linux decoder and sink inventory
+
+`scripts/build-linux.sh --probe-playback` on the Linux development host
+(Fedora, GStreamer 1.28.6, 2026-09-03) printed the following inventory,
+which is the Linux half of P0.5. Highest-ranked factory first.
+
+| Stream type | Decoders present |
+| --- | --- |
+| MPEG-2 video | `avdec_mpeg2video` (libav), `mpeg2dec` |
+| H.264 video | `openh264dec` |
+| HEVC video | none |
+| MPEG-1/2 audio | `mpg123audiodec`, `avdec_mp2float` (libav) |
+| AAC audio | `avdec_aac` (libav), `faad`, `fdkaacdec` |
+| AC-3 audio | `a52dec`, `avdec_ac3` (libav) |
+| E-AC-3 audio | none |
+| AC-4 audio | none |
+
+Audio sinks: `pulsesink` (selected by `autoaudiosink`), `alsasink`,
+`oss4sink`, `openalsink`, `osssink`. The foundation factories all come from
+GStreamer 1.28.6 except `gtk4paintablesink` from gst-plugins-rs 0.15.2. The
+Windows and macOS inventories from the same probe complete P0.5.
+
 ## In-band guide spike
 
 On 2026-09-03 the HDHomeRun CONNECT's stream forms were each captured for
