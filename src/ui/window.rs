@@ -525,11 +525,15 @@ fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &Control
     let controller = controller.clone();
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
     let exact_discovery_button = sidebar.exact_discovery_button().clone();
+    let routed_discovery_button = sidebar.routed_discovery_button().clone();
     sidebar.refresh_button().connect_clicked(move |button| {
         // Close the tiny interval before the Refreshing snapshot arrives so a
-        // fast double-click cannot enqueue redundant supersessions.
+        // fast double-click cannot enqueue redundant supersessions. Local,
+        // exact, and routed discovery share one supersedable lane, so every
+        // start control closes together.
         button.set_sensitive(false);
         exact_discovery_button.set_sensitive(false);
+        routed_discovery_button.set_sensitive(false);
         match controller.try_send(ControllerCommand::RefreshLocalDiscovery) {
             Ok(()) => {
                 cancel_discovery_button.set_visible(true);
@@ -538,6 +542,7 @@ fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &Control
             Err(_) => {
                 button.set_sensitive(true);
                 exact_discovery_button.set_sensitive(true);
+                routed_discovery_button.set_sensitive(true);
             }
         }
     });
@@ -558,6 +563,7 @@ fn connect_exact_discovery(
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
     let dialog_open = Rc::new(Cell::new(false));
     let refresh_button = sidebar.refresh_button().clone();
+    let routed_discovery_button = sidebar.routed_discovery_button().clone();
     let window = window.downgrade();
 
     sidebar
@@ -578,6 +584,7 @@ fn connect_exact_discovery(
             let admitted_cancel_button = cancel_discovery_button.clone();
             let admitted_exact_button = button.clone();
             let admitted_refresh_button = refresh_button.clone();
+            let admitted_routed_button = routed_discovery_button.clone();
             let closed_dialog_open = Rc::clone(&dialog_open);
             exact_discovery_dialog::present(
                 &window,
@@ -591,11 +598,13 @@ fn connect_exact_discovery(
                             return;
                         }
                     };
-                    // Exact and local discovery share one supersedable lane.
-                    // Disable both actions before the Refreshing publication
-                    // closes the small re-admission interval.
+                    // Exact, local, and routed discovery share one
+                    // supersedable lane. Disable every start action before
+                    // the Refreshing publication closes the small
+                    // re-admission interval.
                     admitted_exact_button.set_sensitive(false);
                     admitted_refresh_button.set_sensitive(false);
+                    admitted_routed_button.set_sensitive(false);
                     match admitted_controller.try_send(ControllerCommand::DiscoverExact(target)) {
                         Ok(()) => {
                             // Remember the address only once a newer exact
@@ -609,6 +618,7 @@ fn connect_exact_discovery(
                         Err(_) => {
                             admitted_exact_button.set_sensitive(true);
                             admitted_refresh_button.set_sensitive(true);
+                            admitted_routed_button.set_sensitive(true);
                         }
                     }
                 },
