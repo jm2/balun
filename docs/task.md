@@ -29,17 +29,17 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **1/30 (3.3%)** records complete. This is a dependency ledger,
+Current status: **5/30 (16.7%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
 ## Current focus
 
 P0.1 is documentation only and lands first. P0.2 and P0.4 need the Linux
-development host and the accessible primary-site tuners; P1.1 has no hardware
-dependency and can proceed in parallel. The fake-device teardown-release
-proofs are complete on the test side; P0.4 adds the live numbers that were
-never recorded.
+development host and the accessible primary-site tuners. P1.1 and P1.2 are
+complete. The
+fake-device teardown-release proofs are complete on the test side; P0.4 adds
+the live numbers that were never recorded.
 
 ## P0 — Evidence and contract
 
@@ -74,15 +74,15 @@ never recorded.
 
 ## P1 — Viewer completion
 
-- [ ] **P1.1 — Add versioned settings.** Persist remembered targets, friendly
+- [x] **P1.1 — Add versioned settings.** Persist remembered targets, friendly
   names, and window state as atomic, migration-tested JSON; never credentials,
   stream URLs, or incidental topology.
 
-- [ ] **P1.2 — Remember targets and admit hostnames.** Rediscover persisted
+- [x] **P1.2 — Remember targets and admit hostnames.** Rediscover persisted
   exact targets at startup and accept a hostname resolved to a bounded set of
   unicast addresses; neither becomes prefix-scan authority.
 
-- [ ] **P1.3 — Let errors and diagnostics name the device.** Per ADR-0002,
+- [x] **P1.3 — Let errors and diagnostics name the device.** Per ADR-0002,
   failure copy and `--inspect` output may show the device name, address, and
   DeviceID suffix; `DeviceAuth` and credentials stay redacted.
 
@@ -90,7 +90,7 @@ never recorded.
   stream type from a closed list, and decide whether AC-4 channels play video
   only with an explicit notice or keep failing closed.
 
-- [ ] **P1.5 — Add channel search and a favorites filter.** Filter the selected
+- [x] **P1.5 — Add channel search and a favorites filter.** Filter the selected
   device's lineup without changing device or channel identity.
 
 - [ ] **P1.6 — Complete keyboard navigation and accessibility.** Review both

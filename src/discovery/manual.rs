@@ -30,6 +30,13 @@ impl ExactDiscoveryTarget {
         value.parse()
     }
 
+    /// Accept an already-parsed address under the same unicast rules as
+    /// typed text; used for resolver results.
+    pub(crate) fn from_ip(address: IpAddr) -> Result<Self, InvalidExactDiscoveryTarget> {
+        validate_address(address)?;
+        Ok(Self { address })
+    }
+
     /// Return the validated numeric address for a discovery implementation.
     ///
     /// This is an explicit network-topology boundary. Callers must use the

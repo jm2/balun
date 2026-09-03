@@ -15,6 +15,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::resolution::HostnameResolutionReceiver;
 use super::{
     ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryKind,
     DiscoveryState, DiscoveryStatus, LineupFailure, OperationGeneration, SelectedLineupState,
@@ -23,7 +24,8 @@ use super::{
 };
 use crate::discovery::{
     DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryMethod, DiscoveryObservation,
-    DiscoveryReport, ExactDiscoveryTarget, ProbeConfig, RegistryInstant,
+    DiscoveryReport, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget, ProbeConfig,
+    RegistryInstant, resolve_hostname,
 };
 use crate::domain::{ChannelKey, DeviceId};
 use crate::hdhr::protocol::DISCOVERY_UDP_PORT;
@@ -190,6 +192,10 @@ enum ActorCommand {
     RequestStream {
         selection: StreamSelection,
         reply: oneshot::Sender<Result<StreamHandoff, StreamHandoffError>>,
+    },
+    ResolveHostname {
+        target: HostnameTarget,
+        reply: oneshot::Sender<Result<Vec<ExactDiscoveryTarget>, HostnameResolutionError>>,
     },
 }
 
@@ -446,6 +452,21 @@ impl ControllerHandle {
         Ok(StreamHandoffReceiver::new(receiver))
     }
 
+    /// Resolve one validated hostname on the controller runtime into at most
+    /// a few usable exact targets, delivered only to this caller.
+    ///
+    /// The lookup is bounded by the resolver timeout, never enters the
+    /// shared snapshot, and grants no scan authority: each result is an
+    /// ordinary exact target the caller may submit one at a time.
+    pub fn try_resolve_hostname(
+        &self,
+        target: HostnameTarget,
+    ) -> Result<HostnameResolutionReceiver, ControllerCommandError> {
+        let (reply, receiver) = oneshot::channel();
+        self.try_send_actor(ActorCommand::ResolveHostname { target, reply })?;
+        Ok(HostnameResolutionReceiver::new(receiver))
+    }
+
     fn try_send_actor(&self, command: ActorCommand) -> Result<(), ControllerCommandError> {
         if self.shutdown.is_cancelled() {
             return Err(ControllerCommandError::ShuttingDown);
@@ -602,6 +623,21 @@ impl ControllerActor {
                 }
                 ActorEvent::Command(Some(ActorCommand::RequestStream { selection, reply })) => {
                     let _ = reply.send(self.resolve_stream_handoff(selection));
+                }
+                ActorEvent::Command(Some(ActorCommand::ResolveHostname { target, reply })) => {
+                    // Resolution runs beside the actor so a slow resolver never
+                    // delays commands; shutdown abandons it with a fixed error.
+                    let shutdown = self.shutdown.clone();
+                    tokio::spawn(async move {
+                        let result = tokio::select! {
+                            biased;
+                            () = shutdown.cancelled() => {
+                                Err(HostnameResolutionError::ControllerStopped)
+                            }
+                            result = resolve_hostname(&target) => result,
+                        };
+                        let _ = reply.send(result);
+                    });
                 }
                 ActorEvent::Discovery(completion) => {
                     self.finish_discovery(completion).await?;
