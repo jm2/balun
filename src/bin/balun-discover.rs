@@ -7,6 +7,8 @@ use balun::discovery::{
     ApprovedIpv4Range, DiscoveryClient, DiscoveryReport, ProbeConfig, RegistryError,
     RoutedRangeError, RoutedScanConfig,
 };
+#[cfg(any(target_os = "linux", test))]
+use balun::discovery::{RouteCandidateError, RouteSnapshot, select_route_candidates};
 use balun::hdhr::{
     DeviceInspectionError, DeviceInspectionIssueKind, DeviceInspectionReport, DeviceInspector,
 };
@@ -317,43 +319,58 @@ fn print_probe_budget(config: ProbeConfig) {
     );
 }
 
+/// Bounded counts from one route snapshot, never a route or an address.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug)]
+struct ProviderCounts {
+    interfaces: usize,
+    effective_routes: usize,
+    /// Every active, unambiguously classified tunnel the provider reported,
+    /// whether or not one of its routes is eligible to produce a candidate.
+    tunnel_interfaces: usize,
+    tunnel_candidates: Result<usize, RouteCandidateError>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn provider_counts(snapshot: &RouteSnapshot) -> ProviderCounts {
+    ProviderCounts {
+        interfaces: snapshot.interfaces().len(),
+        effective_routes: snapshot.effective_routes().len(),
+        tunnel_interfaces: snapshot.tunnel_interfaces().len(),
+        tunnel_candidates: select_route_candidates(snapshot, &[])
+            .map(|candidates| candidates.len()),
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl std::fmt::Display for ProviderCounts {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "interfaces={} effective_routes={} tunnel_interfaces={}",
+            self.interfaces, self.effective_routes, self.tunnel_interfaces
+        )?;
+        match &self.tunnel_candidates {
+            Ok(count) => write!(formatter, " tunnel_candidates={count}"),
+            Err(error) => write!(formatter, "; candidate selection failed: {error}"),
+        }
+    }
+}
+
 /// Route-provider availability and bounded counts, never a route or address.
 #[cfg(target_os = "linux")]
 fn print_providers() {
-    use std::collections::BTreeSet;
+    use balun::discovery::{LinuxRouteProvider, RouteProvider};
 
-    use balun::discovery::{
-        LinuxRouteProvider, RouteCandidateOrigin, RouteProvider, select_route_candidates,
-    };
-
-    let snapshot = match LinuxRouteProvider::new().snapshot() {
-        Ok(snapshot) => snapshot,
+    match LinuxRouteProvider::new().snapshot() {
+        Ok(snapshot) => println!(
+            "route provider: linux rtnetlink available; {}",
+            provider_counts(&snapshot)
+        ),
         Err(_) => {
             println!("route provider: linux rtnetlink unavailable (route table could not be read)");
             return;
         }
-    };
-    match select_route_candidates(&snapshot, &[]) {
-        Ok(candidates) => {
-            let tunnel_interfaces = candidates
-                .iter()
-                .flat_map(|candidate| candidate.origins().iter())
-                .filter_map(|origin| match origin {
-                    RouteCandidateOrigin::TunnelRoute { interface, .. } => Some(interface.get()),
-                    RouteCandidateOrigin::Explicit(_) => None,
-                })
-                .collect::<BTreeSet<_>>();
-            println!(
-                "route provider: linux rtnetlink available; interfaces={} effective_routes={} tunnel_candidates={} tunnel_interfaces={}",
-                snapshot.interfaces().len(),
-                snapshot.effective_routes().len(),
-                candidates.len(),
-                tunnel_interfaces.len()
-            );
-        }
-        Err(error) => println!(
-            "route provider: linux rtnetlink available; candidate selection failed: {error}"
-        ),
     }
     println!("routed discovery: offered on this platform; approvals are asked for in the desktop");
 }
@@ -419,10 +436,65 @@ fn print_inspection_report(report: &DeviceInspectionReport) {
 
 #[cfg(test)]
 mod tests {
+    use balun::discovery::{
+        InterfaceId, InterfaceKind, NetworkInterface, NetworkRoute, RouteKind, RouteScope,
+    };
+
     use super::*;
 
     fn parse(values: &[&str]) -> Result<Option<Cli>, CliError> {
         parse_cli(values.iter().map(|value| (*value).to_owned()))
+    }
+
+    fn snapshot(kind: InterfaceKind, is_up: bool, route: &str) -> RouteSnapshot {
+        let tunnel = InterfaceId::new(7);
+        RouteSnapshot::from_effective_routes(
+            vec![NetworkInterface::new(
+                tunnel,
+                "wg0",
+                kind,
+                is_up,
+                ["10.255.0.2/32".parse().unwrap()],
+            )],
+            vec![NetworkRoute::effective(
+                route.parse().unwrap(),
+                Some(tunnel),
+                RouteKind::Unicast,
+                RouteScope::OnLink,
+            )],
+        )
+    }
+
+    #[test]
+    fn tunnel_interfaces_are_counted_before_candidate_selection() {
+        // An active tunnel whose only route is public yields no candidate but
+        // is still one recognized tunnel.
+        let counts = provider_counts(&snapshot(InterfaceKind::Tunnel, true, "198.51.100.0/24"));
+        assert_eq!(
+            (
+                counts.interfaces,
+                counts.effective_routes,
+                counts.tunnel_interfaces
+            ),
+            (1, 1, 1)
+        );
+        assert!(matches!(counts.tunnel_candidates, Ok(0)));
+        assert_eq!(
+            counts.to_string(),
+            "interfaces=1 effective_routes=1 tunnel_interfaces=1 tunnel_candidates=0"
+        );
+
+        // The same tunnel with an eligible private route produces candidates.
+        let counts = provider_counts(&snapshot(InterfaceKind::Tunnel, true, "192.168.40.8/30"));
+        assert_eq!(counts.tunnel_interfaces, 1);
+        assert!(matches!(counts.tunnel_candidates, Ok(count) if count > 0));
+
+        // A down tunnel or a non-tunnel interface is not a tunnel interface.
+        for (kind, is_up) in [(InterfaceKind::Tunnel, false), (InterfaceKind::Other, true)] {
+            let counts = provider_counts(&snapshot(kind, is_up, "192.168.40.8/30"));
+            assert_eq!(counts.tunnel_interfaces, 0);
+            assert!(matches!(counts.tunnel_candidates, Ok(0)));
+        }
     }
 
     #[test]
