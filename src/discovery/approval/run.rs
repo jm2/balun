@@ -5,6 +5,10 @@
 //! fresh route snapshot, and consumes authority through the store-owned gate.
 //! It deliberately opens no socket and remains unwired from production entry
 //! points.
+//!
+//! Only the Linux runner consumes this boundary today; other targets compile
+//! it for parity and admit its unused items rather than diverging the tree.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 
 use std::collections::BTreeMap;
 use std::fmt;
