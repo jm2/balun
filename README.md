@@ -316,8 +316,9 @@ CI automatically runs on every push/PR:
 - **MSRV** — `cargo check --all-features` on the declared Rust 1.98 minimum
 - **Linux desktop** — builds, lints, and tests the desktop shell, runs `--probe-playback`, and
   drives the Wayland lifecycle smokes
-- **macOS and Windows compile smoke** — native toolkit SDKs, playback transport tests, helper
-  desktop builds, and `-ProbePlayback`
+- **macOS and Windows compile smoke** — native toolkit SDKs, strict Clippy over the desktop and
+  diagnostic targets in both profiles, playback transport tests, helper desktop builds, and
+  `-ProbePlayback`
 - **Release candidate** (manual) — verifies an annotated `v` tag against every version
   declaration, builds the diagnostic on all three platforms and the Flatpak bundles, requires the
   exact artifact inventory with SHA-256 sums, and creates a draft release from a job that checks
