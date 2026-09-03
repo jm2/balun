@@ -312,8 +312,9 @@ fn print_inspection_report(report: &DeviceInspectionReport) {
 
         if let Some(summary) = device.summary() {
             println!(
-                "inspection {} name={:?} model={:?} firmware={:?} tuners={} channels={} favorites={} drm={}",
+                "inspection {} address={} name={:?} model={:?} firmware={:?} tuners={} channels={} favorites={} drm={}",
                 summary.device_id(),
+                summary.source(),
                 summary.friendly_name().unwrap_or("-"),
                 summary.model_number().unwrap_or("-"),
                 summary.firmware_version().unwrap_or("-"),
