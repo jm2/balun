@@ -25,6 +25,7 @@ pub(crate) use controller::runner::{
     CompletedRoutedRun, LinuxObserverPairFactory, MonitoredRoutedDiscovery, MonitoredRoutedError,
     MonitoredRoutedRun, PinnedSocketProber, SystemRoutedClock,
 };
+#[cfg(target_os = "linux")]
 pub(crate) use store::{ApprovalStore, StoreError, StorePaths, StoredRoutedProposal};
 
 use std::collections::BTreeSet;
