@@ -1180,6 +1180,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transport_failures_render_without_the_endpoint() {
+        // Bind and release a loopback port so the connection is refused; the
+        // rendered error must not say where the request was going.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = closed.local_addr().unwrap().port();
+        drop(closed);
+        let endpoint = DeviceEndpoint::from_discovery(
+            "127.0.0.1:65001".parse().unwrap(),
+            Some(&format!("http://127.0.0.1:{port}/")),
+            None,
+        )
+        .unwrap();
+
+        let error = DeviceHttpClient::default()
+            .fetch_device_info(&endpoint, expected_id(), &CancellationToken::new())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, DeviceHttpError::Transport(_)));
+        // Display is what diagnostics print: no address, port, or URL.
+        let displayed = error.to_string();
+        for endpoint_text in ["127.0.0.1", &format!(":{port}"), "http://", "discover.json"] {
+            assert!(!displayed.contains(endpoint_text), "{displayed}");
+        }
+        // Debug may name the responder address (ADR-0002) but never the URL.
+        let debugged = format!("{error:?}");
+        for url_text in ["http://", "discover.json"] {
+            assert!(!debugged.contains(url_text), "{debugged}");
+        }
+    }
+
+    #[tokio::test]
     async fn rejects_declared_and_streamed_oversized_bodies() {
         let declared = ScriptedHttpServer::start(vec![ScriptedResponse::immediate(response(
             "200 OK",
