@@ -5,8 +5,10 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use balun::controller::{
-    ControllerCommandError, ControllerHandle, StreamHandoff, StreamHandoffError, StreamSelection,
+    ApplicationSnapshot, ControllerCommandError, ControllerHandle, StreamHandoff,
+    StreamHandoffError, StreamSelection,
 };
+use balun::domain::ChannelKey;
 use balun::playback::{
     PlaybackCapabilities, PlaybackInitializationError, PlaybackPipelineFailure, PlaybackRuntime,
     PlaybackSession, PlaybackSessionFailure, PlaybackSessionState, TuneCompletion, TuneRequest,
@@ -30,6 +32,7 @@ pub(crate) struct PlayerView {
     idle_title: String,
     idle_description: String,
     session: Option<PlaybackSession>,
+    tune_context: RefCell<Option<TuneContext>>,
     updating_audio_controls: Cell<bool>,
     pending_response: RefCell<Option<gtk::glib::JoinHandle<()>>>,
     /// Test-only observation of `stop` invocations for release-wiring smokes.
@@ -87,34 +90,123 @@ const PLAYER_ACCESSIBILITY: PlayerAccessibilityPlan = PlayerAccessibilityPlan {
     exit_fullscreen_shortcuts: "F11 Escape",
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PlaybackFailureCopy {
-    title: &'static str,
-    description: &'static str,
+/// Names the device and channel of the tune in progress so progress and
+/// failure copy can say which tuner and channel they refer to (ADR-0002).
+/// It carries display text only: never a stream URL or credential.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TuneContext {
+    device: String,
+    channel: String,
 }
 
-const PLAYBACK_FAILURE_DESCRIPTION: &str = "The selected channel could not be started. Device discovery and lineup inspection remain available.";
+impl TuneContext {
+    /// Describe `key` from the accepted snapshot: the device's friendly name
+    /// (or model, or "HDHomeRun") with its address, and the channel number
+    /// with its name. Parts missing from the snapshot fall back to the
+    /// DeviceID or the bare channel number.
+    pub(crate) fn from_snapshot(snapshot: &ApplicationSnapshot, key: &ChannelKey) -> Self {
+        let device = snapshot
+            .devices()
+            .iter()
+            .find(|summary| summary.device_id() == key.device_id())
+            .map_or_else(
+                || format!("HDHomeRun {}", key.device_id()),
+                |summary| {
+                    let name = summary
+                        .friendly_name()
+                        .or(summary.model_number())
+                        .unwrap_or("HDHomeRun");
+                    format!("{name} ({})", summary.preferred_locator().ip())
+                },
+            );
+        let channel = snapshot
+            .selected_lineup()
+            .channels()
+            .iter()
+            .find(|summary| summary.key() == key)
+            .map_or_else(
+                || format!("channel {}", key.guide_number()),
+                |summary| format!("{} {}", key.guide_number(), summary.name()),
+            );
+        Self { device, channel }
+    }
 
-fn pipeline_failure_copy(failure: PlaybackPipelineFailure) -> PlaybackFailureCopy {
-    let title = match failure {
-        PlaybackPipelineFailure::TunerBusy => "No tuner available",
-        PlaybackPipelineFailure::ChannelMissing => "Channel unavailable",
-        PlaybackPipelineFailure::HttpRejected => "Device rejected the stream",
-        PlaybackPipelineFailure::Offline => "Device or stream unavailable",
-        PlaybackPipelineFailure::MissingCodecOrPlugin => {
-            "Required playback component or codec unavailable"
-        }
-        PlaybackPipelineFailure::Protected => "Protected channel unsupported",
-        PlaybackPipelineFailure::Internal => "Playback failed",
-        _ => "Playback failed",
-    };
-    PlaybackFailureCopy {
-        title,
-        description: PLAYBACK_FAILURE_DESCRIPTION,
+    fn device(&self) -> &str {
+        &self.device
+    }
+
+    fn channel(&self) -> &str {
+        &self.channel
     }
 }
 
-fn handoff_failure_copy(failure: StreamHandoffError) -> PlaybackFailureCopy {
+impl Default for TuneContext {
+    fn default() -> Self {
+        Self {
+            device: "the selected device".to_owned(),
+            channel: "the selected channel".to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PlaybackFailureCopy {
+    title: &'static str,
+    description: String,
+}
+
+const PLAYBACK_FAILURE_DESCRIPTION: &str = "The selected channel could not be started. Device discovery and lineup inspection remain available.";
+const PLAYBACK_FAILURE_SUFFIX: &str = "Device discovery and lineup inspection remain available.";
+
+fn pipeline_failure_copy(
+    failure: PlaybackPipelineFailure,
+    context: &TuneContext,
+) -> PlaybackFailureCopy {
+    let device = context.device();
+    let channel = context.channel();
+    let (title, reason) = match failure {
+        PlaybackPipelineFailure::TunerBusy => (
+            "No tuner available",
+            format!("All tuners on {device} are busy."),
+        ),
+        PlaybackPipelineFailure::ChannelMissing => (
+            "Channel unavailable",
+            format!(
+                "{device} no longer offers {channel}. Select the device again to reload its lineup."
+            ),
+        ),
+        PlaybackPipelineFailure::HttpRejected => (
+            "Device rejected the stream",
+            format!("{device} rejected the request for {channel}."),
+        ),
+        PlaybackPipelineFailure::Offline => (
+            "Device or stream unavailable",
+            format!(
+                "{device} did not deliver {channel}. Check that the device is powered and reachable."
+            ),
+        ),
+        PlaybackPipelineFailure::MissingCodecOrPlugin => (
+            "Required playback component or codec unavailable",
+            format!(
+                "This Balun build lacks a codec or GStreamer plugin needed for {channel} on {device}."
+            ),
+        ),
+        PlaybackPipelineFailure::Protected => (
+            "Protected channel unsupported",
+            format!("{channel} on {device} is protected and cannot be played."),
+        ),
+        PlaybackPipelineFailure::Internal | _ => (
+            "Playback failed",
+            format!("Playback of {channel} on {device} stopped because of an internal error."),
+        ),
+    };
+    PlaybackFailureCopy {
+        title,
+        description: format!("{reason} {PLAYBACK_FAILURE_SUFFIX}"),
+    }
+}
+
+fn handoff_failure_copy(failure: StreamHandoffError, context: &TuneContext) -> PlaybackFailureCopy {
     let category = match failure {
         StreamHandoffError::Protected => PlaybackPipelineFailure::Protected,
         StreamHandoffError::SelectionChanged
@@ -127,21 +219,31 @@ fn handoff_failure_copy(failure: StreamHandoffError) -> PlaybackFailureCopy {
         StreamHandoffError::Internal => PlaybackPipelineFailure::Internal,
         _ => PlaybackPipelineFailure::Internal,
     };
-    pipeline_failure_copy(category)
+    pipeline_failure_copy(category, context)
 }
 
-fn session_failure_copy(failure: PlaybackSessionFailure) -> Option<PlaybackFailureCopy> {
+fn session_failure_copy(
+    failure: PlaybackSessionFailure,
+    context: &TuneContext,
+) -> Option<PlaybackFailureCopy> {
     match failure {
         PlaybackSessionFailure::PipelineTeardown => None,
-        PlaybackSessionFailure::Pipeline(category) => Some(pipeline_failure_copy(category)),
-        PlaybackSessionFailure::Handoff(failure) => Some(handoff_failure_copy(failure)),
+        PlaybackSessionFailure::Pipeline(category) => {
+            Some(pipeline_failure_copy(category, context))
+        }
+        PlaybackSessionFailure::Handoff(failure) => Some(handoff_failure_copy(failure, context)),
         PlaybackSessionFailure::HandoffMismatch => Some(pipeline_failure_copy(
             PlaybackPipelineFailure::ChannelMissing,
+            context,
         )),
         PlaybackSessionFailure::ComponentsUnavailable => Some(pipeline_failure_copy(
             PlaybackPipelineFailure::MissingCodecOrPlugin,
+            context,
         )),
-        _ => Some(pipeline_failure_copy(PlaybackPipelineFailure::Internal)),
+        _ => Some(pipeline_failure_copy(
+            PlaybackPipelineFailure::Internal,
+            context,
+        )),
     }
 }
 
@@ -283,8 +385,10 @@ impl PlayerView {
         self: &Rc<Self>,
         controller: &ControllerHandle,
         selection: StreamSelection,
+        context: TuneContext,
     ) {
         self.abort_pending_response();
+        self.tune_context.replace(Some(context));
 
         let request = self
             .session
@@ -535,10 +639,18 @@ impl PlayerView {
         self.mute_button.set_sensitive(sensitive);
     }
 
+    fn tune_context(&self) -> TuneContext {
+        self.tune_context.borrow().clone().unwrap_or_default()
+    }
+
     fn show_connecting(&self) {
+        let context = self.tune_context();
         self.status.set_title("Connecting");
-        self.status
-            .set_description(Some("Opening the selected channel on this device."));
+        self.status.set_description(Some(&format!(
+            "Opening {} on {}.",
+            context.channel(),
+            context.device()
+        )));
         self.status.set_visible(true);
     }
 
@@ -555,10 +667,10 @@ impl PlayerView {
         self.status.set_visible(true);
     }
 
-    fn show_failure_copy(&self, copy: PlaybackFailureCopy) {
+    fn show_failure_copy(&self, copy: &PlaybackFailureCopy) {
         self.playback_status.set_label(copy.title);
         self.status.set_title(copy.title);
-        self.status.set_description(Some(copy.description));
+        self.status.set_description(Some(&copy.description));
         self.status.set_visible(true);
     }
 
@@ -572,8 +684,8 @@ impl PlayerView {
     }
 
     fn show_session_failure(&self, failure: PlaybackSessionFailure) {
-        match session_failure_copy(failure) {
-            Some(copy) => self.show_failure_copy(copy),
+        match session_failure_copy(failure, &self.tune_context()) {
+            Some(copy) => self.show_failure_copy(&copy),
             None => self.show_stop_failure(),
         }
     }
@@ -702,6 +814,7 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         idle_title: title.to_owned(),
         idle_description: description,
         session,
+        tune_context: RefCell::new(None),
         updating_audio_controls: Cell::new(false),
         pending_response: RefCell::new(None),
         #[cfg(test)]
@@ -773,18 +886,41 @@ mod tests {
         }
     }
 
-    fn assert_failure_copy_is_endpoint_free(copy: PlaybackFailureCopy) {
+    fn fixture_context() -> TuneContext {
+        TuneContext {
+            device: "Living room (192.0.2.44)".to_owned(),
+            channel: "7.1 Synthetic News".to_owned(),
+        }
+    }
+
+    /// Copy may name the device and channel (ADR-0002) but never a stream
+    /// URL, port, path, or credential.
+    fn assert_failure_copy_names_device_without_secrets(copy: &PlaybackFailureCopy) {
         for secret in [
             "http://",
             "https://",
-            "192.0.2.44",
             "5004",
             "/auto/v7.1",
             "device-auth-secret",
+            "DeviceAuth",
         ] {
-            assert!(!copy.title.contains(secret));
-            assert!(!copy.description.contains(secret));
+            assert!(!copy.title.contains(secret), "{secret} in {:?}", copy.title);
+            assert!(
+                !copy.description.contains(secret),
+                "{secret} in {:?}",
+                copy.description
+            );
         }
+        assert!(
+            copy.description.contains("Living room (192.0.2.44)"),
+            "description must name the device: {:?}",
+            copy.description
+        );
+        assert!(
+            copy.description.ends_with(PLAYBACK_FAILURE_SUFFIX),
+            "description must keep the recovery hint: {:?}",
+            copy.description
+        );
     }
 
     /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
@@ -1128,12 +1264,28 @@ mod tests {
             (PlaybackPipelineFailure::Internal, "Playback failed"),
         ];
 
+        let context = fixture_context();
         for (failure, title) in expected {
-            let copy = pipeline_failure_copy(failure);
+            let copy = pipeline_failure_copy(failure, &context);
             assert_eq!(copy.title, title);
-            assert_eq!(copy.description, PLAYBACK_FAILURE_DESCRIPTION);
-            assert_failure_copy_is_endpoint_free(copy);
+            assert_failure_copy_names_device_without_secrets(&copy);
+            if failure != PlaybackPipelineFailure::TunerBusy {
+                assert!(
+                    copy.description.contains("7.1 Synthetic News"),
+                    "{failure:?} must name the channel: {:?}",
+                    copy.description
+                );
+            }
         }
+        assert_eq!(
+            pipeline_failure_copy(PlaybackPipelineFailure::TunerBusy, &context).description,
+            "All tuners on Living room (192.0.2.44) are busy. Device discovery and lineup inspection remain available."
+        );
+        assert_eq!(
+            pipeline_failure_copy(PlaybackPipelineFailure::Offline, &TuneContext::default())
+                .description,
+            "the selected device did not deliver the selected channel. Check that the device is powered and reachable. Device discovery and lineup inspection remain available."
+        );
     }
 
     #[test]
@@ -1185,16 +1337,70 @@ mod tests {
             ),
         ];
 
+        let context = fixture_context();
         for (failure, title) in expected {
-            let copy = session_failure_copy(failure).expect("ordinary playback failure copy");
+            let copy =
+                session_failure_copy(failure, &context).expect("ordinary playback failure copy");
             assert_eq!(copy.title, title);
-            assert_eq!(copy.description, PLAYBACK_FAILURE_DESCRIPTION);
-            assert_failure_copy_is_endpoint_free(copy);
+            assert_failure_copy_names_device_without_secrets(&copy);
         }
         assert_eq!(
-            session_failure_copy(PlaybackSessionFailure::PipelineTeardown),
+            session_failure_copy(PlaybackSessionFailure::PipelineTeardown, &context),
             None
         );
+    }
+
+    #[test]
+    fn tune_context_names_the_device_and_channel_from_the_snapshot() {
+        use balun::controller::{
+            ChannelSummary, DeviceSummary, DiscoveryState, OperationGeneration,
+            SelectedLineupState, SnapshotRevision,
+        };
+        use balun::domain::{DeviceId, GuideNumber};
+
+        let device_id = DeviceId::new(0x105A_1232).unwrap();
+        let key = ChannelKey::new(device_id, GuideNumber::new("7.1").unwrap());
+        let generation = OperationGeneration::new(3);
+        let channels =
+            [
+                ChannelSummary::new(key.clone(), "Synthetic News".to_owned(), true, false, true)
+                    .unwrap(),
+            ];
+        let device = DeviceSummary::new(
+            device_id,
+            Some("Living room".to_owned()),
+            Some("HDHR5-4K".to_owned()),
+            Some(4),
+            "192.0.2.44:65001".parse().unwrap(),
+            1,
+        )
+        .unwrap();
+        let snapshot = ApplicationSnapshot::new(
+            SnapshotRevision::new(1),
+            OperationGeneration::new(1),
+            generation,
+            DiscoveryState::ready(OperationGeneration::new(1), 0),
+            [device],
+            Some(device_id),
+            SelectedLineupState::ready(device_id, generation, channels).unwrap(),
+        )
+        .unwrap();
+
+        let context = TuneContext::from_snapshot(&snapshot, &key);
+        assert_eq!(context.device(), "Living room (192.0.2.44)");
+        assert_eq!(context.channel(), "7.1 Synthetic News");
+
+        let other = ChannelKey::new(device_id, GuideNumber::new("9.9").unwrap());
+        let context = TuneContext::from_snapshot(&snapshot, &other);
+        assert_eq!(context.channel(), "channel 9.9");
+
+        let stranger = DeviceId::new(0x105A_1243).unwrap();
+        let context = TuneContext::from_snapshot(
+            &snapshot,
+            &ChannelKey::new(stranger, GuideNumber::new("7.1").unwrap()),
+        );
+        assert_eq!(context.device(), "HDHomeRun 105A1243");
+        assert!(!format!("{context:?}").contains("http"));
     }
 
     #[test]
