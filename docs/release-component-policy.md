@@ -78,15 +78,22 @@ enforcement, but it is not a `Balun.app` or DMG claim; bundle staging, signing
 mutations, and reopened-container checks remain mandatory with the real
 package.
 
-The Windows package (`scripts/build-windows.ps1 -Bundle`, `-Zip`, `-InnoSetup`)
-implements all four mandatory gates: it loads this pinned policy before any
-copy, stages only the reviewed capability-derived plugin closure and the DLLs
-those binaries import while refusing forbidden or reparse-point sources and
+The Windows ZIP (`scripts/build-windows.ps1 -Bundle`, `-Zip`) implements all
+four mandatory gates: the helper loads this pinned policy before any copy,
+stages only the reviewed capability-derived plugin closure and the DLLs those
+binaries import while refusing forbidden or reparse-point sources and
 destinations, fails the bounded `llvm-readobj` import traversal on any denied
 dependency rather than omitting it, reinspects the completed tree after the
-packaged runtime probe, reopens the ZIP against the staged tree, and reopens
-the installer's version resource. The generic `libbluray` that `avformat`
-imports remains allowed under the distinction above.
+packaged runtime probe, and reopens the ZIP to require its entry set and sizes
+to equal the staged tree. The installer (`-InnoSetup`) shares the first three
+gates: its payload is the staged tree that passed them immediately before
+compilation, and the compiled `balun-setup.exe` is reopened only for its
+version resource, because the helper has no tool that extracts an Inno Setup
+archive without running it. That narrower installer reopening is a documented
+gap against the fourth gate, not a claim of payload inspection; the
+packaged-artifact validation record P4.1 installs and exercises the result.
+The generic `libbluray` that `avformat` imports remains allowed under the
+distinction above.
 
 ## Mandatory package gates
 
