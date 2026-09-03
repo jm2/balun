@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, btree_map::Entry};
+use std::fmt;
 use std::future::Future;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -126,7 +127,7 @@ pub enum InvalidProbeConfig {
 }
 
 /// A validated tuner observation tied to the UDP endpoint that supplied it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct DiscoveryObservation {
     pub device_id: DeviceId,
     pub source: SocketAddr,
@@ -138,6 +139,35 @@ pub struct DiscoveryObservation {
     pub advertised_base_url: Option<String>,
     /// Untrusted metadata. HTTP code must validate it against the source.
     pub advertised_lineup_url: Option<String>,
+}
+
+/// Advertised URLs are unvalidated device text that may carry credentials or
+/// query values, so `Debug` shows only whether one was present.
+impl fmt::Debug for DiscoveryObservation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DiscoveryObservation")
+            .field("device_id", &self.device_id)
+            .field("source", &self.source)
+            .field("method", &self.method)
+            .field("interface", &self.interface)
+            .field("device_types", &self.device_types)
+            .field("tuner_count", &self.tuner_count)
+            .field(
+                "advertised_base_url",
+                &redacted_url(self.advertised_base_url.as_deref()),
+            )
+            .field(
+                "advertised_lineup_url",
+                &redacted_url(self.advertised_lineup_url.as_deref()),
+            )
+            .finish()
+    }
+}
+
+/// Render an untrusted advertised URL as present or absent, never by value.
+pub(crate) fn redacted_url(value: Option<&str>) -> Option<&'static str> {
+    value.map(|_| "<redacted>")
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -758,6 +788,29 @@ mod tests {
         0x3A, 0x38, 0x30, 0x2F, 0x6C, 0x69, 0x6E, 0x65, 0x75, 0x70, 0x2E, 0x6A, 0x73, 0x6F, 0x6E,
         0x1E, 0x72, 0x20, 0x00,
     ];
+
+    #[test]
+    fn observation_debug_redacts_advertised_urls() {
+        let observation = DiscoveryObservation {
+            device_id: DeviceId::new(0x105A_1232).unwrap(),
+            source: "192.0.2.10:65001".parse().unwrap(),
+            method: DiscoveryMethod::Targeted,
+            interface: None,
+            device_types: vec![1],
+            tuner_count: Some(2),
+            advertised_base_url: Some("http://user:password@192.0.2.10/?token=secret".to_owned()),
+            advertised_lineup_url: None,
+        };
+
+        let rendered = format!("{observation:?}");
+
+        for hidden in ["password", "token", "secret", "http://"] {
+            assert!(!rendered.contains(hidden), "{rendered}");
+        }
+        assert!(rendered.contains("advertised_base_url: Some(\"<redacted>\")"));
+        assert!(rendered.contains("advertised_lineup_url: None"));
+        assert!(rendered.contains("192.0.2.10:65001"));
+    }
 
     #[test]
     fn default_budget_matches_two_official_windows() {
