@@ -1,6 +1,6 @@
 //! Virtualized channel sidebar for exactly one selected HDHomeRun device.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -8,7 +8,7 @@ use balun::controller::{
     ApplicationSnapshot, LineupFailure, OperationGeneration, SelectedLineupState,
     SelectedLineupStatus, StreamSelection,
 };
-use balun::domain::ChannelKey;
+use balun::domain::{ChannelKey, DeviceId};
 
 use super::objects::ChannelRowObject;
 
@@ -20,13 +20,91 @@ const CHANNEL_LIST_PAGE_NAME: &str = "channels";
 pub(crate) struct ChannelSidebar {
     root: adw::ToolbarView,
     store: gtk::gio::ListStore,
+    filtered: gtk::FilterListModel,
+    filter: gtk::CustomFilter,
+    criteria: Rc<RefCell<ChannelFilter>>,
     selection: gtk::SingleSelection,
     list: gtk::ListView,
+    search: gtk::SearchEntry,
+    favorites_toggle: gtk::ToggleButton,
     stack: gtk::Stack,
     status: adw::StatusPage,
     spinner: gtk::Spinner,
+    presentation: Rc<Cell<LineupPresentation>>,
+    selected_device: Rc<Cell<Option<DeviceId>>>,
     applying_snapshot: Rc<Cell<bool>>,
     activation_generation: Rc<Cell<Option<OperationGeneration>>>,
+}
+
+/// Search text and favorites filter applied on top of the applied lineup.
+///
+/// Filtering only hides rows; every row keeps its exact ChannelKey and the
+/// lineup generation, so activation and selection restore are unchanged.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ChannelFilter {
+    query: String,
+    favorites_only: bool,
+}
+
+impl ChannelFilter {
+    /// Replace the search text; returns whether the effective query changed.
+    pub(crate) fn set_query(&mut self, query: &str) -> bool {
+        let normalized = query.trim().to_lowercase();
+        if normalized == self.query {
+            return false;
+        }
+        self.query = normalized;
+        true
+    }
+
+    /// Show favorites only; returns whether the setting changed.
+    pub(crate) fn set_favorites_only(&mut self, favorites_only: bool) -> bool {
+        if self.favorites_only == favorites_only {
+            return false;
+        }
+        self.favorites_only = favorites_only;
+        true
+    }
+
+    /// Whether a channel passes: favorites only when requested, and the query
+    /// as a case-insensitive prefix of the channel number or substring of
+    /// the name.
+    pub(crate) fn matches(&self, number: &str, name: &str, favorite: bool) -> bool {
+        if self.favorites_only && !favorite {
+            return false;
+        }
+        if self.query.is_empty() {
+            return true;
+        }
+        number.to_lowercase().starts_with(&self.query) || name.to_lowercase().contains(&self.query)
+    }
+}
+
+/// What the applied lineup allows the pane to show, independent of the
+/// user's filter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LineupPresentation {
+    Unselected,
+    Loading,
+    Ready { any_channels: bool },
+    Failed(LineupFailure),
+}
+
+impl LineupPresentation {
+    fn from_lineup(lineup: &SelectedLineupState) -> Self {
+        match lineup.status() {
+            SelectedLineupStatus::Unselected => Self::Unselected,
+            SelectedLineupStatus::Loading => Self::Loading,
+            SelectedLineupStatus::Ready => Self::Ready {
+                any_channels: !lineup.channels().is_empty(),
+            },
+            SelectedLineupStatus::Failed(failure) => Self::Failed(failure),
+        }
+    }
+
+    const fn has_channels(self) -> bool {
+        matches!(self, Self::Ready { any_channels: true })
+    }
 }
 
 impl ChannelSidebar {
@@ -70,6 +148,7 @@ impl ChannelSidebar {
     ///
     /// Any inert local highlight is restored by its complete ChannelKey, never
     /// by a list position. Protected rows remain visible but unselectable.
+    /// Search text is cleared when a different device becomes selected.
     pub(crate) fn apply_snapshot(&self, snapshot: &ApplicationSnapshot) {
         let prior_selection = self.selected_channel_key();
         let lineup = snapshot.selected_lineup();
@@ -78,12 +157,6 @@ impl ChannelSidebar {
         } else {
             &[]
         };
-        let selected_position = prior_selection.as_ref().and_then(|selected| {
-            channels
-                .iter()
-                .position(|channel| channel.key() == selected && !channel.is_drm())
-                .and_then(|position| u32::try_from(position).ok())
-        });
         let rows = channels
             .iter()
             .map(ChannelRowObject::from_summary)
@@ -92,25 +165,23 @@ impl ChannelSidebar {
             (lineup.status() == SelectedLineupStatus::Ready).then_some(lineup.generation());
 
         let _applying = SnapshotApplicationGuard::enter(Rc::clone(&self.applying_snapshot));
+        if self.selected_device.replace(snapshot.selected_device()) != snapshot.selected_device() {
+            // A new device starts with its whole lineup visible; the
+            // favorites toggle is a preference and stays as it was.
+            self.search.set_text("");
+            self.sync_criteria();
+        }
         // Revoke the old row authority before replacing any model item. If a
         // nested GTK callback attempts activation during replacement, both
         // the application guard and the absent generation fail closed.
         self.activation_generation.set(None);
         self.store.splice(0, self.store.n_items(), &rows);
-        self.selection
-            .set_selected(selected_position.unwrap_or(gtk::INVALID_LIST_POSITION));
+        self.restore_selection(prior_selection.as_ref());
         self.activation_generation.set(activation_generation);
 
-        let show_list = lineup.status() == SelectedLineupStatus::Ready && !rows.is_empty();
-        let loading = lineup.status() == SelectedLineupStatus::Loading;
-        self.spinner.set_visible(!show_list && loading);
-        self.spinner.set_spinning(!show_list && loading);
-        apply_empty_presentation(&self.status, lineup);
-        self.stack.set_visible_child_name(if show_list {
-            CHANNEL_LIST_PAGE_NAME
-        } else {
-            STATUS_PAGE_NAME
-        });
+        self.presentation
+            .set(LineupPresentation::from_lineup(lineup));
+        self.update_presentation();
     }
 
     fn selected_channel_key(&self) -> Option<ChannelKey> {
@@ -120,13 +191,84 @@ impl ChannelSidebar {
             .ok()?
             .key()
     }
+
+    /// Re-select `key` if it is still visible and activatable; otherwise
+    /// leave nothing highlighted.
+    fn restore_selection(&self, key: Option<&ChannelKey>) {
+        let position = key.and_then(|key| self.visible_position(key));
+        self.selection
+            .set_selected(position.unwrap_or(gtk::INVALID_LIST_POSITION));
+    }
+
+    fn visible_position(&self, key: &ChannelKey) -> Option<u32> {
+        (0..self.filtered.n_items()).find(|position| {
+            self.filtered
+                .item(*position)
+                .and_downcast::<ChannelRowObject>()
+                .is_some_and(|row| !row.is_drm() && row.key().as_ref() == Some(key))
+        })
+    }
+
+    /// Copy the widget state into the filter criteria and re-run the filter
+    /// only when something changed, keeping the highlighted channel if it is
+    /// still visible.
+    fn sync_criteria(&self) {
+        let changed = {
+            let mut criteria = self.criteria.borrow_mut();
+            let query_changed = criteria.set_query(&self.search.text());
+            let favorites_changed = criteria.set_favorites_only(self.favorites_toggle.is_active());
+            query_changed || favorites_changed
+        };
+        if !changed {
+            return;
+        }
+        let prior_selection = self.selected_channel_key();
+        self.filter.changed(gtk::FilterChange::Different);
+        self.restore_selection(prior_selection.as_ref());
+        self.update_presentation();
+    }
+
+    fn update_presentation(&self) {
+        let presentation = self.presentation.get();
+        let has_channels = presentation.has_channels();
+        let filtered_out = has_channels && self.filtered.n_items() == 0;
+        let show_list = has_channels && !filtered_out;
+        let loading = presentation == LineupPresentation::Loading;
+
+        self.search.set_sensitive(has_channels);
+        self.favorites_toggle.set_sensitive(has_channels);
+        self.spinner.set_visible(!show_list && loading);
+        self.spinner.set_spinning(!show_list && loading);
+        if filtered_out {
+            apply_filtered_out_presentation(&self.status, &self.criteria.borrow());
+        } else {
+            apply_empty_presentation(&self.status, presentation);
+        }
+        self.stack.set_visible_child_name(if show_list {
+            CHANNEL_LIST_PAGE_NAME
+        } else {
+            STATUS_PAGE_NAME
+        });
+    }
 }
 
 /// Build the channel pane without inventing lineup or guide data.
 #[must_use]
 pub(crate) fn build() -> ChannelSidebar {
     let store = gtk::gio::ListStore::new::<ChannelRowObject>();
-    let selection = gtk::SingleSelection::new(Some(store.clone()));
+    let criteria = Rc::new(RefCell::new(ChannelFilter::default()));
+    let filter = {
+        let criteria = Rc::clone(&criteria);
+        gtk::CustomFilter::new(move |item| {
+            item.downcast_ref::<ChannelRowObject>().is_some_and(|row| {
+                criteria
+                    .borrow()
+                    .matches(&row.number(), &row.name(), row.is_favorite())
+            })
+        })
+    };
+    let filtered = gtk::FilterListModel::new(Some(store.clone()), Some(filter.clone()));
+    let selection = gtk::SingleSelection::new(Some(filtered.clone()));
     selection.set_autoselect(false);
     selection.set_can_unselect(true);
 
@@ -164,21 +306,65 @@ pub(crate) fn build() -> ChannelSidebar {
     stack.add_named(&scrolled, Some(CHANNEL_LIST_PAGE_NAME));
     stack.set_visible_child_name(STATUS_PAGE_NAME);
 
+    let search = gtk::SearchEntry::builder()
+        .placeholder_text("Search channels")
+        .tooltip_text("Search channels by number or name")
+        .sensitive(false)
+        .margin_start(6)
+        .margin_end(6)
+        .margin_top(6)
+        .margin_bottom(6)
+        .build();
+    search.update_property(&[gtk::accessible::Property::Label("Search channels")]);
+    let favorites_toggle = gtk::ToggleButton::builder()
+        .icon_name("starred-symbolic")
+        .tooltip_text("Show favorite channels only")
+        .sensitive(false)
+        .build();
+    favorites_toggle.update_property(&[gtk::accessible::Property::Label(
+        "Show favorite channels only",
+    )]);
+
+    let header = adw::HeaderBar::new();
+    header.pack_end(&favorites_toggle);
     let root = adw::ToolbarView::new();
-    root.add_top_bar(&adw::HeaderBar::new());
+    root.add_top_bar(&header);
+    root.add_top_bar(&search);
     root.set_content(Some(&stack));
 
-    ChannelSidebar {
+    let sidebar = ChannelSidebar {
         root,
         store,
+        filtered,
+        filter,
+        criteria,
         selection,
         list,
+        search,
+        favorites_toggle,
         stack,
         status,
         spinner,
+        presentation: Rc::new(Cell::new(LineupPresentation::Unselected)),
+        selected_device: Rc::new(Cell::new(None)),
         applying_snapshot: Rc::new(Cell::new(false)),
         activation_generation: Rc::new(Cell::new(None)),
+    };
+    {
+        let sidebar = sidebar.clone();
+        sidebar
+            .search
+            .clone()
+            .connect_search_changed(move |_| sidebar.sync_criteria());
     }
+    {
+        let sidebar = sidebar.clone();
+        sidebar
+            .favorites_toggle
+            .clone()
+            .connect_toggled(move |_| sidebar.sync_criteria());
+    }
+    sidebar
 }
 
 fn activation_selection(
@@ -342,32 +528,48 @@ fn reset_channel_list_item(list_item: &gtk::ListItem) {
     list_item.set_activatable(false);
 }
 
-fn apply_empty_presentation(status: &adw::StatusPage, lineup: &SelectedLineupState) {
-    match lineup.status() {
-        SelectedLineupStatus::Unselected => {
+fn apply_empty_presentation(status: &adw::StatusPage, presentation: LineupPresentation) {
+    match presentation {
+        LineupPresentation::Unselected => {
             status.set_icon_name(Some("view-list-symbolic"));
             status.set_title("Select a device");
             status.set_description(Some(
                 "Channels for the selected HDHomeRun device will appear here.",
             ));
         }
-        SelectedLineupStatus::Loading => {
+        LineupPresentation::Loading => {
             status.set_icon_name(Some("view-refresh-symbolic"));
             status.set_title("Loading channels");
             status.set_description(Some("Reading the selected device's channel lineup."));
         }
-        SelectedLineupStatus::Ready => {
+        LineupPresentation::Ready { .. } => {
             status.set_icon_name(Some("view-list-symbolic"));
             status.set_title("No channels available");
             status.set_description(Some(
                 "The selected device returned an empty channel lineup.",
             ));
         }
-        SelectedLineupStatus::Failed(failure) => {
+        LineupPresentation::Failed(failure) => {
             status.set_icon_name(Some("dialog-error-symbolic"));
             status.set_title("Channels could not be loaded");
             status.set_description(Some(lineup_failure_description(failure)));
         }
+    }
+}
+
+fn apply_filtered_out_presentation(status: &adw::StatusPage, criteria: &ChannelFilter) {
+    status.set_icon_name(Some("edit-find-symbolic"));
+    status.set_title("No matching channels");
+    status.set_description(Some(filtered_out_description(criteria)));
+}
+
+const fn filtered_out_description(criteria: &ChannelFilter) -> &'static str {
+    if criteria.favorites_only && !criteria.query.is_empty() {
+        "No favorite channel matches the search."
+    } else if criteria.favorites_only {
+        "The selected device has no favorite channels."
+    } else {
+        "No channel number or name matches the search."
     }
 }
 
@@ -560,6 +762,80 @@ mod tests {
         assert_eq!(
             lineup_failure_description(LineupFailure::InvalidLineup),
             "The selected device returned an invalid channel lineup."
+        );
+    }
+
+    #[test]
+    fn filter_matches_number_prefix_and_name_substring_case_insensitively() {
+        let mut filter = ChannelFilter::default();
+        assert!(filter.matches("7.1", "Synthetic News", false));
+
+        assert!(filter.set_query("  SYN "));
+        assert!(filter.matches("7.1", "Synthetic News", false));
+        assert!(!filter.matches("8.1", "Protected Test", false));
+
+        assert!(filter.set_query("7"));
+        assert!(filter.matches("7.1", "Synthetic News", false));
+        assert!(filter.matches("71.2", "Other", false));
+        assert!(
+            !filter.matches("17.1", "Other", false),
+            "number matches by prefix only"
+        );
+
+        assert!(
+            !filter.set_query(" 7 "),
+            "an equivalent query is not a change"
+        );
+    }
+
+    #[test]
+    fn favorites_only_hides_non_favorites_and_composes_with_the_query() {
+        let mut filter = ChannelFilter::default();
+        assert!(filter.set_favorites_only(true));
+        assert!(!filter.set_favorites_only(true));
+        assert!(filter.matches("7.1", "Synthetic News", true));
+        assert!(!filter.matches("7.1", "Synthetic News", false));
+
+        assert!(filter.set_query("news"));
+        assert!(filter.matches("7.1", "Synthetic News", true));
+        assert!(!filter.matches("7.1", "Weather", true));
+        assert_eq!(
+            filtered_out_description(&filter),
+            "No favorite channel matches the search."
+        );
+        assert!(filter.set_query(""));
+        assert_eq!(
+            filtered_out_description(&filter),
+            "The selected device has no favorite channels."
+        );
+        assert!(filter.set_favorites_only(false));
+        assert!(filter.set_query("x"));
+        assert_eq!(
+            filtered_out_description(&filter),
+            "No channel number or name matches the search."
+        );
+    }
+
+    #[test]
+    fn presentation_follows_the_lineup_status() {
+        let (snapshot, _, _, _) = ready_snapshot();
+        assert_eq!(
+            LineupPresentation::from_lineup(snapshot.selected_lineup()),
+            LineupPresentation::Ready { any_channels: true }
+        );
+        assert!(LineupPresentation::Ready { any_channels: true }.has_channels());
+        assert!(
+            !LineupPresentation::Ready {
+                any_channels: false
+            }
+            .has_channels()
+        );
+        assert!(!LineupPresentation::Loading.has_channels());
+        assert_eq!(
+            LineupPresentation::from_lineup(&SelectedLineupState::unselected(
+                OperationGeneration::new(1)
+            )),
+            LineupPresentation::Unselected
         );
     }
 }

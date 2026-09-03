@@ -39,6 +39,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fullscreen presentation follows the compositor's confirmation.
 - **Dependency audit and repository linting** — CI now runs `cargo audit` and lints Markdown,
   TOML, YAML, and GitHub Actions workflows with pinned tools and root-level configs.
+- **Channel search and favorites filter** — A search field above the channel list matches a
+  channel number prefix or part of a name, and a star toggle shows favorites only. Filtering
+  hides rows without changing device or channel identity, keeps the highlighted channel when it
+  is still visible, clears the search when another device is selected, and explains an empty
+  result.
+- **Versioned settings** — Balun remembers its window size and maximized state across launches
+  in an atomic, schema-versioned `settings.json` under the platform configuration directory.
+  The same file reserves bounded, credential-free storage for remembered device addresses and
+  user-assigned device names, and a malformed or newer file is reported and left untouched.
+- **Remembered devices** — A tuner found through **Find device by address** is remembered once
+  it answers, and Balun probes those addresses again at the next launch so routed tuners
+  reappear without retyping. Up to 32 addresses are kept; local discovery still waits for
+  Refresh.
+- **Hostname entry** — **Find device by address** also accepts a hostname. It is resolved once
+  on the controller, bounded to five seconds and four usable unicast addresses that are probed
+  one at a time, and remembered by name so it is resolved again at the next launch. A name that
+  cannot be resolved shows a brief notice. The settings schema moves to version 2; version 1
+  files are read and rewritten in place.
 - **Endpoint-free playback errors** — Failures reduce to fixed messages for no tuner available,
   channel unavailable, stream rejected, device or stream unavailable, missing codec or plugin,
   protected channel, and internal error. No native error text, header, or address is retained.
@@ -70,6 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Playback errors name the device and channel** — Failure and connecting messages now say
+  which tuner (friendly name and address) and which channel they refer to, and the diagnostic's
+  inspection line prints the device address. Stream URLs and `DeviceAuth` stay out of every
+  message (ADR-0002).
 - **Build helpers require the playback runtime** — Before a desktop build, every helper checks
   that the GStreamer plugin files behind `playbin3`, `appsrc`, `tsdemux`, `deinterlace`, and
   `gtk4paintablesink` are installed, names the package for each missing one, and warns when the
@@ -122,8 +144,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loopback fake tuner; the packaged codec closure is not yet frozen.
 - **No packages** — Flatpak, deb, rpm, DMG, and winget packaging are planned; the release workflow
   builds the diagnostic only.
-- **No program guide or hostname entry** — Guide data is a v0.2 candidate; hostname entry and
-  remembered devices are planned for v0.1.
+- **No program guide or hostname entry** — Guide data is a v0.2 candidate; hostname entry is
+  planned for v0.1.
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
   decoder, so those channels fail closed and cannot be transcoded.
 
