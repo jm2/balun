@@ -438,6 +438,10 @@ mod tests {
                     diagnostic = native_error_summary(&message);
                     terminal = Some("error");
                 }
+                gst::MessageView::Application(application)
+                    if application.structure().is_some_and(|structure| {
+                        structure.name() == crate::playback::transport::STREAM_STARTED_MESSAGE
+                    }) => {}
                 gst::MessageView::Application(application) => {
                     diagnostic = format!(
                         "application marker {:?}",

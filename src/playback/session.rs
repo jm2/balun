@@ -14,7 +14,7 @@ use tokio::sync::watch;
 use super::PlaybackRuntime;
 use super::pipeline_failure::{self, PlaybackPipelineFailure};
 use super::source_policy::SourcePolicy;
-use super::transport::{PIPELINE_URI, StreamTransport, TransportConfig};
+use super::transport::{PIPELINE_URI, STREAM_STARTED_MESSAGE, StreamTransport, TransportConfig};
 use crate::controller::{OperationGeneration, StreamHandoff, StreamHandoffError, StreamSelection};
 use crate::domain::ChannelKey;
 
@@ -217,6 +217,8 @@ pub enum TuneCompletion {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PipelineEvent {
+    /// The transport pushed its first stream bytes; the live clock may start.
+    StreamStarted,
     Playing,
     Buffering(u8),
     EndOfStream,
@@ -246,6 +248,11 @@ trait PipelineBackend {
         active: &mut Self::Active,
         audio: PlaybackAudioState,
     ) -> Result<(), PlaybackSessionFailure>;
+
+    /// Move a started pipeline from its paused hold to PLAYING. Called once,
+    /// when the stream's first bytes exist, so the running clock starts with
+    /// data rather than with the tuner request.
+    fn play(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure>;
 
     fn stop(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure>;
 }
@@ -553,6 +560,23 @@ impl<B: PipelineBackend> SessionCore<B> {
         }
         let channel_key = active.channel_key.clone();
         match event {
+            PipelineEvent::StreamStarted => {
+                let Some(active) = self.active.as_mut() else {
+                    return;
+                };
+                if let Err(failure) = self.backend.play(&mut active.pipeline) {
+                    let failure = if self.retire_active().is_ok() {
+                        failure
+                    } else {
+                        PlaybackSessionFailure::PipelineTeardown
+                    };
+                    self.publish_state(PlaybackSessionState::Failed {
+                        generation,
+                        channel_key,
+                        failure,
+                    });
+                }
+            }
             PipelineEvent::Playing => {
                 self.publish_state(PlaybackSessionState::Playing {
                     generation,
@@ -748,6 +772,15 @@ impl PipelineBackend for GstreamerBackend {
         let watch = move |_: &gst::Bus, message: &gst::Message| {
             let event = match message.view() {
                 gst::MessageView::Eos(_) => Some(PipelineEvent::EndOfStream),
+                gst::MessageView::Application(application)
+                    if message.src().is_some_and(|source| {
+                        source == watched_pipeline.upcast_ref::<gst::Object>()
+                    }) && application
+                        .structure()
+                        .is_some_and(|structure| structure.name() == STREAM_STARTED_MESSAGE) =>
+                {
+                    Some(PipelineEvent::StreamStarted)
+                }
                 gst::MessageView::Error(_)
                 | gst::MessageView::Element(_)
                 | gst::MessageView::Application(_) => {
@@ -805,7 +838,13 @@ impl PipelineBackend for GstreamerBackend {
             bus_watch: Some(bus_watch),
             armed: true,
         };
-        let start_result = active.pipeline.set_state(gst::State::Playing);
+        // Hold at PAUSED: a live source reaches it without preroll, the
+        // transport starts fetching, and PLAYING (which fixes the running
+        // clock's base time) waits for the first stream bytes. Otherwise the
+        // tuner lock and connection time eat the demuxer's live latency budget
+        // and every later buffer arrives late, which the audio sink renders as
+        // clipped, stuttering sound until the next tune.
+        let start_result = active.pipeline.set_state(gst::State::Paused);
         let source_rejected = active.source_policy.is_rejected();
         let start_failure = if source_rejected {
             PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Internal)
@@ -827,6 +866,14 @@ impl PipelineBackend for GstreamerBackend {
         audio: PlaybackAudioState,
     ) -> Result<(), PlaybackSessionFailure> {
         configure_playbin_audio(&active.pipeline, audio)
+    }
+
+    fn play(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure> {
+        active
+            .pipeline
+            .set_state(gst::State::Playing)
+            .map(|_| ())
+            .map_err(|_| PlaybackSessionFailure::PipelineStart)
     }
 
     fn stop(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure> {
@@ -1165,6 +1212,7 @@ mod tests {
     #[derive(Clone, Debug, Eq, PartialEq)]
     enum Call {
         Start(TuneGeneration, ChannelKey),
+        Play(usize),
         Stop(usize),
     }
 
@@ -1183,6 +1231,7 @@ mod tests {
         next_pipeline: usize,
         fail_start: Option<FakeStartFailure>,
         fail_audio: bool,
+        fail_play: bool,
         fail_stop: bool,
         event_during_start: Option<PipelineEvent>,
         event_during_stop: Option<PipelineEvent>,
@@ -1262,6 +1311,15 @@ mod tests {
                 return Err(PlaybackSessionFailure::PipelineConstruction);
             }
             shared.audio_updates.push((Some(*active), audio));
+            Ok(())
+        }
+
+        fn play(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure> {
+            let mut shared = self.0.0.borrow_mut();
+            if shared.fail_play {
+                return Err(PlaybackSessionFailure::PipelineStart);
+            }
+            shared.calls.push(Call::Play(*active));
             Ok(())
         }
 
@@ -1946,6 +2004,85 @@ mod tests {
 
         drive_context_until(&main_context, || *value.borrow() == 1);
         assert_eq!(*value.borrow(), 1);
+    }
+
+    #[test]
+    fn the_first_stream_bytes_release_the_paused_hold_before_playing() {
+        let control = FakeControl::default();
+        let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+        let mut states = core.borrow().subscribe_state();
+        let request = core
+            .borrow_mut()
+            .begin_tune(selection(&first_key(), 71))
+            .unwrap();
+        let generation = request.generation();
+        core.borrow_mut()
+            .complete_tune(request, Ok(handoff(&first_key(), 71)), events_for(&core))
+            .unwrap();
+        assert!(
+            !control
+                .calls()
+                .iter()
+                .any(|call| matches!(call, Call::Play(_)))
+        );
+
+        control.emit(generation, PipelineEvent::StreamStarted);
+        assert!(matches!(control.calls().last(), Some(Call::Play(0))));
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Connecting {
+                generation,
+                channel_key: first_key(),
+            }
+        );
+
+        control.emit(generation, PipelineEvent::Playing);
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Playing {
+                generation,
+                channel_key: first_key(),
+            }
+        );
+        // A stale notice for a retired generation is ignored.
+        core.borrow_mut().stop().unwrap();
+        control.emit(generation, PipelineEvent::StreamStarted);
+        assert_eq!(
+            control
+                .calls()
+                .iter()
+                .filter(|call| matches!(call, Call::Play(_)))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_failed_play_retires_the_pipeline_and_reports_the_start_failure() {
+        let control = FakeControl::default();
+        control.0.borrow_mut().fail_play = true;
+        let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+        let mut states = core.borrow().subscribe_state();
+        let request = core
+            .borrow_mut()
+            .begin_tune(selection(&first_key(), 71))
+            .unwrap();
+        let generation = request.generation();
+        core.borrow_mut()
+            .complete_tune(request, Ok(handoff(&first_key(), 71)), events_for(&core))
+            .unwrap();
+
+        control.emit(generation, PipelineEvent::StreamStarted);
+        assert_eq!(
+            states.borrow_and_update().clone(),
+            PlaybackSessionState::Failed {
+                generation,
+                channel_key: first_key(),
+                failure: PlaybackSessionFailure::PipelineStart,
+            }
+        );
+        assert!(matches!(control.calls().last(), Some(Call::Stop(0))));
+        assert!(core.borrow().active.is_none());
     }
 
     #[test]

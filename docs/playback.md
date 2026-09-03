@@ -302,7 +302,15 @@ teardown that cannot join both workers fails, quarantines the owner, and
 retains the unjoined transport for the shutdown retry. Cancellation is never
 reported as EOS or as a failure. A live `appsrc` feed does not post `playbin3`
 buffering messages, so the session's buffering state stays reserved for
-runtimes that publish it and the connecting state covers preroll.
+runtimes that publish it and the connecting state covers preroll. The
+session first holds the pipeline at `PAUSED`, which a live source reaches
+without preroll while the transport starts fetching, and requests `PLAYING`
+only when the feeder's first accepted push posts a stream-started notice on
+the bus. The running clock's base time therefore starts with stream bytes
+rather than with the tuner request, so the demuxer's live latency budget
+covers decoding instead of tuner lock; without the hold, a slow lock left
+every later buffer late and the audio sink clipped it into stutter until the
+next tune.
 
 Network-free loopback tests cover accepted configuration, repeated, foreign,
 and retired source rejection, handoff zeroization, worker-thread

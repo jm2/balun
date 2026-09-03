@@ -31,6 +31,10 @@ pub const PIPELINE_URI: &str = "appsrc://balun";
 pub(super) const MAX_PUSH_BYTES: usize = 64 * 1_024;
 pub(super) const TRANSPORT_FAILURE_MESSAGE: &str = "balun-transport-failure";
 pub(super) const TRANSPORT_FAILURE_FIELD: &str = "category";
+/// Posted once, after the feeder's first accepted push, so the session can
+/// start the live clock when stream bytes exist rather than when the tuner
+/// was asked for them.
+pub(super) const STREAM_STARTED_MESSAGE: &str = "balun-stream-started";
 
 const PUSH_BUFFER_SIGNAL: &str = "push-buffer";
 const END_OF_STREAM_SIGNAL: &str = "end-of-stream";
@@ -126,8 +130,9 @@ impl StreamTransport {
         let failure_sink = FailureSink {
             pipeline: pipeline.downgrade(),
         };
+        let started_sink = failure_sink.clone();
         let feeder = WorkerHandle::spawn(FEEDER_THREAD_NAME, move || {
-            run_feeder(&source, feed_receiver);
+            run_feeder(&source, feed_receiver, &started_sink);
         })?;
         let reader_cancellation = cancellation.clone();
         let reader = WorkerHandle::spawn(READER_THREAD_NAME, move || {
@@ -217,21 +222,32 @@ impl WorkerHandle {
     }
 }
 
+/// Posts the transport's own bus messages: fixed failure categories and the
+/// one stream-started notice. Both carry only closed values.
+#[derive(Clone)]
 struct FailureSink {
     pipeline: glib::WeakRef<gst::Pipeline>,
 }
 
 impl FailureSink {
     fn post(&self, failure: PlaybackPipelineFailure) {
+        let structure = gst::Structure::builder(TRANSPORT_FAILURE_MESSAGE)
+            .field(TRANSPORT_FAILURE_FIELD, failure.code())
+            .build();
+        self.post_structure(structure);
+    }
+
+    fn post_started(&self) {
+        self.post_structure(gst::Structure::new_empty(STREAM_STARTED_MESSAGE));
+    }
+
+    fn post_structure(&self, structure: gst::Structure) {
         let Some(pipeline) = self.pipeline.upgrade() else {
             return;
         };
         let Some(bus) = pipeline.bus() else {
             return;
         };
-        let structure = gst::Structure::builder(TRANSPORT_FAILURE_MESSAGE)
-            .field(TRANSPORT_FAILURE_FIELD, failure.code())
-            .build();
         let message = gst::message::Application::builder(structure)
             .src(&pipeline)
             .build();
@@ -385,13 +401,18 @@ async fn send_feed(
     }
 }
 
-fn run_feeder(source: &gst::Element, mut feed: mpsc::Receiver<FeedItem>) {
+fn run_feeder(source: &gst::Element, mut feed: mpsc::Receiver<FeedItem>, started: &FailureSink) {
+    let mut announced = false;
     while let Some(item) = feed.blocking_recv() {
         match item {
             FeedItem::Data(buffer) => {
                 let flow = source.emit_by_name::<gst::FlowReturn>(PUSH_BUFFER_SIGNAL, &[&buffer]);
                 if flow != gst::FlowReturn::Ok {
                     return;
+                }
+                if !announced {
+                    announced = true;
+                    started.post_started();
                 }
             }
             FeedItem::End => {
@@ -404,6 +425,7 @@ fn run_feeder(source: &gst::Element, mut feed: mpsc::Receiver<FeedItem>) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::env;
     use std::process::Command;
 
@@ -430,6 +452,7 @@ mod tests {
         source: gst::Element,
         sink: gst::Element,
         bus: gst::Bus,
+        started: Cell<u32>,
     }
 
     impl FeedFixture {
@@ -449,6 +472,7 @@ mod tests {
                 source,
                 sink,
                 bus,
+                started: Cell::new(0),
             })
         }
 
@@ -458,16 +482,36 @@ mod tests {
         }
 
         fn wait_terminal(&self, timeout: Duration) -> Terminal {
-            let Some(message) = self.bus.timed_pop_filtered(
-                gst::ClockTime::from_nseconds(timeout.as_nanos() as u64),
-                &[
-                    gst::MessageType::Eos,
-                    gst::MessageType::Error,
-                    gst::MessageType::Application,
-                ],
-            ) else {
-                return Terminal::Timeout;
-            };
+            let deadline = Instant::now() + timeout;
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let Some(message) = self.bus.timed_pop_filtered(
+                    gst::ClockTime::from_nseconds(remaining.as_nanos() as u64),
+                    &[
+                        gst::MessageType::Eos,
+                        gst::MessageType::Error,
+                        gst::MessageType::Application,
+                    ],
+                ) else {
+                    return Terminal::Timeout;
+                };
+                if let gst::MessageView::Application(application) = message.view()
+                    && application
+                        .structure()
+                        .is_some_and(|structure| structure.name() == STREAM_STARTED_MESSAGE)
+                {
+                    assert_eq!(
+                        message.src(),
+                        Some(self.pipeline.upcast_ref::<gst::Object>())
+                    );
+                    self.started.set(self.started.get() + 1);
+                    continue;
+                }
+                return self.terminal_of(&message);
+            }
+        }
+
+        fn terminal_of(&self, message: &gst::Message) -> Terminal {
             match message.view() {
                 gst::MessageView::Eos(_) => Terminal::Eos,
                 gst::MessageView::Error(_) => Terminal::NativeError,
@@ -598,6 +642,11 @@ mod tests {
         let transport = fixture.start(handoff(&server.stream_url()), QUICK);
 
         assert_eq!(fixture.wait_terminal(Duration::from_secs(5)), Terminal::Eos);
+        assert_eq!(
+            fixture.started.get(),
+            1,
+            "exactly one stream-started notice precedes the first pushed bytes' EOS"
+        );
         let request = String::from_utf8_lossy(&server.request(Duration::from_secs(3)).unwrap())
             .to_ascii_lowercase();
         assert!(request.starts_with("get /auto/v5.1 http/1.1\r\n"));

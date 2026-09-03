@@ -150,6 +150,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are omitted until lineup HTTP can preserve their scope.
 - **Rust minimum version** — Rust 1.98 is the declared and CI-verified minimum.
 
+### Fixed
+
+- **Smooth audio from the first second** — The pipeline now waits for the first stream bytes
+  before it starts the live clock, so a slow tuner lock no longer leaves every audio buffer late
+  and stuttering until the next channel change.
+
 ### Security
 
 - **Security and privacy review** — Re-audited network admission, persisted state, logs and
