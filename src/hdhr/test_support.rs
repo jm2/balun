@@ -60,8 +60,12 @@ impl ScriptedHttpServer {
                 };
                 // On Windows, accepted sockets inherit non-blocking status from the listener.
                 if stream.set_nonblocking(false).is_err()
-                    || stream.set_read_timeout(Some(Duration::from_secs(2))).is_err()
-                    || stream.set_write_timeout(Some(Duration::from_secs(2))).is_err()
+                    || stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .is_err()
+                    || stream
+                        .set_write_timeout(Some(Duration::from_secs(2)))
+                        .is_err()
                 {
                     return;
                 }
