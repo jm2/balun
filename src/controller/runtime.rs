@@ -1959,7 +1959,11 @@ mod tests {
     use super::*;
     use crate::discovery::{DiscoveryMethod, DiscoveryObservation, LocatorOrigin};
 
-    const WAIT: Duration = Duration::from_secs(3);
+    /// Upper bound on every positive wait in these tests. It only shortens a
+    /// failing run, so it is generous: on the Windows CI runners a scripted
+    /// panic inside the controller thread symbolizes its backtrace before the
+    /// task can be joined, which has taken longer than three seconds.
+    const WAIT: Duration = Duration::from_secs(10);
 
     #[derive(Clone)]
     struct ScriptedService {
