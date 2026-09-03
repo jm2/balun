@@ -4554,6 +4554,14 @@ mod tests {
         })
         .await;
 
+        // The scripted panic runs on the controller thread, where the default
+        // hook symbolizes a backtrace before unwinding; on the Windows runners
+        // that has taken longer than WAIT and starved the projection this test
+        // waits for. Report the panic without a backtrace for its duration.
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("scripted panic (backtrace suppressed by the test): {info}");
+        }));
         handle
             .try_send(ControllerCommand::SelectDevice(first_id()))
             .unwrap();
@@ -4563,6 +4571,7 @@ mod tests {
                 == SelectedLineupStatus::Failed(LineupFailure::Internal)
         })
         .await;
+        std::panic::set_hook(previous_hook);
 
         assert!(failed.selected_lineup().channels().is_empty());
         controller.shutdown().unwrap();
