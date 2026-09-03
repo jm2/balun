@@ -122,7 +122,7 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
 - [ ] **P3.1 — Add desktop metadata and assets.** Land the icon, desktop entry,
   AppStream metadata, and a screenshot with exact Balun identity data.
 
-- [ ] **P3.2 — Build Flatpak x86_64 and aarch64.** Generate locked sources,
+- [x] **P3.2 — Build Flatpak x86_64 and aarch64.** Generate locked sources,
   stage the capability-derived runtime, keep the reviewed permission policy,
   and validate the reopened bundle.
 
