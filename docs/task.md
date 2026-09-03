@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **8/30 (26.7%)** records complete. This is a dependency ledger,
+Current status: **9/30 (30.0%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -38,7 +38,7 @@ most evidence records.
 The Linux live-hardware proofs recorded P0.2, P0.4, P0.6, and P0.7 against
 the primary-site tuners on 2026-09-03. P0.3 needs the macOS host, P0.5 waits
 on the Windows and macOS factory sets, and P0.8 is the next hardware record.
-P1.1, P1.2, and P1.5 are complete.
+P1.1, P1.2, P1.3, and P1.5 are complete.
 
 ## P0 — Evidence and contract
 
@@ -81,7 +81,7 @@ P1.1, P1.2, and P1.5 are complete.
   exact targets at startup and accept a hostname resolved to a bounded set of
   unicast addresses; neither becomes prefix-scan authority.
 
-- [ ] **P1.3 — Let errors and diagnostics name the device.** Per ADR-0002,
+- [x] **P1.3 — Let errors and diagnostics name the device.** Per ADR-0002,
   failure copy and `--inspect` output may show the device name, address, and
   DeviceID suffix; `DeviceAuth` and credentials stay redacted.
 

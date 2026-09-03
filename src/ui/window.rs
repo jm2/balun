@@ -389,6 +389,7 @@ pub(crate) fn build(
         &handle,
         &player_view,
         layout.player_navigation(),
+        &accepted,
     );
     connect_fullscreen(&window, &player_view, &layout);
     spawn_snapshot_reducer(
@@ -419,14 +420,20 @@ fn connect_channel_activation(
     controller: &ControllerHandle,
     player_view: &Rc<player_view::PlayerView>,
     navigation: PlayerNavigation,
+    accepted: &Rc<RefCell<Arc<ApplicationSnapshot>>>,
 ) {
     let controller = controller.clone();
     let player_view = Rc::clone(player_view);
+    let accepted = Rc::clone(accepted);
     sidebar.connect_channel_activated(move |selection| {
+        // Name the device and channel from the accepted snapshot so progress
+        // and failure copy can say which tuner and channel they mean.
+        let context =
+            player_view::TuneContext::from_snapshot(&accepted.borrow(), selection.channel_key());
         // Present the connecting, video, or failure state on compact layouts
         // instead of leaving the player hidden behind the channel list.
         navigation.show_player();
-        player_view.activate_channel(&controller, selection);
+        player_view.activate_channel(&controller, selection, context);
     });
 }
 
@@ -1786,6 +1793,7 @@ mod tests {
                     &handle,
                     &player_view,
                     layout.player_navigation(),
+                    &accepted,
                 );
                 connect_fullscreen(&window, &player_view, &layout);
                 spawn_snapshot_reducer(

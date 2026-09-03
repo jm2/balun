@@ -93,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Playback errors name the device and channel** — Failure and connecting messages now say
+  which tuner (friendly name and address) and which channel they refer to, and the diagnostic's
+  inspection line prints the device address. Stream URLs and `DeviceAuth` stay out of every
+  message (ADR-0002).
 - **Build helpers require the playback runtime** — Before a desktop build, every helper checks
   that the GStreamer plugin files behind `playbin3`, `appsrc`, `tsdemux`, `deinterlace`, and
   `gtk4paintablesink` are installed, names the package for each missing one, and warns when the
