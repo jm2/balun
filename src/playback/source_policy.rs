@@ -95,11 +95,15 @@ impl SourcePolicy {
             });
 
             if args.len() != 2 || !valid_emitter {
-                callback_state.reject(playbin.as_ref(), source.as_ref());
+                callback_state.reject(
+                    playbin.as_ref(),
+                    source.as_ref(),
+                    "source-setup arrived with unexpected arguments or from another pipeline",
+                );
                 return None;
             }
             let Some(source) = source else {
-                callback_state.reject(playbin.as_ref(), None);
+                callback_state.reject(playbin.as_ref(), None, "source-setup carried no element");
                 return None;
             };
             callback_state.inspect_source(
@@ -172,23 +176,37 @@ impl Drop for SourcePolicy {
 impl SourcePolicyState {
     fn inspect_source(&self, playbin: &gst::Pipeline, source: &gst::Element) {
         if self.rejected.load(Ordering::Acquire) || self.retired.load(Ordering::Acquire) {
-            self.reject(Some(playbin), Some(source));
+            self.reject(
+                Some(playbin),
+                Some(source),
+                "policy already rejected or retired",
+            );
             return;
         }
-        if source.factory().as_ref() != Some(&self.expected_factory)
-            || !configure_and_verify(source)
-        {
-            self.reject(Some(playbin), Some(source));
+        if source.factory().as_ref() != Some(&self.expected_factory) {
+            self.reject(
+                Some(playbin),
+                Some(source),
+                "source is not the exact appsrc factory",
+            );
+            return;
+        }
+        if !configure_and_verify(source) {
+            self.reject(
+                Some(playbin),
+                Some(source),
+                "appsrc refused the required configuration",
+            );
             return;
         }
 
         let Ok(mut accepted) = self.accepted_source.lock() else {
-            self.reject(Some(playbin), Some(source));
+            self.reject(Some(playbin), Some(source), "accepted-source lock poisoned");
             return;
         };
         if accepted.is_some() || self.rejected.load(Ordering::Acquire) {
             drop(accepted);
-            self.reject(Some(playbin), Some(source));
+            self.reject(Some(playbin), Some(source), "a source was already accepted");
             return;
         }
         let pending = self
@@ -198,7 +216,11 @@ impl SourcePolicyState {
             .and_then(|mut pending| pending.take());
         let Some(pending) = pending else {
             drop(accepted);
-            self.reject(Some(playbin), Some(source));
+            self.reject(
+                Some(playbin),
+                Some(source),
+                "no pending handoff for this source",
+            );
             return;
         };
         match StreamTransport::start(pending.handoff, source.clone(), playbin, pending.config) {
@@ -209,15 +231,31 @@ impl SourcePolicyState {
                     *slot = Some(transport);
                 }
             }
-            Err(_) => {
+            Err(error) => {
                 drop(accepted);
-                self.reject(Some(playbin), Some(source));
+                tracing::warn!(target: "balun::playback", ?error, "stream transport failed to start");
+                self.reject(
+                    Some(playbin),
+                    Some(source),
+                    "stream transport failed to start",
+                );
             }
         }
     }
 
-    fn reject(&self, playbin: Option<&gst::Pipeline>, source: Option<&gst::Element>) {
+    fn reject(
+        &self,
+        playbin: Option<&gst::Pipeline>,
+        source: Option<&gst::Element>,
+        reason: &'static str,
+    ) {
         let first_rejection = !self.rejected.swap(true, Ordering::AcqRel);
+        tracing::warn!(
+            target: "balun::playback",
+            reason,
+            first_rejection,
+            "source policy rejected playbin3's source"
+        );
         if let Some(source) = source {
             source.set_locked_state(true);
             let _ = source.set_state(gst::State::Null);

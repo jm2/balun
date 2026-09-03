@@ -96,7 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Endpoint-free playback errors** — Failures reduce to fixed messages for no tuner available,
   channel unavailable, stream rejected, device or stream unavailable, missing codec or plugin,
   protected channel, and internal error. A missing decoder is named from a closed list, such as
-  AC-4 audio or HEVC video. No native error text, header, or address is retained.
+  AC-4 audio or HEVC video. No native error text, header, or address is retained in the
+  application state; the native error goes to the log.
 - **Fake HDHomeRun end-to-end tests** — A loopback fake device with UDP discovery, metadata, and
   an MPEG-TS stream server drives the real controller, transport, and session from discovery
   through lineup, DRM refusal, tuning, channel switching, and observed tuner release.
@@ -106,6 +107,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   must stop playback through the production wiring.
 - **Synthetic playback acceptance** — A checked-in MPEG-2 transport-stream fixture and an isolated
   headless-Wayland harness prove decoding, rendering, EOS, and teardown on Linux CI.
+- **Diagnostic logging** — Balun logs discovery, lineup, tune, and playback outcomes to standard
+  error, `info` by default and `RUST_LOG=balun=debug` for detail, including the native GStreamer
+  error, HTTP status, or source-policy reason behind a playback failure. Stream URLs, credentials,
+  and query values are never logged.
 - **Installed-runtime playback probes** — `--probe-playback` (`-ProbePlayback` on Windows) checks
   the seven required GStreamer factories and the constant-URI `appsrc` contract, then prints the
   installed decoders for each broadcast stream type and the audio sinks, so each platform's codec

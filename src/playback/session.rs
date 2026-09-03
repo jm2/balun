@@ -361,6 +361,7 @@ impl<B: PipelineBackend> SessionCore<B> {
         if self.shut_down {
             return Err(PlaybackSessionFailure::ShutDown);
         }
+        tracing::info!(target: "balun::playback", channel = ?selection.channel_key(), "tune requested");
         if self.teardown_failed {
             return Err(PlaybackSessionFailure::PipelineTeardown);
         }
@@ -559,6 +560,7 @@ impl<B: PipelineBackend> SessionCore<B> {
             return;
         }
         let channel_key = active.channel_key.clone();
+        tracing::debug!(target: "balun::playback", ?event, generation = generation.get(), "pipeline event");
         match event {
             PipelineEvent::StreamStarted => {
                 let Some(active) = self.active.as_mut() else {
@@ -770,6 +772,7 @@ impl PipelineBackend for GstreamerBackend {
         ))?;
         let watched_pipeline = pipeline.clone();
         let watch = move |_: &gst::Bus, message: &gst::Message| {
+            pipeline_failure::log_pipeline_message(message);
             let event = match message.view() {
                 gst::MessageView::Eos(_) => Some(PipelineEvent::EndOfStream),
                 gst::MessageView::Application(application)
@@ -804,6 +807,9 @@ impl PipelineBackend for GstreamerBackend {
                 event,
                 Some(PipelineEvent::EndOfStream | PipelineEvent::Error(_))
             );
+            if let Some(PipelineEvent::Error(failure)) = event {
+                tracing::warn!(target: "balun::playback", category = %failure, "playback failed");
+            }
             if let Some(event) = event {
                 events(generation, event);
             }

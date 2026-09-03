@@ -135,6 +135,7 @@ impl From<DeviceInspectionError> for CliError {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    balun::logging::init();
     let Some(cli) = parse_cli(env::args().skip(1))? else {
         println!("{USAGE}");
         return Ok(());

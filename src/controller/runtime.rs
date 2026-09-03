@@ -752,7 +752,11 @@ impl ControllerActor {
                     });
                 }
                 ActorEvent::Command(Some(ActorCommand::RequestStream { selection, reply })) => {
-                    let _ = reply.send(self.resolve_stream_handoff(selection));
+                    let handoff = self.resolve_stream_handoff(selection);
+                    if let Err(error) = &handoff {
+                        tracing::warn!(?error, "stream handoff refused");
+                    }
+                    let _ = reply.send(handoff);
                 }
                 ActorEvent::Command(Some(ActorCommand::ResolveHostname { target, reply })) => {
                     // Resolution runs beside the actor so a slow resolver never
@@ -849,6 +853,7 @@ impl ControllerActor {
                     DiscoveryKind::Routed,
                     DiscoveryFailure::RoutedProposalChanged,
                 );
+                tracing::warn!(status = ?self.discovery.status(), "discovery failed");
             }
             Some(scope) => {
                 let generation = self.next_discovery_generation()?;
@@ -1064,6 +1069,7 @@ impl ControllerActor {
                 DiscoveryKind::Exact,
                 DiscoveryFailure::ExactTargetLimitReached,
             );
+            tracing::warn!(status = ?self.discovery.status(), "discovery failed");
             self.publish()?;
             return Ok(());
         }
@@ -1325,6 +1331,7 @@ impl ControllerActor {
                             completion.scope.kind(),
                             DiscoveryFailure::Internal,
                         );
+                        tracing::warn!(status = ?self.discovery.status(), "discovery failed");
                     }
                 }
             }
@@ -1334,6 +1341,7 @@ impl ControllerActor {
                     completion.scope.kind(),
                     failure,
                 );
+                tracing::warn!(status = ?self.discovery.status(), "discovery failed");
             }
         }
         self.publish()?;
@@ -1473,6 +1481,7 @@ impl ControllerActor {
                     generation,
                     LineupFailure::NoSupportedLocator,
                 );
+                tracing::warn!(status = ?self.selected_lineup.status(), "lineup failed");
                 return None;
             }
             Err(DeviceSnapshotTargetError::TooManyLocators { .. }) => {
@@ -1488,6 +1497,7 @@ impl ControllerActor {
                 generation,
                 LineupFailure::NoSupportedLocator,
             );
+            tracing::warn!(status = ?self.selected_lineup.status(), "lineup failed");
             return None;
         }
 
@@ -1557,6 +1567,7 @@ impl ControllerActor {
                         active.generation,
                         LineupFailure::Internal,
                     );
+                    tracing::warn!(status = ?self.selected_lineup.status(), "lineup failed");
                     self.publish()?;
                 }
             }
@@ -1582,6 +1593,7 @@ impl ControllerActor {
                         completion.generation,
                         LineupFailure::Internal,
                     );
+                    tracing::warn!(status = ?self.selected_lineup.status(), "lineup failed");
                 }
             }
             Ok(_) => {
@@ -1591,6 +1603,7 @@ impl ControllerActor {
                     completion.generation,
                     LineupFailure::IdentityMismatch,
                 );
+                tracing::warn!(status = ?self.selected_lineup.status(), "lineup failed");
             }
             Err(error) => {
                 self.selected_snapshot = None;
@@ -1603,6 +1616,7 @@ impl ControllerActor {
                         supported_locator_count,
                     ),
                 );
+                tracing::warn!(status = ?self.selected_lineup.status(), "lineup failed");
             }
         }
         self.publish()?;
