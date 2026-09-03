@@ -138,6 +138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Parallel release builds** — The release profile now keeps Cargo's default codegen units with
+  thin LTO, matching Tributary, so release and playback-probe builds spread across cores instead
+  of optimizing the main crate on one thread.
 - **Playback errors name the device and channel** — Failure and connecting messages now say
   which tuner (friendly name and address) and which channel they refer to, and the diagnostic's
   inspection line prints the device address. Stream URLs and `DeviceAuth` stay out of every

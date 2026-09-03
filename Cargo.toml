@@ -56,7 +56,6 @@ rustix = { version = "1.1", features = ["fs", "process"] }
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [profile.release]
-codegen-units = 1
 lto = "thin"
 opt-level = 3
 strip = true
