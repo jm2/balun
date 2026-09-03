@@ -1,5 +1,7 @@
 //! Closed, endpoint-free classification of native playback failures.
 
+use std::fmt;
+
 use gst::prelude::*;
 use gstreamer as gst;
 use thiserror::Error;
@@ -8,6 +10,90 @@ use super::source_policy;
 use super::transport::{TRANSPORT_FAILURE_FIELD, TRANSPORT_FAILURE_MESSAGE};
 
 const MISSING_PLUGIN_MESSAGE: &str = "missing-plugin";
+const MISSING_PLUGIN_DETAIL_FIELD: &str = "detail";
+
+/// Closed list of stream types a missing decoder can be reported for.
+///
+/// Only the media type name and MPEG version of the reported caps are read;
+/// every other value, field, or text maps to [`Self::Unknown`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum MissingMedia {
+    Mpeg2Video,
+    H264Video,
+    HevcVideo,
+    MpegAudio,
+    AacAudio,
+    Ac3Audio,
+    Eac3Audio,
+    Ac4Audio,
+    /// The stream type was not identified or is outside the table.
+    Unknown,
+}
+
+impl MissingMedia {
+    /// Every value in stable order.
+    pub const ALL: [Self; 9] = [
+        Self::Mpeg2Video,
+        Self::H264Video,
+        Self::HevcVideo,
+        Self::MpegAudio,
+        Self::AacAudio,
+        Self::Ac3Audio,
+        Self::Eac3Audio,
+        Self::Ac4Audio,
+        Self::Unknown,
+    ];
+
+    /// Plain-language name for user-facing copy, or `None` for
+    /// [`Self::Unknown`].
+    #[must_use]
+    pub const fn description(self) -> Option<&'static str> {
+        match self {
+            Self::Mpeg2Video => Some("MPEG-2 video"),
+            Self::H264Video => Some("H.264 video"),
+            Self::HevcVideo => Some("HEVC video"),
+            Self::MpegAudio => Some("MPEG audio"),
+            Self::AacAudio => Some("AAC audio"),
+            Self::Ac3Audio => Some("AC-3 audio"),
+            Self::Eac3Audio => Some("E-AC-3 audio"),
+            Self::Ac4Audio => Some("AC-4 audio"),
+            Self::Unknown => None,
+        }
+    }
+
+    fn from_caps(caps: &gst::CapsRef) -> Self {
+        let Some(structure) = caps.structure(0) else {
+            return Self::Unknown;
+        };
+        let name: &str = structure.name();
+        let mpeg_version = structure.get::<i32>("mpegversion").ok();
+        match (name, mpeg_version) {
+            ("video/mpeg", Some(2)) => Self::Mpeg2Video,
+            ("video/x-h264", _) => Self::H264Video,
+            ("video/x-h265", _) => Self::HevcVideo,
+            ("audio/mpeg", Some(1)) => Self::MpegAudio,
+            ("audio/mpeg", Some(2 | 4)) => Self::AacAudio,
+            ("audio/x-ac3", _) => Self::Ac3Audio,
+            ("audio/x-eac3", _) => Self::Eac3Audio,
+            ("audio/x-ac4", _) => Self::Ac4Audio,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn from_missing_plugin(element: &gst::message::Element) -> Self {
+        element
+            .structure()
+            .and_then(|structure| structure.get::<gst::Caps>(MISSING_PLUGIN_DETAIL_FIELD).ok())
+            .map_or(Self::Unknown, |caps| Self::from_caps(&caps))
+    }
+}
+
+impl fmt::Display for MissingMedia {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.description().unwrap_or("an unidentified stream type"))
+    }
+}
 
 /// URL-free category for a native playback pipeline or transport failure.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -25,9 +111,10 @@ pub enum PlaybackPipelineFailure {
     /// The stream request could not connect, receive headers, or keep reading.
     #[error("the selected tuner is offline or unreachable")]
     Offline,
-    /// GStreamer reported an exact missing codec or plugin condition.
-    #[error("a required playback codec or plugin is unavailable")]
-    MissingCodecOrPlugin,
+    /// GStreamer reported an exact missing codec or plugin condition, naming
+    /// the stream type when its caps were in the closed table.
+    #[error("a required playback codec or plugin is unavailable ({0})")]
+    MissingCodecOrPlugin(MissingMedia),
     /// GStreamer reported that the stream could not be decrypted.
     #[error("the selected channel is protected")]
     Protected,
@@ -43,7 +130,7 @@ impl PlaybackPipelineFailure {
         Self::ChannelMissing,
         Self::HttpRejected,
         Self::Offline,
-        Self::MissingCodecOrPlugin,
+        Self::MissingCodecOrPlugin(MissingMedia::Unknown),
         Self::Protected,
         Self::Internal,
     ];
@@ -55,7 +142,7 @@ impl PlaybackPipelineFailure {
             Self::ChannelMissing => 2,
             Self::HttpRejected => 3,
             Self::Offline => 4,
-            Self::MissingCodecOrPlugin => 5,
+            Self::MissingCodecOrPlugin(_) => 5,
             Self::Protected => 6,
             Self::Internal => 7,
         }
@@ -68,7 +155,7 @@ impl PlaybackPipelineFailure {
             2 => Some(Self::ChannelMissing),
             3 => Some(Self::HttpRejected),
             4 => Some(Self::Offline),
-            5 => Some(Self::MissingCodecOrPlugin),
+            5 => Some(Self::MissingCodecOrPlugin(MissingMedia::Unknown)),
             6 => Some(Self::Protected),
             7 => Some(Self::Internal),
             _ => None,
@@ -79,7 +166,8 @@ impl PlaybackPipelineFailure {
 /// Reduce one bus message from the exact owned pipeline to a fixed category.
 ///
 /// Native error and debug text, source names, details, and every structure
-/// field other than the transport marker's bounded code are ignored.
+/// field other than the transport marker's bounded code and the missing
+/// plugin's media type are ignored.
 pub(super) fn classify_pipeline_message(
     message: &gst::MessageRef,
     pipeline: &gst::Pipeline,
@@ -90,7 +178,9 @@ pub(super) fn classify_pipeline_message(
             if native.matches(gst::CoreError::MissingPlugin)
                 || native.matches(gst::StreamError::CodecNotFound)
             {
-                Some(PlaybackPipelineFailure::MissingCodecOrPlugin)
+                Some(PlaybackPipelineFailure::MissingCodecOrPlugin(
+                    MissingMedia::Unknown,
+                ))
             } else if native.matches(gst::StreamError::Decrypt)
                 || native.matches(gst::StreamError::DecryptNokey)
             {
@@ -100,7 +190,9 @@ pub(super) fn classify_pipeline_message(
             }
         }
         gst::MessageView::Element(element) if element.has_name(MISSING_PLUGIN_MESSAGE) => {
-            Some(PlaybackPipelineFailure::MissingCodecOrPlugin)
+            Some(PlaybackPipelineFailure::MissingCodecOrPlugin(
+                MissingMedia::from_missing_plugin(element),
+            ))
         }
         gst::MessageView::Application(application) => {
             if message.src() != Some(pipeline.upcast_ref::<gst::Object>()) {
@@ -274,7 +366,7 @@ mod tests {
                     &source,
                     poison_details(200_u32),
                 ),
-                PlaybackPipelineFailure::MissingCodecOrPlugin,
+                PlaybackPipelineFailure::MissingCodecOrPlugin(MissingMedia::Unknown),
             ),
             (
                 error_message(
@@ -282,7 +374,7 @@ mod tests {
                     &source,
                     poison_details(200_u32),
                 ),
-                PlaybackPipelineFailure::MissingCodecOrPlugin,
+                PlaybackPipelineFailure::MissingCodecOrPlugin(MissingMedia::Unknown),
             ),
             (
                 error_message(gst::StreamError::Decrypt, &source, poison_details(200_u32)),
@@ -309,7 +401,100 @@ mod tests {
         let message = gst::message::Element::builder(marker).src(&source).build();
         assert_eq!(
             classify_pipeline_message(&message, &pipeline),
-            Some(PlaybackPipelineFailure::MissingCodecOrPlugin)
+            Some(PlaybackPipelineFailure::MissingCodecOrPlugin(
+                MissingMedia::Unknown
+            ))
+        );
+    }
+
+    #[test]
+    fn missing_plugin_details_map_to_the_closed_media_table() {
+        let Some(pipeline) = pipeline() else {
+            return;
+        };
+        let source = gst::ElementFactory::make("fakesrc").build().unwrap();
+        source.set_property("name", SECRET_TOKEN);
+        let cases = [
+            (
+                gst::Caps::builder("audio/x-ac4").build(),
+                MissingMedia::Ac4Audio,
+            ),
+            (
+                gst::Caps::builder("video/x-h265").build(),
+                MissingMedia::HevcVideo,
+            ),
+            (
+                gst::Caps::builder("video/x-h264").build(),
+                MissingMedia::H264Video,
+            ),
+            (
+                gst::Caps::builder("audio/x-ac3").build(),
+                MissingMedia::Ac3Audio,
+            ),
+            (
+                gst::Caps::builder("audio/x-eac3").build(),
+                MissingMedia::Eac3Audio,
+            ),
+            (
+                gst::Caps::builder("video/mpeg")
+                    .field("mpegversion", 2_i32)
+                    .build(),
+                MissingMedia::Mpeg2Video,
+            ),
+            (
+                gst::Caps::builder("audio/mpeg")
+                    .field("mpegversion", 4_i32)
+                    .build(),
+                MissingMedia::AacAudio,
+            ),
+            (
+                gst::Caps::builder("audio/mpeg")
+                    .field("mpegversion", 1_i32)
+                    .build(),
+                MissingMedia::MpegAudio,
+            ),
+            (
+                gst::Caps::builder("video/mpeg")
+                    .field("mpegversion", 4_i32)
+                    .build(),
+                MissingMedia::Unknown,
+            ),
+            (
+                gst::Caps::builder("video/x-secret")
+                    .field("uri", SECRET_URI)
+                    .build(),
+                MissingMedia::Unknown,
+            ),
+            (gst::Caps::new_empty(), MissingMedia::Unknown),
+        ];
+        for (caps, expected) in cases {
+            let marker = gst::Structure::builder(MISSING_PLUGIN_MESSAGE)
+                .field("type", "decoder")
+                .field("name", SECRET_URI)
+                .field("detail", &caps)
+                .build();
+            let message = gst::message::Element::builder(marker).src(&source).build();
+            let failure = classify_pipeline_message(&message, &pipeline);
+            assert_eq!(
+                failure,
+                Some(PlaybackPipelineFailure::MissingCodecOrPlugin(expected)),
+                "{caps:?}"
+            );
+            let text = failure.unwrap().to_string();
+            assert!(
+                !text.contains(SECRET_TOKEN) && !text.contains("192"),
+                "{text}"
+            );
+        }
+        for media in MissingMedia::ALL {
+            assert_eq!(
+                media.description().is_none(),
+                media == MissingMedia::Unknown
+            );
+        }
+        assert_eq!(
+            PlaybackPipelineFailure::MissingCodecOrPlugin(MissingMedia::Ac4Audio).to_string(),
+            "a required playback codec or plugin is unavailable (AC-4 audio)"
         );
     }
 
