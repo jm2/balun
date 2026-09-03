@@ -172,6 +172,31 @@ Audio sinks: `pulsesink` (selected by `autoaudiosink`), `alsasink`,
 GStreamer 1.28.6 except `gtk4paintablesink` from gst-plugins-rs 0.15.2. The
 Windows and macOS inventories from the same probe complete P0.5.
 
+### Windows decoder and sink inventory
+
+`scripts\build-windows.ps1 -ProbePlayback` on the Windows development host
+(MSYS2 CLANG64, GStreamer 1.28.6, 2026-09-03) printed the following. Highest-
+ranked factory first; Direct3D decoders outrank the software ones.
+
+| Stream type | Decoders present |
+| --- | --- |
+| MPEG-2 video | `avdec_mpeg2video` (libav) |
+| H.264 video | `d3d12h264dec`, `d3d11h264dec`, `avdec_h264` (libav), `openh264dec` |
+| HEVC video | `d3d12h265dec`, `d3d11h265dec`, `avdec_h265` (libav), `libde265dec` |
+| MPEG-1/2 audio | `mpg123audiodec`, `mfmp3dec` (Media Foundation), `avdec_mp2float` (libav) |
+| AAC audio | `avdec_aac` (libav), `faad`, `mfaacdec` (Media Foundation), `fdkaacdec` |
+| AC-3 audio | `avdec_ac3` (libav) |
+| E-AC-3 audio | `avdec_eac3` (libav) |
+| AC-4 audio | none |
+
+Audio sinks: `wasapi2sink` (selected by `autoaudiosink`), `wasapisink`,
+`waveformsink`, `openalsink`, `directsoundsink`. The foundation factories all
+come from GStreamer 1.28.6 except `gtk4paintablesink` from gst-plugins-rs
+0.15.3. Unlike the Linux host, Windows can decode HEVC video, so an ATSC 3.0
+channel there fails closed on AC-4 audio alone; E-AC-3 is also decodable
+but no such channel has been tuned on record. The macOS inventory is the
+remaining half of P0.5.
+
 ## In-band guide spike
 
 On 2026-09-03 the HDHomeRun CONNECT's stream forms were each captured for
@@ -252,7 +277,7 @@ compatibility for the two listed model/firmware pairs, live ATSC 1.0
 playback with audio on one Windows host and one Linux host, and the Linux
 tune, switch, and release budgets. They do not yet establish:
 
-- The Windows and macOS decoder sets, or HEVC and E-AC-3 playback.
+- The macOS decoder set, and HEVC or E-AC-3 playback on any platform.
 - Protected-channel playback.
 - Secondary-site HDHR3-PRIME or HDHR5-4K behavior.
 - UniFi Site Magic, WireGuard, or other routed multi-site discovery.
