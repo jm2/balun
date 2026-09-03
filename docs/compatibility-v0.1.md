@@ -124,7 +124,7 @@ wired host and vary with the broadcast's group-of-pictures length.
 | Measurement | Observed |
 | --- | --- |
 | Controller stream handoff | under 1 ms |
-| First decoded video frame after PLAYING | 0.6 s to 1.3 s |
+| First decoded video frame after PLAYING (measured before the paused hold; to be re-taken) | 0.6 s to 1.3 s |
 | Stable video and audio decode after PLAYING | about 1.3 s |
 | Switch to a second channel (retire, handoff, first frame) | 0.64 s |
 | Client-side tuner release (NULL settled and transport joined) | under 7 ms |
