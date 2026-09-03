@@ -133,10 +133,10 @@ are complete; P2.2 and P4.3 are in review, and P2.3 is in progress.
 - [ ] **P3.4 — Build the macOS arm64 app and DMG.** Complete the app tree,
   runtime closure, Mach-O inspection, signing policy, and reopened DMG check.
 
-- [x] **P3.5 — Complete release automation.** Build every package from one
-  signed annotated tag, require an exact artifact inventory and checksums,
-  create a draft release, and confine release-write authority to the final
-  no-source job.
+- [x] **P3.5 — Complete release automation.** Build every configured release
+  artifact from one signed annotated tag, require an exact artifact inventory
+  and checksums, create a draft release, and confine release-write authority to
+  the final no-source job.
 
 - [x] **P3.6 — Harden CI for packages.** Add the dependency audit and
   Markdown, TOML, YAML, and GitHub Actions linting.

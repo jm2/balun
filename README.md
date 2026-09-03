@@ -14,9 +14,9 @@ merged across devices, no stream URL ever reaches the user interface, and the me
 receives neither a device address nor a stream URL. Playback errors may name the device and its
 address so you know which tuner failed.
 
-> **Pre-alpha.** Balun plays live TV on development builds (verified on Windows against real
-> tuners), but there are no packages yet and Linux and macOS live-device acceptance is still
-> open. The countable status is in [`docs/task.md`](docs/task.md).
+> **Pre-alpha.** Balun plays live TV on development builds (verified on Windows and Linux
+> against real tuners), but there are no packages yet and macOS live-device acceptance is
+> still open. The countable status is in [`docs/task.md`](docs/task.md).
 
 ## Features
 
