@@ -10,6 +10,7 @@ mod routed;
 mod routes;
 mod types;
 
+pub use approval::{RoutedProposalOriginSummary, RoutedProposalSummary, RoutedScanTrigger};
 pub use client::{
     DiscoveryClient, DiscoveryError, DiscoveryObservation, DiscoveryReport, DiscoveryStats,
     InvalidProbeConfig, ProbeConfig, ProbeIssue,

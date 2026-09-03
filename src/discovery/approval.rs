@@ -18,6 +18,15 @@ mod run;
 mod store;
 mod watch;
 
+#[cfg(target_os = "linux")]
+pub(crate) use controller::RoutedObserverCoordinator;
+#[cfg(target_os = "linux")]
+pub(crate) use controller::runner::{
+    CompletedRoutedRun, LinuxObserverPairFactory, MonitoredRoutedDiscovery, MonitoredRoutedError,
+    MonitoredRoutedRun, PinnedSocketProber, SystemRoutedClock,
+};
+pub(crate) use store::{ApprovalStore, StoreError, StorePaths, StoredRoutedProposal};
+
 use std::collections::BTreeSet;
 use std::fmt;
 use std::time::Duration;
@@ -207,6 +216,7 @@ struct ResolvedRouteCandidate {
 ///
 /// It retains every candidate origin and its resolved active tunnel binding.
 /// Default debug output exposes only bounded counts and a redacted digest.
+#[derive(Clone)]
 pub struct RoutedScanProposal {
     fingerprint: RouteFingerprint,
     targets: ApprovedIpv4Targets,
@@ -723,7 +733,7 @@ impl fmt::Debug for RoutedRunId {
 }
 
 /// Why a remembered approval is being considered for a new scan.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RoutedScanTrigger {
     /// A startup, timer, or debounced network-change request.
     Automatic,

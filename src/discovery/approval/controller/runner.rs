@@ -565,6 +565,17 @@ impl<F: ObserverPairFactory, P: RoutedTargetProber> MonitoredRoutedDiscovery<F, 
         }))
     }
 
+    /// Forget every remembered approval, then rebaseline.
+    pub(crate) async fn revoke_all(&mut self) -> Result<(), MonitoredRoutedError> {
+        let result = self
+            .store
+            .revoke_all()
+            .map(|_| ())
+            .map_err(MonitoredRoutedError::Store);
+        self.restore_observation().await;
+        result
+    }
+
     /// Wait until either observed source requires replacement, then
     /// rebaseline. Returns whether observation is healthy afterwards.
     pub(crate) async fn await_replacement(&mut self) -> bool {

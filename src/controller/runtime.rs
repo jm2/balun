@@ -16,17 +16,26 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::resolution::HostnameResolutionReceiver;
+use super::routed::{
+    RoutedDiscoveryService, RoutedOriginsReceiver, RoutedProposal, RoutedRunOutcome,
+    UnavailableRoutedDiscovery,
+};
 use super::{
     ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryKind,
     DiscoveryState, DiscoveryStatus, LineupFailure, OperationGeneration, SelectedLineupState,
     SelectedLineupStatus, SnapshotRevision, StateError, StreamHandoff, StreamHandoffError,
     StreamHandoffReceiver, StreamSelection,
 };
+use super::{
+    RoutedApprovalToken, RoutedAvailability, RoutedDiscoveryState, RoutedProposalState,
+    RoutedProposalStatus, RoutedUnavailableReason,
+};
 use crate::discovery::{
     DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryMethod, DiscoveryObservation,
     DiscoveryReport, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget, ProbeConfig,
     RegistryInstant, resolve_hostname,
 };
+use crate::discovery::{MAX_ROUTED_CANDIDATES, RoutedProposalOriginSummary, RoutedScanTrigger};
 use crate::domain::{ChannelKey, DeviceId};
 use crate::hdhr::protocol::DISCOVERY_UDP_PORT;
 use crate::hdhr::{
@@ -54,6 +63,9 @@ const MAX_RETAINED_LOCAL_OBSERVATIONS: usize = match DeviceRegistry::DEFAULT_MAX
     None => panic!("default discovery registry limits must have a representable product"),
 };
 const MAX_RETAINED_EXACT_OBSERVATIONS: usize = 1;
+const MAX_RETAINED_ROUTED_OBSERVATIONS: usize = MAX_ROUTED_CANDIDATES;
+/// Private approval-store directory under the per-user settings directory.
+const ROUTED_APPROVAL_DIRECTORY: &str = "routed-approvals";
 
 /// Owned, `'static` future returned by an injected discovery service.
 pub type DiscoveryFuture =
@@ -147,6 +159,31 @@ impl DiscoveryService for DiscoveryClient {
     }
 }
 
+/// The production routed service: the Linux supervisor over the private
+/// approval store beside the settings file, or a fixed reason it is
+/// unavailable. Starting it performs no I/O.
+#[cfg(target_os = "linux")]
+fn default_routed_service() -> Arc<dyn RoutedDiscoveryService> {
+    let Some(directory) = crate::settings::default_directory() else {
+        return Arc::new(UnavailableRoutedDiscovery::new(
+            RoutedUnavailableReason::NoPrivateDirectory,
+        ));
+    };
+    match super::routed::LinuxRoutedDiscovery::start(directory.join(ROUTED_APPROVAL_DIRECTORY)) {
+        Ok(service) => Arc::new(service),
+        Err(_) => Arc::new(UnavailableRoutedDiscovery::new(
+            RoutedUnavailableReason::ObserversUnavailable,
+        )),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn default_routed_service() -> Arc<dyn RoutedDiscoveryService> {
+    Arc::new(UnavailableRoutedDiscovery::new(
+        RoutedUnavailableReason::UnsupportedPlatform,
+    ))
+}
+
 fn exact_probe_config() -> ProbeConfig {
     ProbeConfig::new(
         EXACT_DISCOVERY_ATTEMPTS,
@@ -183,6 +220,14 @@ pub enum ControllerCommand {
     SelectDevice(DeviceId),
     /// Cancel selected-device work and discard its retained snapshot.
     ClearSelection,
+    /// Build a fresh routed proposal from the current tunnel routes; sends nothing.
+    ProposeRoutedDiscovery,
+    /// Remember approval of the routed proposal identified by this token.
+    ApproveRoutedDiscovery(RoutedApprovalToken),
+    /// Supersede any current discovery operation and run the approved routed scan.
+    RunRoutedDiscovery(RoutedScanTrigger),
+    /// Forget every remembered routed approval.
+    RevokeRoutedApprovals,
 }
 
 /// Private queue payload. Stream replies deliberately cannot enter the public
@@ -196,6 +241,10 @@ enum ActorCommand {
     ResolveHostname {
         target: HostnameTarget,
         reply: oneshot::Sender<Result<Vec<ExactDiscoveryTarget>, HostnameResolutionError>>,
+    },
+    RoutedProposalOrigins {
+        token: RoutedApprovalToken,
+        reply: oneshot::Sender<Result<Vec<RoutedProposalOriginSummary>, DiscoveryFailure>>,
     },
 }
 
@@ -271,7 +320,12 @@ impl ControllerRuntime {
     /// Start an inert controller with Balun's production discovery client.
     /// No network work begins until an explicit local or exact command.
     pub fn start_default() -> Result<Self, ControllerStartError> {
-        Self::start(DiscoveryClient::default())
+        Self::start_with_services_and_capacity(
+            DiscoveryClient::default(),
+            DeviceSnapshotResolver::default(),
+            default_routed_service(),
+            DEFAULT_COMMAND_CAPACITY,
+        )
     }
 
     /// Start an inert controller with the default bounded command capacity.
@@ -301,6 +355,9 @@ impl ControllerRuntime {
         Self::start_with_services_and_capacity(
             service,
             DeviceSnapshotResolver::default(),
+            Arc::new(UnavailableRoutedDiscovery::new(
+                RoutedUnavailableReason::NotConfigured,
+            )),
             command_capacity,
         )
     }
@@ -308,6 +365,7 @@ impl ControllerRuntime {
     fn start_with_services_and_capacity<D, S>(
         discovery_service: D,
         selection_service: S,
+        routed_service: Arc<dyn RoutedDiscoveryService>,
         command_capacity: usize,
     ) -> Result<Self, ControllerStartError>
     where
@@ -343,6 +401,7 @@ impl ControllerRuntime {
                 let actor = ControllerActor::new(
                     discovery_service,
                     selection_service,
+                    routed_service,
                     command_receiver,
                     actor_shutdown,
                     snapshot_sender,
@@ -375,17 +434,20 @@ impl ControllerRuntime {
     }
 
     #[cfg(test)]
-    fn start_with_test_services<D, S>(
+    fn start_with_test_services<D, S, R>(
         discovery_service: D,
         selection_service: S,
+        routed_service: R,
     ) -> Result<Self, ControllerStartError>
     where
         D: DiscoveryService,
         S: SelectedDeviceService,
+        R: RoutedDiscoveryService,
     {
         Self::start_with_services_and_capacity(
             discovery_service,
             selection_service,
+            Arc::new(routed_service),
             DEFAULT_COMMAND_CAPACITY,
         )
     }
@@ -467,6 +529,19 @@ impl ControllerHandle {
         Ok(HostnameResolutionReceiver::new(receiver))
     }
 
+    /// Ask for the origins behind the routed proposal identified by `token`.
+    ///
+    /// The origins name tunnel interfaces and networks, so they travel only
+    /// through this private reply and never through the snapshot channel.
+    pub fn try_routed_proposal_origins(
+        &self,
+        token: RoutedApprovalToken,
+    ) -> Result<RoutedOriginsReceiver, ControllerCommandError> {
+        let (reply, receiver) = oneshot::channel();
+        self.try_send_actor(ActorCommand::RoutedProposalOrigins { token, reply })?;
+        Ok(RoutedOriginsReceiver::new(receiver))
+    }
+
     fn try_send_actor(&self, command: ActorCommand) -> Result<(), ControllerCommandError> {
         if self.shutdown.is_cancelled() {
             return Err(ControllerCommandError::ShuttingDown);
@@ -499,12 +574,14 @@ impl ControllerHandle {
 struct ControllerActor {
     discovery_service: Arc<dyn DiscoveryService>,
     selection_service: Arc<dyn SelectedDeviceService>,
+    routed_service: Arc<dyn RoutedDiscoveryService>,
     commands: mpsc::Receiver<ActorCommand>,
     shutdown: CancellationToken,
     snapshots: watch::Sender<Arc<ApplicationSnapshot>>,
     registry: DeviceRegistry,
     registry_epoch: Instant,
     local_batch: Option<RetainedDiscoveryBatch>,
+    routed_batch: Option<RetainedDiscoveryBatch>,
     attempted_exact_targets: BTreeSet<ExactDiscoveryTarget>,
     exact_sources: BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
     revision: SnapshotRevision,
@@ -517,25 +594,34 @@ struct ControllerActor {
     selected_snapshot: Option<RetainedSelectedSnapshot>,
     active_discovery: Option<ActiveDiscovery>,
     active_selection: Option<ActiveSelection>,
+    routed: RoutedDiscoveryState,
+    active_routed_control: Option<ActiveRoutedControl>,
 }
 
 impl ControllerActor {
     fn new(
         discovery_service: Arc<dyn DiscoveryService>,
         selection_service: Arc<dyn SelectedDeviceService>,
+        routed_service: Arc<dyn RoutedDiscoveryService>,
         commands: mpsc::Receiver<ActorCommand>,
         shutdown: CancellationToken,
         snapshots: watch::Sender<Arc<ApplicationSnapshot>>,
     ) -> Self {
+        let availability = match routed_service.availability() {
+            Ok(()) => RoutedAvailability::Available,
+            Err(reason) => RoutedAvailability::Unavailable(reason),
+        };
         Self {
             discovery_service,
             selection_service,
+            routed_service,
             commands,
             shutdown,
             snapshots,
             registry: DeviceRegistry::default(),
             registry_epoch: Instant::now(),
             local_batch: None,
+            routed_batch: None,
             attempted_exact_targets: BTreeSet::new(),
             exact_sources: BTreeMap::new(),
             revision: SnapshotRevision::INITIAL,
@@ -548,47 +634,26 @@ impl ControllerActor {
             selected_snapshot: None,
             active_discovery: None,
             active_selection: None,
+            routed: RoutedDiscoveryState::new(availability, RoutedProposalStatus::None, None),
+            active_routed_control: None,
         }
     }
 
     async fn run(mut self) -> Result<(), ControllerRuntimeError> {
         loop {
-            let event = match (
-                self.active_discovery.as_mut(),
-                self.active_selection.as_mut(),
-            ) {
-                (Some(discovery), Some(selection)) => {
-                    tokio::select! {
-                        biased;
-                        () = self.shutdown.cancelled() => ActorEvent::Shutdown,
-                        command = self.commands.recv() => ActorEvent::Command(command),
-                        completion = &mut discovery.task => ActorEvent::Discovery(completion),
-                        completion = &mut selection.task => ActorEvent::Selection(completion),
-                    }
-                }
-                (Some(discovery), None) => {
-                    tokio::select! {
-                        biased;
-                        () = self.shutdown.cancelled() => ActorEvent::Shutdown,
-                        command = self.commands.recv() => ActorEvent::Command(command),
-                        completion = &mut discovery.task => ActorEvent::Discovery(completion),
-                    }
-                }
-                (None, Some(selection)) => {
-                    tokio::select! {
-                        biased;
-                        () = self.shutdown.cancelled() => ActorEvent::Shutdown,
-                        command = self.commands.recv() => ActorEvent::Command(command),
-                        completion = &mut selection.task => ActorEvent::Selection(completion),
-                    }
-                }
-                (None, None) => {
-                    tokio::select! {
-                        biased;
-                        () = self.shutdown.cancelled() => ActorEvent::Shutdown,
-                        command = self.commands.recv() => ActorEvent::Command(command),
-                    }
-                }
+            let event = tokio::select! {
+                biased;
+                () = self.shutdown.cancelled() => ActorEvent::Shutdown,
+                command = self.commands.recv() => ActorEvent::Command(command),
+                completion = join_optional(
+                    self.active_discovery.as_mut().map(|active| &mut active.task),
+                ) => ActorEvent::Discovery(completion),
+                completion = join_optional(
+                    self.active_selection.as_mut().map(|active| &mut active.task),
+                ) => ActorEvent::Selection(completion),
+                completion = join_optional(
+                    self.active_routed_control.as_mut().map(|active| &mut active.task),
+                ) => ActorEvent::RoutedControl(completion),
             };
 
             match event {
@@ -621,6 +686,34 @@ impl ControllerActor {
                 ))) => {
                     self.clear_selection().await?;
                 }
+                ActorEvent::Command(Some(ActorCommand::Controller(
+                    ControllerCommand::ProposeRoutedDiscovery,
+                ))) => {
+                    self.propose_routed().await?;
+                }
+                ActorEvent::Command(Some(ActorCommand::Controller(
+                    ControllerCommand::ApproveRoutedDiscovery(token),
+                ))) => {
+                    self.approve_routed(token).await?;
+                }
+                ActorEvent::Command(Some(ActorCommand::Controller(
+                    ControllerCommand::RunRoutedDiscovery(trigger),
+                ))) => {
+                    self.start_discovery(DiscoveryScope::Routed(trigger))
+                        .await?;
+                }
+                ActorEvent::Command(Some(ActorCommand::Controller(
+                    ControllerCommand::RevokeRoutedApprovals,
+                ))) => {
+                    self.revoke_routed().await?;
+                }
+                ActorEvent::Command(Some(ActorCommand::RoutedProposalOrigins { token, reply })) => {
+                    let service = Arc::clone(&self.routed_service);
+                    let cancellation = self.shutdown.child_token();
+                    tokio::spawn(async move {
+                        let _ = reply.send(service.origins(token, cancellation).await);
+                    });
+                }
                 ActorEvent::Command(Some(ActorCommand::RequestStream { selection, reply })) => {
                     let _ = reply.send(self.resolve_stream_handoff(selection));
                 }
@@ -645,8 +738,134 @@ impl ControllerActor {
                 ActorEvent::Selection(completion) => {
                     self.finish_selection(completion)?;
                 }
+                ActorEvent::RoutedControl(completion) => {
+                    self.finish_routed_control(completion)?;
+                }
             }
         }
+    }
+
+    /// Build a fresh routed proposal beside the discovery lane.
+    async fn propose_routed(&mut self) -> Result<(), ControllerRuntimeError> {
+        self.cancel_active_routed_control().await;
+        if self.shutdown.is_cancelled() {
+            return Ok(());
+        }
+        self.set_routed_proposal(RoutedProposalStatus::Proposing)?;
+        let cancellation = self.shutdown.child_token();
+        let service = Arc::clone(&self.routed_service);
+        let task_cancellation = cancellation.clone();
+        let task = tokio::spawn(async move {
+            RoutedControlCompletion::Proposed(service.propose(task_cancellation).await)
+        });
+        self.active_routed_control = Some(ActiveRoutedControl { cancellation, task });
+        Ok(())
+    }
+
+    /// Remember approval of the proposal currently shown.
+    async fn approve_routed(
+        &mut self,
+        token: RoutedApprovalToken,
+    ) -> Result<(), ControllerRuntimeError> {
+        self.cancel_active_routed_control().await;
+        if self.shutdown.is_cancelled() {
+            return Ok(());
+        }
+        let shown = matches!(self.routed.proposal(), RoutedProposalStatus::Proposed(state)
+            if state.token() == token);
+        if !shown {
+            return self.set_routed_proposal(RoutedProposalStatus::Failed(
+                DiscoveryFailure::RoutedProposalChanged,
+            ));
+        }
+        let cancellation = self.shutdown.child_token();
+        let service = Arc::clone(&self.routed_service);
+        let task_cancellation = cancellation.clone();
+        let task = tokio::spawn(async move {
+            RoutedControlCompletion::Approved {
+                token,
+                result: service.approve(token, task_cancellation).await,
+            }
+        });
+        self.active_routed_control = Some(ActiveRoutedControl { cancellation, task });
+        Ok(())
+    }
+
+    /// Forget every remembered routed approval.
+    async fn revoke_routed(&mut self) -> Result<(), ControllerRuntimeError> {
+        self.cancel_active_routed_control().await;
+        if self.shutdown.is_cancelled() {
+            return Ok(());
+        }
+        let cancellation = self.shutdown.child_token();
+        let service = Arc::clone(&self.routed_service);
+        let task_cancellation = cancellation.clone();
+        let task = tokio::spawn(async move {
+            RoutedControlCompletion::Revoked(service.revoke_all(task_cancellation).await)
+        });
+        self.active_routed_control = Some(ActiveRoutedControl { cancellation, task });
+        Ok(())
+    }
+
+    async fn cancel_active_routed_control(&mut self) {
+        let Some(active) = self.active_routed_control.take() else {
+            return;
+        };
+        active.cancellation.cancel();
+        let _ = active.task.await;
+    }
+
+    fn finish_routed_control(
+        &mut self,
+        completion: Result<RoutedControlCompletion, tokio::task::JoinError>,
+    ) -> Result<(), ControllerRuntimeError> {
+        if self.active_routed_control.take().is_none() {
+            return Ok(());
+        }
+        let proposal = match completion {
+            Ok(RoutedControlCompletion::Proposed(Ok(proposal))) => {
+                let summary = proposal.summary();
+                RoutedProposalStatus::Proposed(RoutedProposalState::new(
+                    proposal.token(),
+                    summary.candidate_count(),
+                    summary.maximum_request_datagrams(),
+                    summary.wire_datagrams_per_second(),
+                    summary.max_in_flight(),
+                    summary.overall_deadline(),
+                    summary.origins().len(),
+                ))
+            }
+            Ok(RoutedControlCompletion::Approved { token, result }) => {
+                match (self.routed.proposal(), result) {
+                    (RoutedProposalStatus::Proposed(state), Ok(())) if state.token() == token => {
+                        RoutedProposalStatus::Proposed(state.with_approved(true))
+                    }
+                    (_, Ok(())) => {
+                        RoutedProposalStatus::Failed(DiscoveryFailure::RoutedProposalChanged)
+                    }
+                    (_, Err(failure)) => RoutedProposalStatus::Failed(failure),
+                }
+            }
+            Ok(RoutedControlCompletion::Revoked(Ok(()))) => RoutedProposalStatus::None,
+            Ok(
+                RoutedControlCompletion::Proposed(Err(failure))
+                | RoutedControlCompletion::Revoked(Err(failure)),
+            ) => RoutedProposalStatus::Failed(failure),
+            Err(_) => RoutedProposalStatus::Failed(DiscoveryFailure::Internal),
+        };
+        self.set_routed_proposal(proposal)
+    }
+
+    fn set_routed_proposal(
+        &mut self,
+        proposal: RoutedProposalStatus,
+    ) -> Result<(), ControllerRuntimeError> {
+        let cooldown = match proposal {
+            RoutedProposalStatus::None => None,
+            _ => self.routed.cooldown_seconds(),
+        };
+        self.routed = RoutedDiscoveryState::new(self.routed.availability(), proposal, cooldown);
+        self.publish()
     }
 
     async fn start_discovery(
@@ -677,25 +896,49 @@ impl ControllerActor {
         }
 
         let expected_device = match scope {
-            DiscoveryScope::Local => None,
+            DiscoveryScope::Local | DiscoveryScope::Routed(_) => None,
             DiscoveryScope::Exact(target) => self.expected_device_for_exact_target(target),
         };
+        if matches!(scope, DiscoveryScope::Routed(_)) {
+            self.routed =
+                RoutedDiscoveryState::new(self.routed.availability(), self.routed.proposal(), None);
+        }
         self.discovery = DiscoveryState::refreshing_for(generation, scope.kind());
         self.publish()?;
 
         let cancellation = self.shutdown.child_token();
         let service = Arc::clone(&self.discovery_service);
+        let routed_service = Arc::clone(&self.routed_service);
         let task_cancellation = cancellation.clone();
         let task = tokio::spawn(async move {
-            let result = if task_cancellation.is_cancelled() {
-                Err(DiscoveryFailure::Internal)
+            let (result, cooldown) = if task_cancellation.is_cancelled() {
+                (Err(DiscoveryFailure::Internal), None)
             } else {
                 match scope {
-                    DiscoveryScope::Local => service.discover_local(task_cancellation).await,
-                    DiscoveryScope::Exact(target) => {
+                    DiscoveryScope::Local => {
+                        (service.discover_local(task_cancellation).await, None)
+                    }
+                    DiscoveryScope::Exact(target) => (
                         service
                             .discover_exact(target, expected_device, task_cancellation)
-                            .await
+                            .await,
+                        None,
+                    ),
+                    DiscoveryScope::Routed(trigger) => {
+                        match routed_service.run(trigger, task_cancellation).await {
+                            Ok(RoutedRunOutcome::Report(report)) => (Ok(report), None),
+                            Ok(RoutedRunOutcome::NeedsApproval) => {
+                                (Err(DiscoveryFailure::RoutedNotApproved), None)
+                            }
+                            Ok(RoutedRunOutcome::CoolingDown { remaining }) => {
+                                (Err(DiscoveryFailure::RoutedCoolingDown), Some(remaining))
+                            }
+                            Ok(RoutedRunOutcome::Busy) => (Err(DiscoveryFailure::RoutedBusy), None),
+                            Ok(RoutedRunOutcome::Unconfirmed) => {
+                                (Err(DiscoveryFailure::RoutedUnconfirmed), None)
+                            }
+                            Err(failure) => (Err(failure), None),
+                        }
                     }
                 }
             };
@@ -703,6 +946,7 @@ impl ControllerActor {
                 generation,
                 scope,
                 result,
+                cooldown,
             }
         });
         self.active_discovery = Some(ActiveDiscovery {
@@ -747,11 +991,16 @@ impl ControllerActor {
     async fn cancel_all_operations(&mut self) {
         let discovery = self.active_discovery.take();
         let selection = self.active_selection.take();
+        let routed_control = self.active_routed_control.take();
         if let Some(active) = &discovery {
             active.cancellation.cancel();
         }
         if let Some(active) = &selection {
             active.cancellation.cancel();
+        }
+        if let Some(active) = routed_control {
+            active.cancellation.cancel();
+            let _ = active.task.await;
         }
 
         match (discovery, selection) {
@@ -786,6 +1035,7 @@ impl ControllerActor {
                 generation: active.generation,
                 scope: active.scope,
                 result: Err(DiscoveryFailure::Internal),
+                cooldown: None,
             },
         };
         self.apply_discovery_completion(completion).await?;
@@ -801,6 +1051,14 @@ impl ControllerActor {
             || self.discovery.kind() != completion.scope.kind()
         {
             return Ok(false);
+        }
+        if let Some(remaining) = completion.cooldown {
+            let seconds = u16::try_from(remaining.as_secs()).unwrap_or(u16::MAX);
+            self.routed = RoutedDiscoveryState::new(
+                self.routed.availability(),
+                self.routed.proposal(),
+                Some(seconds),
+            );
         }
 
         match completion.result {
@@ -834,7 +1092,8 @@ impl ControllerActor {
                             self.spawn_selection(pending_selection);
                             return Ok(true);
                         }
-                        DiscoveryScope::Exact(_) => {
+                        DiscoveryScope::Exact(_) | DiscoveryScope::Routed(_) => {
+                            let kind = completion.scope.kind();
                             let selected_changed = self.selected_device.is_some_and(|device_id| {
                                 self.registry.get(device_id) != update.registry.get(device_id)
                             });
@@ -853,14 +1112,15 @@ impl ControllerActor {
 
                             self.commit_discovery_update(update);
                             self.discovery = if no_response {
-                                DiscoveryState::exact_no_response(
+                                DiscoveryState::no_response_for(
                                     self.discovery_generation,
+                                    kind,
                                     issue_count,
                                 )
                             } else {
                                 DiscoveryState::ready_for(
                                     self.discovery_generation,
-                                    DiscoveryKind::Exact,
+                                    kind,
                                     issue_count,
                                 )
                             };
@@ -903,6 +1163,7 @@ impl ControllerActor {
         let observation_limit = match scope {
             DiscoveryScope::Local => MAX_RETAINED_LOCAL_OBSERVATIONS,
             DiscoveryScope::Exact(_) => MAX_RETAINED_EXACT_OBSERVATIONS,
+            DiscoveryScope::Routed(_) => MAX_RETAINED_ROUTED_OBSERVATIONS,
         };
         if report.observations.len() > observation_limit {
             return Err(());
@@ -911,9 +1172,16 @@ impl ControllerActor {
         let seen_at = RegistryInstant::from_duration(self.registry_epoch.elapsed());
         let batch = RetainedDiscoveryBatch::new(seen_at, report.observations);
         let mut local_batch = self.local_batch.clone();
+        let mut routed_batch = self.routed_batch.clone();
         let mut exact_sources = self.exact_sources.clone();
         match scope {
             DiscoveryScope::Local => local_batch = batch,
+            DiscoveryScope::Routed(_) => {
+                if let Some(batch) = &batch {
+                    validate_routed_batch(batch)?;
+                }
+                routed_batch = batch;
+            }
             DiscoveryScope::Exact(target) => match batch {
                 Some(batch) => {
                     if !exact_sources.contains_key(&target)
@@ -934,10 +1202,12 @@ impl ControllerActor {
             },
         }
 
-        let registry = rebuild_registry(local_batch.as_ref(), &exact_sources)?;
+        let registry =
+            rebuild_registry(local_batch.as_ref(), routed_batch.as_ref(), &exact_sources)?;
         let devices = project_devices(&registry)?;
         Ok(DiscoveryUpdate {
             local_batch,
+            routed_batch,
             exact_sources,
             registry,
             devices,
@@ -946,6 +1216,7 @@ impl ControllerActor {
 
     fn commit_discovery_update(&mut self, update: DiscoveryUpdate) {
         self.local_batch = update.local_batch;
+        self.routed_batch = update.routed_batch;
         self.exact_sources = update.exact_sources;
         self.registry = update.registry;
         self.devices = update.devices;
@@ -1305,7 +1576,8 @@ impl ControllerActor {
             self.devices.iter().cloned(),
             self.selected_device,
             self.selected_lineup.clone(),
-        )?;
+        )?
+        .with_routed(self.routed);
         self.revision = revision;
         self.snapshots.send_replace(Arc::new(snapshot));
         Ok(())
@@ -1395,11 +1667,19 @@ fn preserve_device_summary(
 
 fn rebuild_registry(
     local_batch: Option<&RetainedDiscoveryBatch>,
+    routed_batch: Option<&RetainedDiscoveryBatch>,
     exact_sources: &BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
 ) -> Result<DeviceRegistry, ()> {
-    let mut batches = Vec::with_capacity(1 + exact_sources.len());
+    let mut batches = Vec::with_capacity(2 + exact_sources.len());
     if let Some(batch) = local_batch {
         batches.push((batch.seen_at, DiscoveryScope::Local, batch));
+    }
+    if let Some(batch) = routed_batch {
+        batches.push((
+            batch.seen_at,
+            DiscoveryScope::Routed(RoutedScanTrigger::Automatic),
+            batch,
+        ));
     }
     batches.extend(exact_sources.iter().filter_map(|(target, source)| {
         source
@@ -1418,6 +1698,35 @@ fn rebuild_registry(
         }
     }
     Ok(registry)
+}
+
+/// A routed batch may hold many devices, but every observation must be a
+/// direct routed reply on the discovery port with no interface annotation,
+/// and no `(device, source)` pair may repeat.
+fn validate_routed_batch(batch: &RetainedDiscoveryBatch) -> Result<(), ()> {
+    if batch.observations.iter().any(|observation| {
+        observation.method != DiscoveryMethod::RoutedTargeted
+            || observation.interface.is_some()
+            || observation.source.port() != DISCOVERY_UDP_PORT
+    }) {
+        return Err(());
+    }
+    if batch
+        .observations
+        .windows(2)
+        .any(|pair| pair[0].device_id == pair[1].device_id && pair[0].source == pair[1].source)
+    {
+        return Err(());
+    }
+    Ok(())
+}
+
+/// Await an optional task, or never resolve when there is none.
+async fn join_optional<T>(task: Option<&mut JoinHandle<T>>) -> Result<T, tokio::task::JoinError> {
+    match task {
+        Some(task) => task.await,
+        None => std::future::pending().await,
+    }
 }
 
 fn project_devices(registry: &DeviceRegistry) -> Result<Vec<DeviceSummary>, ()> {
@@ -1490,12 +1799,14 @@ enum ActorEvent {
     Command(Option<ActorCommand>),
     Discovery(Result<DiscoveryCompletion, tokio::task::JoinError>),
     Selection(Result<SelectionCompletion, tokio::task::JoinError>),
+    RoutedControl(Result<RoutedControlCompletion, tokio::task::JoinError>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum DiscoveryScope {
     Local,
     Exact(ExactDiscoveryTarget),
+    Routed(RoutedScanTrigger),
 }
 
 impl DiscoveryScope {
@@ -1503,8 +1814,24 @@ impl DiscoveryScope {
         match self {
             Self::Local => DiscoveryKind::Local,
             Self::Exact(_) => DiscoveryKind::Exact,
+            Self::Routed(_) => DiscoveryKind::Routed,
         }
     }
+}
+
+/// One routed proposal, approval, or revocation running beside the lanes.
+struct ActiveRoutedControl {
+    cancellation: CancellationToken,
+    task: JoinHandle<RoutedControlCompletion>,
+}
+
+enum RoutedControlCompletion {
+    Proposed(Result<RoutedProposal, DiscoveryFailure>),
+    Approved {
+        token: RoutedApprovalToken,
+        result: Result<(), DiscoveryFailure>,
+    },
+    Revoked(Result<(), DiscoveryFailure>),
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -1572,6 +1899,7 @@ impl RetainedExactSource {
 
 struct DiscoveryUpdate {
     local_batch: Option<RetainedDiscoveryBatch>,
+    routed_batch: Option<RetainedDiscoveryBatch>,
     exact_sources: BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
     registry: DeviceRegistry,
     devices: Vec<DeviceSummary>,
@@ -1588,6 +1916,8 @@ struct DiscoveryCompletion {
     generation: OperationGeneration,
     scope: DiscoveryScope,
     result: Result<DiscoveryReport, DiscoveryFailure>,
+    /// Remaining automatic cooldown reported by a refused routed run.
+    cooldown: Option<Duration>,
 }
 
 struct RetainedSelectedSnapshot {
@@ -1928,6 +2258,10 @@ mod tests {
         ExactDiscoveryTarget::parse(&format!("198.51.100.{last_octet}")).unwrap()
     }
 
+    fn unavailable_routed() -> UnavailableRoutedDiscovery {
+        UnavailableRoutedDiscovery::new(RoutedUnavailableReason::NotConfigured)
+    }
+
     fn test_actor() -> ControllerActor {
         let (service, _) = ScriptedService::new([]);
         let (selection, _) = ScriptedSelectionService::new([]);
@@ -1937,6 +2271,9 @@ mod tests {
         ControllerActor::new(
             Arc::new(service),
             Arc::new(selection),
+            Arc::new(UnavailableRoutedDiscovery::new(
+                RoutedUnavailableReason::NotConfigured,
+            )),
             receiver,
             CancellationToken::new(),
             snapshots,
@@ -2253,7 +2590,7 @@ mod tests {
             ),
         ]);
 
-        let registry = rebuild_registry(Some(&local_batch), &exact_sources).unwrap();
+        let registry = rebuild_registry(Some(&local_batch), None, &exact_sources).unwrap();
         assert_eq!(registry.clock(), Some(newer_at));
         let device = registry.get(first_id()).unwrap();
         let tied_source = exact_report(tied_target, first_id(), 4).observations[0].source;
@@ -2287,7 +2624,9 @@ mod tests {
         ))]);
         let (selection, _selection_starts) = ScriptedSelectionService::new([]);
         let observed_selection = selection.clone();
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -2340,7 +2679,9 @@ mod tests {
             cancelled,
             cancellation_result: Err(DeviceSnapshotResolutionError::Cancelled),
         }]);
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -2419,7 +2760,9 @@ mod tests {
                     "127.0.0.1".parse().unwrap(),
                 ),
             ))]);
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -2478,7 +2821,9 @@ mod tests {
             SelectionStep::Immediate(selected_snapshot()),
             SelectionStep::Immediate(selected_snapshot()),
         ]);
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -2730,6 +3075,7 @@ mod tests {
         let mut actor = ControllerActor::new(
             Arc::new(discovery),
             Arc::new(selection),
+            Arc::new(unavailable_routed()),
             receiver,
             CancellationToken::new(),
             snapshots,
@@ -2778,7 +3124,9 @@ mod tests {
                 ),
             }]);
         let observed_selection = selection.clone();
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
         handle
@@ -3327,7 +3675,9 @@ mod tests {
         ))]);
         let (selection, _selection_starts) = ScriptedSelectionService::new([]);
         let observed_selection = selection.clone();
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -3362,7 +3712,9 @@ mod tests {
                 ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
             ))]);
         let observed_selection = selection.clone();
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -3425,7 +3777,9 @@ mod tests {
                 ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
             ))]);
         let observed_selection = selection.clone();
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -3479,7 +3833,9 @@ mod tests {
                 ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
             ))]);
         let observed_selection = selection.clone();
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -3696,7 +4052,9 @@ mod tests {
                 ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
             ))]);
         let observed_selection = selection.clone();
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -3760,7 +4118,9 @@ mod tests {
             ))),
         ]);
         let observed_selection = selection.clone();
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
 
@@ -3822,7 +4182,9 @@ mod tests {
                 ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
             ))]);
         let observed_selection = selection.clone();
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
         handle
@@ -3869,7 +4231,9 @@ mod tests {
             report(first_id(), "192.0.2.10:65001", 4),
         ))]);
         let (selection, selection_starts) = ScriptedSelectionService::new([SelectionStep::Panic]);
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
         handle
@@ -3938,6 +4302,7 @@ mod tests {
         let mut actor = ControllerActor::new(
             Arc::new(service),
             Arc::new(selection),
+            Arc::new(unavailable_routed()),
             receiver,
             CancellationToken::new(),
             snapshots,
@@ -3951,6 +4316,7 @@ mod tests {
                     generation: OperationGeneration::new(1),
                     scope: DiscoveryScope::Local,
                     result: Ok(report(first_id(), "192.0.2.10:65001", 4)),
+                    cooldown: None,
                 })
                 .await
                 .unwrap()
@@ -3987,7 +4353,9 @@ mod tests {
                 finish_cancellation: finish_selection_rx,
                 cancellation_result: Err(DeviceSnapshotResolutionError::Cancelled),
             }]);
-        let controller = ControllerRuntime::start_with_test_services(discovery, selection).unwrap();
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery, selection, unavailable_routed())
+                .unwrap();
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
         handle
@@ -4101,5 +4469,595 @@ mod tests {
         cancelled_rx
             .recv_timeout(WAIT)
             .expect("dropping the owner should cancel and join the service future");
+    }
+
+    // ---- routed lane -------------------------------------------------------
+
+    use super::super::routed::RoutedFuture;
+    use crate::discovery::approval::{RouteFingerprintKey, RoutedScanProposal};
+    use crate::discovery::{
+        InterfaceId, InterfaceKind, NetworkInterface, NetworkRoute, RouteKind, RouteScope,
+        RouteSnapshot, RoutedProposalSummary, RoutedScanConfig, select_route_candidates,
+    };
+
+    enum RoutedStep<T> {
+        Immediate(Result<T, DiscoveryFailure>),
+        UntilCancelled {
+            started: std_mpsc::Sender<()>,
+            cancelled: std_mpsc::Sender<()>,
+        },
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum RoutedCall {
+        Propose,
+        Approve(RoutedApprovalToken),
+        Run(RoutedScanTrigger),
+        RevokeAll,
+        Origins(RoutedApprovalToken),
+    }
+
+    struct ScriptedRoutedState {
+        proposals: Mutex<VecDeque<RoutedStep<RoutedProposal>>>,
+        approvals: Mutex<VecDeque<RoutedStep<()>>>,
+        runs: Mutex<VecDeque<RoutedStep<RoutedRunOutcome>>>,
+        revokes: Mutex<VecDeque<RoutedStep<()>>>,
+        origins: Vec<RoutedProposalOriginSummary>,
+        calls: Mutex<Vec<RoutedCall>>,
+    }
+
+    #[derive(Clone)]
+    struct ScriptedRoutedService {
+        shared: Arc<ScriptedRoutedState>,
+    }
+
+    impl ScriptedRoutedService {
+        fn new(origins: Vec<RoutedProposalOriginSummary>) -> Self {
+            Self {
+                shared: Arc::new(ScriptedRoutedState {
+                    proposals: Mutex::new(VecDeque::new()),
+                    approvals: Mutex::new(VecDeque::new()),
+                    runs: Mutex::new(VecDeque::new()),
+                    revokes: Mutex::new(VecDeque::new()),
+                    origins,
+                    calls: Mutex::new(Vec::new()),
+                }),
+            }
+        }
+
+        fn script_proposal(&self, step: RoutedStep<RoutedProposal>) {
+            self.shared.proposals.lock().unwrap().push_back(step);
+        }
+
+        fn script_approval(&self, step: RoutedStep<()>) {
+            self.shared.approvals.lock().unwrap().push_back(step);
+        }
+
+        fn script_run(&self, step: RoutedStep<RoutedRunOutcome>) {
+            self.shared.runs.lock().unwrap().push_back(step);
+        }
+
+        fn script_revoke(&self, step: RoutedStep<()>) {
+            self.shared.revokes.lock().unwrap().push_back(step);
+        }
+
+        fn calls(&self) -> Vec<RoutedCall> {
+            self.shared.calls.lock().unwrap().clone()
+        }
+
+        fn play<T: Send + 'static>(
+            &self,
+            call: RoutedCall,
+            step: Option<RoutedStep<T>>,
+            cancellation: CancellationToken,
+        ) -> RoutedFuture<T> {
+            self.shared.calls.lock().unwrap().push(call);
+            let step = step.expect("test should script one routed step per call");
+            Box::pin(async move {
+                match step {
+                    RoutedStep::Immediate(result) => result,
+                    RoutedStep::UntilCancelled { started, cancelled } => {
+                        let _ = started.send(());
+                        cancellation.cancelled().await;
+                        let _ = cancelled.send(());
+                        Err(DiscoveryFailure::Internal)
+                    }
+                }
+            })
+        }
+    }
+
+    impl RoutedDiscoveryService for ScriptedRoutedService {
+        fn availability(&self) -> Result<(), RoutedUnavailableReason> {
+            Ok(())
+        }
+
+        fn propose(&self, cancellation: CancellationToken) -> RoutedFuture<RoutedProposal> {
+            let step = self.shared.proposals.lock().unwrap().pop_front();
+            self.play(RoutedCall::Propose, step, cancellation)
+        }
+
+        fn approve(
+            &self,
+            token: RoutedApprovalToken,
+            cancellation: CancellationToken,
+        ) -> RoutedFuture<()> {
+            let step = self.shared.approvals.lock().unwrap().pop_front();
+            self.play(RoutedCall::Approve(token), step, cancellation)
+        }
+
+        fn run(
+            &self,
+            trigger: RoutedScanTrigger,
+            cancellation: CancellationToken,
+        ) -> RoutedFuture<RoutedRunOutcome> {
+            let step = self.shared.runs.lock().unwrap().pop_front();
+            self.play(RoutedCall::Run(trigger), step, cancellation)
+        }
+
+        fn revoke_all(&self, cancellation: CancellationToken) -> RoutedFuture<()> {
+            let step = self.shared.revokes.lock().unwrap().pop_front();
+            self.play(RoutedCall::RevokeAll, step, cancellation)
+        }
+
+        fn origins(
+            &self,
+            token: RoutedApprovalToken,
+            cancellation: CancellationToken,
+        ) -> RoutedFuture<Vec<RoutedProposalOriginSummary>> {
+            let origins = self.shared.origins.clone();
+            self.play(
+                RoutedCall::Origins(token),
+                Some(RoutedStep::Immediate(Ok(origins))),
+                cancellation,
+            )
+        }
+    }
+
+    fn tunnel_summary() -> RoutedProposalSummary {
+        let interface = InterfaceId::new(7);
+        let snapshot = RouteSnapshot::from_effective_routes(
+            vec![NetworkInterface::new(
+                interface,
+                "synthetic-controller-tunnel",
+                InterfaceKind::Tunnel,
+                true,
+                ["10.250.0.2/32".parse().unwrap()],
+            )],
+            vec![NetworkRoute::effective(
+                "172.31.90.8/30".parse().unwrap(),
+                Some(interface),
+                RouteKind::Unicast,
+                RouteScope::OnLink,
+            )],
+        );
+        let candidates = select_route_candidates(&snapshot, &[]).unwrap();
+        RoutedScanProposal::from_route_candidates(
+            &snapshot,
+            &candidates,
+            &RouteFingerprintKey::from_bytes([7; 32]),
+            ProbeConfig::default(),
+            RoutedScanConfig::default(),
+        )
+        .unwrap()
+        .summary()
+        .clone()
+    }
+
+    fn routed_observation(device_id: DeviceId, source: &str) -> DiscoveryObservation {
+        DiscoveryObservation {
+            device_id,
+            source: source.parse().unwrap(),
+            method: DiscoveryMethod::RoutedTargeted,
+            interface: None,
+            device_types: vec![1],
+            tuner_count: Some(2),
+            advertised_base_url: None,
+            advertised_lineup_url: None,
+        }
+    }
+
+    fn routed_report(observations: Vec<DiscoveryObservation>) -> DiscoveryReport {
+        DiscoveryReport {
+            observations,
+            ..DiscoveryReport::default()
+        }
+    }
+
+    fn start_routed(
+        routed: ScriptedRoutedService,
+    ) -> (
+        ControllerRuntime,
+        ScriptedService,
+        std_mpsc::Receiver<ServiceStart>,
+    ) {
+        let (discovery, discovery_starts) = ScriptedService::new([ServiceStep::Immediate(Ok(
+            report(first_id(), "127.0.0.1:65001", 4),
+        ))]);
+        let (selection, _) = ScriptedSelectionService::new([]);
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery.clone(), selection, routed)
+                .unwrap();
+        (controller, discovery, discovery_starts)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routed_proposal_and_approval_travel_as_scalars_with_origins_on_request() {
+        let summary = tunnel_summary();
+        let routed = ScriptedRoutedService::new(summary.origins().to_vec());
+        let token = RoutedApprovalToken::new(41);
+        routed.script_proposal(RoutedStep::Immediate(Ok(RoutedProposal::new(
+            token,
+            summary.clone(),
+        ))));
+        routed.script_approval(RoutedStep::Immediate(Ok(())));
+        let (controller, _discovery, _starts) = start_routed(routed.clone());
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::ProposeRoutedDiscovery)
+            .unwrap();
+        let proposing = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.routed().proposal() != RoutedProposalStatus::None
+        })
+        .await;
+        assert_eq!(
+            proposing.routed().availability(),
+            RoutedAvailability::Available
+        );
+        let proposed = wait_for_snapshot(&mut snapshots, |snapshot| {
+            matches!(
+                snapshot.routed().proposal(),
+                RoutedProposalStatus::Proposed(_)
+            )
+        })
+        .await;
+        let RoutedProposalStatus::Proposed(state) = proposed.routed().proposal() else {
+            unreachable!()
+        };
+        assert_eq!(state.token(), token);
+        assert_eq!(
+            usize::from(state.candidate_count()),
+            summary.candidate_count()
+        );
+        assert_eq!(
+            usize::from(state.maximum_request_datagrams()),
+            summary.maximum_request_datagrams()
+        );
+        assert_eq!(usize::from(state.origin_count()), summary.origins().len());
+        assert!(!state.approved());
+        assert_eq!(proposed.discovery().kind(), DiscoveryKind::Local);
+        let rendered = format!("{proposed:?}");
+        assert!(!rendered.contains("synthetic-controller-tunnel"));
+        assert!(!rendered.contains("172.31.90"));
+
+        let origins = handle
+            .try_routed_proposal_origins(token)
+            .unwrap()
+            .receive()
+            .await
+            .unwrap();
+        assert_eq!(origins.len(), summary.origins().len());
+        assert_eq!(origins[0].interface_name(), "synthetic-controller-tunnel");
+
+        handle
+            .try_send(ControllerCommand::ApproveRoutedDiscovery(
+                RoutedApprovalToken::new(40),
+            ))
+            .unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.routed().proposal()
+                == RoutedProposalStatus::Failed(DiscoveryFailure::RoutedProposalChanged)
+        })
+        .await;
+        assert!(
+            !routed
+                .calls()
+                .contains(&RoutedCall::Approve(RoutedApprovalToken::new(40)))
+        );
+
+        routed.script_proposal(RoutedStep::Immediate(Ok(RoutedProposal::new(
+            token,
+            summary.clone(),
+        ))));
+        handle
+            .try_send(ControllerCommand::ProposeRoutedDiscovery)
+            .unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            matches!(snapshot.routed().proposal(), RoutedProposalStatus::Proposed(state) if !state.approved())
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::ApproveRoutedDiscovery(token))
+            .unwrap();
+        let approved = wait_for_snapshot(&mut snapshots, |snapshot| {
+            matches!(snapshot.routed().proposal(), RoutedProposalStatus::Proposed(state) if state.approved())
+        })
+        .await;
+        assert_eq!(
+            approved.discovery_generation(),
+            OperationGeneration::INITIAL
+        );
+        assert!(routed.calls().contains(&RoutedCall::Approve(token)));
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routed_run_admits_only_routed_replies_on_the_discovery_port() {
+        let routed = ScriptedRoutedService::new(Vec::new());
+        routed.script_run(RoutedStep::Immediate(Ok(RoutedRunOutcome::Report(
+            routed_report(vec![
+                routed_observation(first_id(), "172.31.90.9:65001"),
+                routed_observation(second_id(), "172.31.90.10:65001"),
+            ]),
+        ))));
+        let (controller, _discovery, _starts) = start_routed(routed.clone());
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        let refreshing = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+        assert_eq!(refreshing.discovery().kind(), DiscoveryKind::Routed);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(ready.discovery().kind(), DiscoveryKind::Routed);
+        assert_eq!(ready.devices().len(), 2);
+        assert!(
+            ready
+                .devices()
+                .iter()
+                .all(|device| device.preferred_locator().port() == DISCOVERY_UDP_PORT)
+        );
+        assert_eq!(
+            routed.calls(),
+            vec![RoutedCall::Run(RoutedScanTrigger::ExplicitRefresh)]
+        );
+
+        // A reply that is not a routed reply cannot enter the registry.
+        let mut wrong_method = routed_observation(first_id(), "172.31.90.9:65001");
+        wrong_method.method = DiscoveryMethod::Targeted;
+        routed.script_run(RoutedStep::Immediate(Ok(RoutedRunOutcome::Report(
+            routed_report(vec![wrong_method]),
+        ))));
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::Automatic,
+            ))
+            .unwrap();
+        let rejected = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Failed(DiscoveryFailure::Internal)
+        })
+        .await;
+        assert_eq!(rejected.discovery().kind(), DiscoveryKind::Routed);
+        assert_eq!(
+            rejected.devices().len(),
+            2,
+            "the retained batch is untouched"
+        );
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routed_decisions_become_failures_and_cooldown_is_shown_then_cleared() {
+        let routed = ScriptedRoutedService::new(Vec::new());
+        routed.script_run(RoutedStep::Immediate(Ok(RoutedRunOutcome::NeedsApproval)));
+        routed.script_run(RoutedStep::Immediate(Ok(RoutedRunOutcome::CoolingDown {
+            remaining: Duration::from_secs(90),
+        })));
+        routed.script_run(RoutedStep::Immediate(Ok(RoutedRunOutcome::Report(
+            routed_report(Vec::new()),
+        ))));
+        let (controller, _discovery, _starts) = start_routed(routed.clone());
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::Automatic,
+            ))
+            .unwrap();
+        let unapproved = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status()
+                == DiscoveryStatus::Failed(DiscoveryFailure::RoutedNotApproved)
+        })
+        .await;
+        assert_eq!(unapproved.routed().cooldown_seconds(), None);
+
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::Automatic,
+            ))
+            .unwrap();
+        let cooling = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status()
+                == DiscoveryStatus::Failed(DiscoveryFailure::RoutedCoolingDown)
+        })
+        .await;
+        assert_eq!(cooling.routed().cooldown_seconds(), Some(90));
+
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        let refreshing = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+        assert_eq!(refreshing.routed().cooldown_seconds(), None);
+        let empty = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::NoResponse
+        })
+        .await;
+        assert_eq!(empty.discovery().kind(), DiscoveryKind::Routed);
+        assert!(empty.devices().is_empty());
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routed_run_shares_the_single_superseding_discovery_lane() {
+        let routed = ScriptedRoutedService::new(Vec::new());
+        let (started, started_rx) = std_mpsc::channel();
+        let (cancelled, cancelled_rx) = std_mpsc::channel();
+        routed.script_run(RoutedStep::UntilCancelled { started, cancelled });
+        let (controller, _discovery, starts) = start_routed(routed);
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().kind() == DiscoveryKind::Routed
+                && snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+        started_rx
+            .recv_timeout(WAIT)
+            .expect("the routed run is in flight before it is superseded");
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        cancelled_rx
+            .recv_timeout(WAIT)
+            .expect("the routed run observes supersession");
+        recv_start(&starts);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(ready.discovery().kind(), DiscoveryKind::Local);
+        assert_eq!(ready.devices().len(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn revocation_forgets_the_shown_proposal_and_unavailable_services_say_why() {
+        let summary = tunnel_summary();
+        let routed = ScriptedRoutedService::new(Vec::new());
+        routed.script_proposal(RoutedStep::Immediate(Ok(RoutedProposal::new(
+            RoutedApprovalToken::new(1),
+            summary,
+        ))));
+        routed.script_revoke(RoutedStep::Immediate(Ok(())));
+        let (controller, _discovery, _starts) = start_routed(routed.clone());
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::ProposeRoutedDiscovery)
+            .unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            matches!(
+                snapshot.routed().proposal(),
+                RoutedProposalStatus::Proposed(_)
+            )
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::RevokeRoutedApprovals)
+            .unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.routed().proposal() == RoutedProposalStatus::None
+        })
+        .await;
+        assert!(routed.calls().contains(&RoutedCall::RevokeAll));
+        controller.shutdown().unwrap();
+
+        let (discovery, _starts) = ScriptedService::new([]);
+        let controller = ControllerRuntime::start(discovery).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        let unavailable = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status()
+                == DiscoveryStatus::Failed(DiscoveryFailure::RoutedUnavailable)
+        })
+        .await;
+        assert_eq!(unavailable.discovery().kind(), DiscoveryKind::Routed);
+        assert_eq!(
+            unavailable.routed().availability(),
+            RoutedAvailability::Unavailable(RoutedUnavailableReason::NotConfigured)
+        );
+        handle
+            .try_send(ControllerCommand::ProposeRoutedDiscovery)
+            .unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.routed().proposal()
+                == RoutedProposalStatus::Failed(DiscoveryFailure::RoutedUnavailable)
+        })
+        .await;
+        controller.shutdown().unwrap();
+    }
+
+    #[test]
+    fn routed_batches_are_validated_before_the_registry_is_rebuilt() {
+        let actor = test_actor();
+        let scope = DiscoveryScope::Routed(RoutedScanTrigger::Automatic);
+        let accepted = actor
+            .build_discovery_update(
+                scope,
+                routed_report(vec![
+                    routed_observation(first_id(), "172.31.90.9:65001"),
+                    routed_observation(second_id(), "172.31.90.10:65001"),
+                ]),
+            )
+            .unwrap();
+        assert_eq!(accepted.devices.len(), 2);
+        assert!(accepted.routed_batch.is_some());
+
+        let mut with_interface = routed_observation(first_id(), "172.31.90.9:65001");
+        with_interface.interface = Some("synthetic0".to_owned());
+        assert!(
+            actor
+                .build_discovery_update(scope, routed_report(vec![with_interface]))
+                .is_err()
+        );
+        assert!(
+            actor
+                .build_discovery_update(
+                    scope,
+                    routed_report(vec![routed_observation(first_id(), "172.31.90.9:5004")]),
+                )
+                .is_err()
+        );
+        assert!(
+            actor
+                .build_discovery_update(
+                    scope,
+                    routed_report(vec![
+                        routed_observation(first_id(), "172.31.90.9:65001"),
+                        routed_observation(first_id(), "172.31.90.9:65001"),
+                    ]),
+                )
+                .is_err()
+        );
+        let too_many = (0..=MAX_RETAINED_ROUTED_OBSERVATIONS)
+            .map(|index| {
+                let octet = u8::try_from(index % 200).unwrap();
+                let block = index / 200;
+                routed_observation(first_id(), &format!("10.{block}.1.{octet}:65001"))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            actor
+                .build_discovery_update(scope, routed_report(too_many))
+                .is_err()
+        );
     }
 }
