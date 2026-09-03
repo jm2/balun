@@ -65,7 +65,8 @@ Included:
 Explicitly deferred:
 
 - Program guide data of any kind (in-band PSIP/EIT, XMLTV, the HDHomeRun XMLTV
-  API): v0.2 candidate, gated on the P0.8 spike.
+  API): v0.2 candidate. The P0.8 spike showed per-channel streams carry no
+  PSIP; an in-band guide would crawl full multiplexes.
 - Recording, DVR scheduling, timeshift, and trick-play.
 - Protected or DRM channel playback.
 - AC-4 audio; ATSC 3.0 channels that carry it fail closed with a clear message.
@@ -272,7 +273,7 @@ Codec policy:
 - HEVC decodes where gst-libav or a platform decoder is installed and is
   reported as a capability, not promised.
 - AC-4 has no open decoder; those channels fail closed with a message that names
-  the missing codec (P1.4 decides whether video-only playback is offered).
+  the missing codec. Video-only playback is not offered in v0.1.
 - DRM-tagged channels stay visible but disabled.
 - The shared [release component policy](release-component-policy.md) keeps
   optical-disc decryption and proprietary DRM components out of every package;
@@ -359,10 +360,11 @@ upload.
 complete the hardware matrix and budgets, run the security and privacy review,
 publish the support and limitations matrix, and cut the prerelease.
 
-v0.2 candidates: in-band now/next if the P0.8 spike shows PSIP/EIT survives
-the device PID filter; XMLTV file or URL with explicit mappings; native macOS
-and Windows route providers; SBOM, provenance, fuzzing, and a coverage
-ratchet; conduct, support, and issue-form governance once contributors exist.
+v0.2 candidates: an in-band guide crawled from full-multiplex streams, since
+per-channel streams carry no PSIP (P0.8); XMLTV file or URL with explicit
+mappings; native macOS and Windows route providers; SBOM, provenance, fuzzing,
+and a coverage ratchet; conduct, support, and issue-form governance once
+contributors exist.
 
 ## 10. Verification strategy
 
