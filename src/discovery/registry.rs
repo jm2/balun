@@ -1,10 +1,12 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
+use std::fmt;
 use std::net::SocketAddr;
 use std::time::Duration;
 
 use thiserror::Error;
 
+use super::client::redacted_url;
 use super::{DiscoveryMethod, DiscoveryObservation};
 use crate::domain::DeviceId;
 
@@ -42,7 +44,7 @@ pub struct LocatorOrigin {
 }
 
 /// A network locator claim belonging to one validated DeviceID.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct LocatorClaim {
     source: SocketAddr,
     origins: BTreeMap<LocatorOrigin, OriginFreshness>,
@@ -52,6 +54,30 @@ pub struct LocatorClaim {
     tuner_count: Option<u8>,
     advertised_base_url: Option<String>,
     advertised_lineup_url: Option<String>,
+}
+
+/// The advertised URLs are unvalidated device text, so `Debug` shows only
+/// whether each was present.
+impl fmt::Debug for LocatorClaim {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LocatorClaim")
+            .field("source", &self.source)
+            .field("origins", &self.origins)
+            .field("first_seen", &self.first_seen)
+            .field("last_seen", &self.last_seen)
+            .field("device_types", &self.device_types)
+            .field("tuner_count", &self.tuner_count)
+            .field(
+                "advertised_base_url",
+                &redacted_url(self.advertised_base_url.as_deref()),
+            )
+            .field(
+                "advertised_lineup_url",
+                &redacted_url(self.advertised_lineup_url.as_deref()),
+            )
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -623,6 +649,25 @@ mod tests {
             advertised_base_url: Some(format!("http://{source}")),
             advertised_lineup_url: Some(format!("http://{source}/lineup.json")),
         }
+    }
+
+    #[test]
+    fn locator_claim_debug_redacts_advertised_urls() {
+        let mut registry = DeviceRegistry::default();
+        let mut observed = observation(0x105A_1232, "192.0.2.10:65001", DiscoveryMethod::Targeted);
+        observed.advertised_base_url =
+            Some("http://user:password@192.0.2.10/?token=secret".to_owned());
+        observed.advertised_lineup_url = Some("http://192.0.2.10/lineup.json#fragment".to_owned());
+        registry.observe(observed, at(0)).unwrap();
+
+        let device = registry.get(DeviceId::new(0x105A_1232).unwrap()).unwrap();
+        let rendered = format!("{:?} {device:?}", device.preferred_locator().unwrap());
+
+        for hidden in ["password", "token", "secret", "fragment", "http://"] {
+            assert!(!rendered.contains(hidden), "{rendered}");
+        }
+        assert!(rendered.contains("advertised_base_url: Some(\"<redacted>\")"));
+        assert!(rendered.contains("192.0.2.10:65001"));
     }
 
     #[test]
