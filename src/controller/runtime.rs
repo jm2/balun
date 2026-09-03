@@ -4482,6 +4482,11 @@ mod tests {
 
     enum RoutedStep<T> {
         Immediate(Result<T, DiscoveryFailure>),
+        /// Hold the call in flight until the test releases its result, so a
+        /// transient snapshot stays observable through the watch channel.
+        Gated {
+            release: oneshot::Receiver<Result<T, DiscoveryFailure>>,
+        },
         UntilCancelled {
             started: std_mpsc::Sender<()>,
             cancelled: std_mpsc::Sender<()>,
@@ -4556,6 +4561,15 @@ mod tests {
             Box::pin(async move {
                 match step {
                     RoutedStep::Immediate(result) => result,
+                    RoutedStep::Gated { release } => {
+                        tokio::select! {
+                            biased;
+                            () = cancellation.cancelled() => Err(DiscoveryFailure::Internal),
+                            result = release => {
+                                result.expect("test release sender should remain open")
+                            }
+                        }
+                    }
                     RoutedStep::UntilCancelled { started, cancelled } => {
                         let _ = started.send(());
                         cancellation.cancelled().await;
@@ -4786,12 +4800,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn routed_run_admits_only_routed_replies_on_the_discovery_port() {
         let routed = ScriptedRoutedService::new(Vec::new());
-        routed.script_run(RoutedStep::Immediate(Ok(RoutedRunOutcome::Report(
-            routed_report(vec![
-                routed_observation(first_id(), "172.31.90.9:65001"),
-                routed_observation(second_id(), "172.31.90.10:65001"),
-            ]),
-        ))));
+        let (release_run, release) = oneshot::channel();
+        routed.script_run(RoutedStep::Gated { release });
         let (controller, _discovery, _starts) = start_routed(routed.clone());
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
@@ -4806,6 +4816,12 @@ mod tests {
         })
         .await;
         assert_eq!(refreshing.discovery().kind(), DiscoveryKind::Routed);
+        release_run
+            .send(Ok(RoutedRunOutcome::Report(routed_report(vec![
+                routed_observation(first_id(), "172.31.90.9:65001"),
+                routed_observation(second_id(), "172.31.90.10:65001"),
+            ]))))
+            .expect("the gated routed run should still be in flight");
         let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
             snapshot.discovery().status() == DiscoveryStatus::Ready
         })
@@ -4854,9 +4870,8 @@ mod tests {
         routed.script_run(RoutedStep::Immediate(Ok(RoutedRunOutcome::CoolingDown {
             remaining: Duration::from_secs(90),
         })));
-        routed.script_run(RoutedStep::Immediate(Ok(RoutedRunOutcome::Report(
-            routed_report(Vec::new()),
-        ))));
+        let (release_run, release) = oneshot::channel();
+        routed.script_run(RoutedStep::Gated { release });
         let (controller, _discovery, _starts) = start_routed(routed.clone());
         let handle = controller.handle();
         let mut snapshots = handle.subscribe();
@@ -4895,6 +4910,9 @@ mod tests {
         })
         .await;
         assert_eq!(refreshing.routed().cooldown_seconds(), None);
+        release_run
+            .send(Ok(RoutedRunOutcome::Report(routed_report(Vec::new()))))
+            .expect("the gated routed run should still be in flight");
         let empty = wait_for_snapshot(&mut snapshots, |snapshot| {
             snapshot.discovery().status() == DiscoveryStatus::NoResponse
         })
