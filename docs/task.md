@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **13/30 (43.3%)** records complete. This is a dependency ledger,
+Current status: **14/30 (46.7%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -97,7 +97,7 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
 
 ## P2 — Routed discovery (Linux)
 
-- [ ] **P2.1 — Connect the monitored routed runner.** Replace and rebaseline
+- [x] **P2.1 — Connect the monitored routed runner.** Replace and rebaseline
   the observer pair after store publication, serialize the final pre-send
   check, consume the sealed socket, and settle reservation completion.
 

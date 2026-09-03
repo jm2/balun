@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, btree_map::Entry};
+use std::future::Future;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::Duration;
@@ -390,7 +391,6 @@ impl DiscoveryClient {
             return Err(DiscoveryError::Cancelled);
         }
 
-        let request = encode_tuner_discover_request(expected_device.map(DeviceId::get))?;
         let socket = UdpSocket::bind(endpoint.bind)
             .await
             .map_err(|source| DiscoveryError::Io {
@@ -408,6 +408,55 @@ impl DiscoveryClient {
                 })?;
         }
 
+        self.probe_through_socket(&socket, endpoint, expected_device, cancellation)
+            .await
+    }
+
+    /// Probe one routed IPv4 candidate through a socket the caller already
+    /// pinned to that candidate's fresh tunnel interface.
+    ///
+    /// The endpoint policy is identical to [`Self::discover_routed_target`];
+    /// only the socket's origin differs, so every send still passes through
+    /// the socket's own pre-send checks.
+    pub(super) async fn discover_routed_target_through<S: ProbeSocket + ?Sized>(
+        &self,
+        socket: &S,
+        target: Ipv4Addr,
+        cancellation: &CancellationToken,
+    ) -> Result<DiscoveryReport, DiscoveryError> {
+        let destination = SocketAddr::V4(SocketAddrV4::new(target, DISCOVERY_UDP_PORT));
+        if invalid_target(destination) {
+            return Err(DiscoveryError::InvalidEndpoint {
+                endpoint: destination,
+                reason: "targeted discovery requires a unicast address",
+            });
+        }
+        let endpoint = ProbeEndpoint {
+            bind: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+            destination,
+            method: DiscoveryMethod::RoutedTargeted,
+            interface: None,
+            accepted_source_network: None,
+        };
+        validate_endpoint(&endpoint)?;
+        self.probe_through_socket(socket, endpoint, None, cancellation)
+            .await
+    }
+
+    /// Send the bounded discovery attempts for one validated endpoint through
+    /// `socket` and collect identity-checked responses.
+    async fn probe_through_socket<S: ProbeSocket + ?Sized>(
+        &self,
+        socket: &S,
+        endpoint: ProbeEndpoint,
+        expected_device: Option<DeviceId>,
+        cancellation: &CancellationToken,
+    ) -> Result<DiscoveryReport, DiscoveryError> {
+        if cancellation.is_cancelled() {
+            return Err(DiscoveryError::Cancelled);
+        }
+
+        let request = encode_tuner_discover_request(expected_device.map(DeviceId::get))?;
         let mut report = DiscoveryReport::default();
         report.stats.probes_started = 1;
         let mut observations = BTreeMap::new();
@@ -571,6 +620,41 @@ impl DiscoveryError {
             Self::Cancelled => ProbeFailureClass::Cancelled,
             Self::Protocol(_) => ProbeFailureClass::Protocol,
         }
+    }
+}
+
+/// One UDP socket a targeted probe sends through and receives from.
+///
+/// The client owns the request encoding, response validation, and every
+/// deadline; the socket owns only its transport and whatever pre-send checks
+/// its origin requires.
+pub(super) trait ProbeSocket: Sync {
+    fn send_to(
+        &self,
+        buffer: &[u8],
+        target: SocketAddr,
+    ) -> impl Future<Output = io::Result<usize>> + Send;
+
+    fn recv_from(
+        &self,
+        buffer: &mut [u8],
+    ) -> impl Future<Output = io::Result<(usize, SocketAddr)>> + Send;
+}
+
+impl ProbeSocket for UdpSocket {
+    fn send_to(
+        &self,
+        buffer: &[u8],
+        target: SocketAddr,
+    ) -> impl Future<Output = io::Result<usize>> + Send {
+        Self::send_to(self, buffer, target)
+    }
+
+    fn recv_from(
+        &self,
+        buffer: &mut [u8],
+    ) -> impl Future<Output = io::Result<(usize, SocketAddr)>> + Send {
+        Self::recv_from(self, buffer)
     }
 }
 
