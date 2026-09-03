@@ -209,8 +209,9 @@ jobs:
 
       - name: Lint YAML
         run: |
-          python3 -m pip install --user yamllint==1.37.1
-          yamllint --strict .
+          python3 -m venv "$RUNNER_TEMP/yamllint"
+          "$RUNNER_TEMP/yamllint/bin/pip" install yamllint==1.37.1
+          "$RUNNER_TEMP/yamllint/bin/yamllint" --strict .
 
       - name: Lint GitHub Actions workflows
         run: |
