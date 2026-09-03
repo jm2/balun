@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Balun
+GenericName=Live TV Viewer
+Comment=A lightweight cross-platform HDHomeRun live TV viewer
+Exec=balun
+Icon=io.github.jm2.Balun
+Terminal=false
+Categories=AudioVideo;Video;TV;Player;GNOME;GTK;
+Keywords=HDHomeRun;TV;Television;Tuner;Antenna;ATSC;Live;
+StartupWMClass=Balun
+StartupNotify=true
