@@ -144,7 +144,14 @@ review's pull request.
 
 ### Verified
 
-- No logging framework is linked. The 17 production print sites
+- Logging arrived on 2026-09-03: `tracing` with a standard-error subscriber
+  (`src/logging.rs`, `RUST_LOG`, default `balun=info`). Log lines carry closed
+  categories, GStreamer's native error domain, code, and text (GStreamer never
+  receives an address or URL), HTTP status codes, the `Debug` of value-free
+  error enums, and the device identity ADR-0002 allows; no logged type carries
+  `DeviceAuth`, a query value, or a stream URL, and the redacted `Debug`
+  implementations above were re-checked when the sites were added. The 17
+  production print sites
   (`src/bin/balun-discover.rs`, `src/app.rs`, `src/ui/window.rs`,
   `src/ui/settings_session.rs`) interpolate fixed text, counters, `SocketAddr`,
   `DeviceId`, or value-free error enums; the opt-in `live_hardware.rs` harness
@@ -191,7 +198,8 @@ review's pull request.
 
 ### Not covered
 
-- A future logging framework; re-audit every `Debug` above if one is added.
+- New log sites; re-audit any type first logged after this review against the
+  `Debug` list above.
 
 ## 4. Package contents and CI
 
@@ -291,5 +299,5 @@ review's pull request.
 - Pin the flatpak-builder action and its `gnome-50` image; review the
   publication job with #18 (P3.5).
 - Repeat this review when P2.2 connects the routed sender and when the Windows
-  and macOS packages land (P3.3, P3.4); add a CI guard so a logging framework
-  cannot arrive without a `Debug` re-audit.
+  and macOS packages land (P3.3, P3.4), and re-audit new log sites against the
+  `Debug` list.

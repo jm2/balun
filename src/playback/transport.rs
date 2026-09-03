@@ -312,6 +312,7 @@ fn run_reader(
         .enable_time()
         .build();
     let Ok(runtime) = runtime else {
+        tracing::warn!(target: "balun::playback", "stream reader could not build its runtime");
         failure_sink.post(PlaybackPipelineFailure::Internal);
         return;
     };
@@ -348,18 +349,34 @@ async fn stream_body(
         () = cancellation.cancelled() => return Err(ReaderStop::Cancelled),
         result = tokio::time::timeout(config.response_timeout, request) => match result {
             Ok(Ok(response)) => response,
-            Ok(Err(_)) | Err(_) => {
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    target: "balun::playback",
+                    connect = error.is_connect(),
+                    timeout = error.is_timeout(),
+                    "stream request failed before a response"
+                );
+                return Err(ReaderStop::Failed(PlaybackPipelineFailure::Offline));
+            }
+            Err(_) => {
+                tracing::warn!(target: "balun::playback", "stream request timed out before a response");
                 return Err(ReaderStop::Failed(PlaybackPipelineFailure::Offline));
             }
         },
     };
     // Only the numeric status is interpreted; reason phrases, headers, and
     // bodies of rejected responses are dropped with the response.
-    match response.status().as_u16() {
-        200 => {}
-        503 => return Err(ReaderStop::Failed(PlaybackPipelineFailure::TunerBusy)),
-        404 => return Err(ReaderStop::Failed(PlaybackPipelineFailure::ChannelMissing)),
-        _ => return Err(ReaderStop::Failed(PlaybackPipelineFailure::HttpRejected)),
+    let status = response.status().as_u16();
+    tracing::debug!(target: "balun::playback", status, "stream response");
+    let rejected = match status {
+        200 => None,
+        503 => Some(PlaybackPipelineFailure::TunerBusy),
+        404 => Some(PlaybackPipelineFailure::ChannelMissing),
+        _ => Some(PlaybackPipelineFailure::HttpRejected),
+    };
+    if let Some(failure) = rejected {
+        tracing::warn!(target: "balun::playback", status, category = %failure, "device rejected the stream request");
+        return Err(ReaderStop::Failed(failure));
     }
 
     loop {
@@ -383,7 +400,14 @@ async fn stream_body(
                 send_feed(feed, cancellation, FeedItem::End).await?;
                 return Ok(());
             }
-            Err(_) => return Err(ReaderStop::Failed(PlaybackPipelineFailure::Offline)),
+            Err(error) => {
+                tracing::warn!(
+                    target: "balun::playback",
+                    timeout = error.is_timeout(),
+                    "stream read failed"
+                );
+                return Err(ReaderStop::Failed(PlaybackPipelineFailure::Offline));
+            }
         }
     }
 }

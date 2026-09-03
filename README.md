@@ -193,7 +193,18 @@ is a developer build against the installed MSYS2 runtime, not a portable bundle 
 ```bash
 # Desktop application:
 cargo run --locked --features desktop --bin balun
+
+# With debug logging on standard error:
+RUST_LOG=balun=debug cargo run --locked --features desktop --bin balun
+
+# With GStreamer's own element warnings as well:
+GST_DEBUG=2 RUST_LOG=balun=debug cargo run --locked --features desktop --bin balun
 ```
+
+Balun logs discovery, lineup, tune, and playback outcomes to standard error at `info` by default;
+`RUST_LOG` selects the level, as in Tributary. A playback failure logs the native GStreamer error
+behind its fixed category. Release builds on Windows detach from the console, so use a debug
+build there to read the log.
 
 ### Discovery diagnostic
 

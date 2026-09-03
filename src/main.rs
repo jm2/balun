@@ -6,5 +6,6 @@ mod app;
 mod ui;
 
 fn main() -> gtk::glib::ExitCode {
+    balun::logging::init();
     app::run()
 }

@@ -165,6 +165,52 @@ impl PlaybackPipelineFailure {
 
 /// Reduce one bus message from the exact owned pipeline to a fixed category.
 ///
+/// Log what a bus message says before it is reduced to a closed category.
+///
+/// This is the only place native GStreamer error text reaches anything, and
+/// it reaches only the process's standard error. GStreamer never receives a
+/// device address or stream URL, so the text cannot contain one.
+pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
+    let source = message
+        .src()
+        .and_then(|source| source.downcast_ref::<gst::Element>().cloned())
+        .and_then(|element| element.factory())
+        .map_or_else(
+            || String::from("<none>"),
+            |factory| factory.name().to_string(),
+        );
+    match message.view() {
+        gst::MessageView::Error(error) => {
+            let native = error.error();
+            tracing::warn!(
+                target: "balun::playback",
+                source = %source,
+                domain = %native.domain().as_str(),
+                code = native.code(),
+                message = %native.message(),
+                debug = %error.debug().map(|text| text.to_string()).unwrap_or_default(),
+                "GStreamer reported an error"
+            );
+        }
+        gst::MessageView::Element(element) if element.has_name(MISSING_PLUGIN_MESSAGE) => {
+            tracing::warn!(
+                target: "balun::playback",
+                source = %source,
+                media = %MissingMedia::from_missing_plugin(element).description().unwrap_or("unknown"),
+                "GStreamer reported a missing plugin"
+            );
+        }
+        gst::MessageView::Application(application) => {
+            let name = application.structure().map_or_else(
+                || String::from("<none>"),
+                |structure| structure.name().to_string(),
+            );
+            tracing::debug!(target: "balun::playback", marker = %name, "application marker");
+        }
+        _ => {}
+    }
+}
+
 /// Native error and debug text, source names, details, and every structure
 /// field other than the transport marker's bounded code and the missing
 /// plugin's media type are ignored.

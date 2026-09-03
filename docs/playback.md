@@ -301,7 +301,11 @@ same five-second bound, because a flushing `appsrc` is what unblocks a feeder
 waiting on the byte limit. `NULL` alone is no longer sufficient proof: a
 teardown that cannot join both workers fails, quarantines the owner, and
 retains the unjoined transport for the shutdown retry. Cancellation is never
-reported as EOS or as a failure. A live `appsrc` feed does not post `playbin3`
+reported as EOS or as a failure. Every bus error, missing-plugin notice,
+transport rejection, and source-policy rejection is logged to standard error
+with its native detail before it is reduced to a category (`RUST_LOG=balun=debug`
+shows the full event trace); the category is all the state retains. A live
+`appsrc` feed does not post `playbin3`
 buffering messages, so the session's buffering state stays reserved for
 runtimes that publish it and the connecting state covers preroll. The
 session first holds the pipeline at `PAUSED`, which a live source reaches
