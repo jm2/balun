@@ -14,9 +14,9 @@ merged across devices, no stream URL ever reaches the user interface, and the me
 receives neither a device address nor a stream URL. Playback errors may name the device and its
 address so you know which tuner failed.
 
-> **Pre-alpha.** Balun plays live TV on development builds (verified on Windows against real
-> tuners), but there are no packages yet and Linux and macOS live-device acceptance is still
-> open. The countable status is in [`docs/task.md`](docs/task.md).
+> **Pre-alpha.** Balun plays live TV on development builds (verified on Windows and Linux
+> against real tuners), but there are no packages yet and macOS live-device acceptance is
+> still open. The countable status is in [`docs/task.md`](docs/task.md).
 
 ## Features
 
@@ -315,8 +315,10 @@ CI automatically runs on every push/PR:
   drives the Wayland lifecycle smokes
 - **macOS and Windows compile smoke** — native toolkit SDKs, playback transport tests, helper
   desktop builds, and `-ProbePlayback`
-- **Release candidate** (manual) — verifies an annotated `v` tag against `Cargo.toml` and
-  `CHANGELOG.md`, then builds the diagnostic on all three platforms
+- **Release candidate** (manual) — verifies an annotated `v` tag against every version
+  declaration, builds the diagnostic on all three platforms and the Flatpak bundles, requires the
+  exact artifact inventory with SHA-256 sums, and creates a draft release from a job that checks
+  out no source; every action it runs is pinned to an immutable commit
 
 ### Rust toolchain policy
 
@@ -329,6 +331,20 @@ python3 scripts/sync_rust_toolchain.py --check
 # After reviewing a Dependabot compiler proposal:
 python3 scripts/sync_rust_toolchain.py --from-toolchain
 ```
+
+### Cutting a release
+
+Bump the version in `Cargo.toml` (and `Cargo.lock`), add the `## [version]` changelog section and
+its compare link, add the `<release>` to the AppStream metainfo, then confirm they agree before
+tagging:
+
+```bash
+python3 scripts/release_check.py --tag v0.1.0-alpha.1
+```
+
+Push a signed, annotated `v` tag and run the **Release candidate** workflow with it. The workflow
+repeats the check, builds every artifact from that one commit, verifies the exact inventory, and
+creates a draft GitHub release with `SHA256SUMS.txt`; publishing it is a manual step.
 
 ### Release component policy
 
