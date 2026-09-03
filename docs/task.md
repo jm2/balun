@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **13/30 (43.3%)** records complete. This is a dependency ledger,
+Current status: **14/30 (46.7%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -38,7 +38,8 @@ most evidence records.
 The Linux live-hardware proofs recorded P0.2, P0.4, P0.6, and P0.7 against
 the primary-site tuners on 2026-09-03. P0.3 needs the macOS host, P0.5 waits
 on the Windows and macOS factory sets, and P0.8 is the next hardware record.
-P1.1, P1.2, P1.3, and P1.5 are complete.
+P1.1, P1.2, P1.3, and P1.5 are complete. P4.3 recorded the security and
+privacy review in `security-review-v0.1.md` with only Low findings open.
 
 ## P0 — Evidence and contract
 
@@ -151,7 +152,7 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
   primary-site and secondary-site devices; defer the Australian units without
   claiming regional support.
 
-- [ ] **P4.3 — Complete the security and privacy review.** Re-audit network
+- [x] **P4.3 — Complete the security and privacy review.** Re-audit network
   admission, persisted state, logs, package contents, and unexpected
   tuner-allocation paths.
 
