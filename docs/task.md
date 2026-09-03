@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **2/30 (6.7%)** records complete. This is a dependency ledger,
+Current status: **3/30 (10.0%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -90,7 +90,7 @@ the live numbers that were never recorded.
   stream type from a closed list, and decide whether AC-4 channels play video
   only with an explicit notice or keep failing closed.
 
-- [ ] **P1.5 — Add channel search and a favorites filter.** Filter the selected
+- [x] **P1.5 — Add channel search and a favorites filter.** Filter the selected
   device's lineup without changing device or channel identity.
 
 - [ ] **P1.6 — Complete keyboard navigation and accessibility.** Review both
