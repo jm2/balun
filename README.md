@@ -267,12 +267,13 @@ coverage, and the installed-runtime playback probes:
 ```
 
 The check, Clippy, and coverage modes include the desktop feature by default, and Clippy runs with
-`-D warnings` in both the debug and release profiles. `--probe-playback` (`-ProbePlayback`) runs
-the same installed-runtime probes CI uses on every platform and cannot be combined with
-`--diagnostic`. Packaging switches such as `--flatpak`, `--deb`, `--rpm`, `--dmg`, `-Bundle`, and
-`-InnoSetup` exit before any work until packaging lands. The helpers keep Tributary's filenames
-and flags; [`docs/tributary-build-infrastructure.md`](docs/tributary-build-infrastructure.md) is
-the port ledger.
+`-D warnings` in both the debug and release profiles. `--probe-playback` (`-ProbePlayback`) runs the
+same installed-runtime probes CI uses on every platform, prints the installed decoder and audio-sink
+inventory for the codec contract, and cannot be combined with `--diagnostic`. Packaging switches
+such as `--flatpak`, `--deb`, `--rpm`, `--dmg`, `-Bundle`, and `-InnoSetup` exit before any work
+until packaging lands. The helpers keep Tributary's filenames and flags;
+[`docs/tributary-build-infrastructure.md`](docs/tributary-build-infrastructure.md) is the port
+ledger.
 
 ### Testing & Code Quality
 

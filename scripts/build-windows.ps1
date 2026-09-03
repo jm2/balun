@@ -869,11 +869,12 @@ try {
         Write-Info 'Probing the installed GStreamer playback runtime (release profile)...'
         foreach ($Probe in @(
             'playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation',
-            'playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc'
+            'playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc',
+            'playback::runtime::tests::installed_runtime_reports_the_decoder_and_sink_inventory'
         )) {
             $CargoArguments = @('test', '--release', '--locked', '--features', 'desktop', '--lib') +
                 $TargetDirectoryArguments + $TargetArguments +
-                @($Probe, '--', '--ignored', '--exact')
+                @($Probe, '--', '--ignored', '--exact', '--nocapture')
             Invoke-Cargo -CargoCommand $CargoCommand -Arguments $CargoArguments -Description 'cargo test'
         }
         Write-Info 'Playback runtime probes passed.'

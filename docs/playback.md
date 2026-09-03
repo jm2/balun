@@ -119,7 +119,8 @@ sink. The synthetic acceptance test proves one narrow MPEG-2 fixture path
 through `playbin3` and `gtk4paintablesink`; P0.5 must still record the
 complete tested factory contract. The helpers' `--probe-playback` mode now provides the
 development-runtime probe of this snapshot and of the constant-URI `appsrc`
-contract on all three platforms; the fake-device probes exist and P3 adds
+contract on all three platforms and prints the decoder and audio-sink
+inventory that P0.5 records per platform; the fake-device probes exist and P3 adds
 packaged-runtime probes.
 
 Registry presence also does not prove that a factory can construct, negotiate,

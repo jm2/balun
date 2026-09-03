@@ -240,6 +240,9 @@ fn probe_capabilities(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::str::FromStr;
+
+    use gst::prelude::*;
 
     use super::*;
 
@@ -331,6 +334,123 @@ mod tests {
             Err(PlaybackInitializationError::MainContextUnavailable)
         );
         assert_eq!(require_main_context_owner(true), Ok(()));
+    }
+
+    /// Broadcast stream types Balun may meet, in the order of the closed
+    /// missing-media table, with the caps a decoder must accept.
+    const INVENTORY_MEDIA: [(&str, &str); 8] = [
+        (
+            "MPEG-2 video",
+            "video/mpeg,mpegversion=2,systemstream=false",
+        ),
+        ("H.264 video", "video/x-h264"),
+        ("HEVC video", "video/x-h265"),
+        ("MPEG-1/2 audio", "audio/mpeg,mpegversion=1"),
+        ("AAC audio", "audio/mpeg,mpegversion=4"),
+        ("AC-3 audio", "audio/x-ac3"),
+        ("E-AC-3 audio", "audio/x-eac3"),
+        ("AC-4 audio", "audio/x-ac4"),
+    ];
+
+    fn factory_summary(factory: &gst::ElementFactory) -> String {
+        let plugin = factory
+            .plugin()
+            .map(|plugin| format!("{} {}", plugin.plugin_name(), plugin.version()))
+            .unwrap_or_else(|| "static".to_owned());
+        format!(
+            "{} [rank {}, {plugin}]",
+            factory.name(),
+            i32::from(factory.rank())
+        )
+    }
+
+    /// Factories of one type, highest rank first, optionally filtered by caps.
+    fn ranked_factories(
+        kind: gst::ElementFactoryType,
+        sink_caps: Option<&gst::Caps>,
+    ) -> Vec<gst::ElementFactory> {
+        let mut factories = gst::ElementFactory::factories_with_type(kind, gst::Rank::MARGINAL)
+            .into_iter()
+            .filter(|factory| sink_caps.is_none_or(|caps| factory.can_sink_any_caps(caps)))
+            .collect::<Vec<_>>();
+        factories.sort_by_key(|factory| std::cmp::Reverse(i32::from(factory.rank())));
+        factories
+    }
+
+    /// The sink `autoaudiosink` selects on this host, if one opens.
+    fn selected_audio_sink() -> String {
+        let Ok(auto) = gst::ElementFactory::make("autoaudiosink").build() else {
+            return "autoaudiosink unavailable".to_owned();
+        };
+        if auto.set_state(gst::State::Ready).is_err() {
+            return "none opened".to_owned();
+        }
+        let selected = auto
+            .downcast_ref::<gst::Bin>()
+            .and_then(|bin| bin.iterate_elements().into_iter().flatten().next())
+            .and_then(|child| child.factory())
+            .map(|factory| factory_summary(&factory))
+            .unwrap_or_else(|| "unknown".to_owned());
+        let _ = auto.set_state(gst::State::Null);
+        selected
+    }
+
+    /// Print the installed decoder and sink inventory in a fixed, plugin-only
+    /// format. Run through the helpers' `--probe-playback` mode with
+    /// `--nocapture`; the lines feed the per-platform codec contract in
+    /// `docs/compatibility-v0.1.md`. Nothing here names a device or a host.
+    #[test]
+    #[ignore = "requires the complete development playback runtime"]
+    fn installed_runtime_reports_the_decoder_and_sink_inventory() {
+        let main_context = gst::glib::MainContext::default();
+        let _main_context_guard = main_context
+            .acquire()
+            .expect("acquire default main context for installed-runtime inventory");
+        let runtime = PlaybackRuntime::initialize().expect("initialize installed GStreamer");
+        println!(
+            "inventory: gstreamer {} on {} {}",
+            runtime.capabilities().runtime_version(),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        for capability in runtime.capabilities().factories() {
+            let detail = gst::ElementFactory::find(capability.factory().name())
+                .map(|factory| factory_summary(&factory))
+                .unwrap_or_else(|| "missing".to_owned());
+            println!("inventory: foundation {}: {detail}", capability.factory());
+        }
+        for (label, caps) in INVENTORY_MEDIA {
+            let caps = gst::Caps::from_str(caps).expect("inventory caps parse");
+            let decoders = ranked_factories(gst::ElementFactoryType::DECODER, Some(&caps))
+                .iter()
+                .map(factory_summary)
+                .collect::<Vec<_>>();
+            let rendered = if decoders.is_empty() {
+                "none".to_owned()
+            } else {
+                decoders.join("; ")
+            };
+            println!("inventory: decoder {label}: {rendered}");
+        }
+        let audio_sinks = ranked_factories(
+            gst::ElementFactoryType::SINK | gst::ElementFactoryType::MEDIA_AUDIO,
+            None,
+        )
+        .iter()
+        .map(factory_summary)
+        .collect::<Vec<_>>();
+        println!(
+            "inventory: audio sinks: {}",
+            if audio_sinks.is_empty() {
+                "none".to_owned()
+            } else {
+                audio_sinks.join("; ")
+            }
+        );
+        println!(
+            "inventory: autoaudiosink selects: {}",
+            selected_audio_sink()
+        );
     }
 
     #[test]
