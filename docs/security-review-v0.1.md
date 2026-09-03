@@ -197,13 +197,19 @@ review's pull request.
 
 ### Verified
 
-- `ci.yml` and `release.yml`: top-level `permissions: contents: read`, no job
-  elevation, `persist-credentials: false` on every checkout, no secrets, no
-  `pull_request_target`; `dtolnay/rust-toolchain` and `msys2/setup-msys2`
+- `ci.yml` and `release.yml`: top-level `permissions: contents: read`, no
+  GitHub token permission elevation in any job, `persist-credentials: false`
+  on every checkout, no secrets, no `pull_request_target`; `dtolnay/rust-toolchain` and `msys2/setup-msys2`
   pinned by SHA; actionlint pinned by SHA-256; markdownlint, taplo, and
   yamllint pinned by version; a `cargo audit` job; `--locked` on every cargo
   step; `Cargo.lock` committed; Dependabot for cargo, rust-toolchain, and
   actions; an exact-MSRV job.
+- The Flatpak job is the one privilege exception: its container runs with
+  `options: --privileged` because `flatpak-builder` needs to create its own
+  bubblewrap sandbox inside the runner's container. That privilege is
+  container-local; the job's token stays at the read-only default, it reads
+  only the checked-out tree and the pinned `gnome-50` image, and its only
+  output is the bundle uploaded as a seven-day workflow artifact.
 - `release.yml`: `workflow_dispatch` with a regex-validated tag that must be
   annotated and agree with `Cargo.toml` and the changelog, builds from the
   resolved SHA, and uploads the diagnostic only.
