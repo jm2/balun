@@ -166,6 +166,7 @@ jobs:
               require_png(f'{HICOLOR}/{size}x{size}/apps/{APP_ID}.png', size)
           for name, size in ICONSET:
               require_png(f'data/balun.iconset/{name}', size)
+          require_png('data/balun.png', 1024)
           require_svg(f'{HICOLOR}/scalable/apps/{APP_ID}.svg')
           require_svg(f'{HICOLOR}/symbolic/apps/{APP_ID}-symbolic.svg')
           require_ico('data/balun.ico')

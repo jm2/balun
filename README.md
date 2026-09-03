@@ -1,4 +1,4 @@
-<img src="data/icons/hicolor/128x128/apps/io.github.jm2.Balun.png" width="96" alt="Balun icon">
+<img src="data/icons/hicolor/scalable/apps/io.github.jm2.Balun.svg" width="96" alt="Balun icon">
 
 # Balun
 
@@ -401,6 +401,7 @@ scripts/
 ├── test-desktop-lifecycle.sh # Headless Wayland/Xvfb desktop and playback smokes
 ├── test-build-*            # Helper routing tests
 ├── macos-*-policy.sh       # macOS bundle and icon policy helpers
+├── render-icons.py         # Renders every icon raster from the SVG source
 └── sync_rust_toolchain.py  # Rust floor synchronization
 
 build-aux/
@@ -412,9 +413,10 @@ build-aux/
 data/
 ├── io.github.jm2.Balun.desktop      # Desktop entry
 ├── io.github.jm2.Balun.metainfo.xml # AppStream metadata
-├── icons/hicolor/          # Application icon (scalable, symbolic, 16-512 px)
-├── balun.iconset/          # macOS icon source
-└── balun.ico               # Windows icon
+├── icons/hicolor/          # Application icon: SVG source, symbolic SVG, 16-512 px renders
+├── balun.iconset/          # macOS icon set rendered from the SVG (up to 1024 px)
+├── balun.png               # 1024 px master render
+└── balun.ico               # Windows icon rendered from the SVG
 
 hooks/pre-commit             # cargo fmt check
 tests/                       # Synthetic MPEG-2 fixture and display-backed playback test
