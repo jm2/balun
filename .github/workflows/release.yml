@@ -79,7 +79,8 @@ jobs:
           fi
 
           build_ref="$(git rev-parse HEAD)"
-          version="$(awk -F'"' '/^\[package\]/{in_package=1; next} in_package && /^version = /{print $2; exit}' Cargo.toml)"
+          version="$(awk -F'"' '/^\[package\]/{in_package=1; next}
+            in_package && /^version = /{print $2; exit}' Cargo.toml)"
           if [[ -z "${version}" ]]; then
             echo "Could not read the package version from Cargo.toml" >&2
             exit 1

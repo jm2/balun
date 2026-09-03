@@ -24,7 +24,7 @@ mod test_support;
 mod transport;
 
 #[cfg(feature = "desktop")]
-pub use pipeline_failure::PlaybackPipelineFailure;
+pub use pipeline_failure::{MissingMedia, PlaybackPipelineFailure};
 pub use runtime::{
     FactoryCapability, GSTREAMER_API_FLOOR, PlaybackCapabilities, PlaybackFactory,
     PlaybackInitializationError, PlaybackRuntime, RuntimeVersion,
