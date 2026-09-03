@@ -1,5 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use thiserror::Error;
 
@@ -210,6 +211,21 @@ pub enum DiscoveryFailure {
     Network,
     ExactTargetLimitReached,
     Internal,
+    /// Routed discovery is not offered on this system, or its route and
+    /// approval observers could not be established.
+    RoutedUnavailable,
+    /// No active tunnel route offers a candidate to probe.
+    RoutedNoCandidates,
+    /// The current routed proposal has not been approved.
+    RoutedNotApproved,
+    /// Another routed reservation is still active.
+    RoutedBusy,
+    /// Automatic routed runs are cooling down after empty results.
+    RoutedCoolingDown,
+    /// The approval store published a reservation it could not confirm.
+    RoutedUnconfirmed,
+    /// The proposal changed since it was shown, so the action does not apply.
+    RoutedProposalChanged,
 }
 
 /// Address-free kind of discovery operation represented by a state update.
@@ -217,6 +233,181 @@ pub enum DiscoveryFailure {
 pub enum DiscoveryKind {
     Local,
     Exact,
+    Routed,
+}
+
+/// Session-unique handle to the routed proposal a snapshot currently shows,
+/// so an approval can never apply to a proposal the user did not see.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RoutedApprovalToken(u64);
+
+impl RoutedApprovalToken {
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Why routed discovery cannot be offered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RoutedUnavailableReason {
+    /// The platform has no route provider or observer support yet.
+    UnsupportedPlatform,
+    /// The controller was started without a routed service.
+    NotConfigured,
+    /// No private per-user directory exists for the approval store.
+    NoPrivateDirectory,
+    /// The route and approval-store observers could not be established.
+    ObserversUnavailable,
+}
+
+/// Whether routed discovery can be offered at all.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RoutedAvailability {
+    #[default]
+    Unknown,
+    Available,
+    Unavailable(RoutedUnavailableReason),
+}
+
+/// The scalars of one routed proposal. Origins (interface names and
+/// networks) deliberately stay out of the snapshot and are fetched by the
+/// approval dialog through a private reply.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RoutedProposalState {
+    token: RoutedApprovalToken,
+    candidate_count: u16,
+    maximum_request_datagrams: u16,
+    wire_datagrams_per_second: u16,
+    max_in_flight: u8,
+    overall_deadline_seconds: u16,
+    origin_count: u8,
+    approved: bool,
+}
+
+impl RoutedProposalState {
+    #[must_use]
+    pub fn new(
+        token: RoutedApprovalToken,
+        candidate_count: usize,
+        maximum_request_datagrams: usize,
+        wire_datagrams_per_second: u16,
+        max_in_flight: usize,
+        overall_deadline: Duration,
+        origin_count: usize,
+    ) -> Self {
+        Self {
+            token,
+            candidate_count: u16::try_from(candidate_count).unwrap_or(u16::MAX),
+            maximum_request_datagrams: u16::try_from(maximum_request_datagrams).unwrap_or(u16::MAX),
+            wire_datagrams_per_second,
+            max_in_flight: u8::try_from(max_in_flight).unwrap_or(u8::MAX),
+            overall_deadline_seconds: u16::try_from(overall_deadline.as_secs()).unwrap_or(u16::MAX),
+            origin_count: u8::try_from(origin_count).unwrap_or(u8::MAX),
+            approved: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_approved(mut self, approved: bool) -> Self {
+        self.approved = approved;
+        self
+    }
+
+    #[must_use]
+    pub const fn token(self) -> RoutedApprovalToken {
+        self.token
+    }
+
+    #[must_use]
+    pub const fn candidate_count(self) -> u16 {
+        self.candidate_count
+    }
+
+    #[must_use]
+    pub const fn maximum_request_datagrams(self) -> u16 {
+        self.maximum_request_datagrams
+    }
+
+    #[must_use]
+    pub const fn wire_datagrams_per_second(self) -> u16 {
+        self.wire_datagrams_per_second
+    }
+
+    #[must_use]
+    pub const fn max_in_flight(self) -> u8 {
+        self.max_in_flight
+    }
+
+    #[must_use]
+    pub const fn overall_deadline_seconds(self) -> u16 {
+        self.overall_deadline_seconds
+    }
+
+    #[must_use]
+    pub const fn origin_count(self) -> u8 {
+        self.origin_count
+    }
+
+    #[must_use]
+    pub const fn approved(self) -> bool {
+        self.approved
+    }
+}
+
+/// The routed proposal lane, independent of the discovery lane's generation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RoutedProposalStatus {
+    #[default]
+    None,
+    Proposing,
+    Proposed(RoutedProposalState),
+    Failed(DiscoveryFailure),
+}
+
+/// Bounded, topology-free status for routed discovery.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RoutedDiscoveryState {
+    availability: RoutedAvailability,
+    proposal: RoutedProposalStatus,
+    cooldown_seconds: Option<u16>,
+}
+
+impl RoutedDiscoveryState {
+    #[must_use]
+    pub const fn new(
+        availability: RoutedAvailability,
+        proposal: RoutedProposalStatus,
+        cooldown_seconds: Option<u16>,
+    ) -> Self {
+        Self {
+            availability,
+            proposal,
+            cooldown_seconds,
+        }
+    }
+
+    #[must_use]
+    pub const fn availability(self) -> RoutedAvailability {
+        self.availability
+    }
+
+    #[must_use]
+    pub const fn proposal(self) -> RoutedProposalStatus {
+        self.proposal
+    }
+
+    /// Seconds left before an automatic run may start again, when the last
+    /// automatic request was refused for cooling down.
+    #[must_use]
+    pub const fn cooldown_seconds(self) -> Option<u16> {
+        self.cooldown_seconds
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -290,9 +481,19 @@ impl DiscoveryState {
     /// Complete an exact-address probe that received no valid device reply.
     #[must_use]
     pub const fn exact_no_response(generation: OperationGeneration, issue_count: u16) -> Self {
+        Self::no_response_for(generation, DiscoveryKind::Exact, issue_count)
+    }
+
+    /// Complete a targeted operation that received no valid device reply.
+    #[must_use]
+    pub const fn no_response_for(
+        generation: OperationGeneration,
+        kind: DiscoveryKind,
+        issue_count: u16,
+    ) -> Self {
         Self {
             generation,
-            kind: DiscoveryKind::Exact,
+            kind,
             status: DiscoveryStatus::NoResponse,
             issue_count,
         }
@@ -468,6 +669,7 @@ pub struct ApplicationSnapshot {
     devices: Arc<[DeviceSummary]>,
     selected_device: Option<DeviceId>,
     selected_lineup: SelectedLineupState,
+    routed: RoutedDiscoveryState,
 }
 
 impl ApplicationSnapshot {
@@ -534,7 +736,15 @@ impl ApplicationSnapshot {
             devices: Arc::from(bounded.into_boxed_slice()),
             selected_device,
             selected_lineup,
+            routed: RoutedDiscoveryState::default(),
         })
+    }
+
+    /// Attach the routed lane's state; it carries no generation of its own.
+    #[must_use]
+    pub const fn with_routed(mut self, routed: RoutedDiscoveryState) -> Self {
+        self.routed = routed;
+        self
     }
 
     #[must_use]
@@ -547,6 +757,7 @@ impl ApplicationSnapshot {
             devices: Arc::from([]),
             selected_device: None,
             selected_lineup: SelectedLineupState::unselected(OperationGeneration::INITIAL),
+            routed: RoutedDiscoveryState::default(),
         }
     }
 
@@ -583,6 +794,11 @@ impl ApplicationSnapshot {
     #[must_use]
     pub const fn selected_lineup(&self) -> &SelectedLineupState {
         &self.selected_lineup
+    }
+
+    #[must_use]
+    pub const fn routed(&self) -> RoutedDiscoveryState {
+        self.routed
     }
 
     /// Whether this publication can safely replace `previous` in a reducer.
@@ -1294,5 +1510,51 @@ mod tests {
             ),
             Err(StateError::ControlCharacter { .. })
         ));
+    }
+
+    #[test]
+    fn routed_state_defaults_to_unknown_and_rides_with_the_snapshot() {
+        let initial = ApplicationSnapshot::initial();
+        assert_eq!(initial.routed(), RoutedDiscoveryState::default());
+        assert_eq!(initial.routed().availability(), RoutedAvailability::Unknown);
+        assert_eq!(initial.routed().proposal(), RoutedProposalStatus::None);
+
+        let proposal = RoutedProposalState::new(
+            RoutedApprovalToken::new(9),
+            300,
+            70_000,
+            64,
+            16,
+            Duration::from_secs(15),
+            300,
+        );
+        assert_eq!(proposal.candidate_count(), 300);
+        assert_eq!(proposal.maximum_request_datagrams(), u16::MAX);
+        assert_eq!(proposal.origin_count(), u8::MAX);
+        assert_eq!(proposal.overall_deadline_seconds(), 15);
+        assert!(!proposal.approved());
+        assert!(proposal.with_approved(true).approved());
+
+        let routed = RoutedDiscoveryState::new(
+            RoutedAvailability::Available,
+            RoutedProposalStatus::Proposed(proposal),
+            Some(30),
+        );
+        let next = ApplicationSnapshot::new(
+            SnapshotRevision::INITIAL.checked_next().unwrap(),
+            OperationGeneration::INITIAL,
+            OperationGeneration::INITIAL,
+            DiscoveryState::idle(OperationGeneration::INITIAL),
+            [],
+            None,
+            SelectedLineupState::unselected(OperationGeneration::INITIAL),
+        )
+        .unwrap()
+        .with_routed(routed);
+        assert_eq!(next.routed(), routed);
+        assert!(
+            next.can_replace(&initial),
+            "routed state changes never block a publication"
+        );
     }
 }
