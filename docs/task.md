@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **14/30 (46.7%)** records complete. This is a dependency ledger,
+Current status: **16/30 (53.3%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -109,7 +109,7 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
   expire stale evidence, cancel invalid authority synchronously, and keep
   devices that retain another valid locator.
 
-- [ ] **P2.4 — Complete discovery diagnostics.** Report probe counts, accepted
+- [x] **P2.4 — Complete discovery diagnostics.** Report probe counts, accepted
   and rejected replies, provider availability, and failure classes without
   persisting unrelated topology.
 
@@ -122,7 +122,7 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
 - [ ] **P3.1 — Add desktop metadata and assets.** Land the icon, desktop entry,
   AppStream metadata, and a screenshot with exact Balun identity data.
 
-- [ ] **P3.2 — Build Flatpak x86_64 and aarch64.** Generate locked sources,
+- [x] **P3.2 — Build Flatpak x86_64 and aarch64.** Generate locked sources,
   stage the capability-derived runtime, keep the reviewed permission policy,
   and validate the reopened bundle.
 
