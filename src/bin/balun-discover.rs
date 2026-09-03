@@ -4,8 +4,8 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use balun::discovery::{
-    ApprovedIpv4Range, DiscoveryClient, DiscoveryReport, RegistryError, RoutedRangeError,
-    RoutedScanConfig,
+    ApprovedIpv4Range, DiscoveryClient, DiscoveryReport, ProbeConfig, RegistryError,
+    RoutedRangeError, RoutedScanConfig,
 };
 use balun::hdhr::{
     DeviceInspectionError, DeviceInspectionIssueKind, DeviceInspectionReport, DeviceInspector,
@@ -20,8 +20,11 @@ Usage:
   balun-discover [--inspect] --local
   balun-discover [--inspect] --target <IP> [--target <IP> ...]
   balun-discover [--inspect] --approved-range <PRIVATE-CIDR>
+  balun-discover --providers
 
 No arguments performs ordinary local-interface discovery.
+--providers reports route-provider availability and tunnel candidate counts
+without sending packets or printing any address or route.
 --inspect also fetches bounded device metadata and lineup counts; it never
 starts a stream or allocates a tuner.
 Routed enumeration requires the explicit --approved-range option and is
@@ -32,6 +35,7 @@ enum Action {
     Local,
     Target(SocketAddr),
     ApprovedRange(ApprovedIpv4Range),
+    Providers,
 }
 
 #[derive(Debug)]
@@ -146,8 +150,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let inspector = DeviceInspector::default();
     let inspect = cli.inspect;
     let mut inspection = InspectionOutcome::default();
+    if cli
+        .actions
+        .iter()
+        .any(|action| !matches!(action, Action::Providers))
+    {
+        print_probe_budget(client.config());
+    }
     for action in cli.actions {
         let report = match action {
+            Action::Providers => {
+                print_providers();
+                continue;
+            }
             Action::Local => client.discover_local(&cancellation).await?,
             Action::Target(target) => client.discover_target(target, None, &cancellation).await?,
             Action::ApprovedRange(range) => {
@@ -196,6 +211,7 @@ fn parse_cli(arguments: impl Iterator<Item = String>) -> Result<Option<Cli>, Cli
         match argument.as_str() {
             "-h" | "--help" => return Ok(None),
             "--inspect" => inspect = true,
+            "--providers" => actions.push(Action::Providers),
             "--local" => actions.push(Action::Local),
             "--target" => {
                 let value = arguments
@@ -281,10 +297,71 @@ fn print_report(report: &DiscoveryReport) {
     }
     for issue in &report.issues {
         eprintln!(
-            "probe issue: {:?} {}: {}",
-            issue.endpoint.method, issue.endpoint.destination, issue.message
+            "probe issue: {:?} {} class={}: {}",
+            issue.endpoint.method,
+            issue.endpoint.destination,
+            issue.class.name(),
+            issue.message
         );
     }
+}
+
+/// The fixed per-probe traffic budget every action below runs under.
+fn print_probe_budget(config: ProbeConfig) {
+    println!(
+        "probe budget: attempts={} response_window_ms={} max_received_datagrams={} max_devices={}",
+        config.attempts(),
+        config.response_window().as_millis(),
+        config.max_received_datagrams(),
+        config.max_unique_devices()
+    );
+}
+
+/// Route-provider availability and bounded counts, never a route or address.
+#[cfg(target_os = "linux")]
+fn print_providers() {
+    use std::collections::BTreeSet;
+
+    use balun::discovery::{
+        LinuxRouteProvider, RouteCandidateOrigin, RouteProvider, select_route_candidates,
+    };
+
+    let snapshot = match LinuxRouteProvider::new().snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            println!("route provider: linux rtnetlink unavailable (route table could not be read)");
+            return;
+        }
+    };
+    match select_route_candidates(&snapshot, &[]) {
+        Ok(candidates) => {
+            let tunnel_interfaces = candidates
+                .iter()
+                .flat_map(|candidate| candidate.origins().iter())
+                .filter_map(|origin| match origin {
+                    RouteCandidateOrigin::TunnelRoute { interface, .. } => Some(interface.get()),
+                    RouteCandidateOrigin::Explicit(_) => None,
+                })
+                .collect::<BTreeSet<_>>();
+            println!(
+                "route provider: linux rtnetlink available; interfaces={} effective_routes={} tunnel_candidates={} tunnel_interfaces={}",
+                snapshot.interfaces().len(),
+                snapshot.effective_routes().len(),
+                candidates.len(),
+                tunnel_interfaces.len()
+            );
+        }
+        Err(error) => println!(
+            "route provider: linux rtnetlink available; candidate selection failed: {error}"
+        ),
+    }
+    println!("routed discovery: offered on this platform; approvals are asked for in the desktop");
+}
+
+#[cfg(not(target_os = "linux"))]
+fn print_providers() {
+    println!("route provider: unavailable on this platform (no native route provider yet)");
+    println!("routed discovery: not offered; use --target or a hostname for a tunnelled tuner");
 }
 
 fn advertised_url_summary(_url: &str) -> &'static str {
@@ -346,6 +423,18 @@ mod tests {
 
     fn parse(values: &[&str]) -> Result<Option<Cli>, CliError> {
         parse_cli(values.iter().map(|value| (*value).to_owned()))
+    }
+
+    #[test]
+    fn providers_is_a_packet_free_action() {
+        let cli = parse(&["--providers"]).unwrap().unwrap();
+        assert!(matches!(cli.actions.as_slice(), [Action::Providers]));
+        assert!(!cli.inspect);
+        let mixed = parse(&["--providers", "--local"]).unwrap().unwrap();
+        assert!(matches!(
+            mixed.actions.as_slice(),
+            [Action::Providers, Action::Local]
+        ));
     }
 
     #[test]

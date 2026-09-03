@@ -164,9 +164,46 @@ impl DiscoveryStats {
     }
 }
 
+/// Fixed class of one probe failure, independent of the error's text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ProbeFailureClass {
+    /// Local interfaces could not be enumerated.
+    Interfaces,
+    /// The endpoint was rejected before any packet was sent.
+    InvalidEndpoint,
+    /// A socket, send, or receive operation failed.
+    Network,
+    /// A discovery task failed to run.
+    Task,
+    /// The routed scan exceeded its overall deadline.
+    Deadline,
+    /// The operation was cancelled.
+    Cancelled,
+    /// A frame could not be encoded or decoded.
+    Protocol,
+}
+
+impl ProbeFailureClass {
+    /// Fixed, lowercase name for diagnostics.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Interfaces => "interfaces",
+            Self::InvalidEndpoint => "invalid-endpoint",
+            Self::Network => "network",
+            Self::Task => "task",
+            Self::Deadline => "deadline",
+            Self::Cancelled => "cancelled",
+            Self::Protocol => "protocol",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProbeIssue {
     pub endpoint: ProbeEndpoint,
+    pub class: ProbeFailureClass,
     pub message: String,
 }
 
@@ -323,6 +360,7 @@ impl DiscoveryClient {
                 Err(DiscoveryError::Cancelled) => return Err(DiscoveryError::Cancelled),
                 Err(error) => report.issues.push(ProbeIssue {
                     endpoint,
+                    class: error.class(),
                     message: error.to_string(),
                 }),
             }
@@ -518,6 +556,22 @@ pub enum DiscoveryError {
 
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
+}
+
+impl DiscoveryError {
+    /// The fixed class this error belongs to.
+    #[must_use]
+    pub const fn class(&self) -> ProbeFailureClass {
+        match self {
+            Self::Interfaces(_) => ProbeFailureClass::Interfaces,
+            Self::InvalidEndpoint { .. } => ProbeFailureClass::InvalidEndpoint,
+            Self::Io { .. } | Self::ShortSend { .. } => ProbeFailureClass::Network,
+            Self::Task(_) => ProbeFailureClass::Task,
+            Self::RoutedScanDeadline { .. } => ProbeFailureClass::Deadline,
+            Self::Cancelled => ProbeFailureClass::Cancelled,
+            Self::Protocol(_) => ProbeFailureClass::Protocol,
+        }
+    }
 }
 
 fn validate_endpoint(endpoint: &ProbeEndpoint) -> Result<(), DiscoveryError> {
@@ -995,5 +1049,44 @@ mod tests {
             .await
             .expect_err("link-local IPv6 needs a scope");
         assert!(matches!(link_local, DiscoveryError::InvalidEndpoint { .. }));
+    }
+
+    #[test]
+    fn every_discovery_error_has_a_distinct_fixed_class() {
+        let errors = [
+            DiscoveryError::Interfaces(io::Error::other("secret interface detail")),
+            DiscoveryError::InvalidEndpoint {
+                endpoint: "192.0.2.9:65001".parse().unwrap(),
+                reason: "synthetic",
+            },
+            DiscoveryError::Io {
+                operation: "send discovery request",
+                endpoint: "192.0.2.9:65001".parse().unwrap(),
+                source: io::Error::other("secret io detail"),
+            },
+            DiscoveryError::Task("synthetic".to_owned()),
+            DiscoveryError::RoutedScanDeadline {
+                deadline: Duration::from_secs(15),
+            },
+            DiscoveryError::Cancelled,
+        ];
+        let classes = errors.iter().map(DiscoveryError::class).collect::<Vec<_>>();
+        assert_eq!(
+            classes,
+            vec![
+                ProbeFailureClass::Interfaces,
+                ProbeFailureClass::InvalidEndpoint,
+                ProbeFailureClass::Network,
+                ProbeFailureClass::Task,
+                ProbeFailureClass::Deadline,
+                ProbeFailureClass::Cancelled,
+            ]
+        );
+        let names = classes
+            .iter()
+            .map(|class| class.name())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(names.len(), classes.len());
+        assert!(names.iter().all(|name| !name.contains("secret")));
     }
 }
