@@ -10,9 +10,10 @@ mod routed;
 mod routes;
 mod types;
 
+pub use approval::{RoutedProposalOriginSummary, RoutedProposalSummary, RoutedScanTrigger};
 pub use client::{
     DiscoveryClient, DiscoveryError, DiscoveryObservation, DiscoveryReport, DiscoveryStats,
-    InvalidProbeConfig, ProbeConfig, ProbeIssue,
+    InvalidProbeConfig, ProbeConfig, ProbeFailureClass, ProbeIssue,
 };
 pub use hostname::{
     DiscoveryEntry, HOSTNAME_RESOLUTION_TIMEOUT, HostnameResolutionError, HostnameTarget,

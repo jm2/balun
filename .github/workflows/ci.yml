@@ -174,6 +174,60 @@ jobs:
               sys.exit(1)
           EOF
 
+  flatpak:
+    name: Flatpak (x86_64)
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Validate the manifest's permission policy
+        run: |
+          build-aux/flatpak/test-permissions.sh
+          build-aux/flatpak/validate-permissions.sh build-aux/flatpak/io.github.jm2.Balun.yml
+
+      - name: Test Linux package compliance policy
+        run: |
+          command -v ostree
+          command -v readelf
+          build-aux/linux/test-package-compliance.sh
+          build-aux/linux/validate-package-metadata.sh
+
+      - name: Install the pinned cargo-source generator dependencies
+        run: |
+          python3 -m pip install --requirement build-aux/flatpak/generator-requirements.txt \
+            --break-system-packages \
+            || python3 -m pip install --requirement build-aux/flatpak/generator-requirements.txt
+
+      - name: Generate cargo-sources.json from Balun's lockfile
+        run: bash build-aux/flatpak/generate-cargo-sources.sh
+
+      - name: Build the Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: balun.flatpak
+          manifest-path: build-aux/flatpak/io.github.jm2.Balun.yml
+          cache-key: flatpak-${{ hashFiles('**/Cargo.lock') }}
+          upload-artifact: false
+
+      - name: Reopen and validate the completed bundle
+        run: build-aux/flatpak/validate-bundle-compliance.sh balun.flatpak
+
+      - name: Probe the packaged runtime for the playback factories
+        run: build-aux/flatpak/validate-bundle-runtime.sh balun.flatpak
+
+      - name: Upload the Flatpak bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: balun-flatpak-x86_64
+          path: balun.flatpak
+          if-no-files-found: error
+          retention-days: 7
+
   audit:
     name: Security audit
     runs-on: ubuntu-24.04

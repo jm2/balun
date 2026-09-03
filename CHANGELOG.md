@@ -44,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a balun, and the name on the bezel, as scalable and symbolic SVG, hicolor PNGs from 16 to
   512 px, a macOS iconset, and a Windows `.ico`, validated by a new CI job. Packages are still to
   come.
+- **Flatpak bundle** — Add the `io.github.jm2.Balun` manifest on the GNOME 50 runtime with the
+  reviewed six-entry permission policy, the Freedesktop ffmpeg-full codec extension, an offline
+  cargo build from generated locked sources, build-time and installed-bundle checks that the
+  runtime supplies every structural playback factory, and app-payload validation. CI builds
+  and reopens an x86_64 bundle; the release-candidate workflow builds x86_64 and aarch64
+  bundles as artifacts.
 - **Channel search and favorites filter** — A search field above the channel list matches a
   channel number prefix or part of a name, and a star toggle shows favorites only. Filtering
   hides rows without changing device or channel identity, keeps the highlighted channel when it
@@ -95,7 +101,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interface-pinned socket are connected into one library runner. It reserves the approved scan,
   rebaselines the observers around the exact post-publication reread, probes each target through a
   socket that re-checks authority and its pin before every datagram, and settles completion
-  durably on every exit path. No user interface reaches it yet.
+  durably on every exit path. The controller offers it as a lane of its own (propose, approve,
+  run, revoke) with topology-free snapshot state and copy for every decision; the window does not
+  drive it yet.
 - **Live-hardware proofs** — Opt-in, display-free tests that discover the real tuners, tune an
   unprotected ATSC 1.0 channel with decoded video and audio, switch channels, observe the ATSC 3.0
   fail-closed path, and probe each device at its own address. They run only with
@@ -106,6 +114,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Support matrix and governance docs** — `docs/support-v0.1.md` names the verified platforms,
   devices, discovery methods, codecs, and v0.1 limitations from the compatibility notes;
   `CONTRIBUTING.md` and `SECURITY.md` say how to contribute and how to report a vulnerability.
+- **Discovery diagnostics** — `balun-discover --providers` reports route-provider availability and
+  bounded tunnel candidate counts without sending a packet or printing a route; every run prints
+  its fixed probe budget, and each probe issue carries a fixed failure class beside its message.
 
 ### Changed
 
@@ -162,8 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   development builds against real tuners; macOS has not yet been exercised against real hardware.
 - **No packaged-runtime acceptance yet** — Playback is proven on development runtimes and the
   loopback fake tuner; the packaged codec closure is not yet frozen.
-- **No packages** — Flatpak, deb, rpm, DMG, and winget packaging are planned; the release workflow
-  builds the diagnostic only.
+- **No published packages** — A Flatpak bundle is built and validated but not published; deb,
+  rpm, DMG, and winget packaging are planned.
 - **No program guide** — Guide data is a v0.2 candidate. The tested HDHomeRun CONNECT's
   per-channel streams carry no PSIP tables, so an in-band guide needs a full-multiplex crawl or
   XMLTV.
