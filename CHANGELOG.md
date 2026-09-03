@@ -150,8 +150,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exercised against real hardware.
 - **No packaged-runtime acceptance yet** — Playback is proven on development runtimes and the
   loopback fake tuner; the packaged codec closure is not yet frozen.
-- **No packages** — Flatpak, deb, rpm, DMG, and winget packaging are planned; the release workflow
-  builds the diagnostic only.
+- **No published packages** — A Flatpak bundle is built and validated but not published; deb,
+  rpm, DMG, and winget packaging are planned.
 - **No program guide or hostname entry** — Guide data is a v0.2 candidate; hostname entry is
   planned for v0.1.
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
