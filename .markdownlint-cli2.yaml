@@ -6,6 +6,12 @@ config:
     tables: false
   MD024:
     siblings_only: true
+  # The README opens with a sized <img> before its title.
+  MD033:
+    allowed_elements:
+      - img
+  MD041:
+    allow_preamble: true
 ignores:
   - "target/**"
   - "build-aux/flatpak/cargo-sources.json"
