@@ -29,7 +29,7 @@ address so you know which tuner failed.
 | Device metadata and lineup inspection without allocating a tuner | ✅ |
 | Adaptive three-pane GTK 4 / libadwaita window | ✅ |
 | Window size and maximized state remembered across launches | ✅ |
-| Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Windows against real tuners; Linux and macOS acceptance pending |
+| Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Windows and Linux against real tuners; macOS acceptance pending |
 | Stop, volume, mute, and fullscreen controls | ✅ |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
 | Playback errors that name the device and channel | ✅ |
@@ -39,7 +39,7 @@ address so you know which tuner failed.
 | Route-derived tunnel discovery (Linux) | 🚧 Foundation only; not connected to the UI |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
-| Audible output and complete codec contract | ✅ Windows; Linux and macOS pending |
+| Audible output and complete codec contract | ✅ Windows and Linux; macOS pending |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, DMG, winget) | ❌ Planned |
@@ -275,6 +275,10 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --all-targets --locked
 cargo test --release --all-targets --locked
+
+# Real-tuner proofs (opt-in, never run by CI; see src/playback/live_hardware.rs):
+BALUN_LIVE_HARDWARE=1 cargo test --features desktop --lib live_hardware -- \
+  --ignored --nocapture --test-threads=1
 
 # Desktop and playback lifecycle smokes under an isolated headless compositor:
 scripts/test-desktop-lifecycle.sh
