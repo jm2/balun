@@ -66,6 +66,7 @@ const MAX_RETAINED_LOCAL_OBSERVATIONS: usize = match DeviceRegistry::DEFAULT_MAX
 const MAX_RETAINED_EXACT_OBSERVATIONS: usize = 1;
 const MAX_RETAINED_ROUTED_OBSERVATIONS: usize = MAX_ROUTED_CANDIDATES;
 /// Private approval-store directory under the per-user settings directory.
+#[cfg(target_os = "linux")]
 const ROUTED_APPROVAL_DIRECTORY: &str = "routed-approvals";
 
 /// Owned, `'static` future returned by an injected discovery service.

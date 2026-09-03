@@ -448,6 +448,7 @@ impl DiscoveryClient {
     /// The endpoint policy is identical to [`Self::discover_routed_target`];
     /// only the socket's origin differs, so every send still passes through
     /// the socket's own pre-send checks.
+    #[cfg(target_os = "linux")]
     pub(super) async fn discover_routed_target_through<S: ProbeSocket + ?Sized>(
         &self,
         socket: &S,

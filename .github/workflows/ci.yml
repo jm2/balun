@@ -67,6 +67,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
 
+      - name: Cross-check the GTK-free library for Windows without warnings
+        run: |
+          rustup target add x86_64-pc-windows-gnullvm
+          RUSTFLAGS="-D warnings" cargo check --locked --target x86_64-pc-windows-gnullvm
+
       - name: Test (debug)
         run: cargo test --all-targets --locked
 
