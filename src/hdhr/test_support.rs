@@ -1,5 +1,5 @@
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::io::{ErrorKind, Read, Write};
+use std::net::{Shutdown, SocketAddr, TcpListener};
 use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -33,6 +33,7 @@ pub(crate) struct ScriptedHttpServer {
 }
 
 impl ScriptedHttpServer {
+    /// Starts a loopback HTTP server that responds sequentially to requests.
     pub(crate) fn start(responses: Vec<ScriptedResponse>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test HTTP server");
         listener
@@ -48,7 +49,7 @@ impl ScriptedHttpServer {
                 let mut stream = loop {
                     match listener.accept() {
                         Ok((stream, _)) => break stream,
-                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {
                             if Instant::now() >= deadline {
                                 return;
                             }
@@ -57,20 +58,40 @@ impl ScriptedHttpServer {
                         Err(_) => return,
                     }
                 };
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                // On Windows, accepted sockets inherit non-blocking status from the listener.
+                if stream.set_nonblocking(false).is_err()
+                    || stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .is_err()
+                    || stream
+                        .set_write_timeout(Some(Duration::from_secs(2)))
+                        .is_err()
+                {
+                    return;
+                }
 
                 let mut request = Vec::new();
                 let mut buffer = [0_u8; 1_024];
-                while request.len() <= 16 * 1_024 {
-                    let Ok(count) = stream.read(&mut buffer) else {
-                        break;
-                    };
-                    if count == 0 {
-                        break;
-                    }
-                    request.extend_from_slice(&buffer[..count]);
-                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                        break;
+                let read_deadline = Instant::now() + Duration::from_secs(2);
+                while request.len() < 16 * 1_024 && Instant::now() < read_deadline {
+                    let read_len = (16 * 1_024 - request.len()).min(buffer.len());
+                    match stream.read(&mut buffer[..read_len]) {
+                        Ok(0) => break,
+                        Ok(count) => {
+                            request.extend_from_slice(&buffer[..count]);
+                            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                ErrorKind::WouldBlock | ErrorKind::TimedOut
+                            ) =>
+                        {
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                        Err(_) => break,
                     }
                 }
                 let _ = request_sender.send(request);
@@ -78,6 +99,7 @@ impl ScriptedHttpServer {
                 thread::sleep(response.delay);
                 let _ = stream.write_all(&response.bytes);
                 let _ = stream.flush();
+                let _ = stream.shutdown(Shutdown::Both);
             }
         });
 
