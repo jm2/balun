@@ -1,7 +1,7 @@
 # Balun v0.1 Compatibility Notes
 
 - Status: Active
-- Last updated: 2026-09-02
+- Last updated: 2026-09-03
 
 This document records sanitized, reproducible observations that refine the
 v0.1 implementation plan. Device IDs, network addresses, channel names,
@@ -86,6 +86,29 @@ This is an owner-reported observation. It did not measure first-frame,
 channel-switch, or tuner-release times, and it did not enumerate the exact
 decoder set in use; P0.4 and P0.5 in [`task.md`](task.md) record those.
 
+## In-band guide spike
+
+On 2026-09-03 the HDHomeRun CONNECT's stream forms were each captured for
+about twelve seconds with a plain HTTP client and inventoried by PID and
+table identifier, without decoding any content:
+
+- Per-channel streams (`/auto/v<guide>` and
+  `/tuner<n>/ch<frequency>-<program>`) carry only the PAT, the program's PMT,
+  and its video and audio elementary streams. The PSIP base PID is absent, so
+  no MGT, VCT, STT, EIT, or ETT reaches a player that tunes the way Balun
+  does.
+- Full-multiplex streams (`/tuner<n>/ch<frequency>` and `/auto/ch<frequency>`)
+  carry the whole broadcast at about 19 Mb/s: every program in the multiplex,
+  the PSIP base PID with the MGT, TVCT, and STT, EIT-0 through EIT-3 on their
+  own PIDs, and the matching ETT tables.
+
+In-band guide data therefore survives only when a whole multiplex is
+requested, which occupies a tuner at the full broadcast rate and needs the RF
+frequency, which the lineup does not expose. A v0.2 in-band guide would have
+to crawl each multiplex briefly, or the guide comes from XMLTV; a now/next
+overlay taken from the playing stream is ruled out. ATSC 3.0 signalling was
+not examined.
+
 ## Observed JSON compatibility
 
 Both `discover.json` documents exposed the following non-secret fields with
@@ -140,7 +163,6 @@ playback with audio on one Windows host. They do not yet establish:
 - Channel-change latency or tuner-release timing.
 - The exact per-platform decoder set, or HEVC and E-AC-3 support.
 - Protected-channel playback.
-- In-band PSIP/EIT guide availability.
 - Secondary-site HDHR3-PRIME or HDHR5-4K behavior.
 - UniFi Site Magic, WireGuard, or other routed multi-site discovery.
 - Linux or macOS live-TV behavior, or the second Windows host.
