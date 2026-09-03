@@ -33,6 +33,7 @@ pub(crate) struct ScriptedHttpServer {
 }
 
 impl ScriptedHttpServer {
+    /// Starts a loopback HTTP server that responds sequentially to requests.
     pub(crate) fn start(responses: Vec<ScriptedResponse>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test HTTP server");
         listener
@@ -58,15 +59,19 @@ impl ScriptedHttpServer {
                     }
                 };
                 // On Windows, accepted sockets inherit non-blocking status from the listener.
-                let _ = stream.set_nonblocking(false);
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+                if stream.set_nonblocking(false).is_err()
+                    || stream.set_read_timeout(Some(Duration::from_secs(2))).is_err()
+                    || stream.set_write_timeout(Some(Duration::from_secs(2))).is_err()
+                {
+                    return;
+                }
 
                 let mut request = Vec::new();
                 let mut buffer = [0_u8; 1_024];
                 let read_deadline = Instant::now() + Duration::from_secs(2);
-                while request.len() <= 16 * 1_024 && Instant::now() < read_deadline {
-                    match stream.read(&mut buffer) {
+                while request.len() < 16 * 1_024 && Instant::now() < read_deadline {
+                    let read_len = (16 * 1_024 - request.len()).min(buffer.len());
+                    match stream.read(&mut buffer[..read_len]) {
                         Ok(0) => break,
                         Ok(count) => {
                             request.extend_from_slice(&buffer[..count]);
