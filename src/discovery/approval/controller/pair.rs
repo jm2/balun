@@ -68,7 +68,7 @@ pub(super) struct LinuxObserverPairShutdown {
 /// must call [`Self::shutdown`] and await its returned future before starting
 /// a replacement. Dropping the pair is a synchronous fail-closed fallback.
 #[must_use = "a paired observer must be driven and shut down explicitly"]
-pub(super) struct LinuxObserverPair {
+pub(crate) struct LinuxObserverPair {
     owner: PairedObserverOwner<LinuxRouteObserverSession, LinuxStoreObserverSession>,
 }
 

@@ -694,6 +694,15 @@ pub(super) struct StoredPublishedReservation {
     key_binding: [u8; 32],
 }
 
+impl StoredPublishedReservation {
+    /// The permit identity this publication carries, so a runner can settle
+    /// completion even when the exact post-publication reread never runs.
+    #[must_use]
+    pub(super) const fn permit(&self) -> &RoutedScanPermit {
+        &self.permit
+    }
+}
+
 impl fmt::Debug for StoredPublishedReservation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("StoredPublishedReservation(<redacted>)")

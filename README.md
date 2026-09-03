@@ -36,7 +36,7 @@ address so you know which tuner failed.
 | Channel search and favorites-only filter | ✅ |
 | Fixed, endpoint-free playback error messages | ✅ |
 | Windows local discovery | ✅ |
-| Route-derived tunnel discovery (Linux) | 🚧 Foundation only; not connected to the UI |
+| Route-derived tunnel discovery (Linux) | 🚧 Library runner connected; approval UX pending |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
 | Audible output and complete codec contract | ✅ Windows and Linux; macOS pending |
