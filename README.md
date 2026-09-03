@@ -15,8 +15,9 @@ receives neither a device address nor a stream URL. Playback errors may name the
 address so you know which tuner failed.
 
 > **Pre-alpha.** Balun plays live TV on development builds (verified on Windows and Linux
-> against real tuners), but there are no packages yet and macOS live-device acceptance is
-> still open. The countable status is in [`docs/task.md`](docs/task.md).
+> against real tuners). A Flatpak bundle and a Windows ZIP and installer are built and validated
+> in CI but not published, and macOS live-device acceptance is still open. The countable status
+> is in [`docs/task.md`](docs/task.md).
 
 ## Features
 
@@ -43,7 +44,7 @@ address so you know which tuner failed.
 | Audible output and complete codec contract | ⚠️ Audio verified on Windows and Linux; codec contract open until P0.5, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, DMG, winget) | 🚧 A Flatpak bundle is built and validated in CI; nothing is published yet |
+| Packages (Flatpak, deb, rpm, DMG, winget) | 🚧 A Flatpak bundle and a Windows ZIP and installer are built and validated in CI; nothing is published yet |
 | Cross-platform: Linux, macOS, Windows | ✅ Windows verified with real tuners; Linux covered by CI runtime smokes; macOS build-tested only |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
@@ -86,8 +87,9 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 ## Installation
 
 No packages are published yet; build from source as described below. CI builds and validates
-a Flatpak bundle on every change, and the release-candidate workflow builds x86_64 and aarch64
-bundles as internal artifacts.
+a Flatpak bundle and a Windows x86_64 ZIP on every change, and the release-candidate workflow
+builds the Flatpak bundles, the Windows ZIP, and the Windows installer as internal artifacts.
+The Windows ZIP unpacks to `balun-windows\`; run `bin\balun.exe` from there.
 
 ---
 
@@ -186,6 +188,23 @@ The helper detects a standard MSYS2 installation (pass `-Msys2Root C:\path\to\ms
 verifies the plugin files, and writes `target\x86_64-pc-windows-gnullvm\release\balun.exe`. This
 is a developer build against the installed MSYS2 runtime, not a portable bundle or installer.
 
+To package it:
+
+```powershell
+# Stage dist\balun-windows, probe it, and create dist\balun-windows.zip:
+.\scripts\build-windows.ps1 -Zip
+
+# Also compile dist\balun-setup.exe (requires a preinstalled Inno Setup 6):
+.\scripts\build-windows.ps1 -InnoSetup
+```
+
+The package keeps the MSYS2 prefix shape (`bin\balun.exe` beside its DLLs, `lib\gstreamer-1.0`,
+`libexec\gstreamer-1.0`, `share`) and contains only the reviewed GStreamer plugin closure and the
+DLLs those binaries import. Before the archive is written, the helper runs the staged `balun.exe`
+itself with a sanitized environment so the bundled scanner, a fresh registry, and the synthetic
+MPEG-2 fixture are proven inside the tree, then reopens the ZIP against it. `-InnoSetup
+-SkipBundle` rebuilds only the installer from a tree whose probe receipt still matches.
+
 ---
 
 ## Running
@@ -272,6 +291,9 @@ coverage, and the installed-runtime playback probes:
 .\scripts\build-windows.ps1 -Test
 .\scripts\build-windows.ps1 -Coverage
 .\scripts\build-windows.ps1 -ProbePlayback
+.\scripts\build-windows.ps1 -Bundle       # stage and probe dist\balun-windows
+.\scripts\build-windows.ps1 -Zip          # ... and create dist\balun-windows.zip
+.\scripts\build-windows.ps1 -InnoSetup    # ... and compile dist\balun-setup.exe
 .\scripts\build-windows.ps1 -Diagnostic
 .\scripts\build-windows.ps1 -InspectLocal
 .\scripts\build-windows.ps1 -Run
@@ -280,9 +302,10 @@ coverage, and the installed-runtime playback probes:
 The check, Clippy, and coverage modes include the desktop feature by default, and Clippy runs with
 `-D warnings` in both the debug and release profiles. `--probe-playback` (`-ProbePlayback`) runs the
 same installed-runtime probes CI uses on every platform, prints the installed decoder and audio-sink
-inventory for the codec contract, and cannot be combined with `--diagnostic`. Packaging switches
-such as `--flatpak`, `--deb`, `--rpm`, `--dmg`, `-Bundle`, and `-InnoSetup` exit before any work
-until packaging lands. The helpers keep Tributary's filenames and flags;
+inventory for the codec contract, and cannot be combined with `--diagnostic`. The Linux and macOS
+packaging switches (`--flatpak`, `--deb`, `--rpm`, `--dmg`) still exit before any work; the
+Windows helper's `-Bundle`, `-Zip`, and `-InnoSetup` stage, probe, and archive the package as
+described under [Windows](#windows). The helpers keep Tributary's filenames and flags;
 [`docs/tributary-build-infrastructure.md`](docs/tributary-build-infrastructure.md) is the port
 ledger.
 

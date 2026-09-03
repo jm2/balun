@@ -64,7 +64,7 @@ final artifact reopening for that format.
 | --- | --- |
 | `build-linux.sh` | Adapted to a no-option, build-only locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, GTK/libadwaita/GStreamer development-floor checks, a structural GStreamer runtime plugin-file gate with a libav warning, an exact native target and repository-local Cargo target path, and Linux ELF inspection; native/Flatpak package modes fail before build work until their complete gates land |
 | `build-macos.sh` | Adapted to a no-option, build-only native locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, GTK/libadwaita/GStreamer development-floor checks, a structural GStreamer runtime plugin-file gate with a libav warning, exact native-target output binding, and pinned Mach-O inspection; app, DMG, signing, and notarization modes fail before external work until their complete gates land |
-| `build-windows.ps1` | Adapted to Tributary's desktop-default flag semantics: no flags auto-detect MSYS2 CLANG64, require the GTK/libadwaita/GStreamer development floors and the structural GStreamer runtime plugin DLLs (Tributary's runtime-plugin gate adapted to Balun's factory contract, with a gst-libav warning), and build a locked release `balun.exe` without launching, `-Run` is the sole desktop launch route, `-Diagnostic` selects the GTK-free tool, and the new-purpose `-InspectLocal` builds, validates, and runs only its fixed local inspection; every compiling route pins its Rust target and repository-local output while bundle, ZIP, Inno, and update paths remain fail-closed |
+| `build-windows.ps1` | Adapted to Tributary's desktop-default flag semantics with a build-only default: no flags auto-detect MSYS2 CLANG64, require the GTK/libadwaita/GStreamer development floors and the structural GStreamer runtime plugin DLLs, and build a locked release `balun.exe` without launching; `-Run` is the sole desktop launch route, `-Diagnostic` selects the GTK-free tool, and `-InspectLocal` runs its fixed local inspection. `-Bundle`, `-Zip`, and `-InnoSetup` (with `-SkipBundle` and `-NoCargoBuild`) port Tributary's bundle, PE-import closure, application-resource contract, packaged-runtime probe, receipt, ZIP, and Inno stages; see [Windows package](#windows-package) for the deliberate differences. `-Package` and `-Installer` were never Tributary flags and are gone; `-CargoUpdate` stays unavailable |
 | `macos-icon-bundle-policy.sh` | Adapted preparatory helper with Balun identity/temp names |
 | `macos-package-policy.sh` | Adapted inspection-only core with bounded Mach-O output and completed-tree checks; broad copy-any-allowed-plugin staging API removed |
 | `sync_rust_toolchain.py` | Ported against Balun's MSRV declarations and wired into CI and the release-candidate workflow |
@@ -121,10 +121,11 @@ native Rust host target explicitly before applying their ELF or Mach-O gates;
 Windows does the same for native diagnostics and already fixes its CLANG64
 desktop target. This prevents inherited Cargo target configuration from moving
 a fresh artifact away from the path being inspected. Windows owns the compiler,
-`pkg-config`, Rust-target, and output-path wiring but makes no PE validation
-claim. The release-candidate workflow selects all three diagnostic routes
-explicitly. These developer conveniences do not imply a bundle, installer,
-redistributable runtime closure, or package validation.
+`pkg-config`, Rust-target, and output-path wiring, and its package modes add
+the PE import, resource, tree, and archive gates described below.
+The release-candidate workflow selects all three diagnostic routes
+explicitly. The Linux and macOS developer conveniences do not imply a bundle,
+installer, redistributable runtime closure, or package validation.
 
 The Fedora desktop CI image installs `gstreamer1-plugin-libav` solely to decode
 the pinned synthetic MPEG-2 test fixture. That host development dependency is
@@ -149,7 +150,7 @@ rustup override and GitHub's rejected attempt to update the original copy under
 | `flatpak/io.github.tributary.Tributary.yml` | Landed as `io.github.jm2.Balun.yml`: GNOME 50 runtime, the six reviewed permissions, the ffmpeg-full extension for broadcast decoders, build-time and installed-bundle probes of the seven structural factories, desktop/metainfo/icon installation, and the app-payload gate; CI builds x86_64 and the release-candidate workflow builds x86_64 and aarch64 |
 | `flatpak/test-permissions.sh` | Landed first against a synthetic manifest so the permission contract is reviewable before packaging |
 | `flatpak/validate-permissions.sh` | Adapted to Balun's exact permission allowlist; the real manifest must invoke it atomically when it lands |
-| `inno/tributary.iss` | Redesign as `balun.iss` with new GUID, resources, version mapping, and reopened-installer gate |
+| `inno/tributary.iss` | Landed as `build-aux/inno/balun.iss`: a deterministic UUID version 5 application GUID, `bin\balun.exe` shortcut and uninstall targets, a numeric `VersionInfoVersion` beside the textual package version, and the product, description, and copyright version fields the helper reopens after compiling |
 | `arch/PKGBUILD` | Deferred with native distro packages |
 | `rpm/tributary.spec` | Deferred with native distro packages |
 
@@ -162,6 +163,55 @@ GPU/DRI permission is broader than render nodes alone, and the PulseAudio
 socket exposes more than Balun's intended output use; both are explicit,
 reviewed tradeoffs for practical accelerated video and audio playback, not
 narrower capability claims.
+
+## Windows package
+
+`build-windows.ps1 -Bundle`, `-Zip`, and `-InnoSetup` port Tributary's Windows
+packaging stages in Tributary's order: shared policy, staging, gst-plugin-scanner,
+bounded non-executing PE import closure with `llvm-readobj`, GTK icons and
+compiled schemas, the completed-tree policy, the packaged runtime probe, the
+receipt, the final PE import and application-resource gates, the ZIP, and Inno
+Setup. The deliberate differences are:
+
+- **Layout.** Tributary stages a flat tree and sets `GST_PLUGIN_PATH`,
+  `GST_PLUGIN_SYSTEM_PATH`, `GST_PLUGIN_SCANNER`, and `GST_REGISTRY` in-process
+  at launch. Balun forbids unsafe code, and writing the process environment is
+  not possible in safe Rust, so the package keeps the MSYS2 prefix shape
+  (`bin\balun.exe` beside every DLL, `lib\gstreamer-1.0`,
+  `libexec\gstreamer-1.0\gst-plugin-scanner.exe`, `share`). GStreamer derives
+  the plugin directory and the scanner from its own DLL location and prepends
+  that directory to the scanner's `PATH`, GLib locates `share` the same way, and
+  an ordinary launch needs no variable at all. The packaged application uses
+  GStreamer's default per-user registry cache.
+- **Closure.** Tributary copies every plugin in the MSYS2 plugin directory
+  minus the deny list. Balun's [release component policy](release-component-policy.md)
+  requires a capability-derived allowlist, so the helper stages exactly the 27
+  plugins listed in its `$GStreamerPluginClosure` table (the seven structural
+  factories, the MPEG-TS parsers and converters, the decoders in the Windows
+  half of the P0.5 codec contract, and the Windows audio sinks) and prunes any
+  other plugin or unreachable DLL from an incremental tree. Every entry is
+  required, so a missing `gst-libav` fails the run instead of warning.
+- **Probe.** Tributary's probe sets its own environment and poisons proxy
+  variables. Balun's helper owns the environment: it removes every `GST_*`,
+  GIO, and proxy variable, sets `PATH` to `System32` only and `GST_REGISTRY` to
+  a fresh cache, and the Rust probe rejects any other inherited policy key,
+  preflights the bundled scanner, and plays the synthetic MPEG-2 fixture from a
+  loopback server through the production `appsrc` source policy and stream
+  transport (which disables proxies itself) to end of stream. Every autoplugged
+  element must come from a bundled plugin file.
+- **Reopened artifacts.** Tributary reopens the ZIP for forbidden names only.
+  Balun additionally requires the ZIP entry set and sizes to equal the staged
+  tree, and reopens the installer's version resource for the product name and
+  the exact package version. The installer payload is the tree validated
+  immediately before compilation.
+- **Receipt.** The unshipped `dist\balun-windows.probe-v1` receipt binds the
+  probed tree to `bin\balun.exe`, `libgstgtk4.dll`, `libgstwasapi2.dll`, and
+  `libgstlibav.dll`; `-InnoSetup -SkipBundle` accepts the tree only while it
+  matches and still repeats every non-executing gate.
+- **Resources.** `build.rs` ports Tributary's `winresource` and
+  `embed-resource` step for the seven-image `data/balun.ico` and the package
+  version; the helper requires exactly that resource set before staging and
+  again after the probe.
 
 ## Required real-package order
 

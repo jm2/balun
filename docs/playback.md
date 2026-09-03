@@ -497,9 +497,9 @@ discovery and lineup inspection and reports playback as unavailable.
 
 The libav package used by the Linux smoke is a development/CI system dependency
 only. It is not part of the seven-factory startup snapshot, a package allowlist,
-or authority to copy a broad plugin distribution into Balun. Future packages
-must derive and inspect a minimal runtime closure after P0.5 and the P3
-packaging records.
+or authority to copy a broad plugin distribution into Balun. The Windows
+package derives its closure from the frozen Windows half of the P0.5 contract;
+the macOS package must do the same after its inventory is recorded.
 
 ## Packaging and protected-content boundary
 
@@ -510,6 +510,22 @@ self-contained package must stage only that reviewed plugin and native-library
 closure, traverse native imports, inspect the completed application tree, and
 reopen and validate its final artifact. Copying an entire GStreamer plugin
 distribution is not acceptable.
+
+The Windows package implements that contract. `build-windows.ps1 -Zip` stages
+exactly the plugins named in the helper's closure table (the seven structural
+factories, the MPEG-TS parsers and converters, the decoders recorded in the
+Windows inventory, and the Windows audio sinks) plus the DLLs those binaries
+import, then runs the staged `balun.exe` with the hidden
+`--balun-platform-runtime-probe` argument. The probe initializes the bundled
+GStreamer through the production runtime owner with a fresh registry, requires
+every structural factory, every contract decoder class, and `wasapi2sink` to
+resolve to bundled plugin files, plays the synthetic MPEG-2 fixture from a
+loopback server through the production `appsrc` source policy and stream
+transport to end of stream with the deinterlace flag set, requires every
+autoplugged element to come from the package, and tears the pipeline down to
+`NULL` inside the five-second class above. Rendering through
+`gtk4paintablesink` is not part of the packaged probe; it stays covered by the
+Linux headless smoke and by the packaged-artifact validation record P4.1.
 
 The shared [release component policy](release-component-policy.md) remains
 mandatory at every package boundary. Balun does not implement protected-channel
@@ -523,7 +539,7 @@ provenance, and distribution review.
 ## Next acceptance steps
 
 1. P0.3: repeat the Windows and Linux live-TV result on macOS.
-2. P0.5: record the Windows and macOS factory sets and freeze the per-platform
-   factory, codec, and audio-sink contract; the Linux set is recorded.
-3. P3: stage the derived runtime closure into each package and run the
-   packaged-runtime probes on Linux, macOS, and Windows.
+2. P0.5: record the macOS factory set and freeze the per-platform factory,
+   codec, and audio-sink contract; the Linux and Windows sets are recorded.
+3. P3.4: stage the derived runtime closure into the macOS package and run its
+   packaged-runtime probe; the Flatpak and Windows packages do so already.

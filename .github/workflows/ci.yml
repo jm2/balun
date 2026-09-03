@@ -355,7 +355,10 @@ jobs:
   platform-smoke:
     name: ${{ matrix.name }} compile smoke
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # Cap the job so a hung MSYS2 mirror fails fast and re-runs instead of
+    # stalling to the 6-hour ceiling; the Windows package closure needs the
+    # extra headroom.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -408,6 +411,7 @@ jobs:
             mingw-w64-clang-x86_64-gst-plugins-good
             mingw-w64-clang-x86_64-gst-plugins-bad
             mingw-w64-clang-x86_64-gst-plugins-rs
+            mingw-w64-clang-x86_64-gst-libav
             mingw-w64-clang-x86_64-libadwaita
             mingw-w64-clang-x86_64-pkg-config
             mingw-w64-clang-x86_64-toolchain
@@ -475,3 +479,19 @@ jobs:
         env:
           MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: ./scripts/build-windows.ps1 -ProbePlayback
+
+      - name: Stage, probe, and archive the Windows package through helper
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: ./scripts/build-windows.ps1 -Zip -NoCargoBuild
+
+      - name: Upload the Windows ZIP
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: balun-windows-x86_64
+          path: dist/balun-windows.zip
+          if-no-files-found: error
+          retention-days: 7

@@ -445,7 +445,7 @@ exit $global:LASTEXITCODE
     Assert-ExpectedStatus 0
     Assert-ExpectedOutput 'A lightweight cross-platform HDHomeRun live TV viewer'
     Assert-ExpectedOutput 'Application ID: io.github.jm2.Balun'
-    Assert-ExpectedOutput 'Windows desktop build helper'
+    Assert-ExpectedOutput 'Windows desktop build and packaging helper'
     Assert-ExpectedOutput 'InspectLocal'
     Assert-EmptyLog $CommandLog 'Cargo'
     Assert-EmptyLog $PkgConfigLog 'pkg-config'
@@ -453,19 +453,12 @@ exit $global:LASTEXITCODE
     foreach ($HelpArgument in @('--help', '-h')) {
         Invoke-TestHelper -Arguments @($HelpArgument)
         Assert-ExpectedStatus 0
-        Assert-ExpectedOutput 'Windows desktop build helper'
+        Assert-ExpectedOutput 'Windows desktop build and packaging helper'
         Assert-EmptyLog $CommandLog 'Cargo'
         Assert-EmptyLog $PkgConfigLog 'pkg-config'
     }
 
     $UnavailableCases = @(
-        [pscustomobject]@{ Name = '-Bundle'; Arguments = @('-Bundle') },
-        [pscustomobject]@{ Name = '-Zip'; Arguments = @('-Zip') },
-        [pscustomobject]@{ Name = '-InnoSetup'; Arguments = @('-InnoSetup') },
-        [pscustomobject]@{ Name = '-Package'; Arguments = @('-Package') },
-        [pscustomobject]@{ Name = '-Installer'; Arguments = @('-Installer') },
-        [pscustomobject]@{ Name = '-SkipBundle'; Arguments = @('-SkipBundle') },
-        [pscustomobject]@{ Name = '-NoCargoBuild'; Arguments = @('-NoCargoBuild') },
         [pscustomobject]@{ Name = '-CargoUpdate'; Arguments = @('-CargoUpdate') },
         [pscustomobject]@{
             Name = '-CargoUpdateArgs'
@@ -481,16 +474,7 @@ exit $global:LASTEXITCODE
         Assert-EmptyLog $PkgConfigLog 'pkg-config'
     }
 
-    foreach ($FalseSwitch in @(
-        '-Bundle:$false',
-        '-Zip:$false',
-        '-InnoSetup:$false',
-        '-Package:$false',
-        '-Installer:$false',
-        '-SkipBundle:$false',
-        '-NoCargoBuild:$false',
-        '-CargoUpdate:$false'
-    )) {
+    foreach ($FalseSwitch in @('-CargoUpdate:$false')) {
         $SwitchName = $FalseSwitch.Substring(0, $FalseSwitch.IndexOf(':'))
         Invoke-TestHelper -Arguments @($FalseSwitch)
         Assert-ExpectedStatus 2
@@ -500,9 +484,50 @@ exit $global:LASTEXITCODE
     }
 
     Invoke-TestHelper -Arguments @('-Help', '-Zip')
-    Assert-ExpectedStatus 2
-    Assert-ExpectedOutput '-Zip'
+    Assert-ExpectedStatus 0
+    Assert-ExpectedOutput 'Windows desktop build and packaging helper'
     Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    # Package modes are exclusive with each other, every quick mode, the
+    # launch route, and the GTK-free diagnostic routes; -SkipBundle belongs
+    # only to -InnoSetup, and -NoCargoBuild only to a package mode. Each
+    # rejection happens before any Cargo, pkg-config, or packaging work.
+    Invoke-TestHelper -Arguments @('-Bundle', '-Zip')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput 'Package modes cannot be combined: -Bundle, -Zip'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-Zip', '-Check')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput '-Zip cannot be combined with quick-exit mode -Check'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-InnoSetup', '-Run')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput '-InnoSetup cannot be combined with -Run'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-Bundle', '-Diagnostic')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput 'cannot be combined with -Diagnostic or -InspectLocal'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-SkipBundle', '-Zip')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput '-SkipBundle contradicts -Bundle and -Zip'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
+
+    Invoke-TestHelper -Arguments @('-NoCargoBuild')
+    Assert-ExpectedStatus 2
+    Assert-ExpectedOutput '-NoCargoBuild applies only to -Bundle, -Zip, or -InnoSetup'
+    Assert-EmptyLog $CommandLog 'Cargo'
+    Assert-EmptyLog $PkgConfigLog 'pkg-config'
 
     Invoke-TestHelper -Arguments @('-Check', '-Clippy')
     Assert-ExpectedStatus 2
@@ -553,8 +578,7 @@ exit $global:LASTEXITCODE
 
     Invoke-TestHelper -Arguments @('-InspectLocal', '-Bundle')
     Assert-ExpectedStatus 2
-    Assert-ExpectedOutput 'Unavailable option(s): -Bundle'
-    Assert-ExpectedOutput 'no external work was started'
+    Assert-ExpectedOutput '-Bundle packages the desktop application and cannot be combined with -Diagnostic or -InspectLocal'
     Assert-EmptyLog $CommandLog 'Cargo'
     Assert-EmptyLog $PkgConfigLog 'pkg-config'
 
@@ -610,6 +634,70 @@ exit $global:LASTEXITCODE
     Assert-ExpectedPkgConfigProbeSet
     Assert-DesktopTargetProbe
     Assert-DesktopEnvironment
+
+    # -SkipBundle alone is the build-only default.
+    Invoke-TestHelper -Arguments @('-SkipBundle')
+    Assert-ExpectedStatus 0
+    Assert-ExpectedOutput 'Build-only run (-SkipBundle specified'
+    Assert-ExpectedOutput 'Desktop output:'
+    Assert-ExpectedLog $DesktopBuildCommand
+
+    # Package modes resolve every packaging input before any build: the shared
+    # component policy, the PE inspector, the plugin scanner, and the GLib and
+    # GTK resource tools. The fixture repository starts without the policy.
+    Invoke-TestHelper -Arguments @('-Bundle')
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'Required bundled-component policy is missing'
+    Assert-EmptyLog $CommandLog 'Cargo'
+
+    $FixturePolicyDirectory = Join-Path $FixtureRoot 'build-aux\packaging'
+    [System.IO.Directory]::CreateDirectory($FixturePolicyDirectory) | Out-Null
+    [System.IO.File]::WriteAllLines(
+        (Join-Path $FixtureRoot 'Cargo.toml'),
+        @('[package]', 'name = "balun"', 'version = "0.1.0-routing"')
+    )
+    Copy-Item -LiteralPath (
+        Join-Path $ScriptDirectory '..\build-aux\packaging\forbidden-bundled-components.txt'
+    ) -Destination (Join-Path $FixturePolicyDirectory 'forbidden-bundled-components.txt')
+    Invoke-TestHelper -Arguments @('-Zip')
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'Required packaging tools are missing from MSYS2 CLANG64'
+    Assert-ExpectedOutput 'llvm-readobj.exe'
+    Assert-EmptyLog $CommandLog 'Cargo'
+
+    $FakeScannerDirectory = Join-Path $FakeMsysPrefix 'libexec\gstreamer-1.0'
+    [System.IO.Directory]::CreateDirectory($FakeScannerDirectory) | Out-Null
+    foreach ($FakeTool in @(
+        (Join-Path $FakeMsysBin 'llvm-readobj.exe'),
+        (Join-Path $FakeMsysBin 'glib-compile-schemas.exe'),
+        (Join-Path $FakeMsysBin 'gtk4-update-icon-cache.exe'),
+        (Join-Path $FakeScannerDirectory 'gst-plugin-scanner.exe')
+    )) {
+        [System.IO.File]::WriteAllBytes($FakeTool, [byte[]]@(0x4d, 0x5a))
+    }
+
+    # Installer-only mode needs an existing, receipted tree and starts no build.
+    Invoke-TestHelper -Arguments @('-InnoSetup', '-SkipBundle')
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'No staged Windows bundle exists'
+    Assert-EmptyLog $CommandLog 'Cargo'
+
+    # -NoCargoBuild packages only an executable that already exists.
+    Invoke-TestHelper -Arguments @('-Zip', '-NoCargoBuild')
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'Skipping the cargo build (-NoCargoBuild specified)'
+    Assert-ExpectedOutput 'The expected desktop application output path is not a nonempty regular'
+    Assert-EmptyLog $CommandLog 'Cargo'
+
+    # A package mode builds the desktop first, then fails closed at the
+    # application resource gate because the fake inspector cannot run.
+    Invoke-TestHelper -Arguments @('-Bundle')
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'Package version:'
+    Assert-ExpectedOutput 'Built application resource validation failed'
+    Assert-ExpectedLog $DesktopBuildCommand
+    Assert-ExpectedPkgConfigProbeSet
+    Assert-DesktopTargetProbe
 
     $ProbeCommands = (
         'cargo <test> <--release> <--locked> <--features> <desktop> <--lib> ' +
@@ -1027,15 +1115,35 @@ exit $global:LASTEXITCODE
         "'gst-plugins-rs'",
         "'playback::source_policy::tests::installed_runtime_maps_the_constant_uri_to_exact_appsrc'",
         '& $BinaryItem.FullName',
-        "& `$BinaryItem.FullName '--inspect' '--local'"
+        "& `$BinaryItem.FullName '--inspect' '--local'",
+        # The packaging contract: the shared policy, the capability-derived
+        # closure with its libav and Windows audio anchors, non-executing PE
+        # inspection, the sanitized probe environment, the exact sentinel, and
+        # the reopened ZIP and installer.
+        "'build-aux\packaging\forbidden-bundled-components.txt'",
+        "Plugin = 'libgstlibav.dll'",
+        "Plugin = 'libgstwasapi2.dll'",
+        "Plugin = 'libgstgtk4.dll'",
+        "'--coff-imports '",
+        '''--coff-resources "''',
+        "= '--balun-platform-runtime-probe'",
+        '= "balun-windows-runtime-probe-v1`n"',
+        '[System.Environment]::SystemDirectory',
+        "['GST_REGISTRY'] = `$probeRegistry",
+        'Assert-WindowsZipMatchesTree $zipPath $Distribution',
+        "= 'build-aux\inno\balun.iss'",
+        'Assert-WindowsProbeReceipt $Distribution'
     )) {
         if (-not $HelperText.Contains($RequiredText)) {
             Assert-RoutingTestFailure "helper is missing required text: $RequiredText"
         }
     }
+    # Packaging may copy, archive, and launch bounded inspectors and the
+    # staged executable, but the helper must never install, download, or
+    # update anything.
     if ($HelperText -match '(?im)^\s*(cargo\s+install|rustup\s+(target|component)\s+add|winget|choco|pacman)(\s|$)' -or
-        $HelperText -match '(?i)\b(Copy-Item|Compress-Archive|Expand-Archive|Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|Start-Process|curl|wget|git)\b') {
-        Assert-RoutingTestFailure 'helper contains installer, downloader, archive, runtime-copy, or detached-launch logic'
+        $HelperText -match '(?i)\b(Expand-Archive|Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|curl|wget|git)\b') {
+        Assert-RoutingTestFailure 'helper contains installer, downloader, or update logic'
     }
 
     Write-Output 'build-windows desktop command-routing tests passed'

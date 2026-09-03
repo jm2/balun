@@ -11,8 +11,12 @@
 mod fake_device_e2e;
 #[cfg(all(test, feature = "desktop"))]
 mod live_hardware;
+#[cfg(all(feature = "desktop", target_os = "windows"))]
+mod packaged_probe;
 #[cfg(feature = "desktop")]
 mod pipeline_failure;
+#[cfg(feature = "desktop")]
+mod platform_runtime;
 mod runtime;
 #[cfg(feature = "desktop")]
 mod session;
@@ -25,6 +29,12 @@ mod transport;
 
 #[cfg(feature = "desktop")]
 pub use pipeline_failure::{MissingMedia, PlaybackPipelineFailure};
+#[cfg(feature = "desktop")]
+pub use platform_runtime::{
+    PLATFORM_RUNTIME_PROBE_FLAG, PlatformRuntimeError, REGISTRY_ENVIRONMENT_KEY,
+    ToolkitPreparation, WINDOWS_PROBE_SENTINEL, WINDOWS_PROBE_SENTINEL_NAME,
+    configure_before_toolkit,
+};
 pub use runtime::{
     FactoryCapability, GSTREAMER_API_FLOOR, PlaybackCapabilities, PlaybackFactory,
     PlaybackInitializationError, PlaybackRuntime, RuntimeVersion,
