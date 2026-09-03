@@ -122,6 +122,7 @@ pub fn configure_before_toolkit() -> Result<ToolkitPreparation, PlatformRuntimeE
 }
 
 #[cfg(target_os = "windows")]
+/// Run the probe when one was requested; an ordinary launch continues untouched.
 fn configure_for_platform(
     probe_root: Option<&Path>,
 ) -> Result<ToolkitPreparation, PlatformRuntimeError> {
@@ -137,6 +138,7 @@ fn configure_for_platform(
 }
 
 #[cfg(not(target_os = "windows"))]
+/// Refuse the probe outside the Windows package and continue otherwise.
 fn configure_for_platform(
     probe_root: Option<&Path>,
 ) -> Result<ToolkitPreparation, PlatformRuntimeError> {
@@ -183,6 +185,7 @@ fn detect_windows_package(exe: &Path) -> Option<WindowsPackageLayout> {
 }
 
 #[cfg(target_os = "windows")]
+/// Run every probe stage in order and write the sentinel last.
 fn run_windows_runtime_probe(
     layout: &WindowsPackageLayout,
     requested_cache_root: &Path,
@@ -225,6 +228,7 @@ fn reject_inherited_probe_environment(
 }
 
 #[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
+/// Whether an inherited variable could redirect GStreamer, GIO, or the transport.
 fn forbidden_probe_environment_key(key: &OsStr) -> bool {
     let normalized = key.to_string_lossy().to_ascii_uppercase();
     (normalized.starts_with("GST_") && normalized != REGISTRY_ENVIRONMENT_KEY)
@@ -257,6 +261,7 @@ fn probe_registry_path(
 }
 
 #[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
+/// Require the fresh registry to be a non-empty file outside the package.
 fn verify_probe_registry(registry: &Path, install_root: &Path) -> Result<(), PlatformRuntimeError> {
     let metadata =
         std::fs::metadata(registry).map_err(|_| PlatformRuntimeError::RegistryMissing)?;
@@ -325,6 +330,7 @@ fn preflight_windows_plugin_scanner(
 }
 
 #[cfg(target_os = "windows")]
+/// Kill and reap a scanner that overran its bound.
 fn terminate_windows_scanner(child: &mut std::process::Child) -> Result<(), PlatformRuntimeError> {
     let killed = child.kill().is_ok();
     let waited = child.wait().is_ok();
@@ -399,6 +405,7 @@ fn validate_probe_cache_root(
 }
 
 #[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
+/// Whether a directory has no entries at all.
 fn directory_is_empty(directory: &Path) -> Result<bool, PlatformRuntimeError> {
     let mut entries =
         std::fs::read_dir(directory).map_err(|_| PlatformRuntimeError::CacheRootUnavailable)?;
@@ -406,6 +413,7 @@ fn directory_is_empty(directory: &Path) -> Result<bool, PlatformRuntimeError> {
 }
 
 #[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
+/// Whether a path contains `.` or `..` components.
 fn has_relative_components(path: &Path) -> bool {
     path.components().any(|component| {
         matches!(

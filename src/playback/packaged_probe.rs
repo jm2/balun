@@ -221,6 +221,7 @@ pub(super) fn run(plugin_dir: &Path) -> Result<(), PackagedProbeError> {
     Ok(())
 }
 
+/// Build the loopback handoff for the probe's synthetic channel.
 fn probe_handoff(address: SocketAddr) -> Result<StreamHandoff, PackagedProbeError> {
     let device_id = DeviceId::new(PROBE_DEVICE_ID).map_err(|_| PackagedProbeError::Identity)?;
     let guide_number =
@@ -327,6 +328,7 @@ fn run_to_end_of_stream(
     }
 }
 
+/// Retire the transport, settle the pipeline to `NULL`, and join the workers.
 fn teardown_to_null(
     pipeline: &gst::Pipeline,
     source_policy: &SourcePolicy,
@@ -354,6 +356,7 @@ fn teardown_to_null(
     }
 }
 
+/// Convert a duration into a GStreamer clock time without overflow.
 fn clock_time(duration: Duration) -> gst::ClockTime {
     gst::ClockTime::from_nseconds(duration.as_nanos().min(u128::from(u64::MAX)) as u64)
 }
@@ -361,11 +364,13 @@ fn clock_time(duration: Duration) -> gst::ClockTime {
 struct NullOnDrop(gst::Pipeline);
 
 impl Drop for NullOnDrop {
+    /// Fail-safe `NULL` request if the probe unwinds before teardown.
     fn drop(&mut self) {
         let _ = self.0.set_state(gst::State::Null);
     }
 }
 
+/// Find a factory and require its plugin file to be inside the package.
 fn bundled_factory(
     name: &'static str,
     canonical_plugin_dir: &Path,
@@ -390,6 +395,7 @@ enum ElementOrigin {
     PluginFile(Option<PathBuf>),
 }
 
+/// Classify where an autoplugged element's factory came from.
 fn element_origin(element: &gst::Element) -> ElementOrigin {
     let Some(factory) = element.factory() else {
         return ElementOrigin::PrivateType;
@@ -415,11 +421,13 @@ fn element_origin_is_bundled(origin: &ElementOrigin, canonical_plugin_dir: &Path
     }
 }
 
+/// Whether a factory's plugin file lies inside the package.
 fn plugin_is_bundled(factory: &gst::ElementFactory, canonical_plugin_dir: &Path) -> bool {
     let filename = factory.plugin().and_then(|plugin| plugin.filename());
     plugin_filename_is_bundled(filename.as_deref(), canonical_plugin_dir)
 }
 
+/// Whether a plugin filename canonicalizes to a file inside the package.
 fn plugin_filename_is_bundled(filename: Option<&Path>, canonical_plugin_dir: &Path) -> bool {
     filename
         .and_then(|filename| filename.canonicalize().ok())
@@ -466,6 +474,7 @@ struct FixtureServer {
 }
 
 impl FixtureServer {
+    /// Bind a loopback listener and serve the fixture once on a worker thread.
     fn start() -> Result<Self, PackagedProbeError> {
         let listener =
             TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|_| PackagedProbeError::Server)?;
@@ -514,11 +523,13 @@ impl FixtureServer {
 }
 
 impl Drop for FixtureServer {
+    /// Stop the server and join its worker.
     fn drop(&mut self) {
         self.finish();
     }
 }
 
+/// A complete `200 OK` response carrying the fixture with its exact length.
 fn fixture_response() -> Vec<u8> {
     let mut response = format!(
         "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: video/mpeg\r\nContent-Length: {}\r\n\r\n",
@@ -529,6 +540,7 @@ fn fixture_response() -> Vec<u8> {
     response
 }
 
+/// Accept the first connection inside the bound, or none.
 fn accept_one(listener: &TcpListener, stop: &AtomicBool) -> Option<TcpStream> {
     let deadline = Instant::now() + ACCEPT_DEADLINE;
     loop {
@@ -545,6 +557,7 @@ fn accept_one(listener: &TcpListener, stop: &AtomicBool) -> Option<TcpStream> {
     }
 }
 
+/// Read one bounded HTTP request head.
 fn read_request(stream: &mut TcpStream, stop: &AtomicBool) -> Vec<u8> {
     let deadline = Instant::now() + REQUEST_DEADLINE;
     let mut request = Vec::new();
@@ -568,6 +581,7 @@ fn read_request(stream: &mut TcpStream, stop: &AtomicBool) -> Vec<u8> {
     request
 }
 
+/// Write every byte unless the server is stopped or the socket closes.
 fn write_fully(stream: &mut TcpStream, bytes: &[u8], stop: &AtomicBool) -> std::io::Result<()> {
     let mut remaining = bytes;
     while !remaining.is_empty() {
@@ -587,6 +601,7 @@ fn write_fully(stream: &mut TcpStream, bytes: &[u8], stop: &AtomicBool) -> std::
     Ok(())
 }
 
+/// Whether an I/O error is a socket timeout.
 fn is_timeout(error: &std::io::Error) -> bool {
     matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
 }

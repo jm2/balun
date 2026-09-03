@@ -7,6 +7,7 @@
 //! and requires exactly this resource set, so a build that silently lost it
 //! cannot reach a package.
 
+/// Generate and link the Windows resource on a Windows host; do nothing elsewhere.
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=data/balun.ico");
