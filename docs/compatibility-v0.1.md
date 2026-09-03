@@ -197,6 +197,18 @@ channel there fails closed on AC-4 audio alone; E-AC-3 is also decodable
 but no such channel has been tuned on record. The macOS inventory is the
 remaining half of P0.5.
 
+## Windows package smoke
+
+On 2026-09-03 `scripts\build-windows.ps1 -Zip` on the Windows development host
+staged the package from the MSYS2 CLANG64 runtime above and passed every gate.
+The staged tree held the 27 allowlisted plugins and 158 dependent DLLs (213 MB
+on disk, 84 MB as a ZIP), the reopened `balun.exe` carried the seven-image icon
+and the `0.1.0-alpha.1` version resource, and the packaged runtime probe
+decoded the synthetic MPEG-2 fixture inside the tree with a fresh registry and
+only `System32` on `PATH`. Launched the same way by hand, the packaged
+application presented its window. No tuner was contacted; tuning from the
+package is recorded under P4.1.
+
 ## In-band guide spike
 
 On 2026-09-03 the HDHomeRun CONNECT's stream forms were each captured for

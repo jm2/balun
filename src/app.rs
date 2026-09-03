@@ -2,7 +2,7 @@
 
 use adw::prelude::*;
 use balun::controller::ControllerRuntime;
-use balun::playback::PlaybackRuntime;
+use balun::playback::{PlaybackRuntime, ToolkitPreparation, configure_before_toolkit};
 use balun::settings::SettingsStore;
 
 use std::cell::{Cell, RefCell};
@@ -16,6 +16,16 @@ pub(crate) const APPLICATION_ID: &str = "io.github.jm2.Balun";
 
 /// Start the desktop application and run the GLib main loop.
 pub(crate) fn run() -> gtk::glib::ExitCode {
+    // The hidden packaging probe must run before GTK, GStreamer, or the
+    // controller start; it exits the process without a window.
+    match configure_before_toolkit() {
+        Ok(ToolkitPreparation::Continue) => {}
+        Ok(ToolkitPreparation::ProbeCompleted) => return gtk::glib::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Balun could not prepare the platform runtime: {error}");
+            return gtk::glib::ExitCode::FAILURE;
+        }
+    }
     let controller = match ControllerRuntime::start_default() {
         Ok(controller) => controller,
         Err(error) => {

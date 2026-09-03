@@ -881,7 +881,9 @@ impl PipelineBackend for GstreamerBackend {
     }
 }
 
-fn configure_playbin_video(
+/// Apply the deinterlace flag, forced aspect preservation, and the exact
+/// video sink, and read every setting back. Shared with the packaged probe.
+pub(super) fn configure_playbin_video(
     pipeline: &gst::Pipeline,
     video_sink: &gst::Element,
 ) -> Result<(), PlaybackSessionFailure> {

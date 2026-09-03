@@ -1,6 +1,6 @@
 # Release component policy
 
-Last reviewed: 2026-08-31
+Last reviewed: 2026-09-03
 
 Balun plays unprotected live television supplied by HDHomeRun devices. It does
 not implement DVD or Blu-ray playback, protected-channel playback, or a
@@ -37,9 +37,9 @@ BD+, DVD copy-control, and proprietary-DRM implementations remain denied.
 
 ## Enforcement available now
 
-Balun does not yet contain a GTK/GStreamer application package. The current
-validator therefore makes only claims that can be checked against source and
-packaging inputs:
+The repository validator makes only claims that can be checked against source
+and packaging inputs; the Flatpak bundle and the Windows package add their own
+artifact gates below. The repository validator checks that:
 
 - the shared policy must be present, regular NUL-free UTF-8 text, non-empty,
   bounded, well formed, checksum-pinned, and free of case-insensitive
@@ -77,6 +77,16 @@ validate stable, typed app-tree manifests. This is useful preparatory
 enforcement, but it is not a `Balun.app` or DMG claim; bundle staging, signing
 mutations, and reopened-container checks remain mandatory with the real
 package.
+
+The Windows package (`scripts/build-windows.ps1 -Bundle`, `-Zip`, `-InnoSetup`)
+implements all four mandatory gates: it loads this pinned policy before any
+copy, stages only the reviewed capability-derived plugin closure and the DLLs
+those binaries import while refusing forbidden or reparse-point sources and
+destinations, fails the bounded `llvm-readobj` import traversal on any denied
+dependency rather than omitting it, reinspects the completed tree after the
+packaged runtime probe, reopens the ZIP against the staged tree, and reopens
+the installer's version resource. The generic `libbluray` that `avformat`
+imports remains allowed under the distinction above.
 
 ## Mandatory package gates
 

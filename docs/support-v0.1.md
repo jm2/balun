@@ -12,12 +12,15 @@ it is unsupported. Every ✅ is traceable to a section of the compatibility note
 
 | Platform | Build | Local discovery | Live TV with audio | Packages |
 | --- | --- | --- | --- | --- |
-| Linux | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | ❌ Not yet published |
-| Windows | CI and development hosts | ✅ One host; second host awaits retest | ✅ Development build, one host | ❌ Not yet published |
+| Linux | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | 🚧 Flatpak built and validated in CI; not published |
+| Windows | CI and development hosts | ✅ One host; second host awaits retest | ✅ Development build, one host | 🚧 ZIP and installer built and validated in CI; not published |
 | macOS | CI only | Not yet verified | Not yet verified | ❌ Not yet published |
 
-Flatpak, Windows, and macOS packages are ledger records P3.2 to P3.4. Until they land, every
-platform builds from source as the README describes, and the packaged codec closure is not frozen.
+The Flatpak bundle (P3.2) and the Windows ZIP and installer (P3.3) are built and validated in
+CI but not published; the macOS package (P3.4) is open. Until a package is validated against real
+tuners (P4.1) and published, every platform builds from source as the README describes. The
+Windows package stages the decoders in its column of the codec table; the other platforms use
+the installed runtime.
 
 ## Devices
 
@@ -50,7 +53,8 @@ a diagnostic for a network you administer, not a desktop feature.
 
 ## Codecs
 
-Decoders come from the installed GStreamer runtime; Balun bundles none and transcodes nothing.
+On Linux and macOS, decoders come from the installed GStreamer runtime; the Windows package
+bundles the decoders listed in its column. Balun transcodes nothing.
 
 | Stream type | Linux | Windows | macOS |
 | --- | --- | --- | --- |

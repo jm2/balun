@@ -2,7 +2,7 @@
 
 - Status: Active
 - Target: v0.1.0-alpha.1
-- Last updated: 2026-09-02
+- Last updated: 2026-09-03
 
 This is the scope, architecture, and delivery-order contract for the first
 alpha. The countable ledger is [`task.md`](task.md); sanitized hardware
@@ -78,7 +78,7 @@ Explicitly deferred:
   exercised regularly.
 - SBOM, build provenance, fuzzing, and a coverage ratchet: beta.
 
-## 3. Current baseline (2026-09-02)
+## 3. Current baseline (2026-09-03)
 
 Built and tested:
 
@@ -118,9 +118,15 @@ Built and tested:
 - Hostname entry resolved on the controller to a bounded set of unicast
   addresses, probed one at a time and remembered by name.
 
-Not yet done: macOS live-device acceptance, the Windows and macOS halves of
-the per-platform codec contract, a live routed proof on a real tunnel,
-packages, and the alpha release.
+- A self-contained Windows x86_64 package: a reviewed, capability-derived
+  GStreamer closure staged in the MSYS2 prefix shape, PE-import and
+  completed-tree inspection, a packaged-runtime probe that decodes the
+  synthetic fixture inside the staged tree, and a reopened ZIP and Inno Setup
+  installer, built by CI and the release-candidate workflow.
+
+Not yet done: macOS live-device acceptance, the macOS half of the per-platform
+codec contract, a live routed proof on a real tunnel, the macOS package,
+packaged-artifact validation against real tuners, and the alpha release.
 
 ## 4. Architecture
 
