@@ -226,6 +226,28 @@ impl RouteSnapshot {
     pub fn effective_routes(&self) -> &[NetworkRoute] {
         &self.effective_routes
     }
+
+    /// Interfaces the candidate policy treats as tunnels: up, and classified
+    /// as [`InterfaceKind::Tunnel`] by every record that shares the id.
+    ///
+    /// This is the complete set of recognized tunnels, whether or not any of
+    /// their routes is eligible to produce a candidate.
+    #[must_use]
+    pub fn tunnel_interfaces(&self) -> BTreeSet<InterfaceId> {
+        let mut kinds_by_id = BTreeMap::<InterfaceId, BTreeSet<InterfaceKind>>::new();
+        for interface in self.interfaces.iter().filter(|item| item.is_up()) {
+            kinds_by_id
+                .entry(interface.id())
+                .or_default()
+                .insert(interface.kind());
+        }
+        kinds_by_id
+            .into_iter()
+            .filter_map(|(id, kinds)| {
+                (kinds.len() == 1 && kinds.contains(&InterfaceKind::Tunnel)).then_some(id)
+            })
+            .collect()
+    }
 }
 
 /// Supplies a normalized, platform-specific interface and effective-route
@@ -469,14 +491,12 @@ struct InterfacePolicy {
 
 impl InterfacePolicy {
     fn from_snapshot(snapshot: &RouteSnapshot) -> Self {
-        let mut kinds_by_id = BTreeMap::<InterfaceId, BTreeSet<InterfaceKind>>::new();
+        let tunnels = snapshot.tunnel_interfaces();
+        let mut active = BTreeSet::new();
         let mut direct_networks = BTreeSet::new();
 
         for interface in snapshot.interfaces().iter().filter(|item| item.is_up()) {
-            kinds_by_id
-                .entry(interface.id())
-                .or_default()
-                .insert(interface.kind());
+            active.insert(interface.id());
 
             for address in interface.addresses() {
                 let IpNet::V4(network) = address else {
@@ -493,15 +513,15 @@ impl InterfacePolicy {
             let Some(interface) = route.interface() else {
                 continue;
             };
-            let Some(kinds) = kinds_by_id.get(&interface) else {
+            if !active.contains(&interface) {
                 continue;
-            };
+            }
             // A tunnel's own OnLink destination is a remote routed candidate,
             // not a directly connected LAN. Linux commonly represents
             // WireGuard routes as `dev wg0 scope link`, so suppressing these
             // would disable automatic tunnel discovery. Assigned tunnel
             // prefixes were already added above and remain suppressed.
-            if kinds.len() == 1 && kinds.contains(&InterfaceKind::Tunnel) {
+            if tunnels.contains(&interface) {
                 continue;
             }
             let IpNet::V4(network) = route.destination() else {
@@ -509,13 +529,6 @@ impl InterfacePolicy {
             };
             direct_networks.insert(network.trunc());
         }
-
-        let tunnels = kinds_by_id
-            .into_iter()
-            .filter_map(|(id, kinds)| {
-                (kinds.len() == 1 && kinds.contains(&InterfaceKind::Tunnel)).then_some(id)
-            })
-            .collect();
 
         Self {
             tunnels,
@@ -625,6 +638,22 @@ mod tests {
         let first = u32::from_be_bytes(first);
         let last = u32::from_be_bytes(last);
         (first..=last).map(Ipv4Addr::from).collect()
+    }
+
+    #[test]
+    fn tunnel_interfaces_are_the_active_unambiguous_tunnels() {
+        let snapshot = RouteSnapshot::from_effective_routes(
+            vec![
+                interface(1, InterfaceKind::Tunnel, true, &[]),
+                interface(2, InterfaceKind::Tunnel, false, &[]),
+                interface(3, InterfaceKind::Tunnel, true, &[]),
+                interface(3, InterfaceKind::Other, true, &[]),
+                interface(4, InterfaceKind::Other, true, &[]),
+            ],
+            vec![],
+        );
+
+        assert_eq!(snapshot.tunnel_interfaces(), BTreeSet::from([id(1)]));
     }
 
     #[test]

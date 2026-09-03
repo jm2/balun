@@ -209,6 +209,9 @@ cargo run --locked --bin balun-discover -- --target 192.168.50.20
 
 # Enumerate one explicitly approved private range:
 cargo run --locked --bin balun-discover -- --approved-range 10.42.7.0/24
+
+# Report route-provider availability and tunnel candidate counts without sending a packet:
+cargo run --locked --bin balun-discover -- --providers
 ```
 
 `--approved-range` accepts only RFC 1918 space no wider than `/24`, caps the scan at 256
@@ -304,7 +307,8 @@ CI automatically runs on every push/PR:
 - **Desktop metadata** — validates the desktop entry and AppStream metainfo and checks the icon
   set
 - **Flatpak (x86_64)** — generates locked cargo sources, builds the bundle on the GNOME 50
-  runtime with a build-time playback-factory probe, reopens it, and validates its payload
+  runtime, reopens it, validates its payload, and probes the installed bundle's runtime for
+  the playback factories
 - **MSRV** — `cargo check --all-features` on the declared Rust 1.98 minimum
 - **Linux desktop** — builds, lints, and tests the desktop shell, runs `--probe-playback`, and
   drives the Wayland lifecycle smokes

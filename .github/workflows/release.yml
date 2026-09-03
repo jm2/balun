@@ -220,6 +220,9 @@ jobs:
       - name: Reopen and validate the completed bundle
         run: build-aux/flatpak/validate-bundle-compliance.sh balun-linux-${{ matrix.arch }}.flatpak
 
+      - name: Probe the packaged runtime for the playback factories
+        run: build-aux/flatpak/validate-bundle-runtime.sh balun-linux-${{ matrix.arch }}.flatpak
+
       - name: Upload internal candidate bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

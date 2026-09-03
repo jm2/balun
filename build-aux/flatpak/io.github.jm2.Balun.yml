@@ -52,9 +52,10 @@ modules:
           /app/share/icons/hicolor/scalable/apps/io.github.jm2.Balun.svg
       - install -Dm0644 data/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg
           /app/share/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg
-      # The runtime must supply every structural playback factory Balun checks
-      # at startup; a runtime that lacks one fails the build instead of
-      # shipping a bundle that reports playback unavailable.
+      # Early check that the SDK registry supplies every structural playback
+      # factory Balun checks at startup. The build sandbox sees org.gnome.Sdk,
+      # so validate-bundle-runtime.sh repeats the probe against the installed
+      # bundle's org.gnome.Platform after the build.
       - for factory in playbin3 uridecodebin3 decodebin3 appsrc tsdemux deinterlace
           gtk4paintablesink; do
           gst-inspect-1.0 --exists "$factory"

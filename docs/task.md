@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **15/30 (50.0%)** records complete. This is a dependency ledger,
+Current status: **16/30 (53.3%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -109,7 +109,7 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
   expire stale evidence, cancel invalid authority synchronously, and keep
   devices that retain another valid locator.
 
-- [ ] **P2.4 — Complete discovery diagnostics.** Report probe counts, accepted
+- [x] **P2.4 — Complete discovery diagnostics.** Report probe counts, accepted
   and rejected replies, provider availability, and failure classes without
   persisting unrelated topology.
 

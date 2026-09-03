@@ -46,9 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   come.
 - **Flatpak bundle** — Add the `io.github.jm2.Balun` manifest on the GNOME 50 runtime with the
   reviewed six-entry permission policy, the Freedesktop ffmpeg-full codec extension, an offline
-  cargo build from generated locked sources, a build-time check that the runtime supplies every
-  structural playback factory, and app-payload validation. CI builds and reopens an x86_64
-  bundle; the release-candidate workflow builds x86_64 and aarch64 bundles as artifacts.
+  cargo build from generated locked sources, build-time and installed-bundle checks that the
+  runtime supplies every structural playback factory, and app-payload validation. CI builds
+  and reopens an x86_64 bundle; the release-candidate workflow builds x86_64 and aarch64
+  bundles as artifacts.
 - **Release automation** — The release-candidate workflow now checks that the tag agrees with
   `Cargo.toml`, `Cargo.lock`, the changelog section and compare link, and the AppStream release
   (`scripts/release_check.py`), requires the exact artifact inventory with SHA-256 sums, and
@@ -105,7 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interface-pinned socket are connected into one library runner. It reserves the approved scan,
   rebaselines the observers around the exact post-publication reread, probes each target through a
   socket that re-checks authority and its pin before every datagram, and settles completion
-  durably on every exit path. No user interface reaches it yet.
+  durably on every exit path. The controller offers it as a lane of its own (propose, approve,
+  run, revoke) with topology-free snapshot state and copy for every decision; the window does not
+  drive it yet.
 - **Live-hardware proofs** — Opt-in, display-free tests that discover the real tuners, tune an
   unprotected ATSC 1.0 channel with decoded video and audio, switch channels, observe the ATSC 3.0
   fail-closed path, and probe each device at its own address. They run only with
@@ -113,6 +116,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sanitized device fixtures** — Real `discover.json`, `lineup.json`, and HTTP failure responses
   from a CONNECT and a CONNECT 4K, with identities, addresses, credentials, and channel names
   replaced, now back the parser tests.
+- **Discovery diagnostics** — `balun-discover --providers` reports route-provider availability and
+  bounded tunnel candidate counts without sending a packet or printing a route; every run prints
+  its fixed probe budget, and each probe issue carries a fixed failure class beside its message.
 
 ### Changed
 
@@ -169,8 +175,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   development builds against real tuners; macOS has not yet been exercised against real hardware.
 - **No packaged-runtime acceptance yet** — Playback is proven on development runtimes and the
   loopback fake tuner; the packaged codec closure is not yet frozen.
-- **No packages** — Flatpak, deb, rpm, DMG, and winget packaging are planned; the release workflow
-  builds the diagnostic only.
+- **No published packages** — A Flatpak bundle is built and validated but not published; deb,
+  rpm, DMG, and winget packaging are planned.
 - **No program guide** — Guide data is a v0.2 candidate. The tested HDHomeRun CONNECT's
   per-channel streams carry no PSIP tables, so an in-band guide needs a full-multiplex crawl or
   XMLTV.
