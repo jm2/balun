@@ -105,6 +105,7 @@ application needs `--features desktop`.
 ### Linux
 
 **Debian / Ubuntu:**
+
 ```bash
 sudo apt install libgtk-4-dev libadwaita-1-dev libgstreamer1.0-dev \
   gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
@@ -112,6 +113,7 @@ sudo apt install libgtk-4-dev libadwaita-1-dev libgstreamer1.0-dev \
 ```
 
 **Fedora:**
+
 ```bash
 sudo dnf install gtk4-devel libadwaita-devel gstreamer1-devel \
   gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free \
@@ -119,12 +121,14 @@ sudo dnf install gtk4-devel libadwaita-devel gstreamer1-devel \
 ```
 
 **Arch Linux:**
+
 ```bash
 sudo pacman -S gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-good \
   gst-plugins-bad gst-plugin-gtk4 gst-libav pkgconf base-devel
 ```
 
 Then build:
+
 ```bash
 cargo build --release --locked --features desktop --bin balun
 # or use the helper script:
@@ -166,6 +170,7 @@ pacman -S mingw-w64-clang-x86_64-gtk4 \
 ```
 
 Then, in PowerShell:
+
 ```powershell
 # Ensure Rust's LLVM target is installed:
 rustup target add x86_64-pc-windows-gnullvm
@@ -290,8 +295,12 @@ Weston is unavailable. Set `BALUN_DESKTOP_TEST_BACKEND` to `wayland` or `x11` to
 backend; `auto` is the default, and CI requires Wayland.
 
 CI automatically runs on every push/PR:
+
 - **Linux quality** — release-component, packaging, helper, and toolchain policy tests, then
   `cargo fmt`, strict Clippy, and debug plus release tests
+- **Security audit** — `cargo audit` against the RustSec advisory database
+- **Lint** — markdownlint, taplo (TOML), yamllint, and actionlint with the configs at the
+  repository root
 - **Desktop metadata** — validates the desktop entry and AppStream metainfo and checks the icon
   set
 - **Flatpak (x86_64)** — generates locked cargo sources, builds the bundle on the GNOME 50
@@ -430,13 +439,13 @@ docs/                        # Plan, task ledger, playback contract, compatibili
 ### Discovering devices
 
 At launch Balun probes only the addresses you previously added; everything else waits until you
-ask. **Refresh devices** runs one bounded local discovery over every attached interface. **Find device by address** probes one numeric IPv4 or unscoped
-IPv6 address, or a hostname, for a tuner behind WireGuard or another routed link. It accepts no
-port or range; a name resolves to at most four unicast addresses that are probed one at a time,
-each probe sends at most two requests, and up to 32 distinct addresses are admitted per session.
-A tuner that answers is remembered, by name when you entered a name, and probed again at the next
-launch. **Stop device discovery** cancels
-either kind and any remaining launch probes.
+ask. **Refresh devices** runs one bounded local discovery over every attached interface.
+**Find device by address** probes one numeric IPv4 or unscoped IPv6 address, or a hostname, for a
+tuner behind WireGuard or another routed link. It accepts no port or range; a name resolves to at
+most four unicast addresses that are probed one at a time, each probe sends at most two requests,
+and up to 32 distinct addresses are admitted per session. A tuner that answers is remembered, by
+name when you entered a name, and probed again at the next launch. **Stop device discovery**
+cancels either kind and any remaining launch probes.
 
 On Windows, local discovery uses the limited broadcast from each interface. If a host firewall
 blocks the replies, use **Find device by address** with the tuner's IPv4 address.
@@ -445,9 +454,9 @@ blocks the replies, use **Find device by address** with the tuner's IPv4 address
 
 Select a device to load its channel lineup; selecting alone never tunes. Type in the search field
 above the list to match a channel number or name, or press the star to show favorites only.
-Double-click a channel or press Enter to play it. Protected channels are listed but cannot be activated. The player header
-has **Stop**, a volume slider, a mute toggle, and a fullscreen button; volume and mute carry across
-channel changes for the running session.
+Double-click a channel or press Enter to play it. Protected channels are listed but cannot be
+activated. The player header has **Stop**, a volume slider, a mute toggle, and a fullscreen
+button; volume and mute carry across channel changes for the running session.
 
 ### Keyboard Shortcuts
 
