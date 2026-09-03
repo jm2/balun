@@ -10,8 +10,9 @@ use balun::controller::{
 };
 use balun::domain::ChannelKey;
 use balun::playback::{
-    PlaybackCapabilities, PlaybackInitializationError, PlaybackPipelineFailure, PlaybackRuntime,
-    PlaybackSession, PlaybackSessionFailure, PlaybackSessionState, TuneCompletion, TuneRequest,
+    MissingMedia, PlaybackCapabilities, PlaybackInitializationError, PlaybackPipelineFailure,
+    PlaybackRuntime, PlaybackSession, PlaybackSessionFailure, PlaybackSessionState, TuneCompletion,
+    TuneRequest,
 };
 
 /// Main-context-owned player pane.
@@ -185,11 +186,16 @@ fn pipeline_failure_copy(
                 "{device} did not deliver {channel}. Check that the device is powered and reachable."
             ),
         ),
-        PlaybackPipelineFailure::MissingCodecOrPlugin => (
+        PlaybackPipelineFailure::MissingCodecOrPlugin(media) => (
             "Required playback component or codec unavailable",
-            format!(
-                "This Balun build lacks a codec or GStreamer plugin needed for {channel} on {device}."
-            ),
+            match media.description() {
+                Some(name) => {
+                    format!("This Balun build has no {name} decoder for {channel} on {device}.")
+                }
+                None => format!(
+                    "This Balun build lacks a codec or GStreamer plugin needed for {channel} on {device}."
+                ),
+            },
         ),
         PlaybackPipelineFailure::Protected => (
             "Protected channel unsupported",
@@ -237,7 +243,7 @@ fn session_failure_copy(
             context,
         )),
         PlaybackSessionFailure::ComponentsUnavailable => Some(pipeline_failure_copy(
-            PlaybackPipelineFailure::MissingCodecOrPlugin,
+            PlaybackPipelineFailure::MissingCodecOrPlugin(MissingMedia::Unknown),
             context,
         )),
         _ => Some(pipeline_failure_copy(
@@ -1254,7 +1260,11 @@ mod tests {
                 "Device or stream unavailable",
             ),
             (
-                PlaybackPipelineFailure::MissingCodecOrPlugin,
+                PlaybackPipelineFailure::MissingCodecOrPlugin(MissingMedia::Unknown),
+                "Required playback component or codec unavailable",
+            ),
+            (
+                PlaybackPipelineFailure::MissingCodecOrPlugin(MissingMedia::Ac4Audio),
                 "Required playback component or codec unavailable",
             ),
             (
@@ -1280,6 +1290,14 @@ mod tests {
         assert_eq!(
             pipeline_failure_copy(PlaybackPipelineFailure::TunerBusy, &context).description,
             "All tuners on Living room (192.0.2.44) are busy. Device discovery and lineup inspection remain available."
+        );
+        assert_eq!(
+            pipeline_failure_copy(
+                PlaybackPipelineFailure::MissingCodecOrPlugin(MissingMedia::Ac4Audio),
+                &context
+            )
+            .description,
+            "This Balun build has no AC-4 audio decoder for 7.1 Synthetic News on Living room (192.0.2.44). Device discovery and lineup inspection remain available."
         );
         assert_eq!(
             pipeline_failure_copy(PlaybackPipelineFailure::Offline, &TuneContext::default())

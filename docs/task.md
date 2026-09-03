@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **4/30 (13.3%)** records complete. This is a dependency ledger,
+Current status: **5/30 (16.7%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -86,9 +86,9 @@ the live numbers that were never recorded.
   failure copy and `--inspect` output may show the device name, address, and
   DeviceID suffix; `DeviceAuth` and credentials stay redacted.
 
-- [ ] **P1.4 — Name the missing codec.** Report the specific unsupported
-  stream type from a closed list, and decide whether AC-4 channels play video
-  only with an explicit notice or keep failing closed.
+- [x] **P1.4 — Name the missing codec.** The failure copy names the stream
+  type from a closed list (AC-4 audio, HEVC video, and the ATSC 1.0 set).
+  AC-4 channels keep failing closed in v0.1; video-only playback is declined.
 
 - [x] **P1.5 — Add channel search and a favorites filter.** Filter the selected
   device's lineup without changing device or channel identity.
