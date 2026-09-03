@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`scripts/release_check.py`), requires the exact artifact inventory with SHA-256 sums, and
   creates a draft GitHub release from a job that checks out no source. Every action the workflow
   runs is pinned to an immutable commit. Publishing stays manual.
+- **Channel search and favorites filter** — A search field above the channel list matches a
+  channel number prefix or part of a name, and a star toggle shows favorites only. Filtering
+  hides rows without changing device or channel identity, keeps the highlighted channel when it
+  is still visible, clears the search when another device is selected, and explains an empty
+  result.
 - **Versioned settings** — Balun remembers its window size and maximized state across launches
   in an atomic, schema-versioned `settings.json` under the platform configuration directory.
   The same file reserves bounded, credential-free storage for remembered device addresses and
