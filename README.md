@@ -39,7 +39,7 @@ address so you know which tuner failed.
 | Route-derived tunnel discovery (Linux) | 🚧 Library runner connected; approval UX pending |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
-| Audible output and complete codec contract | ✅ Windows and Linux; macOS pending |
+| Audible output and complete codec contract | ⚠️ Audio verified on Windows and Linux; codec contract open until P0.5, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, DMG, winget) | 🚧 A Flatpak bundle is built and validated in CI; nothing is published yet |
@@ -48,7 +48,8 @@ address so you know which tuner failed.
 
 The product plan is [`docs/plan-v0.1.md`](docs/plan-v0.1.md), the countable ledger is
 [`docs/task.md`](docs/task.md), sanitized hardware observations are in
-[`docs/compatibility-v0.1.md`](docs/compatibility-v0.1.md), and the playback contract is in
+[`docs/compatibility-v0.1.md`](docs/compatibility-v0.1.md), the evidence-backed support matrix is
+[`docs/support-v0.1.md`](docs/support-v0.1.md), and the playback contract is in
 [`docs/playback.md`](docs/playback.md).
 
 ---
@@ -462,6 +463,14 @@ Shortcuts are recognized only without modifier keys.
 Balun is a viewer, not a DVR or tuner administration tool. Recording, timeshift, protected-channel
 playback, firmware management, transcoding, and a merged cross-device channel list are outside the
 v0.1 scope.
+
+---
+
+## Contributing
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) covers the build, the pull-request flow, the ledger and docs
+register, and the contracts a change must not weaken. Report vulnerabilities privately as
+described in [`SECURITY.md`](SECURITY.md), not in a public issue.
 
 ---
 

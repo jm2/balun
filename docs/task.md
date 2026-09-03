@@ -29,16 +29,16 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **14/30 (46.7%)** records complete. This is a dependency ledger,
+Current status: **16/30 (53.3%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
 ## Current focus
 
-The Linux live-hardware proofs recorded P0.2, P0.4, P0.6, and P0.7 against
-the primary-site tuners on 2026-09-03. P0.3 needs the macOS host, P0.5 waits
-on the Windows and macOS factory sets, and P0.8 is the next hardware record.
-P1.1, P1.2, P1.3, and P1.5 are complete.
+The Linux live-hardware proofs recorded P0.2, P0.4, P0.6, P0.7, and the P0.8
+guide spike on 2026-09-03; P0.3 needs the macOS host and P0.5 waits on the
+Windows and macOS factory sets. P1.1 to P1.5, P2.1, P2.4, P3.2, and P4.4 are
+complete; P2.2, P3.5, and P4.3 are in review, and P2.3 is in progress.
 
 ## P0 — Evidence and contract
 
@@ -155,7 +155,7 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
   admission, persisted state, logs, package contents, and unexpected
   tuner-allocation paths.
 
-- [ ] **P4.4 — Publish the support matrix and minimal governance docs.** Name
+- [x] **P4.4 — Publish the support matrix and minimal governance docs.** Name
   supported devices, platforms, codecs, and limitations from evidence; add
   CONTRIBUTING and SECURITY.
 
