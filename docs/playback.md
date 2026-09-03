@@ -41,8 +41,9 @@ real GTK paintable, the real production session streams that fixture from a
 loopback HTTP listener through the transport and exact `appsrc` feed to
 PLAYING, natural EOS, and joined `NULL` settlement while exposing only the
 paintable, and `PlayerView` binds/clears an opaque paintable through its
-production widgets and Stop control. Linux and macOS live-device acceptance
-(P0.2-P0.3) and packaged-runtime acceptance (P3) remain open. Additional
+production widgets and Stop control. The Linux live-device result and budgets
+are in [`compatibility-v0.1.md`](compatibility-v0.1.md); macOS live-device
+acceptance (P0.3) and packaged-runtime acceptance (P3) remain open. Additional
 isolated widget and Wayland smokes cover the audio-control state, exact ListView activation, and a real
 compositor-confirmed fullscreen round trip without adding a URI-forging test
 surface.
@@ -227,8 +228,8 @@ are forced to the player and their Back/pop paths are disabled while fullscreen,
 then their exact pages, pop permissions, and prior focus are restored. Native
 Back choices outside fullscreen remain synchronized, and a valid compact-width
 channel activation presents the player even when setup fails. These controls
-are complete; the accessibility pass (P1.6) and live-device teardown evidence
-(P0.4) remain open.
+are complete; the accessibility pass (P1.6) remains open, and the live-device
+teardown numbers (P0.4) are in [`compatibility-v0.1.md`](compatibility-v0.1.md).
 
 The session publishes every owned transition through a deduplicated,
 URL-free latest-state watch. `PlayerView` consumes it on the GTK main context
@@ -450,8 +451,9 @@ itself is a library test module — the bin target enforces the production
 metadata-port policy whose loopback exemption compiles only into library
 test builds — so this proof exercises the window stop wiring, while the
 live-tuner release evidence for those same paths stays with the library
-end-to-end smokes above. These proofs cover fake-tuner release ordering;
-live-device (P0.4) and packaged-runtime (P3) acceptance remain open.
+end-to-end smokes above. These proofs cover fake-tuner release ordering; the
+live-device release numbers (P0.4) are recorded, and packaged-runtime (P3)
+acceptance remains open.
 
 ## Development runtime examples
 
@@ -507,9 +509,8 @@ provenance, and distribution review.
 
 ## Next acceptance steps
 
-1. P0.1-P0.4: record the Windows live-TV result, repeat it on Linux and
-   macOS, and measure tune, switch, and tuner-release times on real hardware.
-2. P0.5: freeze the per-platform factory, codec, and audio-sink contract from
-   that evidence.
+1. P0.3: repeat the Windows and Linux live-TV result on macOS.
+2. P0.5: record the Windows and macOS factory sets and freeze the per-platform
+   factory, codec, and audio-sink contract; the Linux set is recorded.
 3. P3: stage the derived runtime closure into each package and run the
    packaged-runtime probes on Linux, macOS, and Windows.

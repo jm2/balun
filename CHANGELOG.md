@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Playback controls** — Stop, a volume slider, an independent mute toggle, and fullscreen with
   `F11` and `Escape`. Volume and mute carry across channel changes for the running session, and
   fullscreen presentation follows the compositor's confirmation.
+- **Desktop metadata and icon** — Add the `io.github.jm2.Balun` desktop entry, AppStream
+  metainfo, and a Tango-style application icon: a CRT showing colour bars, rabbit ears joined by
+  a balun, and the name on the bezel, as scalable and symbolic SVG, hicolor PNGs from 16 to
+  512 px, a macOS iconset, and a Windows `.ico`, validated by a new CI job. Packages are still to
+  come.
 - **Channel search and favorites filter** — A search field above the channel list matches a
   channel number prefix or part of a name, and a star toggle shows favorites only. Filtering
   hides rows without changing device or channel identity, keeps the highlighted channel when it
@@ -90,6 +95,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   durably on every exit path. The controller offers it as a lane of its own (propose, approve,
   run, revoke) with topology-free snapshot state and copy for every decision; the window does not
   drive it yet.
+- **Live-hardware proofs** — Opt-in, display-free tests that discover the real tuners, tune an
+  unprotected ATSC 1.0 channel with decoded video and audio, switch channels, observe the ATSC 3.0
+  fail-closed path, and probe each device at its own address. They run only with
+  `BALUN_LIVE_HARDWARE=1`, never in CI, and print no address, name, or channel.
+- **Sanitized device fixtures** — Real `discover.json`, `lineup.json`, and HTTP failure responses
+  from a CONNECT and a CONNECT 4K, with identities, addresses, credentials, and channel names
+  replaced, now back the parser tests.
 
 ### Changed
 
@@ -142,9 +154,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limitations
 
-- **Linux and macOS live-device acceptance pending** — Live TV with audio is verified on a
-  Windows development build against real tuners; the other two desktops have not yet been
-  exercised against real hardware.
+- **macOS live-device acceptance pending** — Live TV with audio is verified on Windows and Linux
+  development builds against real tuners; macOS has not yet been exercised against real hardware.
 - **No packaged-runtime acceptance yet** — Playback is proven on development runtimes and the
   loopback fake tuner; the packaged codec closure is not yet frozen.
 - **No packages** — Flatpak, deb, rpm, DMG, and winget packaging are planned; the release workflow

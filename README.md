@@ -1,3 +1,5 @@
+<img src="data/icons/hicolor/128x128/apps/io.github.jm2.Balun.png" width="96" alt="Balun icon">
+
 # Balun
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
@@ -27,7 +29,7 @@ address so you know which tuner failed.
 | Device metadata and lineup inspection without allocating a tuner | ✅ |
 | Adaptive three-pane GTK 4 / libadwaita window | ✅ |
 | Window size and maximized state remembered across launches | ✅ |
-| Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Windows against real tuners; Linux and macOS acceptance pending |
+| Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Windows and Linux against real tuners; macOS acceptance pending |
 | Stop, volume, mute, and fullscreen controls | ✅ |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
 | Playback errors that name the device and channel | ✅ |
@@ -37,7 +39,7 @@ address so you know which tuner failed.
 | Route-derived tunnel discovery (Linux) | 🚧 Library runner connected; approval UX pending |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
-| Audible output and complete codec contract | ✅ Windows; Linux and macOS pending |
+| Audible output and complete codec contract | ✅ Windows and Linux; macOS pending |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, DMG, winget) | ❌ Planned |
@@ -269,6 +271,10 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --all-targets --locked
 cargo test --release --all-targets --locked
 
+# Real-tuner proofs (opt-in, never run by CI; see src/playback/live_hardware.rs):
+BALUN_LIVE_HARDWARE=1 cargo test --features desktop --lib live_hardware -- \
+  --ignored --nocapture --test-threads=1
+
 # Desktop and playback lifecycle smokes under an isolated headless compositor:
 scripts/test-desktop-lifecycle.sh
 
@@ -285,6 +291,8 @@ backend; `auto` is the default, and CI requires Wayland.
 CI automatically runs on every push/PR:
 - **Linux quality** — release-component, packaging, helper, and toolchain policy tests, then
   `cargo fmt`, strict Clippy, and debug plus release tests
+- **Desktop metadata** — validates the desktop entry and AppStream metainfo and checks the icon
+  set
 - **MSRV** — `cargo check --all-features` on the declared Rust 1.98 minimum
 - **Linux desktop** — builds, lints, and tests the desktop shell, runs `--probe-playback`, and
   drives the Wayland lifecycle smokes
@@ -383,6 +391,13 @@ build-aux/
 ├── linux/                  # Linux package payload and metadata validators
 ├── packaging/              # Shared forbidden-component policy and validator
 └── toolchain/              # Dependabot-tracked Rust floor proposal
+
+data/
+├── io.github.jm2.Balun.desktop      # Desktop entry
+├── io.github.jm2.Balun.metainfo.xml # AppStream metadata
+├── icons/hicolor/          # Application icon (scalable, symbolic, 16-512 px)
+├── balun.iconset/          # macOS icon source
+└── balun.ico               # Windows icon
 
 hooks/pre-commit             # cargo fmt check
 tests/                       # Synthetic MPEG-2 fixture and display-backed playback test
