@@ -70,6 +70,110 @@ jobs:
       - name: Test (release)
         run: cargo test --release --all-targets --locked
 
+  desktop-metadata:
+    name: Desktop metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends appstream desktop-file-utils
+
+      - name: Validate the desktop entry
+        run: |
+          status=0
+          output="$(desktop-file-validate data/io.github.jm2.Balun.desktop 2>&1)" \
+            || status=$?
+          if [ "$status" -ne 0 ] || [ -n "$output" ]; then
+            printf '%s\n' "$output" >&2
+            exit 1
+          fi
+
+      - name: Validate the AppStream metainfo
+        run: appstreamcli validate --no-net data/io.github.jm2.Balun.metainfo.xml
+
+      - name: Check icon formats and sizes
+        run: |
+          python3 - <<'EOF'
+          import struct
+          import sys
+          import xml.etree.ElementTree as ET
+
+          HICOLOR = 'data/icons/hicolor'
+          APP_ID = 'io.github.jm2.Balun'
+          # The names and sizes scripts/macos-icon-bundle-policy.sh requires.
+          ICONSET = (
+              ('icon_16x16.png', 16), ('icon_16x16@2x.png', 32),
+              ('icon_32x32.png', 32), ('icon_32x32@2x.png', 64),
+              ('icon_128x128.png', 128), ('icon_128x128@2x.png', 256),
+              ('icon_256x256.png', 256), ('icon_256x256@2x.png', 512),
+              ('icon_512x512.png', 512), ('icon_512x512@2x.png', 1024),
+          )
+          failures = []
+
+          def read(path, limit=None):
+              try:
+                  with open(path, 'rb') as handle:
+                      return handle.read() if limit is None else handle.read(limit)
+              except OSError as error:
+                  failures.append(f'{path}: {error.strerror}')
+                  return None
+
+          def require_png(path, size):
+              header = read(path, 24)
+              if header is None:
+                  return
+              if header[:8] != b'\x89PNG\r\n\x1a\n' or header[12:16] != b'IHDR':
+                  failures.append(f'{path}: not a PNG')
+                  return
+              width, height = struct.unpack('>II', header[16:24])
+              if (width, height) != (size, size):
+                  failures.append(f'{path}: {width}x{height}, expected {size}x{size}')
+
+          def require_svg(path):
+              try:
+                  root = ET.parse(path).getroot()
+              except (OSError, ET.ParseError) as error:
+                  failures.append(f'{path}: {error}')
+                  return
+              if root.tag != '{http://www.w3.org/2000/svg}svg':
+                  failures.append(f'{path}: root element is {root.tag}, not svg')
+
+          def require_ico(path):
+              data = read(path)
+              if data is None:
+                  return
+              if len(data) < 6 or struct.unpack('<HH', data[:4]) != (0, 1):
+                  failures.append(f'{path}: not an ICO')
+                  return
+              count = struct.unpack('<H', data[4:6])[0]
+              if count == 0:
+                  failures.append(f'{path}: contains no images')
+              for index in range(count):
+                  entry = data[6 + 16 * index:22 + 16 * index]
+                  if len(entry) < 16:
+                      failures.append(f'{path}: icon directory is truncated')
+                      break
+                  size, offset = struct.unpack('<II', entry[8:16])
+                  if size == 0 or offset + size > len(data):
+                      failures.append(f'{path}: image {index} lies outside the file')
+
+          for size in (16, 24, 32, 48, 64, 128, 256, 512):
+              require_png(f'{HICOLOR}/{size}x{size}/apps/{APP_ID}.png', size)
+          for name, size in ICONSET:
+              require_png(f'data/balun.iconset/{name}', size)
+          require_svg(f'{HICOLOR}/scalable/apps/{APP_ID}.svg')
+          require_svg(f'{HICOLOR}/symbolic/apps/{APP_ID}-symbolic.svg')
+          require_ico('data/balun.ico')
+          if failures:
+              print('\n'.join(failures), file=sys.stderr)
+              sys.exit(1)
+          EOF
+
   msrv:
     # Cargo.toml's declared floor is rustc 1.98.
     name: MSRV
