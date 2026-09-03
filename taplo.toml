@@ -1,0 +1,4 @@
+# TOML formatting policy shared by CI and `npx @taplo/cli fmt`.
+[formatting]
+column_width = 120
+reorder_keys = false

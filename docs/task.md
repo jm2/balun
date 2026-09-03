@@ -138,7 +138,7 @@ P1.1, P1.2, P1.3, and P1.5 are complete.
   create a draft release, and confine release-write authority to the final
   no-source job.
 
-- [ ] **P3.6 — Harden CI for packages.** Add the dependency audit and
+- [x] **P3.6 — Harden CI for packages.** Add the dependency audit and
   Markdown, TOML, YAML, and GitHub Actions linting.
 
 ## P4 — v0.1.0-alpha.1
