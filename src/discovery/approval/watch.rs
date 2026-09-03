@@ -36,15 +36,15 @@
 //! descriptor after the baseline. That actor, and privileged mount-namespace
 //! replacement, remain outside this cooperative per-user storage boundary.
 //!
-//! Before this observer can establish production authority, the controller must
-//! own a distinct store observer session, cancel and join its old actor, perform
-//! an exact post-publication reread through a fresh sandwich, and only then
-//! activate combined route-and-store health. Until those pieces exist this
-//! module deliberately remains unwired.
+//! The monitored runner owns a distinct store observer session, cancels and
+//! joins its old actor after every publication of its own, performs the exact
+//! post-publication reread through a fresh sandwich, and only then activates
+//! combined route-and-store health. Nothing outside that runner may treat a
+//! file notification as anything but a reason to rebaseline.
 
 #![allow(
     dead_code,
-    reason = "production routed discovery remains intentionally unwired"
+    reason = "the monitored routed runner has no production caller until the approval UX lands"
 )]
 
 use std::fmt;

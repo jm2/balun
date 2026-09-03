@@ -10,25 +10,28 @@
 //! not infer success from a kernel version: if either operation is absent or
 //! denied, construction fails closed without an unpinned fallback.
 //!
-//! The double readback proves the pin only at construction time. A future
-//! runner must arm route/link invalidation before consuming admission, retain
-//! it throughout the run, and revalidate the pin and admitted route state at
-//! the final pre-send boundary. This capability intentionally has no I/O API
-//! until that lifecycle exists.
+//! The double readback proves the pin only at construction time, so the only
+//! I/O view, [`PinnedProbeSocket`], re-reads both pin views and consults the
+//! runner's authority check immediately before every datagram. The monitored
+//! runner arms route and store invalidation before consuming admission and
+//! retains it for the whole run.
 
 #![allow(
     dead_code,
-    reason = "production route-derived execution is intentionally unwired"
+    reason = "the monitored routed runner has no production caller until the approval UX lands"
 )]
 
 use std::fmt;
+use std::future::Future;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket as StdUdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket as StdUdpSocket};
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
-use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+use socket2::{Domain, Protocol, SockAddr, SockRef, Socket, Type};
 use thiserror::Error;
 
+use crate::discovery::client::ProbeSocket;
 use crate::discovery::routes::InterfaceId;
 
 const LINUX_INTERFACE_NAME_MAX_BYTES: usize = 15;
@@ -36,11 +39,125 @@ const LINUX_INTERFACE_NAME_MAX_BYTES: usize = 15;
 /// A nonblocking UDP socket whose Linux interface pin was verified twice.
 ///
 /// The socket stays private so callers cannot construct this capability around
-/// an unverified descriptor, clear its pin, or perform I/O before the future
-/// runner supplies route invalidation and final pre-send revalidation. This
-/// type intentionally does not implement `Clone` or a raw-descriptor trait.
+/// an unverified descriptor, clear its pin, or perform I/O directly. The only
+/// I/O view is [`Self::into_probe_socket`], which re-checks the caller's
+/// authority and the pin immediately before every send. This type
+/// intentionally does not implement `Clone` or a raw-descriptor trait.
 pub(in crate::discovery) struct PinnedRoutedUdpSocket {
     socket: StdUdpSocket,
+    interface_name: Vec<u8>,
+    interface_id: NonZeroU32,
+}
+
+impl PinnedRoutedUdpSocket {
+    /// Register the pinned descriptor with the current Tokio runtime for one
+    /// bounded probe. `authority` is consulted before every datagram; when it
+    /// returns `false`, or the pin no longer reads back, the send is refused
+    /// and nothing leaves the socket.
+    pub(in crate::discovery) fn into_probe_socket(
+        self,
+        authority: PreSendAuthority,
+    ) -> Result<PinnedProbeSocket, PinnedRoutedUdpSocketError> {
+        let socket = tokio::net::UdpSocket::from_std(self.socket)
+            .map_err(|_| PinnedRoutedUdpSocketError::RegisterWithRuntime)?;
+        Ok(PinnedProbeSocket {
+            socket,
+            interface_name: self.interface_name,
+            interface_id: self.interface_id,
+            authority,
+        })
+    }
+}
+
+/// Authority check consulted immediately before every datagram a pinned
+/// probe socket sends. It must be cheap and must never block.
+pub(crate) type PreSendAuthority = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// Why a pinned probe socket refused to send one datagram.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub(in crate::discovery) enum PinnedSendRefusal {
+    #[error("routed authority is no longer current at the pre-send boundary")]
+    AuthorityLost,
+    #[error("the Linux socket pin could not be re-verified before sending: {0}")]
+    Pin(PinnedRoutedUdpSocketError),
+}
+
+/// The only I/O view of a pinned socket. Every send re-checks the caller's
+/// authority and reads both pin views back; receives need no check because
+/// the pin already confines them to the interface.
+pub(in crate::discovery) struct PinnedProbeSocket {
+    socket: tokio::net::UdpSocket,
+    interface_name: Vec<u8>,
+    interface_id: NonZeroU32,
+    authority: PreSendAuthority,
+}
+
+impl PinnedProbeSocket {
+    fn verify_before_send(&self) -> Result<(), PinnedSendRefusal> {
+        if !(self.authority)() {
+            return Err(PinnedSendRefusal::AuthorityLost);
+        }
+        verify_interface_pin(
+            &mut TokioReadbackOps,
+            &self.socket,
+            &self.interface_name,
+            self.interface_id,
+        )
+        .map_err(PinnedSendRefusal::Pin)
+    }
+}
+
+impl fmt::Debug for PinnedProbeSocket {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PinnedProbeSocket(<redacted>)")
+    }
+}
+
+impl ProbeSocket for PinnedProbeSocket {
+    async fn send_to(&self, buffer: &[u8], target: SocketAddr) -> io::Result<usize> {
+        self.verify_before_send().map_err(io::Error::other)?;
+        self.socket.send_to(buffer, target).await
+    }
+
+    fn recv_from(
+        &self,
+        buffer: &mut [u8],
+    ) -> impl Future<Output = io::Result<(usize, SocketAddr)>> + Send {
+        self.socket.recv_from(buffer)
+    }
+}
+
+/// Pin readback through Tokio's registered descriptor; every mutating
+/// operation is refused because the socket was fully prepared before
+/// registration.
+struct TokioReadbackOps;
+
+impl PinnedUdpSocketOps for TokioReadbackOps {
+    type Socket = tokio::net::UdpSocket;
+
+    fn create_ipv4_udp(&mut self) -> io::Result<Self::Socket> {
+        Err(io::Error::other("readback only"))
+    }
+
+    fn bind_to_device(&mut self, _socket: &Self::Socket, _name: &[u8]) -> io::Result<()> {
+        Err(io::Error::other("readback only"))
+    }
+
+    fn device_name(&mut self, socket: &Self::Socket) -> io::Result<Option<Vec<u8>>> {
+        SockRef::from(socket).device()
+    }
+
+    fn device_index(&mut self, socket: &Self::Socket) -> io::Result<Option<NonZeroU32>> {
+        SockRef::from(socket).device_index_v4()
+    }
+
+    fn bind_wildcard_ephemeral(&mut self, _socket: &Self::Socket) -> io::Result<()> {
+        Err(io::Error::other("readback only"))
+    }
+
+    fn set_nonblocking(&mut self, _socket: &Self::Socket) -> io::Result<()> {
+        Err(io::Error::other("readback only"))
+    }
 }
 
 impl fmt::Debug for PinnedRoutedUdpSocket {
@@ -81,6 +198,9 @@ pub(in crate::discovery) enum PinnedRoutedUdpSocketError {
 
     #[error("the Linux UDP socket could not be made nonblocking")]
     SetNonblocking,
+
+    #[error("the Linux UDP socket could not be registered with the async runtime")]
+    RegisterWithRuntime,
 }
 
 /// Create an IPv4 UDP socket and prove its interface pin survives local bind.
@@ -93,10 +213,14 @@ pub(in crate::discovery) fn open_pinned_routed_udp_socket(
     interface_id: InterfaceId,
     interface_name: &str,
 ) -> Result<PinnedRoutedUdpSocket, PinnedRoutedUdpSocketError> {
+    let expected_name = validate_interface_name(interface_name)?.to_vec();
+    let expected_id = validate_interface_id(interface_id)?;
     let mut ops = Socket2Ops;
     let socket = open_pinned_routed_udp_socket_with(&mut ops, interface_id, interface_name)?;
     Ok(PinnedRoutedUdpSocket {
         socket: StdUdpSocket::from(socket),
+        interface_name: expected_name,
+        interface_id: expected_id,
     })
 }
 
@@ -211,8 +335,82 @@ fn verify_interface_pin<O: PinnedUdpSocketOps>(
 #[cfg(test)]
 mod tests {
     use std::os::fd::{AsFd, AsRawFd};
+    #[cfg(feature = "desktop")]
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[cfg(feature = "desktop")]
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
+    #[cfg(feature = "desktop")]
+    use crate::discovery::client::{DiscoveryClient, DiscoveryError};
+    #[cfg(feature = "desktop")]
+    use crate::discovery::types::DiscoveryMethod;
+    #[cfg(feature = "desktop")]
+    use crate::hdhr::fake_device::FakeHdhrDevice;
+
+    #[cfg(feature = "desktop")]
+    fn loopback_interface_id() -> InterfaceId {
+        let text = std::fs::read_to_string("/sys/class/net/lo/ifindex")
+            .expect("Linux exposes the loopback interface index");
+        InterfaceId::new(text.trim().parse().expect("numeric loopback index"))
+    }
+
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn pinned_probe_socket_reaches_a_loopback_responder_only_while_authority_holds() {
+        let device = FakeHdhrDevice::start(1, &[]);
+        let pinned = match open_pinned_routed_udp_socket(loopback_interface_id(), "lo") {
+            Ok(pinned) => pinned,
+            Err(PinnedRoutedUdpSocketError::PinInterface) => {
+                eprintln!("skipping: this kernel refuses SO_BINDTODEVICE without privileges");
+                return;
+            }
+            Err(error) => panic!("pin the loopback interface: {error}"),
+        };
+        let live = Arc::new(AtomicBool::new(true));
+        let authority: PreSendAuthority = {
+            let live = Arc::clone(&live);
+            Arc::new(move || live.load(Ordering::SeqCst))
+        };
+        let socket = pinned
+            .into_probe_socket(authority)
+            .expect("register the pinned socket with the runtime");
+        assert!(!format!("{socket:?}").contains("lo"));
+
+        let client = DiscoveryClient::default();
+        let report = client
+            .discover_routed_target_through(&socket, Ipv4Addr::LOCALHOST, &CancellationToken::new())
+            .await
+            .expect("probe the loopback responder through the pinned socket");
+        assert_eq!(report.observations.len(), 1);
+        assert_eq!(report.observations[0].device_id, device.device_id());
+        assert_eq!(
+            report.observations[0].method,
+            DiscoveryMethod::RoutedTargeted
+        );
+        assert!(report.stats.datagrams_sent >= 1);
+        assert!(report.stats.datagrams_accepted >= 1);
+
+        live.store(false, Ordering::SeqCst);
+        let refused = client
+            .discover_routed_target_through(&socket, Ipv4Addr::LOCALHOST, &CancellationToken::new())
+            .await
+            .expect_err("lost authority must refuse the send");
+        assert!(
+            matches!(
+                refused,
+                DiscoveryError::Io {
+                    operation: "send discovery request",
+                    ..
+                }
+            ),
+            "{refused:?}"
+        );
+        let text = refused.to_string();
+        assert!(text.contains("authority is no longer current"), "{text}");
+        assert!(!text.contains("lo\""), "{text}");
+    }
 
     const VALID_ID: u32 = 17;
     const VALID_NAME: &str = "wg-test0";

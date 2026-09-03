@@ -15,7 +15,7 @@ use super::types::{DiscoveryMethod, ProbeEndpoint};
 use crate::hdhr::protocol::DISCOVERY_UDP_PORT;
 
 #[cfg(target_os = "linux")]
-mod linux;
+pub(super) mod linux;
 
 /// Hard ceiling for an explicitly approved routed discovery range.
 pub const MAX_ROUTED_CANDIDATES: usize = 256;
@@ -368,7 +368,7 @@ where
     .await
 }
 
-async fn scan_approved_targets_until<F, Fut>(
+pub(super) async fn scan_approved_targets_until<F, Fut>(
     targets: &ApprovedIpv4Targets,
     scan_config: RoutedScanConfig,
     attempts_per_target: u8,

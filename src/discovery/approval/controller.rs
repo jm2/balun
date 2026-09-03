@@ -7,13 +7,13 @@
 //! Any source event, source failure, replacement, or drop cancels every
 //! registration synchronously before reconciliation work can be scheduled.
 //!
-//! Linux actor wiring remains separate. Its route and store activation
-//! callbacks will be the only production callers of `activate`; until that
-//! handoff is complete this module remains unavailable outside the crate.
+//! Linux actor wiring lives in the child modules. Their route and store
+//! activation callbacks are the only callers of `activate`, and the monitored
+//! runner in `runner` is the only consumer of the resulting epochs.
 
 #![allow(
     dead_code,
-    reason = "the consuming routed-discovery controller remains intentionally unwired"
+    reason = "the monitored routed runner has no production caller until the approval UX lands"
 )]
 
 use std::collections::BTreeMap;
@@ -30,6 +30,8 @@ mod activation;
 mod linux;
 #[cfg(target_os = "linux")]
 mod pair;
+#[cfg(target_os = "linux")]
+pub(crate) mod runner;
 #[cfg(target_os = "linux")]
 mod store;
 
@@ -713,6 +715,16 @@ impl Drop for RoutedAuthorityRegistration {
         {
             state.registrations.remove(&self.registration_id);
         }
+    }
+}
+
+impl super::run::AuthorityRegistration for RoutedAuthorityRegistration {
+    fn is_current(&self) -> bool {
+        Self::is_current(self)
+    }
+
+    fn cancellation(&self) -> &CancellationToken {
+        Self::cancellation(self)
     }
 }
 

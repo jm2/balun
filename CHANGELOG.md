@@ -83,6 +83,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest, the MSRV job, and the README compiler declarations aligned.
 - **v0.1 plan and task ledger** — The product plan, architecture, safety constraints, and a
   countable dependency-aware ledger of what is done and what remains for the first alpha.
+- **Monitored routed runner (Linux)** — The approval store, the route and store observers, and the
+  interface-pinned socket are connected into one library runner. It reserves the approved scan,
+  rebaselines the observers around the exact post-publication reread, probes each target through a
+  socket that re-checks authority and its pin before every datagram, and settles completion
+  durably on every exit path. No user interface reaches it yet.
 
 ### Changed
 

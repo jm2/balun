@@ -48,7 +48,12 @@ impl RoutedClockSample {
         }
     }
 
-    fn exact_policy_time(self) -> Result<Duration, RoutedAdmissionError> {
+    #[must_use]
+    pub(super) const fn monotonic_time(self) -> Instant {
+        self.monotonic_time
+    }
+
+    pub(super) fn exact_policy_time(self) -> Result<Duration, RoutedAdmissionError> {
         if self.policy_subsecond_nanos >= 1_000_000_000 {
             return Err(RoutedAdmissionError::InvalidClockSample);
         }
@@ -58,7 +63,7 @@ impl RoutedClockSample {
         ))
     }
 
-    fn conservative_policy_time(self) -> Result<RoutedPolicyTime, RoutedAdmissionError> {
+    pub(super) fn conservative_policy_time(self) -> Result<RoutedPolicyTime, RoutedAdmissionError> {
         if self.policy_subsecond_nanos >= 1_000_000_000 {
             return Err(RoutedAdmissionError::InvalidClockSample);
         }
@@ -558,6 +563,24 @@ impl fmt::Debug for RoutedInvalidationRegistration {
     }
 }
 
+/// Non-cloneable membership in one exact healthy epoch, whichever observer
+/// system minted it. A runner holds one for the whole life of a scan and
+/// treats a non-current registration as lost authority.
+pub(super) trait AuthorityRegistration: Send + Sync + 'static {
+    fn is_current(&self) -> bool;
+    fn cancellation(&self) -> &CancellationToken;
+}
+
+impl AuthorityRegistration for RoutedInvalidationRegistration {
+    fn is_current(&self) -> bool {
+        Self::is_current(self)
+    }
+
+    fn cancellation(&self) -> &CancellationToken {
+        Self::cancellation(self)
+    }
+}
+
 /// Fully admitted, still packet-free routed scan parts.
 ///
 /// This value is non-cloneable. `absolute_deadline` is fixed before the final
@@ -570,14 +593,31 @@ impl fmt::Debug for RoutedInvalidationRegistration {
 /// deliberately does not weaken the durable crash-conservative reservation.
 /// The future consuming runner must own exact completion (including its own
 /// drop/error paths) before production wiring may use admitted authority.
-pub(crate) struct AdmittedRoutedScan {
+pub(crate) struct AdmittedRoutedScan<R: AuthorityRegistration = RoutedInvalidationRegistration> {
     scan: RevalidatedRoutedScan,
     absolute_deadline: Instant,
     request_cancellation: CancellationToken,
-    invalidation: RoutedInvalidationRegistration,
+    invalidation: R,
 }
 
-impl AdmittedRoutedScan {
+impl<R: AuthorityRegistration> AdmittedRoutedScan<R> {
+    /// Bind revalidated authority to one absolute deadline and one exact
+    /// registration. Only an admission boundary that performed the final
+    /// pre-send clock check may construct this.
+    pub(super) const fn new(
+        scan: RevalidatedRoutedScan,
+        absolute_deadline: Instant,
+        request_cancellation: CancellationToken,
+        invalidation: R,
+    ) -> Self {
+        Self {
+            scan,
+            absolute_deadline,
+            request_cancellation,
+            invalidation,
+        }
+    }
+
     #[must_use]
     pub(crate) fn scan(&self) -> &RevalidatedRoutedScan {
         &self.scan
@@ -604,7 +644,7 @@ impl AdmittedRoutedScan {
     }
 }
 
-impl fmt::Debug for AdmittedRoutedScan {
+impl<R: AuthorityRegistration> fmt::Debug for AdmittedRoutedScan<R> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("AdmittedRoutedScan")
@@ -822,12 +862,12 @@ where
         let request_cancellation = cancellation.clone();
         ensure_live(&registration, &request_cancellation)?;
 
-        Ok(RoutedAdmissionDecision::Admitted(AdmittedRoutedScan {
+        Ok(RoutedAdmissionDecision::Admitted(AdmittedRoutedScan::new(
             scan,
             absolute_deadline,
             request_cancellation,
-            invalidation: registration,
-        }))
+            registration,
+        )))
     }
 
     /// Cancel all admitted authority before mutating the exact store record.
@@ -846,14 +886,22 @@ where
     }
 }
 
-struct AdmissionTimeline {
+/// Monotonic lease accounting across every admission checkpoint: the
+/// deadline only ever moves earlier, and a clock that moves backward in
+/// either domain fails the admission.
+pub(super) struct AdmissionTimeline {
     last_sample: RoutedClockSample,
     lease_expires_at: RoutedPolicyTime,
     lease_deadline: Instant,
 }
 
 impl AdmissionTimeline {
-    fn new(
+    #[must_use]
+    pub(super) const fn lease_deadline(&self) -> Instant {
+        self.lease_deadline
+    }
+
+    pub(super) fn new(
         first: RoutedClockSample,
         lease_expires_at: RoutedPolicyTime,
     ) -> Result<Self, RoutedAdmissionError> {
@@ -871,7 +919,7 @@ impl AdmissionTimeline {
         Ok(timeline)
     }
 
-    fn observe(
+    pub(super) fn observe(
         &mut self,
         sample: RoutedClockSample,
     ) -> Result<RoutedClockSample, RoutedAdmissionError> {
@@ -901,9 +949,9 @@ impl AdmissionTimeline {
     }
 }
 
-fn sample_live<C: RoutedAdmissionClock + ?Sized>(
+pub(super) fn sample_live<C: RoutedAdmissionClock + ?Sized, R: AuthorityRegistration>(
     clock: &C,
-    registration: &RoutedInvalidationRegistration,
+    registration: &R,
     cancellation: &CancellationToken,
 ) -> Result<RoutedClockSample, RoutedAdmissionError> {
     ensure_live(registration, cancellation)?;
@@ -915,9 +963,9 @@ fn sample_live<C: RoutedAdmissionClock + ?Sized>(
     Ok(sample)
 }
 
-fn checkpoint<C: RoutedAdmissionClock + ?Sized>(
+pub(super) fn checkpoint<C: RoutedAdmissionClock + ?Sized, R: AuthorityRegistration>(
     clock: &C,
-    registration: &RoutedInvalidationRegistration,
+    registration: &R,
     cancellation: &CancellationToken,
     timeline: &mut AdmissionTimeline,
 ) -> Result<RoutedClockSample, RoutedAdmissionError> {
@@ -925,8 +973,8 @@ fn checkpoint<C: RoutedAdmissionClock + ?Sized>(
     timeline.observe(sample)
 }
 
-fn ensure_live(
-    registration: &RoutedInvalidationRegistration,
+pub(super) fn ensure_live<R: AuthorityRegistration>(
+    registration: &R,
     cancellation: &CancellationToken,
 ) -> Result<(), RoutedAdmissionError> {
     if cancellation.is_cancelled() {
