@@ -206,8 +206,10 @@ on disk, 84 MB as a ZIP), the reopened `balun.exe` carried the seven-image icon
 and the `0.1.0-alpha.1` version resource, and the packaged runtime probe
 decoded the synthetic MPEG-2 fixture inside the tree with a fresh registry and
 only `System32` on `PATH`. Launched the same way by hand, the packaged
-application presented its window. No tuner was contacted; tuning from the
-package is recorded under P4.1.
+application presented its window. `-InnoSetup -SkipBundle` then compiled a
+55 MB installer from the receipted tree with Inno Setup 6.7.3 and reopened
+its version resource. No tuner was contacted; tuning from the package is
+recorded under P4.1.
 
 ## In-band guide spike
 

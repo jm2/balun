@@ -269,8 +269,8 @@ review's pull request.
 
 - The release publication job with write permission (P3.5, PR #18); the macOS
   package does not exist yet; the privileged flathub builder container was
-  reviewed only through its inputs; the Windows installer is compiled only by
-  the release workflow's Inno Setup and inspected only through its version
+  reviewed only through its inputs; the Windows installer, compiled locally and
+  by the release workflow's Inno Setup, is inspected only through its version
   resource.
 
 ## 5. Unexpected tuner-allocation paths

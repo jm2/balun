@@ -2625,9 +2625,12 @@ function New-WindowsZip {
 }
 
 function Find-InnoSetupCompiler {
+    # Tributary's machine-wide locations plus the per-user location that the
+    # Inno Setup installer and winget use when installing for one user.
     foreach ($candidate in @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+        "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe",
         'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
         'C:\Program Files\Inno Setup 6\ISCC.exe'
     )) {
@@ -2671,14 +2674,17 @@ function Invoke-InnoSetup {
     # identity and the exact package version.
     $installerItem = Get-ValidatedBuildOutput $installerPath 'installer'
     Assert-MzHeader $installerItem.FullName 'Completed installer'
+    # Inno Setup pads its version-resource strings with trailing blanks, so
+    # compare the trimmed values against the exact expected identity.
     $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($installerItem.FullName)
-    if ([string]$versionInfo.ProductName -cne $ProductName) {
+    $padding = [char[]]@(' ', [char]0)
+    if (([string]$versionInfo.ProductName).Trim($padding) -cne $ProductName) {
         Exit-WithError "Completed installer ProductName metadata must be '$ProductName'."
     }
-    if ([string]$versionInfo.ProductVersion -cne $Version) {
+    if (([string]$versionInfo.ProductVersion).Trim($padding) -cne $Version) {
         Exit-WithError "Completed installer ProductVersion metadata does not match package version $Version."
     }
-    if ([string]$versionInfo.FileVersion -cne $Version) {
+    if (([string]$versionInfo.FileVersion).Trim($padding) -cne $Version) {
         Exit-WithError "Completed installer FileVersion metadata does not match package version $Version."
     }
     Write-Info "Installer created and reopened: $($installerItem.FullName)"
