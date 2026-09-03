@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **5/30 (16.7%)** records complete. This is a dependency ledger,
+Current status: **6/30 (20.0%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -102,7 +102,7 @@ the live numbers that were never recorded.
   the observer pair after store publication, serialize the final pre-send
   check, consume the sealed socket, and settle reservation completion.
 
-- [ ] **P2.2 — Add routed-discovery UX.** Preview candidates and packet budget,
+- [x] **P2.2 — Add routed-discovery UX.** Preview candidates and packet budget,
   require explicit approval, and expose progress, cancel, cooldown, backoff,
   and revocation.
 

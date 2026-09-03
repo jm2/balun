@@ -88,8 +88,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebaselines the observers around the exact post-publication reread, probes each target through a
   socket that re-checks authority and its pin before every datagram, and settles completion
   durably on every exit path. The controller offers it as a lane of its own (propose, approve,
-  run, revoke) with topology-free snapshot state and copy for every decision; the window does not
-  drive it yet.
+  run, revoke) with topology-free snapshot state and copy for every decision.
+- **Routed tunnel discovery (Linux)** — A tunnel-search button in the device sidebar runs the
+  approved routed scan. The first search shows the exact routes, address count, and packet budget
+  and asks for approval once per route set; approval is remembered on disk, cooldown and busy
+  decisions are shown in place, Stop cancels the scan, and **Forget routed approvals** revokes
+  them.
 
 ### Changed
 
