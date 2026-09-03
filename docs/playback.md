@@ -150,9 +150,9 @@ desktop can hold and move the opaque type but cannot inspect the URI. Its sole
 crate-private exposure is a consuming higher-ranked closure used by the
 transport when `playbin3` delivers its exact `appsrc`; the borrow cannot escape
 that closure, and the parsed URL lives only in that transport's reader thread.
-Merely selecting
-a channel row remains inert. Double-clicking or pressing Enter on a valid,
-unprotected row constructs a URL-free `StreamSelection`; only the controller's
+Merely highlighting
+a channel row with the keyboard remains inert. Clicking or pressing Enter on a
+valid, unprotected row constructs a URL-free `StreamSelection`; only the controller's
 validated opaque handoff can then open the stream through `PlaybackSession`.
 
 ## Generation-owned tune session
@@ -361,7 +361,7 @@ crate-private `cfg(test)` handoff constructor.
 The controls work extends the layered harness rather than weakening that boundary. A
 production `PlayerView` smoke changes volume and mute through the real GTK
 widgets and verifies retained session state and terminal disabling. A ListView
-smoke proves selection remains inert while double-click/Enter activation carries
+smoke proves selection remains inert while click/Enter activation carries
 the exact applied generation and protected rows fail closed. A separate fresh
 headless Wayland desktop-shell process requests fullscreen through the real
 window, waits for compositor entry and exit notifications, proves nested

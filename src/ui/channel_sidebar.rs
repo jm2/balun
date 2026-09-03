@@ -2,6 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use balun::controller::{
@@ -116,15 +117,20 @@ impl ChannelSidebar {
     /// Connect one URL-free activation intent for a row belonging to the
     /// exact complete lineup generation currently applied to this sidebar.
     ///
-    /// Selection alone remains inert. GTK emits this signal for the standard
-    /// double-click and keyboard activation paths because single-click
-    /// activation stays disabled on the list.
+    /// Selection alone remains inert: keyboard navigation only moves the
+    /// highlight. A single primary-button click on an activatable row
+    /// activates it through the row's own gesture, and GTK still emits the
+    /// signal for Enter and for its double-click path; the second activation
+    /// of a double-click is dropped inside [`REPEAT_ACTIVATION_WINDOW`] so
+    /// one tune request reaches the controller.
     pub(crate) fn connect_channel_activated<F>(&self, activate: F) -> gtk::glib::SignalHandlerId
     where
         F: Fn(StreamSelection) + 'static,
     {
         let activation_generation = Rc::clone(&self.activation_generation);
         let applying_snapshot = Rc::clone(&self.applying_snapshot);
+        let last_activation: Rc<RefCell<Option<(StreamSelection, Instant)>>> =
+            Rc::new(RefCell::new(None));
         self.list.connect_activate(move |list, position| {
             if applying_snapshot.get() {
                 return;
@@ -139,6 +145,11 @@ impl ChannelSidebar {
             else {
                 return;
             };
+            let now = Instant::now();
+            if is_repeat_activation(last_activation.borrow().as_ref(), &selection, now) {
+                return;
+            }
+            *last_activation.borrow_mut() = Some((selection.clone(), now));
             activate(selection);
         })
     }
@@ -377,6 +388,58 @@ fn activation_selection(
     Some(StreamSelection::new(row.key()?, generation?))
 }
 
+/// A second activation of the same selection inside this window is the
+/// double-click echo of a single click, not a new intent.
+const REPEAT_ACTIVATION_WINDOW: Duration = Duration::from_millis(500);
+
+fn is_repeat_activation(
+    last: Option<&(StreamSelection, Instant)>,
+    selection: &StreamSelection,
+    now: Instant,
+) -> bool {
+    last.is_some_and(|(previous, at)| {
+        previous == selection && now.saturating_duration_since(*at) <= REPEAT_ACTIVATION_WINDOW
+    })
+}
+
+/// Whether one released primary-button press on a row should activate it.
+const fn single_click_activates(n_press: i32, activatable: bool) -> bool {
+    n_press == 1 && activatable
+}
+
+/// The gesture that turns one primary-button click on a bound row into the
+/// list's ordinary `activate` signal, so the same URL-free callback handles
+/// clicks, Enter, and GTK's double-click path. Bubble phase keeps GTK's own
+/// press handling first, so the row is selected before it activates.
+fn single_click_activation(list_item: &gtk::ListItem) -> gtk::GestureClick {
+    let gesture = gtk::GestureClick::builder()
+        .button(gtk::gdk::BUTTON_PRIMARY)
+        .propagation_phase(gtk::PropagationPhase::Bubble)
+        .build();
+    let list_item = list_item.downgrade();
+    gesture.connect_released(move |gesture, n_press, _, _| {
+        let Some(list_item) = list_item.upgrade() else {
+            return;
+        };
+        if !single_click_activates(n_press, list_item.is_activatable()) {
+            return;
+        }
+        let position = list_item.position();
+        if position == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        let Some(list) = gesture
+            .widget()
+            .and_then(|row| row.ancestor(gtk::ListView::static_type()))
+            .and_downcast::<gtk::ListView>()
+        else {
+            return;
+        };
+        list.emit_by_name::<()>("activate", &[&position]);
+    });
+    gesture
+}
+
 fn channel_factory() -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, object| {
@@ -416,6 +479,7 @@ fn channel_factory() -> gtk::SignalListItemFactory {
         row.append(&hd);
         list_item.set_child(Some(&row));
         reset_channel_list_item(list_item);
+        row.add_controller(single_click_activation(list_item));
     });
     factory.connect_bind(|_, object| {
         let Some(list_item) = object.downcast_ref::<gtk::ListItem>() else {
@@ -747,6 +811,35 @@ mod tests {
         sidebar.list.emit_by_name::<()>("activate", &[&1_u32]);
         assert_eq!(activations.borrow().len(), 1);
         window.close();
+    }
+
+    #[test]
+    fn a_single_primary_click_activates_only_activatable_rows() {
+        assert!(single_click_activates(1, true));
+        assert!(!single_click_activates(1, false));
+        assert!(!single_click_activates(2, true));
+        assert!(!single_click_activates(0, true));
+    }
+
+    #[test]
+    fn the_double_click_echo_of_a_single_click_is_dropped() {
+        let (_snapshot, key, protected, generation) = ready_snapshot();
+        let selection = StreamSelection::new(key, generation);
+        let start = Instant::now();
+        assert!(!is_repeat_activation(None, &selection, start));
+        let last = (selection.clone(), start);
+        assert!(is_repeat_activation(
+            Some(&last),
+            &selection,
+            start + Duration::from_millis(200)
+        ));
+        assert!(!is_repeat_activation(
+            Some(&last),
+            &selection,
+            start + REPEAT_ACTIVATION_WINDOW + Duration::from_millis(1)
+        ));
+        let other = StreamSelection::new(protected, generation);
+        assert!(!is_repeat_activation(Some(&last), &other, start));
     }
 
     #[test]
