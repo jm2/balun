@@ -699,6 +699,7 @@ impl StoredPublishedReservation {
     /// The permit identity this publication carries, so a runner can settle
     /// completion even when the exact post-publication reread never runs.
     #[must_use]
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(super) const fn permit(&self) -> &RoutedScanPermit {
         &self.permit
     }
@@ -2079,6 +2080,7 @@ fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
 }
 
 #[cfg(not(unix))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn same_file(_before: &fs::Metadata, _opened: &fs::Metadata) -> bool {
     true
 }
