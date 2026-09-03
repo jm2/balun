@@ -118,8 +118,8 @@ Built and tested:
   addresses, probed one at a time and remembered by name.
 
 Not yet done: macOS live-device acceptance, the Windows and macOS halves of
-the per-platform codec contract, the routed sender and its UX, packages, and
-the alpha release.
+the per-platform codec contract, a live routed proof on a real tunnel,
+packages, and the alpha release.
 
 ## 4. Architecture
 
