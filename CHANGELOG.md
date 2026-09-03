@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sidebar, and a live-TV pane. **Refresh devices** runs local discovery, **Find device by
   address** probes one numeric IPv4 or unscoped IPv6 address, and **Stop device discovery**
   cancels either.
-- **Live channel playback** — Double-click or press Enter on an unprotected channel to tune it. A
+- **Live channel playback** — Click or press Enter on an unprotected channel to tune it. A
   generation-owned `playbin3` session renders through `gtk4paintablesink`, settles the previous
   tune before starting the next, and tears down within a bounded time.
 - **Application-owned stream transport** — GStreamer receives only the constant `appsrc://balun`

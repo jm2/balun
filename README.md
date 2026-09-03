@@ -463,10 +463,10 @@ blocks the replies, use **Find device by address** with the tuner's IPv4 address
 
 ### Watching a channel
 
-Select a device to load its channel lineup; selecting alone never tunes. Type in the search field
-above the list to match a channel number or name, or press the star to show favorites only.
-Double-click a channel or press Enter to play it. Protected channels are listed but cannot be
-activated. The player header has **Stop**, a volume slider, a mute toggle, and a fullscreen
+Select a device to load its channel lineup. Type in the search field above the list to match a
+channel number or name, or press the star to show favorites only. Click a channel or press Enter
+to play it; moving the keyboard highlight alone never tunes. Protected channels are listed but
+cannot be activated. The player header has **Stop**, a volume slider, a mute toggle, and a fullscreen
 button; volume and mute carry across channel changes for the running session.
 
 ### Keyboard Shortcuts
