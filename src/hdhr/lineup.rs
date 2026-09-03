@@ -799,4 +799,83 @@ mod tests {
         ));
         assert_eq!(requests.len(), 1);
     }
+
+    #[test]
+    fn parses_sanitized_real_device_lineups() {
+        let connect = parse_lineup(
+            include_bytes!("../../tests/fixtures/hdhr/lineup-hdhr4-2us.json"),
+            id(),
+            &endpoint(),
+            256,
+        )
+        .unwrap();
+        assert_eq!(connect.channels().len(), 78);
+        assert!(connect.channels().iter().all(|channel| !channel.is_drm()));
+        assert_eq!(
+            connect
+                .channels()
+                .iter()
+                .filter(|channel| channel.is_hd())
+                .count(),
+            27
+        );
+        assert_eq!(
+            connect
+                .channels()
+                .iter()
+                .filter(|channel| channel.is_favorite())
+                .count(),
+            20
+        );
+
+        let flex_endpoint = DeviceEndpoint::from_discovery(
+            "192.0.2.11:65001".parse().unwrap(),
+            Some("http://fixture.invalid"),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            parse_lineup(
+                include_bytes!("../../tests/fixtures/hdhr/lineup-hdhr5-4k.json"),
+                id(),
+                &endpoint(),
+                256,
+            ),
+            Err(LineupError::InvalidStreamUrl { index: 0, .. })
+        ));
+        let flex = parse_lineup(
+            include_bytes!("../../tests/fixtures/hdhr/lineup-hdhr5-4k.json"),
+            id(),
+            &flex_endpoint,
+            256,
+        )
+        .unwrap();
+        assert_eq!(flex.channels().len(), 68);
+        assert_eq!(
+            flex.channels()
+                .iter()
+                .filter(|channel| channel.is_drm())
+                .count(),
+            2
+        );
+        assert_eq!(
+            flex.channels()
+                .iter()
+                .filter(|channel| channel.is_hd())
+                .count(),
+            20
+        );
+        assert_eq!(
+            flex.channels()
+                .iter()
+                .filter(|channel| channel.is_favorite())
+                .count(),
+            19
+        );
+        assert!(
+            flex.channels()
+                .iter()
+                .all(|channel| channel.key().device_id() == id())
+        );
+    }
 }

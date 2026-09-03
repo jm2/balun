@@ -29,31 +29,30 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **3/30 (10.0%)** records complete. This is a dependency ledger,
+Current status: **8/30 (26.7%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
 ## Current focus
 
-P0.1 is documentation only and lands first. P0.2 and P0.4 need the Linux
-development host and the accessible primary-site tuners. P1.1 and P1.2 are
-complete. The
-fake-device teardown-release proofs are complete on the test side; P0.4 adds
-the live numbers that were never recorded.
+The Linux live-hardware proofs recorded P0.2, P0.4, P0.6, and P0.7 against
+the primary-site tuners on 2026-09-03. P0.3 needs the macOS host, P0.5 waits
+on the Windows and macOS factory sets, and P0.8 is the next hardware record.
+P1.1, P1.2, and P1.5 are complete.
 
 ## P0 — Evidence and contract
 
-- [ ] **P0.1 — Record the Windows live-TV result.** Add the sanitized owner
+- [x] **P0.1 — Record the Windows live-TV result.** Add the sanitized owner
   trial to the compatibility notes: ATSC 1.0 plays with audio, ATSC 3.0 fails
   closed on AC-4, and discovery, switching, Stop, and close behave as expected.
 
-- [ ] **P0.2 — Linux live-TV acceptance on real hardware.** Same checklist as
+- [x] **P0.2 — Linux live-TV acceptance on real hardware.** Same checklist as
   P0.1 on the Linux development build, including audio.
 
 - [ ] **P0.3 — macOS live-TV acceptance on real hardware.** Same checklist as
   P0.1 on the macOS development build, including audio.
 
-- [ ] **P0.4 — Measure tune and teardown budgets.** Record first-frame time,
+- [x] **P0.4 — Measure tune and teardown budgets.** Record first-frame time,
   channel-switch time, and tuner-release time on one device, and confirm the
   tuner is released on switch, Stop, device change, and window close.
 
@@ -61,11 +60,11 @@ the live numbers that were never recorded.
   to P0.3, record the exact GStreamer factories, decoders, and audio sinks each
   platform uses; this is the input to the packaged runtime closure.
 
-- [ ] **P0.6 — Land sanitized fixtures from real devices.** Add representative
+- [x] **P0.6 — Land sanitized fixtures from real devices.** Add representative
   discover replies, device JSON, lineup JSON, and HTTP failures without
   topology, authentication, or channel data.
 
-- [ ] **P0.7 — Prove the exact-address probe on real hardware.** Exercise and
+- [x] **P0.7 — Prove the exact-address probe on real hardware.** Exercise and
   document one exact-address probe against an accessible tuner.
 
 - [ ] **P0.8 — Run the in-band guide spike.** In one day, observe whether

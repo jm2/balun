@@ -9,6 +9,8 @@
 
 #[cfg(all(test, feature = "desktop"))]
 mod fake_device_e2e;
+#[cfg(all(test, feature = "desktop"))]
+mod live_hardware;
 #[cfg(feature = "desktop")]
 mod pipeline_failure;
 mod runtime;
