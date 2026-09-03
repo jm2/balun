@@ -217,6 +217,9 @@ jobs:
       - name: Reopen and validate the completed bundle
         run: build-aux/flatpak/validate-bundle-compliance.sh balun.flatpak
 
+      - name: Probe the packaged runtime for the playback factories
+        run: build-aux/flatpak/validate-bundle-runtime.sh balun.flatpak
+
       - name: Upload the Flatpak bundle
         uses: actions/upload-artifact@v7
         with:

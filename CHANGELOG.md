@@ -46,9 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   come.
 - **Flatpak bundle** — Add the `io.github.jm2.Balun` manifest on the GNOME 50 runtime with the
   reviewed six-entry permission policy, the Freedesktop ffmpeg-full codec extension, an offline
-  cargo build from generated locked sources, a build-time check that the runtime supplies every
-  structural playback factory, and app-payload validation. CI builds and reopens an x86_64
-  bundle; the release-candidate workflow builds x86_64 and aarch64 bundles as artifacts.
+  cargo build from generated locked sources, build-time and installed-bundle checks that the
+  runtime supplies every structural playback factory, and app-payload validation. CI builds
+  and reopens an x86_64 bundle; the release-candidate workflow builds x86_64 and aarch64
+  bundles as artifacts.
 - **Channel search and favorites filter** — A search field above the channel list matches a
   channel number prefix or part of a name, and a star toggle shows favorites only. Filtering
   hides rows without changing device or channel identity, keeps the highlighted channel when it
