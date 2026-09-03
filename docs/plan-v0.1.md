@@ -116,9 +116,9 @@ Built and tested:
 - Hostname entry resolved on the controller to a bounded set of unicast
   addresses, probed one at a time and remembered by name.
 
-Not yet done: Linux and macOS live-device acceptance, measured tune and
-teardown budgets, a frozen per-platform codec contract, the routed sender
-and its UX, search and favorites, packages, and the alpha release.
+Not yet done: macOS live-device acceptance, the Windows and macOS halves of
+the per-platform codec contract, the routed sender and its UX, packages, and
+the alpha release.
 
 ## 4. Architecture
 
