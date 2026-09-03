@@ -54,19 +54,20 @@ Decoders come from the installed GStreamer runtime; Balun bundles none and trans
 
 | Stream type | Linux | Windows | macOS |
 | --- | --- | --- | --- |
-| MPEG-2 video | ✅ `avdec_mpeg2video` | ✅ ATSC 1.0 picture; decoder set unrecorded | Not yet verified |
-| AC-3 audio | ✅ `a52dec` | ✅ ATSC 1.0 audio; decoder set unrecorded | Not yet verified |
-| H.264 video | Not yet verified | Not yet verified | Not yet verified |
-| MPEG-1/2 audio | Not yet verified | Not yet verified | Not yet verified |
-| AAC audio | Not yet verified | Not yet verified | Not yet verified |
-| E-AC-3 audio | Not yet verified | Not yet verified | Not yet verified |
-| HEVC video | ⚠️ Fedora's gst-libav build has no HEVC decoder | ⚠️ Not proven | ⚠️ Not proven |
+| MPEG-2 video | ✅ `avdec_mpeg2video` | ✅ `avdec_mpeg2video` | Not yet verified |
+| AC-3 audio | ✅ `a52dec` | ✅ `avdec_ac3` | Not yet verified |
+| H.264 video | Decoder present (`openh264dec`); not tuned on record | Decoders present (`d3d12h264dec`, `avdec_h264`); not tuned on record | Not yet verified |
+| MPEG-1/2 audio | Decoder present (`mpg123audiodec`); not tuned on record | Decoder present (`mpg123audiodec`); not tuned on record | Not yet verified |
+| AAC audio | Decoder present (`avdec_aac`); not tuned on record | Decoder present (`avdec_aac`); not tuned on record | Not yet verified |
+| E-AC-3 audio | ❌ No decoder installed | Decoder present (`avdec_eac3`); not tuned on record | Not yet verified |
+| HEVC video | ❌ Fedora's gst-libav build has no HEVC decoder | ⚠️ Decoders present (`d3d12h265dec`, `avdec_h265`); ATSC 3.0 fails on AC-4 first | ⚠️ Not proven |
 | AC-4 audio | ❌ No open decoder | ❌ No open decoder | ❌ No open decoder |
 
-- HEVC needs gst-libav built with HEVC or a platform decoder; it is not proven on any platform.
+- HEVC decoders exist on Windows (Direct3D and libav) but not in Fedora's gst-libav; HEVC playback
+  is not proven on any platform because every ATSC 3.0 channel tried so far fails on AC-4 first.
 - AC-4 has no open decoder, so ATSC 3.0 audio fails closed with a message that names the codec.
-- H.264, MPEG-1/2 audio, and AAC decoders ship with gst-libav, but no broadcast carrying them has
-  been tuned on record. E-AC-3 is unverified.
+- H.264, MPEG-1/2 audio, and AAC decoders are installed on Linux and Windows, but no broadcast
+  carrying them has been tuned on record. E-AC-3 decodes on Windows only.
 
 ## Limitations
 
@@ -93,6 +94,8 @@ Decoders come from the installed GStreamer runtime; Balun bundles none and trans
   [Linux route-provider smoke](compatibility-v0.1.md#linux-route-provider-smoke); ledger P0.7,
   P1.2, and P2.1 to P2.5.
 - Codecs: [Linux plugin and codec contract](compatibility-v0.1.md#linux-plugin-and-codec-contract),
+  [Linux decoder and sink inventory](compatibility-v0.1.md#linux-decoder-and-sink-inventory),
+  [Windows decoder and sink inventory](compatibility-v0.1.md#windows-decoder-and-sink-inventory),
   [Windows live-TV trial](compatibility-v0.1.md#windows-live-tv-trial); ledger P0.5.
 - Limitations: [In-band guide spike](compatibility-v0.1.md#in-band-guide-spike) and the
   "Explicitly outside v0.1" list in [`task.md`](task.md).

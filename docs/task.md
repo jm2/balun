@@ -36,9 +36,9 @@ most evidence records.
 ## Current focus
 
 The Linux live-hardware proofs recorded P0.2, P0.4, P0.6, P0.7, and the P0.8
-guide spike on 2026-09-03; P0.3 needs the macOS host and P0.5 waits on the
-Windows and macOS factory sets. P1.1 to P1.5, P2.1 to P2.4, P3.2, P3.5, P4.3,
-and P4.4 are complete.
+guide spike on 2026-09-03; P0.3 needs the macOS host, and P0.5 has its Linux
+and Windows inventories recorded and waits on the macOS one. P1.1 to P1.5,
+P2.1 to P2.4, P3.2, P3.5, P4.3, and P4.4 are complete.
 
 ## P0 — Evidence and contract
 
