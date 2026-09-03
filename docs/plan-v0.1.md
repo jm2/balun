@@ -272,7 +272,7 @@ Codec policy:
 - HEVC decodes where gst-libav or a platform decoder is installed and is
   reported as a capability, not promised.
 - AC-4 has no open decoder; those channels fail closed with a message that names
-  the missing codec (P1.4 decides whether video-only playback is offered).
+  the missing codec. Video-only playback is not offered in v0.1.
 - DRM-tagged channels stay visible but disabled.
 - The shared [release component policy](release-component-policy.md) keeps
   optical-disc decryption and proprietary DRM components out of every package;
