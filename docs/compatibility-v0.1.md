@@ -86,6 +86,69 @@ This is an owner-reported observation. It did not measure first-frame,
 channel-switch, or tuner-release times, and it did not enumerate the exact
 decoder set in use; P0.4 and P0.5 in [`task.md`](task.md) record those.
 
+## Linux live-TV acceptance
+
+On 2026-09-03 the opt-in live-hardware proofs in
+[`src/playback/live_hardware.rs`](../src/playback/live_hardware.rs) ran on
+the Linux development host (Fedora 44, GStreamer 1.28.6, Rust 1.98) against
+the primary-site tuners. They are display-free: the production controller
+services discover, select, and authorize the stream, and `playbin3` renders
+video into a `fakesink` and audio into a `fakesink` or, for the audio run,
+into `pulsesink` on the host's PipeWire session. Every proof passed on its
+first run.
+
+- Local discovery found both devices, and the controller selected the
+  HDHR4-2US through to a ready lineup.
+- An unprotected ATSC 1.0 channel decoded to raw 1920×1080 progressive video
+  and raw 48 kHz 5.1 audio, and the same audio rendered through `pulsesink`,
+  so the desktop audio path works end to end on Linux.
+- The unprotected ATSC 3.0 channel on the HDHR5-4K failed closed with the
+  missing-codec category. GStreamer asked for decoders for `audio/x-ac4` and
+  `video/x-h265`: Fedora's `gstreamer1-plugin-libav` carries no HEVC decoder,
+  and no open AC-4 decoder exists. The tuner was released afterwards.
+- A targeted probe at each discovered device's own address, with its
+  DeviceID, returned exactly that device.
+
+The proofs run only with `BALUN_LIVE_HARDWARE=1`, print no address, name,
+channel name, or URL, and write their metadata captures under the build
+directory with synthesized channel names. The GTK window was not part of
+this run; its Stop and close paths are covered by the fake-device end-to-end
+tests and by the Windows trial above.
+
+## Tune and teardown budgets
+
+Measured by the same proofs on the HDHR4-2US, with the production transport
+deadlines tightened to 2 s connect and 5 s idle. Times are wall-clock on a
+wired host and vary with the broadcast's group-of-pictures length.
+
+| Measurement | Observed |
+| --- | --- |
+| Controller stream handoff | under 1 ms |
+| First decoded video frame after PLAYING | 0.6 s to 1.3 s |
+| Stable video and audio decode after PLAYING | about 1.3 s |
+| Switch to a second channel (retire, handoff, first frame) | 0.64 s |
+| Client-side tuner release (NULL settled and transport joined) | under 7 ms |
+
+Release is the client-side bound: the stream socket is closed and the
+transport thread joined, after which the device frees the tuner on its own
+idle timer. Every release in the run, including the one after the fail-closed
+ATSC 3.0 tune, stayed far inside the 5 s class in [`playback.md`](playback.md).
+
+## Linux plugin and codec contract
+
+The ATSC 1.0 pipeline on Fedora 44 with GStreamer 1.28.6 autoplugged these
+factories, with the hosted-CI hardware MPEG-2 decoders demoted so the
+software path is the one recorded: `appsrc`, `typefind`, `tsdemux`,
+`parsebin`, `multiqueue`, `mpegvideoparse`, `avdec_mpeg2video`,
+`deinterlace`, `videoconvert`, `videoscale`, `videobalance`, `ac3parse`,
+`a52dec`, `audioconvert`, `audioresample`, `volume`, `streamsynchronizer`,
+`playsink`, and the sinks. `decodebin3`, `uridecodebin3`, `urisourcebin`,
+`queue`, `tee`, `capsfilter`, and `identity` are `playbin3` internals.
+
+ATSC 3.0 needs `avdec_h265` or a platform HEVC decoder plus an AC-4 decoder;
+the first is absent from Fedora's libav plugin build and the second from
+every open plugin set. The Windows and macOS factory sets are still
+unrecorded, so P0.5 in [`task.md`](task.md) stays open.
 ## In-band guide spike
 
 On 2026-09-03 the HDHomeRun CONNECT's stream forms were each captured for
@@ -141,6 +204,11 @@ Every accepted channel URL used the responder host, port 5004, and an
 `/auto/v<GuideNumber>` path. Balun now enforces all three properties without
 connecting to the stream.
 
+Sanitized copies of both documents, and the CONNECT's 404 and 503 responses,
+are in [`tests/fixtures/hdhr/`](../tests/fixtures/hdhr/provenance.md); the
+parser unit tests read them, including the responder-host pin on the 4K
+lineup.
+
 ## Linux route-provider smoke
 
 The native Linux rtnetlink provider was exercised separately on the
@@ -157,15 +225,15 @@ not evidence yet for WireGuard or UniFi Site Magic discovery.
 
 These observations establish local discovery, stable device separation,
 responder pinning, metadata identity, lineup parsing, favorite/DRM
-compatibility for the two listed model/firmware pairs, and live ATSC 1.0
-playback with audio on one Windows host. They do not yet establish:
+compatibility for the two listed model/firmware pairs, live ATSC 1.0
+playback with audio on one Windows host and one Linux host, and the Linux
+tune, switch, and release budgets. They do not yet establish:
 
-- Channel-change latency or tuner-release timing.
-- The exact per-platform decoder set, or HEVC and E-AC-3 support.
+- The Windows and macOS decoder sets, or HEVC and E-AC-3 playback.
 - Protected-channel playback.
 - Secondary-site HDHR3-PRIME or HDHR5-4K behavior.
 - UniFi Site Magic, WireGuard, or other routed multi-site discovery.
-- Linux or macOS live-TV behavior, or the second Windows host.
+- macOS live-TV behavior, or the second Windows host.
 - Deferred Australian HDHR5-4DT compatibility.
 
 Those remain explicit rows in the real-hardware matrix in
