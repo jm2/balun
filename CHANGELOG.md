@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   valid address stay, remembered addresses are never removed, and a brief notice says what changed.
 - **Dependency audit and repository linting** — CI now runs `cargo audit` and lints Markdown,
   TOML, YAML, and GitHub Actions workflows with pinned tools and root-level configs.
+- **Strict Clippy on every native lane** — The macOS and Windows jobs now lint the desktop and
+  diagnostic targets with warnings denied in both profiles, as Tributary does, so platform-only
+  dead code fails CI instead of surfacing in a developer's build log.
 - **Desktop metadata and icon** — Add the `io.github.jm2.Balun` desktop entry, AppStream
   metainfo, and an application icon: a dark-bezelled Trinitron-style CRT showing colour bars,
   with rabbit ears joined by a balun, speaker slots, knobs, and a power light, and no text. The

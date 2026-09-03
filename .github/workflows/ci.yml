@@ -417,9 +417,25 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.desktop_target }}
+          components: clippy
 
       - name: Check all targets
         run: cargo check --all-targets --locked
+
+      # Tributary lints every native lane with warnings denied in both
+      # profiles; platform-only dead code must fail here, not in a build log.
+      - name: Lint desktop and diagnostic targets on macOS
+        if: runner.os == 'macOS'
+        run: |
+          /bin/bash scripts/build-macos.sh --clippy
+          /bin/bash scripts/build-macos.sh --clippy --diagnostic
+
+      - name: Lint desktop and diagnostic targets on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/build-windows.ps1 -Clippy
+          ./scripts/build-windows.ps1 -Clippy -Diagnostic
 
       - name: Test playback transport on macOS
         if: runner.os == 'macOS'
