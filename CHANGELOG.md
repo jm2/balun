@@ -93,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest, the MSRV job, and the README compiler declarations aligned.
 - **v0.1 plan and task ledger** — The product plan, architecture, safety constraints, and a
   countable dependency-aware ledger of what is done and what remains for the first alpha.
+- **Live-hardware proofs** — Opt-in, display-free tests that discover the real tuners, tune an
+  unprotected ATSC 1.0 channel with decoded video and audio, switch channels, observe the ATSC 3.0
+  fail-closed path, and probe each device at its own address. They run only with
+  `BALUN_LIVE_HARDWARE=1`, never in CI, and print no address, name, or channel.
+- **Sanitized device fixtures** — Real `discover.json`, `lineup.json`, and HTTP failure responses
+  from a CONNECT and a CONNECT 4K, with identities, addresses, credentials, and channel names
+  replaced, now back the parser tests.
 
 ### Changed
 
@@ -145,9 +152,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limitations
 
-- **Linux and macOS live-device acceptance pending** — Live TV with audio is verified on a
-  Windows development build against real tuners; the other two desktops have not yet been
-  exercised against real hardware.
+- **macOS live-device acceptance pending** — Live TV with audio is verified on Windows and Linux
+  development builds against real tuners; macOS has not yet been exercised against real hardware.
 - **No packaged-runtime acceptance yet** — Playback is proven on development runtimes and the
   loopback fake tuner; the packaged codec closure is not yet frozen.
 - **No published packages** — A Flatpak bundle is built and validated but not published; deb,
