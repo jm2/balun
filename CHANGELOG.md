@@ -143,6 +143,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Security and privacy review** — Re-audited network admission, persisted state, logs and
+  diagnostics, package contents and CI, and every tuner-allocation path against the v0.1 plan
+  and ADRs; the write-up is `docs/security-review-v0.1.md`. `settings.json` is now explicitly
+  owner-only on Unix, discovery observations redact advertised URLs in debug output, and the
+  remaining GitHub actions are pinned by commit.
 - **Pinned device HTTP** — Metadata and lineup requests go only to the responder that answered
   discovery, on the observed ports, without credentials, redirects, proxies, or DNS, with bounded
   response sizes and times, and only after the device identity matches.

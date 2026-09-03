@@ -9,7 +9,8 @@
 //! is reported with a fixed, path-free error and left untouched, so a later
 //! save cannot destroy settings written by a newer Balun or edited by hand.
 //! Writes go through a temporary sibling that is flushed and renamed over the
-//! previous file, so a crash never leaves a partial document.
+//! previous file, so a crash never leaves a partial document. On Unix the
+//! file is readable and writable by its owner only.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -432,9 +433,16 @@ impl SettingsStore {
         fs::create_dir_all(&self.directory)
             .map_err(|error| SettingsError::io(SettingsOperation::CreateDirectory, &error))?;
 
-        let mut temporary = tempfile::Builder::new()
-            .prefix(TEMPORARY_PREFIX)
-            .suffix(TEMPORARY_SUFFIX)
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(TEMPORARY_PREFIX).suffix(TEMPORARY_SUFFIX);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // Remembered addresses and names belong to this user alone; the
+            // published file keeps the mode of the temporary it was renamed from.
+            builder.permissions(fs::Permissions::from_mode(0o600));
+        }
+        let mut temporary = builder
             .tempfile_in(&self.directory)
             .map_err(|error| SettingsError::io(SettingsOperation::CreateTemporary, &error))?;
         temporary
@@ -736,6 +744,21 @@ mod tests {
         store.save(&settings).expect("save");
 
         assert_eq!(store.load(), Ok(Some(settings)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_file_is_readable_by_its_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_directory, store) = test_store();
+
+        store.save(&populated()).expect("save");
+
+        let mode = fs::metadata(store.path())
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
