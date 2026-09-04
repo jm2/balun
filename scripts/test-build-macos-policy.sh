@@ -791,4 +791,26 @@ case "$(cat "$script_under_test")" in
     *) fail_test 'helper is missing the exact application ID' ;;
 esac
 
+# Keep the native package lane responsible for exercising these behaviors.
+# The routing fixture cannot execute Apple's bundle, signing, or disk-image
+# tools, so it checks only the small source contracts that make those native
+# checks meaningful.
+for required_package_contract in \
+    'export GST_REGISTRY="$PROBE_CACHE/registry.bin"' \
+    'LOADER_MODULES=("$LOADERS_DIR"/*.so "$LOADERS_DIR"/*.dylib)' \
+    'macos_validate_icon_sources "data/balun.iconset"' \
+    'macos_validate_app_icon_bundle "$APP_BUNDLE" "$BUNDLE_ID"' \
+    'hdiutil verify "$DMG_PATH"' \
+    'hdiutil attach -nobrowse -readonly -mountpoint "$DMG_MOUNT"'
+do
+    grep -Fq -- "$required_package_contract" "$script_under_test" \
+        || fail_test "helper is missing package contract: $required_package_contract"
+done
+if grep -Fq -- 'printf("%016s' "$script_under_test"; then
+    fail_test 'helper space-pads the install hash instead of zero-padding it'
+fi
+if grep -Fq -- '        local dep_base' "$script_under_test"; then
+    fail_test 'helper declares a local variable outside a function'
+fi
+
 printf 'build-macos command-routing tests passed\n'

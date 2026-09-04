@@ -460,9 +460,9 @@ jobs:
         shell: pwsh
         run: ./scripts/build-windows.ps1 -Diagnostic
 
-      - name: Build and inspect macOS desktop through default helper
+      - name: Stage, sign, and probe the macOS app through helper
         if: runner.os == 'macOS'
-        run: /bin/bash scripts/build-macos.sh
+        run: /bin/bash scripts/build-macos.sh --app
 
       - name: Probe installed playback runtime through macOS helper
         if: runner.os == 'macOS'
