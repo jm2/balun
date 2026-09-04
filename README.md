@@ -14,11 +14,11 @@ merged across devices, no stream URL ever reaches the user interface, and the me
 receives neither a device address nor a stream URL. Playback errors may name the device and its
 address so you know which tuner failed.
 
-> **v0.1.0 release candidate.** Balun plays live TV on Linux, macOS, and Windows and has been
-> verified against real tuners. The release workflow builds the twelve packages below from the
-> `v0.1.0` tag; until that release is visible on the
-> [Releases](https://github.com/jm2/balun/releases) page, build from source. The countable status
-> is in [`docs/task.md`](docs/task.md).
+![Balun main window](data/screenshots/balun-main-window.png)
+
+> **v0.1.0.** Balun plays live TV on Linux, macOS, and Windows and has been verified against real
+> tuners. Pre-built packages are on the [Releases](https://github.com/jm2/balun/releases) page;
+> the countable status is in [`docs/task.md`](docs/task.md).
 
 ## Features
 
@@ -38,19 +38,19 @@ address so you know which tuner failed.
 | Channel search and favorites-only filter | ✅ |
 | Fixed, endpoint-free playback error messages | ✅ |
 | Windows local discovery | ✅ |
-| Network-change handling (Linux) | ✅ Stale addresses expire and routed scans stop when adapters or routes change; nothing rescans on its own |
-| Opt-in route-table-derived tunnel search (Linux) | ✅ Approve each route set once; verified across an owned routed WireGuard tunnel |
-| Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
+| Network-change handling | 🚧 Linux: stale addresses expire and routed scans stop when adapters or routes change, and nothing rescans on its own; macOS and Windows in a future release |
+| Route-table-derived tunnel discovery | 🚧 Linux: approve each route set once, verified across an owned routed WireGuard tunnel; macOS and Windows in a future release |
+| Program guide (in-band PSIP/EIT, XMLTV) | 🚧 Future release |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | 🚧 Built by the release workflow; published with `v0.1.0` as direct downloads, no COPR, AUR, or winget yet |
+| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Direct downloads from the Releases page; no COPR, AUR, or winget yet |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
-The Linux qualifier covers only the opt-in route-table-derived proposal and the route-change
-monitor. Local broadcast and multicast discovery, exact IP or hostname discovery, and remembered
+Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
+today. Local broadcast and multicast discovery, exact IP or hostname discovery, and remembered
 targets work on Linux, macOS, and Windows.
 
 The product plan is [`docs/plan-v0.1.md`](docs/plan-v0.1.md), the countable ledger is
@@ -92,24 +92,18 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 ## Installation
 
 Pre-built packages for Linux (Flatpak, `.deb`, `.rpm`, Arch), macOS (`.dmg`), and Windows
-(`.exe` installer, `.zip`) are published on the [Releases](https://github.com/jm2/balun/releases)
-page with each release; `v0.1.0` is the first. If it is not visible there yet, build from source
-below. Balun does not yet publish through COPR, the AUR, or winget. Download `SHA256SUMS.txt` with
+(`.exe` installer, `.zip`) are available on the [Releases](https://github.com/jm2/balun/releases)
+page. Balun does not yet publish through COPR, the AUR, or winget. Download `SHA256SUMS.txt` with
 the package and verify its SHA-256 entry before installing.
 
 ### Linux
 
-| Format | Architectures | Release assets |
-| --- | --- | --- |
-| Flatpak | x86_64, aarch64 | `balun-linux-x86_64.flatpak`, `balun-linux-aarch64.flatpak` |
-| Debian package | amd64, arm64 | `balun-amd64.deb`, `balun-arm64.deb` |
-| RPM package | x86_64, aarch64 | `balun-x86_64.rpm`, `balun-aarch64.rpm` |
-| Arch package | x86_64 | `balun-x86_64.pkg.tar.zst` |
-
-Native packages require GTK 4.16 and libadwaita 1.6 from the distribution. Use the Flatpak when
-the host repositories provide older versions.
-
-Install the downloaded file with the matching platform tool, for example:
+| Distribution | Assets |
+| --- | --- |
+| Any (Flatpak) | `balun-linux-x86_64.flatpak`, `balun-linux-aarch64.flatpak` |
+| Debian / Ubuntu | `balun-amd64.deb`, `balun-arm64.deb` |
+| Fedora / RPM-based | `balun-x86_64.rpm`, `balun-aarch64.rpm` |
+| Arch Linux | `balun-x86_64.pkg.tar.zst` |
 
 ```bash
 flatpak install --user ./balun-linux-x86_64.flatpak
@@ -118,30 +112,26 @@ sudo dnf install ./balun-x86_64.rpm
 sudo pacman -U ./balun-x86_64.pkg.tar.zst
 ```
 
-Use the asset matching the machine architecture; the commands above show x86_64/amd64 names.
+Native packages need GTK 4.16 and libadwaita 1.6 from the distribution; use the Flatpak where the
+host repositories are older.
 
 ### macOS
 
-Apple Silicon uses `balun-macos-aarch64.dmg`. Mount it and drag **Balun** to Applications.
+Apple Silicon: `balun-macos-aarch64.dmg`. Mount it and drag **Balun** to Applications.
 
-> **macOS note:** The app is ad-hoc signed but not notarized, so Gatekeeper may block its first
-> launch. After verifying the checksum, mounting the DMG, and copying Balun to Applications, run:
+> **macOS note:** The `.dmg` is ad-hoc signed but not notarized, so Gatekeeper will block it on
+> first launch. After mounting the DMG and dragging Balun to Applications, run:
 >
 > ```bash
 > xattr -cr /Applications/Balun.app
 > ```
 >
-> Then open Balun normally. This is needed only once.
+> Then open normally. This is only needed once.
 
 ### Windows
 
-| Architecture | Portable ZIP | Installer |
-| --- | --- | --- |
-| x86_64 | `balun-windows-x86_64.zip` | `balun-windows-x86_64-setup.exe` |
-| ARM64 | `balun-windows-aarch64.zip` | `balun-windows-aarch64-setup.exe` |
-
-Run the installer, or unpack the portable ZIP to `balun-windows\` and launch
-`bin\balun.exe`. Choose the package matching the Windows architecture.
+`balun-windows-x86_64-setup.exe` or `balun-windows-aarch64-setup.exe` installs Balun. The matching
+`.zip` is a portable tree: unpack it to `balun-windows\` and run `bin\balun.exe`.
 
 ---
 
