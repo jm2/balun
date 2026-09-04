@@ -1,6 +1,6 @@
 #!/bin/sh
-# Pin the Linux dependency inputs that exist in the current Balun tree.
-# Package recipes and manifests are added here atomically when they land.
+# Pin every Linux input that can add payload files or direct package
+# dependencies. Ordinary distribution GStreamer packages remain external.
 
 set -eu
 
@@ -11,6 +11,7 @@ validator="$script_dir/validate-package-compliance.sh"
 "$validator" --metadata \
     "$repository_root/Cargo.toml" \
     "$repository_root/Cargo.lock" \
-    "$repository_root/build-aux/flatpak/io.github.jm2.Balun.yml"
+    "$repository_root/build-aux/flatpak/io.github.jm2.Balun.yml" \
+    "$repository_root/build-aux/arch/PKGBUILD"
 
-echo "Current Linux packaging inputs comply with the reviewed component policy"
+echo "Linux packaging inputs comply with the reviewed component policy"
