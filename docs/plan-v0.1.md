@@ -133,8 +133,12 @@ Built and tested:
   (HDHR4-2US, two HDHR5-4K units, and HDHR3-PRIME): Clear QAM, ATSC 1.0/3.0,
   CableCARD DRM refusal, and 503 tuner-busy handling verified (P4.2).
 
-Not yet done: the macOS package, packaged-artifact validation against real
-tuners, and the alpha release.
+- macOS package (`Balun.app` and `Balun.dmg`) built with hardened launcher
+  environment, transitive dynamic library resolution, and isolated runtime
+  probe loopback (P3.4).
+
+- Packaged-artifact validation verified on real hardware across Linux, macOS,
+  and Windows with empirical tune, switch, and release budgets (P4.1).
 
 ## 4. Architecture
 
