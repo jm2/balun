@@ -24,6 +24,7 @@ pub(crate) struct DeviceSidebar {
     root: adw::ToolbarView,
     store: gtk::gio::ListStore,
     selection: gtk::SingleSelection,
+    list: gtk::ListView,
     stack: gtk::Stack,
     status: adw::StatusPage,
     terminal_banner: adw::Banner,
@@ -71,6 +72,19 @@ impl DeviceSidebar {
     #[must_use]
     pub(crate) fn selection(&self) -> &gtk::SingleSelection {
         &self.selection
+    }
+
+    /// Connect an activation callback invoked when any device row is activated
+    /// via Enter key or single click.
+    pub(crate) fn connect_device_activated<F>(&self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        let selection = self.selection.clone();
+        self.list.connect_activate(move |_, position| {
+            selection.set_selected(position);
+            callback();
+        });
     }
 
     /// Share the non-GObject reentrancy flag with the window bridge without
@@ -164,8 +178,10 @@ pub(crate) fn build() -> DeviceSidebar {
         .factory(&factory)
         .single_click_activate(false)
         .css_classes(["navigation-sidebar"])
+        .accessible_role(gtk::AccessibleRole::List)
         .vexpand(true)
         .build();
+    list.update_property(&[gtk::accessible::Property::Label("HDHomeRun devices")]);
     let scrolled = gtk::ScrolledWindow::builder()
         .child(&list)
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -173,7 +189,11 @@ pub(crate) fn build() -> DeviceSidebar {
         .vexpand(true)
         .build();
 
-    let spinner = gtk::Spinner::builder().visible(false).build();
+    let spinner = gtk::Spinner::builder()
+        .visible(false)
+        .accessible_role(gtk::AccessibleRole::ProgressBar)
+        .build();
+    spinner.update_property(&[gtk::accessible::Property::Label("Discovering devices")]);
     let status = adw::StatusPage::builder()
         .icon_name("network-wired-symbolic")
         .title("No HDHomeRun devices")
@@ -197,11 +217,17 @@ pub(crate) fn build() -> DeviceSidebar {
         .tooltip_text("Find device by address")
         .css_classes(["flat"])
         .build();
+    exact_discovery_button
+        .update_property(&[gtk::accessible::Property::Label("Find device by address")]);
     let refresh_button = gtk::Button::builder()
         .icon_name("view-refresh-symbolic")
-        .tooltip_text("Refresh devices")
+        .tooltip_text("Refresh devices (F5)")
         .css_classes(["flat"])
         .build();
+    refresh_button.update_property(&[
+        gtk::accessible::Property::Label("Refresh devices"),
+        gtk::accessible::Property::KeyShortcuts("F5 Control+r"),
+    ]);
     let cancel_discovery_button = gtk::Button::builder()
         .icon_name("process-stop-symbolic")
         .tooltip_text("Stop device discovery")
@@ -209,6 +235,8 @@ pub(crate) fn build() -> DeviceSidebar {
         .sensitive(false)
         .visible(false)
         .build();
+    cancel_discovery_button
+        .update_property(&[gtk::accessible::Property::Label("Stop device discovery")]);
     // Routed actions stay hidden until a snapshot says the platform offers
     // them; the menu holds the one destructive gesture, forgetting approvals.
     let routed_discovery_button = gtk::Button::builder()
@@ -217,6 +245,9 @@ pub(crate) fn build() -> DeviceSidebar {
         .css_classes(["flat"])
         .visible(false)
         .build();
+    routed_discovery_button.update_property(&[gtk::accessible::Property::Label(
+        "Search routes behind your tunnel",
+    )]);
     let routed_menu = gtk::gio::Menu::new();
     routed_menu.append(
         Some("Forget routed approvals"),
@@ -229,6 +260,8 @@ pub(crate) fn build() -> DeviceSidebar {
         .menu_model(&routed_menu)
         .visible(false)
         .build();
+    routed_menu_button
+        .update_property(&[gtk::accessible::Property::Label("More discovery options")]);
     let discovery_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     discovery_actions.append(&exact_discovery_button);
     discovery_actions.append(&routed_discovery_button);
@@ -249,6 +282,7 @@ pub(crate) fn build() -> DeviceSidebar {
         root,
         store,
         selection,
+        list,
         stack,
         status,
         terminal_banner,
@@ -261,6 +295,35 @@ pub(crate) fn build() -> DeviceSidebar {
         applying_snapshot: Rc::new(Cell::new(false)),
         network_sequence: Rc::new(Cell::new(0)),
     }
+}
+
+fn single_click_activation(list_item: &gtk::ListItem) -> gtk::GestureClick {
+    let gesture = gtk::GestureClick::builder()
+        .button(gtk::gdk::BUTTON_PRIMARY)
+        .propagation_phase(gtk::PropagationPhase::Bubble)
+        .build();
+    let list_item = list_item.downgrade();
+    gesture.connect_released(move |gesture, n_press, _, _| {
+        let Some(list_item) = list_item.upgrade() else {
+            return;
+        };
+        if n_press != 1 || !list_item.is_activatable() {
+            return;
+        }
+        let position = list_item.position();
+        if position == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        let Some(list) = gesture
+            .widget()
+            .and_then(|row| row.ancestor(gtk::ListView::static_type()))
+            .and_downcast::<gtk::ListView>()
+        else {
+            return;
+        };
+        list.emit_by_name::<()>("activate", &[&position]);
+    });
+    gesture
 }
 
 fn device_factory() -> gtk::SignalListItemFactory {
@@ -300,6 +363,7 @@ fn device_factory() -> gtk::SignalListItemFactory {
             .build();
         row.append(&icon);
         row.append(&labels);
+        row.add_controller(single_click_activation(list_item));
         list_item.set_child(Some(&row));
         reset_device_list_item(list_item);
     });
@@ -326,9 +390,14 @@ fn device_factory() -> gtk::SignalListItemFactory {
         subtitle.set_text(&subtitle_text);
         subtitle.set_visible(!subtitle_text.is_empty());
         row.set_tooltip_text(Some(&format!("{title_text}\n{subtitle_text}")));
-        list_item.set_accessible_label(&format!("{title_text}, {subtitle_text}"));
+        let label = if subtitle_text.is_empty() {
+            title_text.clone()
+        } else {
+            format!("{title_text}, {subtitle_text}")
+        };
+        list_item.set_accessible_label(&label);
         list_item.set_selectable(true);
-        list_item.set_activatable(false);
+        list_item.set_activatable(true);
     });
     factory.connect_unbind(|_, object| {
         if let Some(list_item) = object.downcast_ref::<gtk::ListItem>() {
@@ -890,5 +959,56 @@ mod tests {
             terminal_banner_title(DiscoveryKind::Routed, DiscoveryStatus::Refreshing, true),
             None
         );
+    }
+
+    #[test]
+    #[ignore = "requires the isolated display supplied by scripts/test-desktop-lifecycle.sh"]
+    fn device_sidebar_accessibility_contract() {
+        adw::init().expect("initialize libadwaita for device accessibility test");
+        let sidebar = build();
+        assert_eq!(sidebar.list.accessible_role(), gtk::AccessibleRole::List);
+        assert!(sidebar.list.is_focusable());
+        assert!(!sidebar.list.is_single_click_activate());
+        assert_eq!(
+            sidebar.cancel_discovery_button.accessible_role(),
+            gtk::AccessibleRole::Button
+        );
+        assert_eq!(
+            sidebar.exact_discovery_button.accessible_role(),
+            gtk::AccessibleRole::Button
+        );
+        assert_eq!(
+            sidebar.refresh_button.accessible_role(),
+            gtk::AccessibleRole::Button
+        );
+        assert_eq!(
+            sidebar.routed_discovery_button.accessible_role(),
+            gtk::AccessibleRole::Button
+        );
+        assert_eq!(
+            sidebar.routed_menu_button.accessible_role(),
+            gtk::AccessibleRole::Button
+        );
+        assert_eq!(
+            sidebar.spinner.accessible_role(),
+            gtk::AccessibleRole::ProgressBar
+        );
+    }
+
+    #[test]
+    fn device_row_accessible_label_formatting() {
+        let format_label = |title: &str, subtitle: &str| {
+            if subtitle.is_empty() {
+                title.to_string()
+            } else {
+                format!("{title}, {subtitle}")
+            }
+        };
+
+        assert_eq!(
+            format_label("HDHomeRun CONNECT", "10800000"),
+            "HDHomeRun CONNECT, 10800000"
+        );
+        assert_eq!(format_label("HDHomeRun PRIME", ""), "HDHomeRun PRIME");
     }
 }

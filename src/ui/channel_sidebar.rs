@@ -22,19 +22,94 @@ pub(crate) struct ChannelSidebar {
     root: adw::ToolbarView,
     store: gtk::gio::ListStore,
     filtered: gtk::FilterListModel,
-    filter: gtk::CustomFilter,
-    criteria: Rc<RefCell<ChannelFilter>>,
     selection: gtk::SingleSelection,
     list: gtk::ListView,
     search: gtk::SearchEntry,
     favorites_toggle: gtk::ToggleButton,
-    stack: gtk::Stack,
-    status: adw::StatusPage,
-    spinner: gtk::Spinner,
     presentation: Rc<Cell<LineupPresentation>>,
     selected_device: Rc<Cell<Option<DeviceId>>>,
     applying_snapshot: Rc<Cell<bool>>,
     activation_generation: Rc<Cell<Option<OperationGeneration>>>,
+    sync_state: Rc<SidebarSyncState>,
+}
+
+struct SidebarSyncState {
+    search: gtk::glib::WeakRef<gtk::SearchEntry>,
+    favorites_toggle: gtk::glib::WeakRef<gtk::ToggleButton>,
+    criteria: Rc<RefCell<ChannelFilter>>,
+    filter: gtk::CustomFilter,
+    selection: gtk::SingleSelection,
+    filtered: gtk::FilterListModel,
+    presentation: Rc<Cell<LineupPresentation>>,
+    spinner: gtk::Spinner,
+    status: adw::StatusPage,
+    stack: gtk::Stack,
+}
+
+impl SidebarSyncState {
+    fn sync(&self) {
+        let Some(search) = self.search.upgrade() else {
+            return;
+        };
+        let Some(favorites_toggle) = self.favorites_toggle.upgrade() else {
+            return;
+        };
+        let changed = {
+            let mut criteria = self.criteria.borrow_mut();
+            let query_changed = criteria.set_query(&search.text());
+            let favorites_changed = criteria.set_favorites_only(favorites_toggle.is_active());
+            query_changed || favorites_changed
+        };
+        if !changed {
+            return;
+        }
+        let prior_selection = self
+            .selection
+            .selected_item()
+            .and_then(|item| item.downcast::<ChannelRowObject>().ok())
+            .and_then(|row| row.key());
+        self.filter.changed(gtk::FilterChange::Different);
+        let position = prior_selection.as_ref().and_then(|key| {
+            (0..self.filtered.n_items()).find(|pos| {
+                self.filtered
+                    .item(*pos)
+                    .and_downcast::<ChannelRowObject>()
+                    .is_some_and(|row| !row.is_drm() && row.key().as_ref() == Some(key))
+            })
+        });
+        self.selection
+            .set_selected(position.unwrap_or(gtk::INVALID_LIST_POSITION));
+        self.update_presentation();
+    }
+
+    fn update_presentation(&self) {
+        let Some(search) = self.search.upgrade() else {
+            return;
+        };
+        let Some(favorites_toggle) = self.favorites_toggle.upgrade() else {
+            return;
+        };
+        let presentation = self.presentation.get();
+        let has_channels = presentation.has_channels();
+        let filtered_out = has_channels && self.filtered.n_items() == 0;
+        let show_list = has_channels && !filtered_out;
+        let loading = presentation == LineupPresentation::Loading;
+
+        search.set_sensitive(has_channels);
+        favorites_toggle.set_sensitive(has_channels);
+        self.spinner.set_visible(!show_list && loading);
+        self.spinner.set_spinning(!show_list && loading);
+        if filtered_out {
+            apply_filtered_out_presentation(&self.status, &self.criteria.borrow());
+        } else {
+            apply_empty_presentation(&self.status, presentation);
+        }
+        self.stack.set_visible_child_name(if show_list {
+            CHANNEL_LIST_PAGE_NAME
+        } else {
+            STATUS_PAGE_NAME
+        });
+    }
 }
 
 /// Search text and favorites filter applied on top of the applied lineup.
@@ -112,6 +187,11 @@ impl ChannelSidebar {
     #[must_use]
     pub(crate) fn root(&self) -> &adw::ToolbarView {
         &self.root
+    }
+
+    #[must_use]
+    pub(crate) fn search_entry(&self) -> &gtk::SearchEntry {
+        &self.search
     }
 
     /// Connect one URL-free activation intent for a row belonging to the
@@ -220,46 +300,12 @@ impl ChannelSidebar {
         })
     }
 
-    /// Copy the widget state into the filter criteria and re-run the filter
-    /// only when something changed, keeping the highlighted channel if it is
-    /// still visible.
     fn sync_criteria(&self) {
-        let changed = {
-            let mut criteria = self.criteria.borrow_mut();
-            let query_changed = criteria.set_query(&self.search.text());
-            let favorites_changed = criteria.set_favorites_only(self.favorites_toggle.is_active());
-            query_changed || favorites_changed
-        };
-        if !changed {
-            return;
-        }
-        let prior_selection = self.selected_channel_key();
-        self.filter.changed(gtk::FilterChange::Different);
-        self.restore_selection(prior_selection.as_ref());
-        self.update_presentation();
+        self.sync_state.sync();
     }
 
     fn update_presentation(&self) {
-        let presentation = self.presentation.get();
-        let has_channels = presentation.has_channels();
-        let filtered_out = has_channels && self.filtered.n_items() == 0;
-        let show_list = has_channels && !filtered_out;
-        let loading = presentation == LineupPresentation::Loading;
-
-        self.search.set_sensitive(has_channels);
-        self.favorites_toggle.set_sensitive(has_channels);
-        self.spinner.set_visible(!show_list && loading);
-        self.spinner.set_spinning(!show_list && loading);
-        if filtered_out {
-            apply_filtered_out_presentation(&self.status, &self.criteria.borrow());
-        } else {
-            apply_empty_presentation(&self.status, presentation);
-        }
-        self.stack.set_visible_child_name(if show_list {
-            CHANNEL_LIST_PAGE_NAME
-        } else {
-            STATUS_PAGE_NAME
-        });
+        self.sync_state.update_presentation();
     }
 }
 
@@ -289,8 +335,10 @@ pub(crate) fn build() -> ChannelSidebar {
         .factory(&factory)
         .single_click_activate(false)
         .css_classes(["navigation-sidebar"])
+        .accessible_role(gtk::AccessibleRole::List)
         .vexpand(true)
         .build();
+    list.update_property(&[gtk::accessible::Property::Label("Channel lineup")]);
     let scrolled = gtk::ScrolledWindow::builder()
         .child(&list)
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -298,7 +346,11 @@ pub(crate) fn build() -> ChannelSidebar {
         .vexpand(true)
         .build();
 
-    let spinner = gtk::Spinner::builder().visible(false).build();
+    let spinner = gtk::Spinner::builder()
+        .visible(false)
+        .accessible_role(gtk::AccessibleRole::ProgressBar)
+        .build();
+    spinner.update_property(&[gtk::accessible::Property::Label("Loading channel lineup")]);
     let status = adw::StatusPage::builder()
         .icon_name("view-list-symbolic")
         .title("Select a device")
@@ -317,8 +369,9 @@ pub(crate) fn build() -> ChannelSidebar {
     stack.add_named(&scrolled, Some(CHANNEL_LIST_PAGE_NAME));
     stack.set_visible_child_name(STATUS_PAGE_NAME);
 
+    let presentation = Rc::new(Cell::new(LineupPresentation::Unselected));
     let search = gtk::SearchEntry::builder()
-        .placeholder_text("Search channels")
+        .placeholder_text("Search channels (Ctrl+F)")
         .tooltip_text("Search channels by number or name")
         .sensitive(false)
         .margin_start(6)
@@ -326,7 +379,10 @@ pub(crate) fn build() -> ChannelSidebar {
         .margin_top(6)
         .margin_bottom(6)
         .build();
-    search.update_property(&[gtk::accessible::Property::Label("Search channels")]);
+    search.update_property(&[
+        gtk::accessible::Property::Label("Search channels"),
+        gtk::accessible::Property::KeyShortcuts("Control+f"),
+    ]);
     let favorites_toggle = gtk::ToggleButton::builder()
         .icon_name("starred-symbolic")
         .tooltip_text("Show favorite channels only")
@@ -343,37 +399,56 @@ pub(crate) fn build() -> ChannelSidebar {
     root.add_top_bar(&search);
     root.set_content(Some(&stack));
 
+    let sync_state = Rc::new(SidebarSyncState {
+        search: search.downgrade(),
+        favorites_toggle: favorites_toggle.downgrade(),
+        criteria: Rc::clone(&criteria),
+        filter: filter.clone(),
+        selection: selection.clone(),
+        filtered: filtered.clone(),
+        presentation: Rc::clone(&presentation),
+        spinner: spinner.clone(),
+        status: status.clone(),
+        stack: stack.clone(),
+    });
+
     let sidebar = ChannelSidebar {
         root,
         store,
         filtered,
-        filter,
-        criteria,
         selection,
         list,
         search,
         favorites_toggle,
-        stack,
-        status,
-        spinner,
-        presentation: Rc::new(Cell::new(LineupPresentation::Unselected)),
+        presentation,
         selected_device: Rc::new(Cell::new(None)),
         applying_snapshot: Rc::new(Cell::new(false)),
         activation_generation: Rc::new(Cell::new(None)),
+        sync_state,
     };
     {
-        let sidebar = sidebar.clone();
-        sidebar
-            .search
-            .clone()
-            .connect_search_changed(move |_| sidebar.sync_criteria());
+        let list = sidebar.list.downgrade();
+        sidebar.search.connect_stop_search(move |_| {
+            if let Some(list) = list.upgrade() {
+                let _ = list.grab_focus();
+            }
+        });
     }
     {
-        let sidebar = sidebar.clone();
-        sidebar
-            .favorites_toggle
-            .clone()
-            .connect_toggled(move |_| sidebar.sync_criteria());
+        let sync_weak = Rc::downgrade(&sidebar.sync_state);
+        sidebar.search.connect_search_changed(move |_| {
+            if let Some(sync) = sync_weak.upgrade() {
+                sync.sync();
+            }
+        });
+    }
+    {
+        let sync_weak = Rc::downgrade(&sidebar.sync_state);
+        sidebar.favorites_toggle.connect_toggled(move |_| {
+            if let Some(sync) = sync_weak.upgrade() {
+                sync.sync();
+            }
+        });
     }
     sidebar
 }
@@ -789,7 +864,7 @@ mod tests {
 
         assert_eq!(sidebar.store.n_items(), 2);
         assert_eq!(
-            sidebar.stack.visible_child_name().as_deref(),
+            sidebar.sync_state.stack.visible_child_name().as_deref(),
             Some(CHANNEL_LIST_PAGE_NAME)
         );
         assert!(!sidebar.list.is_single_click_activate());
@@ -929,6 +1004,36 @@ mod tests {
                 OperationGeneration::new(1)
             )),
             LineupPresentation::Unselected
+        );
+    }
+
+    #[test]
+    fn channel_row_accessible_label_formatting() {
+        let format_label = |number: &str, name: &str, favorite: bool, drm: bool, hd: bool| {
+            let flags = [
+                favorite.then_some("favorite"),
+                drm.then_some("protected"),
+                hd.then_some("high definition"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", ");
+            if flags.is_empty() {
+                format!("{number}, {name}")
+            } else {
+                format!("{number}, {name}, {flags}")
+            }
+        };
+
+        assert_eq!(
+            format_label("2.1", "WGBH-HD", true, false, true),
+            "2.1, WGBH-HD, favorite, high definition"
+        );
+        assert_eq!(format_label("4.1", "WBZ", false, false, false), "4.1, WBZ");
+        assert_eq!(
+            format_label("500", "HBO", false, true, true),
+            "500, HBO, protected, high definition"
         );
     }
 }
