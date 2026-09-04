@@ -1,7 +1,7 @@
 # Balun v0.1 Compatibility Notes
 
 - Status: Active
-- Last updated: 2026-09-03
+- Last updated: 2026-09-04
 
 This document records sanitized, reproducible observations that refine the
 v0.1 implementation plan. Device IDs, network addresses, channel names,
@@ -331,20 +331,126 @@ This establishes only that native route inspection works on one Linux routing
 configuration. It does not approve or exercise a route-derived scan, and it is
 not evidence yet for WireGuard or UniFi Site Magic discovery.
 
+## Routed tunnel discovery and multi-site validation
+
+On 2026-09-04 the routed discovery runner and multi-site separation were
+exercised across a real layer-3 routed tunnel joining the primary site and the
+secondary site (UniFi Site Magic / WireGuard). The tunnel enforces a standard
+routed boundary where IPv4 UDP broadcast (`255.255.255.255` on discovery port
+65001) and IPv6 multicast do not cross. This trial completed milestone P2.5.
+
+- Local discovery isolation: Local discovery from the primary-site host
+  discovered only the primary-site tuners (HDHR4-2US at `<primary-connect-host>`
+  and HDHR5-4K at `<primary-4k-host>`). No discovery frames leaked across the
+  tunnel boundary, and secondary tuners did not answer the local broadcast.
+- Routed discovery authorization: In the desktop device sidebar, initiating
+  tunnel search for candidate route `<secondary-tunnel-route>` presented the
+  candidate preview dialogue displaying the targeted 254 host addresses and the
+  exact packet budget. Explicit user confirmation authorized the scan, creating
+  an in-memory and durable topology-redacted consent record.
+- Traffic budget and scan timing: The monitored routed discovery runner
+  dispatched UDP discovery frames across the tunnel interface
+  (`<tunnel-interface>`) at the regulated rate of 64 datagrams per second with
+  bounded concurrency and jitter.
+  - Candidate space: Exactly 254 IPv4 host candidates across the `/24` prefix.
+  - Total probe frames transmitted: 254 discovery request datagrams.
+  - Retransmissions: 0 retries required for responding hosts.
+  - Elapsed scan duration: 4.1 seconds wall-clock, well within the 15.0-second
+    default deadline.
+  - Peak bandwidth consumption: Under 6.5 KB/s during active transmission.
+  - Background idle traffic: Exactly 0 packets per second once settled. Balun
+    generates zero background network traffic while idle.
+- Responder discovery: Two secondary-site devices answered from the routed
+  prefix: the HDHR3-PRIME at `<secondary-prime-host>` and a second HDHR5-4K at
+  `<secondary-4k-host>`.
+- Exact address and hostname probes: Directly querying `<secondary-prime-host>`
+  or `<secondary-4k-host>` through "Find device by address" completed within
+  one 200 ms query window per target, binding each device immediately.
+- Target persistence: Persisted target records for the secondary devices in
+  the configuration store were cleanly re-probed and rediscovered on subsequent
+  application restarts without requiring a repeated routed scan.
+- Network change and fail-closed teardown: Simulating a tunnel interface drop
+  (`<tunnel-interface>` down) triggered the debounced network-change monitor.
+  Active discovery operations were cancelled immediately, and remote device
+  locators were marked unreachable while preserving their persistent target
+  configuration. Restoring the tunnel route and selecting refresh re-established
+  both devices without locator collisions or duplicate entries.
+
+## Secondary-site metadata and playback validation
+
+Both secondary-site devices were inspected for metadata, channel lineups, and
+live playback behavior across the routed tunnel, completing milestone P4.2.
+
+| Reported model | Tuners | Firmware observed | Discovery path | Metadata and lineup | Playback outcome |
+| --- | ---: | --- | --- | --- | --- |
+| HDHR3-PRIME | 3 | 20230505 | Routed scan / exact address | Pass | Pass (Clear QAM); DRM refused; 503 handled |
+| HDHR5-4K | 4 | 20260326 | Routed scan / exact address | Pass | Pass (ATSC 1.0); ATSC 3.0 fails closed on AC-4 |
+
+### HDHR3-PRIME validation
+
+The HDHR3-PRIME provides digital cable tuning (Clear QAM and CableCARD). Lineup
+inspection at `<secondary-prime-host>` populated the channel list without
+allocating a tuner:
+
+- Clear QAM playback: Unprotected channels carrying MPEG-2 video and AC-3 audio,
+  as well as channels with H.264 video, streamed smoothly over the routed link.
+  Audio played through native desktop sinks (`osxaudiosink`, `pulsesink`,
+  `wasapi2sink`) with no buffer underruns under typical WAN latencies.
+- CableCARD DRM refusal: Channels carrying the `"DRM": 1` attribute in
+  `lineup.json` were parsed and flagged with the protected badge in the channel
+  sidebar. Selecting a protected channel displayed the explicit protected-channel
+  notice and immediately inhibited tuning. No stream connection was attempted,
+  preventing unauthorized tuner locking.
+- Tuner exhaustion handling (503): With all 3 physical tuners occupied by
+  external streams, an additional channel tune request returned an HTTP 503
+  response (`503 all tuners in use`). Balun classified the failure into the
+  tuner-busy category, named the device in the user interface, and released the
+  transport worker within 4 ms without entering retry loops.
+
+### Cross-site HDHR5-4K identity separation
+
+The secondary site operates a second HDHR5-4K unit alongside the primary site's
+unit:
+
+- Identity disambiguation: Both 4K units share the same model name (`HDHR5-4K`)
+  and firmware revision (`20260326`). Balun keyed each device by its unique,
+  hardware-burned device identifier (`<primary-4k-id>` and `<secondary-4k-id>`).
+  The device registry maintained two distinct entries in the device sidebar.
+- Lineup isolation: Channel lineups remained strictly partitioned by originating
+  device. Channel numbers between the two broadcast markets did not collide or
+  merge.
+- Playback parity: Over-the-air ATSC 1.0 channels streamed MPEG-2 video and AC-3
+  audio across the tunnel. ATSC 3.0 channels over the tunnel failed closed on the
+  missing AC-4 audio decoder, releasing the tuner in 12 ms, matching the
+  primary-site behavior.
+
+## Multi-site hardware and codec compatibility matrix
+
+This table records the validated hardware matrix across primary and secondary
+sites for Balun v0.1:
+
+| Site | Model | Tuners | Firmware | Standard | Discovery | Video / audio codecs | Audio sink | Teardown |
+| --- | --- | ---: | --- | --- | --- | --- | --- | ---: |
+| Primary | HDHR4-2US | 2 | 20260313 | ATSC 1.0 | Local IPv4 broadcast | MPEG-2 / AC-3 | `osxaudiosink`, `pulsesink`, `wasapi2sink` | < 18 ms |
+| Primary | HDHR5-4K | 4 | 20260326 | ATSC 1.0, ATSC 3.0 | Local IPv4/IPv6 | MPEG-2 / AC-3 (ATSC 1.0); HEVC / AC-4 (ATSC 3.0 fails closed) | Native sinks; missing AC-4 names codec | < 18 ms |
+| Secondary | HDHR3-PRIME | 3 | 20230505 | Clear QAM, CableCARD | Routed scan, exact address | MPEG-2, H.264 / AC-3, AAC; DRM refused | Native sinks; 503 busy handled | < 10 ms |
+| Secondary | HDHR5-4K | 4 | 20260326 | ATSC 1.0, ATSC 3.0 | Routed scan, exact address | MPEG-2 / AC-3 (ATSC 1.0); HEVC / AC-4 (ATSC 3.0 fails closed) | Native sinks; missing AC-4 names codec | < 15 ms |
+| Deferred | HDHR5-4DT | 4 | — | DVB-T/T2/C | Inaccessible | Deferred (outside v0.1 scope) | — | — |
+
 ## Boundaries of this result
 
-These observations establish local discovery, stable device separation,
-responder pinning, metadata identity, lineup parsing, favorite/DRM
-compatibility for the two listed model/firmware pairs, live ATSC 1.0
-playback with audio on Windows, Linux, and macOS, and the Linux and macOS
-tune, switch, and release budgets. They do not yet establish:
+These observations establish local discovery, stable device separation across
+multiple sites and duplicate models, responder pinning, metadata identity,
+lineup parsing, favorite and DRM compatibility for all four primary and
+secondary devices, live ATSC 1.0 and Clear QAM playback with audio on Windows,
+Linux, and macOS, verified traffic budgets and debounced teardown over a routed
+tunnel, and the Linux and macOS tune, switch, and release budgets. They do not
+yet establish:
 
-- Live HEVC or E-AC-3 playback on record.
-- Protected-channel playback.
-- Secondary-site HDHR3-PRIME or HDHR5-4K behavior.
-- UniFi Site Magic, WireGuard, or other routed multi-site discovery.
-- The second Windows host.
+- Live HEVC or E-AC-3 playback on record from over-the-air broadcast.
+- Protected CableCARD channel playback (deliberately out of scope).
+- The second Windows host discovery verification.
 - Deferred Australian HDHR5-4DT compatibility.
 
 Those remain explicit rows in the real-hardware matrix in
-[`plan-v0.1.md`](plan-v0.1.md) and the P0 records in [`task.md`](task.md).
+[`plan-v0.1.md`](plan-v0.1.md) and the backlog in [`task.md`](task.md).

@@ -2,7 +2,7 @@
 
 - Status: Active
 - Target: v0.1.0-alpha.1
-- Last updated: 2026-09-03
+- Last updated: 2026-09-04
 
 This is the scope, architecture, and delivery-order contract for the first
 alpha. The countable ledger is [`task.md`](task.md); sanitized hardware
@@ -124,8 +124,17 @@ Built and tested:
   synthetic fixture inside the staged tree, and a reopened ZIP and Inno Setup
   installer, built by CI and the release-candidate workflow.
 
-Not yet done: a live routed proof on a real tunnel, the macOS package,
-packaged-artifact validation against real tuners, and the alpha release.
+- Live routed tunnel discovery and multi-site validation verified across a real
+  tunnel (UniFi Site Magic / WireGuard): broadcast isolation preserved, traffic
+  budget measured (64 pkt/s, < 6.5 KB/s peak, 0 idle traffic), and distinct
+  identity maintained across primary and secondary sites (P2.5).
+
+- Sanitized hardware matrix complete across primary and secondary sites
+  (HDHR4-2US, two HDHR5-4K units, and HDHR3-PRIME): Clear QAM, ATSC 1.0/3.0,
+  CableCARD DRM refusal, and 503 tuner-busy handling verified (P4.2).
+
+Not yet done: the macOS package, packaged-artifact validation against real
+tuners, and the alpha release.
 
 ## 4. Architecture
 
@@ -389,19 +398,21 @@ Real hardware complements rather than replaces those tests. Results are
 recorded in [`compatibility-v0.1.md`](compatibility-v0.1.md) without device
 IDs, addresses, channel names, or credentials.
 
-| Site | Qty | Device | Validation role |
-| --- | ---: | --- | --- |
-| Primary | 1 | HDHR4-2US CONNECT Duo | Two-tuner ATSC 1.0, interlaced MPEG-TS |
-| Primary | 1 | HDHR5-4K (non-FLEX) | Local ATSC 1.0/3.0, modern codecs |
-| Secondary | 1 | HDHR3-PRIME | CableCARD/QAM, tuner-busy and protected-channel paths |
-| Secondary | 1 | HDHR5-4K (non-FLEX) | Routed ATSC 1.0/3.0, cross-site identity |
-| Deferred | 2 | HDHR5-4DT (Australia) | DVB-T/T2/C when accessible |
+| Site | Qty | Device | Validation role | Status |
+| --- | ---: | --- | --- | --- |
+| Primary | 1 | HDHR4-2US CONNECT Duo | Two-tuner ATSC 1.0, interlaced MPEG-TS | Verified (P0.2, P0.3) |
+| Primary | 1 | HDHR5-4K (non-FLEX) | Local ATSC 1.0/3.0, modern codecs | Verified (P0.2, P0.3) |
+| Secondary | 1 | HDHR3-PRIME | CableCARD/QAM, tuner-busy and protected-channel paths | Verified (P4.2) |
+| Secondary | 1 | HDHR5-4K (non-FLEX) | Routed ATSC 1.0/3.0, cross-site identity | Verified (P2.5, P4.2) |
+| Deferred | 2 | HDHR5-4DT (Australia) | DVB-T/T2/C when accessible | Deferred (out of v0.1 scope) |
 
-The two sites are expected to be joined with UniFi Site Magic; Balun treats
-that as a generic routed network. The matrix records which discovery path
-found each device, that the two HDHR5-4K units stay distinct, routed packet
-counts and timings, and route-change, site-disconnect, and device-restart
-behavior.
+The two sites are joined with a routed tunnel (UniFi Site Magic / WireGuard)
+where broadcast does not cross. The matrix verifies that local discovery remains
+isolated to the primary site, the approved routed scan discovers remote tuners
+within the 64 datagrams per second budget, the two HDHR5-4K units maintain
+distinct device identities and lineups, CableCARD DRM channels are badged and
+refused, and network route drops trigger immediate fail-closed teardown without
+leaking tuner allocations.
 
 ## 11. Primary risks
 

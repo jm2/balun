@@ -1,6 +1,6 @@
 # Balun v0.1 implementation backlog
 
-Last audited: 2026-09-03
+Last audited: 2026-09-04
 
 This is the executable work ledger for `v0.1.0-alpha.1`. Scope, architecture,
 and delivery order are authoritative in [`plan-v0.1.md`](plan-v0.1.md);
@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **25/30 (83.3%)** records complete. This is a dependency ledger,
+Current status: **27/30 (90.0%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -37,9 +37,10 @@ most evidence records.
 
 The Linux and macOS live-hardware proofs recorded P0.2, P0.3, P0.4, P0.6, P0.7,
 and the P0.8 guide spike; P0.5 has its Linux, Windows, and macOS inventories
-recorded and frozen. P0.1 to P0.8, P1.1 to P1.6, P2.1 to P2.4, P3.1 to P3.3,
-P3.5, P3.6, P4.3, and P4.4 are complete. Current focus is P3.4 (macOS package)
-and P2.5 (routed tunnel validation).
+recorded and frozen; P2.5 and P4.2 validated the multi-site hardware and tunnel
+compatibility matrix. P0.1 to P0.8, P1.1 to P1.6, P2.1 to P2.5, P3.1 to P3.3,
+P3.5, P3.6, P4.2, P4.3, and P4.4 are complete. Current focus is P3.4 (macOS package)
+and P4.1 (packaged hardware validation).
 
 ## P0 — Evidence and contract
 
@@ -114,7 +115,7 @@ and P2.5 (routed tunnel validation).
   and rejected replies, provider availability, and failure classes without
   persisting unrelated topology.
 
-- [ ] **P2.5 — Pass routed and multi-site validation.** Prove one routed case on
+- [x] **P2.5 — Pass routed and multi-site validation.** Prove one routed case on
   the owner's tunnel where broadcast does not cross, keep local and remote
   devices separate across both sites, and measure the traffic budget.
 
@@ -148,7 +149,7 @@ and P2.5 (routed tunnel validation).
   launch, discover, tune, switch, and close on Linux (Wayland and X11), macOS,
   and Windows candidates, with startup, idle, and switch budgets.
 
-- [ ] **P4.2 — Complete the sanitized hardware matrix.** Cover the accessible
+- [x] **P4.2 — Complete the sanitized hardware matrix.** Cover the accessible
   primary-site and secondary-site devices; defer the Australian units without
   claiming regional support.
 

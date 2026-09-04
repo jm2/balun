@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-site hardware matrix** — Document the secondary tuner and tunnel compatibility matrix in
+  `docs/compatibility-v0.1.md`, covering the secondary-site HDHR3-PRIME (CableCARD/QAM, 3 tuners)
+  and secondary HDHR5-4K (ATSC 1.0/3.0, 4 tuners), completing P4.2. Unprotected Clear QAM channels
+  play over the tunnel, DRM channels are identified and refused without leaking allocations, and
+  tuner-busy HTTP 503 responses classify cleanly without retry loops.
+- **Routed tunnel validation and traffic budgets** — Validate cross-site tuner discovery and live
+  playback over a routed tunnel (UniFi Site Magic / WireGuard), completing P2.5. Broadcast
+  discovery remains confined to local segments while approved routed scans discover remote tuners
+  within a 64 packet/second budget (< 6.5 KB/s peak) with zero idle traffic, maintaining distinct
+  device identities and lineups across sites.
+
 - **macOS live-TV acceptance** — Exercise the live-hardware acceptance suite on macOS against
   physical HDHomeRun tuners, completing P0.3. Unprotected ATSC 1.0 channels play with progressive
   video and decoded audio rendered through `osxaudiosink`, channel switches settle within 780 ms,
