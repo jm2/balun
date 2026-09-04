@@ -14,6 +14,7 @@ sys.path.insert(0, str(SCRIPT_DIRECTORY))
 import release_check  # noqa: E402
 
 VERSION = "0.1.0-alpha.1"
+ARCH_VERSION = "0.1.0pre.1.alpha.0.1"
 
 
 def write_fixture(
@@ -21,6 +22,7 @@ def write_fixture(
     *,
     manifest_version: str = VERSION,
     lock_version: str = VERSION,
+    pkgbuild_version: str = ARCH_VERSION,
     changelog_version: str | None = VERSION,
     changelog_link: bool = True,
     metainfo_version: str | None = VERSION,
@@ -34,6 +36,11 @@ def write_fixture(
         'version = 4\n\n[[package]]\nname = "adw"\nversion = "0.9.0"\n\n'
         f'[[package]]\nname = "balun"\nversion = "{lock_version}"\n\n'
         '[[package]]\nname = "serde"\nversion = "1.0.0"\n',
+        encoding="utf-8",
+    )
+    (root / "build-aux" / "arch").mkdir(parents=True)
+    (root / "build-aux" / "arch" / "PKGBUILD").write_text(
+        f"pkgname=balun\npkgver={pkgbuild_version}\npkgrel=1\n",
         encoding="utf-8",
     )
     changelog = "# Changelog\n\n## [Unreleased]\n\n"
@@ -79,13 +86,15 @@ class ReleaseCheckTests(unittest.TestCase):
                 root,
                 manifest_version="0.1.0-alpha.2",
                 lock_version="0.1.0",
+                pkgbuild_version="0.1.0_alpha.3",
                 changelog_version="0.1.0-alpha.2",
                 metainfo_version="0.1.0",
             )
             problems = release_check.check_release(root, f"v{VERSION}")
-            self.assertEqual(len(problems), 5, problems)
+            self.assertEqual(len(problems), 6, problems)
             self.assertTrue(any("Cargo.toml version 0.1.0-alpha.2" in p for p in problems))
             self.assertTrue(any("Cargo.lock records balun 0.1.0" in p for p in problems))
+            self.assertTrue(any("PKGBUILD pkgver is 0.1.0_alpha.3" in p for p in problems))
             self.assertTrue(any("no '## [0.1.0-alpha.1]' section" in p for p in problems))
             self.assertTrue(any("no '[0.1.0-alpha.1]:' compare link" in p for p in problems))
             self.assertTrue(any("newest release is 0.1.0" in p for p in problems))
@@ -122,6 +131,55 @@ class ReleaseCheckTests(unittest.TestCase):
         manifest = '[workspace]\nversion = "0.0.0"\n\n[package]\nname = "balun"\nversion = "1.2.3"\n\n[dependencies.x]\nversion = "5"\n'
         self.assertEqual(release_check.cargo_manifest_version(manifest), "1.2.3")
         self.assertIsNone(release_check.cargo_manifest_version("[dependencies]\nserde = \"1\"\n"))
+
+    def test_pkgbuild_version_must_be_a_literal_top_level_assignment(self) -> None:
+        self.assertEqual(
+            release_check.arch_pkgbuild_version("pkgname=balun\npkgver=1.2.3\npkgrel=1\n"),
+            "1.2.3",
+        )
+        self.assertIsNone(release_check.arch_pkgbuild_version("_pkgver=1.2.3\n"))
+        self.assertIsNone(release_check.arch_pkgbuild_version('pkgver="1.2.3" # generated\n'))
+
+    def test_arch_pkgver_uses_a_stable_upgrade_safe_prerelease_marker(self) -> None:
+        self.assertEqual(release_check.arch_pkgver_for_semver("1.2.3"), "1.2.3")
+        self.assertEqual(
+            release_check.arch_pkgver_for_semver("1.2.3-alpha.beta.1+build-two"),
+            "1.2.3pre.1.alpha.1.beta.0.1+build_two",
+        )
+        self.assertEqual(
+            release_check.arch_pkgver_for_semver("1.2.3-alpha"),
+            "1.2.3pre.1.alpha",
+        )
+        self.assertEqual(
+            release_check.arch_pkgver_for_semver("1.2.3-1"),
+            "1.2.3pre.0.1",
+        )
+        self.assertEqual(
+            release_check.arch_pkgver_for_semver("1.2.3+build-two"),
+            "1.2.3+build_two",
+        )
+
+    def test_arch_pkgver_refuses_unorderable_prerelease_identifiers(self) -> None:
+        # SemVer orders 1.2.3-alpha.a before 1.2.3-alpha-a and 1.2.3-alpha10
+        # before 1.2.3-alpha2, but Arch treats the hyphen's only substitute as
+        # a separator and compares digit runs numerically, so neither identifier
+        # can keep its order and such tags are refused instead.
+        for version in ("1.2.3-alpha-a", "1.2.3-alpha10", "1.2.3-rc1.x"):
+            with self.assertRaises(ValueError, msg=version):
+                release_check.arch_pkgver_for_semver(version)
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_fixture(
+                root,
+                manifest_version="1.2.3-alpha-a",
+                lock_version="1.2.3-alpha-a",
+                changelog_version="1.2.3-alpha-a",
+                metainfo_version="1.2.3-alpha-a",
+            )
+            problems = release_check.check_release(root, "v1.2.3-alpha-a")
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("no Arch pkgver encoding", problems[0])
+            self.assertIn("'alpha-a'", problems[0])
 
 
 if __name__ == "__main__":

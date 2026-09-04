@@ -62,6 +62,112 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 embed-resource = "3.0"
 winresource = "0.1"
 
+[package.metadata.deb]
+maintainer = "Balun Contributors"
+copyright = "2026, Balun Contributors"
+license-file = ["LICENSE", "0"]
+section = "video"
+priority = "optional"
+features = ["desktop"]
+default-features = false
+depends = "$auto, libgtk-4-1 (>= 4.16), libadwaita-1-0 (>= 1.6), libgstreamer1.0-0 (>= 1.20), gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-gtk4, gstreamer1.0-libav"
+assets = [
+  [
+    "target/release/balun",
+    "usr/bin/",
+    "755",
+  ],
+  [
+    "data/io.github.jm2.Balun.desktop",
+    "usr/share/applications/",
+    "644",
+  ],
+  [
+    "data/io.github.jm2.Balun.metainfo.xml",
+    "usr/share/metainfo/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/16x16/apps/io.github.jm2.Balun.png",
+    "usr/share/icons/hicolor/16x16/apps/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/24x24/apps/io.github.jm2.Balun.png",
+    "usr/share/icons/hicolor/24x24/apps/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/32x32/apps/io.github.jm2.Balun.png",
+    "usr/share/icons/hicolor/32x32/apps/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/48x48/apps/io.github.jm2.Balun.png",
+    "usr/share/icons/hicolor/48x48/apps/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/64x64/apps/io.github.jm2.Balun.png",
+    "usr/share/icons/hicolor/64x64/apps/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/128x128/apps/io.github.jm2.Balun.png",
+    "usr/share/icons/hicolor/128x128/apps/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/256x256/apps/io.github.jm2.Balun.png",
+    "usr/share/icons/hicolor/256x256/apps/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/512x512/apps/io.github.jm2.Balun.png",
+    "usr/share/icons/hicolor/512x512/apps/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/scalable/apps/io.github.jm2.Balun.svg",
+    "usr/share/icons/hicolor/scalable/apps/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg",
+    "usr/share/icons/hicolor/symbolic/apps/",
+    "644",
+  ],
+]
+
+[package.metadata.generate-rpm]
+release = "1"
+assets = [
+  { source = "target/release/balun", dest = "/usr/bin/balun", mode = "0755" },
+  { source = "data/io.github.jm2.Balun.desktop", dest = "/usr/share/applications/io.github.jm2.Balun.desktop", mode = "0644" },
+  { source = "data/io.github.jm2.Balun.metainfo.xml", dest = "/usr/share/metainfo/io.github.jm2.Balun.metainfo.xml", mode = "0644" },
+  { source = "data/icons/hicolor/16x16/apps/io.github.jm2.Balun.png", dest = "/usr/share/icons/hicolor/16x16/apps/io.github.jm2.Balun.png", mode = "0644" },
+  { source = "data/icons/hicolor/24x24/apps/io.github.jm2.Balun.png", dest = "/usr/share/icons/hicolor/24x24/apps/io.github.jm2.Balun.png", mode = "0644" },
+  { source = "data/icons/hicolor/32x32/apps/io.github.jm2.Balun.png", dest = "/usr/share/icons/hicolor/32x32/apps/io.github.jm2.Balun.png", mode = "0644" },
+  { source = "data/icons/hicolor/48x48/apps/io.github.jm2.Balun.png", dest = "/usr/share/icons/hicolor/48x48/apps/io.github.jm2.Balun.png", mode = "0644" },
+  { source = "data/icons/hicolor/64x64/apps/io.github.jm2.Balun.png", dest = "/usr/share/icons/hicolor/64x64/apps/io.github.jm2.Balun.png", mode = "0644" },
+  { source = "data/icons/hicolor/128x128/apps/io.github.jm2.Balun.png", dest = "/usr/share/icons/hicolor/128x128/apps/io.github.jm2.Balun.png", mode = "0644" },
+  { source = "data/icons/hicolor/256x256/apps/io.github.jm2.Balun.png", dest = "/usr/share/icons/hicolor/256x256/apps/io.github.jm2.Balun.png", mode = "0644" },
+  { source = "data/icons/hicolor/512x512/apps/io.github.jm2.Balun.png", dest = "/usr/share/icons/hicolor/512x512/apps/io.github.jm2.Balun.png", mode = "0644" },
+  { source = "data/icons/hicolor/scalable/apps/io.github.jm2.Balun.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.jm2.Balun.svg", mode = "0644" },
+  { source = "data/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg", dest = "/usr/share/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg", mode = "0644" },
+  { source = "LICENSE", dest = "/usr/share/licenses/balun/LICENSE", mode = "0644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+gtk4 = ">= 4.16"
+libadwaita = ">= 1.6"
+gstreamer1 = ">= 1.20"
+gstreamer1-plugins-base = "*"
+gstreamer1-plugins-good = "*"
+gstreamer1-plugins-bad-free = "*"
+gstreamer1-plugin-gtk4 = "*"
+gstreamer1-plugin-libav = "*"
+
 [profile.release]
 lto = "thin"
 opt-level = 3

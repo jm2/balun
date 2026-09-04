@@ -28,6 +28,16 @@ expect_status()
     }
 }
 
+require_literal()
+{
+    file=$1
+    literal=$2
+    grep -Fq -- "$literal" "$file" || {
+        echo "Expected packaging contract missing from $file: $literal" >&2
+        exit 1
+    }
+}
+
 read_validator_limit()
 {
     awk -F= -v key="$1" '$1 == key { print $2; found = 1; exit }
@@ -536,6 +546,33 @@ for fixture in missing empty comments binary truncated appended malformed duplic
     expect_status 2 "$temp_dir/$fixture/build-aux/linux/validate-package-compliance.sh" \
         --tree "$temp_dir/allowed"
 done
+
+# Keep the distribution dependency closure and package build contract visible
+# to this existing policy suite without adding a second metadata parser.
+manifest="$repository_root/Cargo.toml"
+pkgbuild="$repository_root/build-aux/arch/PKGBUILD"
+metadata_validator="$script_dir/validate-package-metadata.sh"
+require_literal "$manifest" '[package.metadata.deb]'
+require_literal "$manifest" 'features = ["desktop"]'
+require_literal "$manifest" 'libgtk-4-1 (>= 4.16)'
+require_literal "$manifest" 'gstreamer1.0-gtk4'
+require_literal "$manifest" 'gstreamer1.0-libav'
+require_literal "$manifest" '[package.metadata.generate-rpm.requires]'
+require_literal "$manifest" 'gtk4 = ">= 4.16"'
+require_literal "$manifest" 'gstreamer1-plugin-gtk4 = "*"'
+require_literal "$manifest" 'gstreamer1-plugin-libav = "*"'
+require_literal "$pkgbuild" "arch=('x86_64')"
+require_literal "$pkgbuild" "options=('!lto' '!debug')"
+require_literal "$pkgbuild" "checkdepends=('perl')"
+require_literal "$pkgbuild" "'gtk4>=4.16'"
+require_literal "$pkgbuild" "'gst-plugins-base-libs'"
+require_literal "$pkgbuild" "'gst-plugins-bad-libs'"
+require_literal "$pkgbuild" "'gst-plugin-gtk4'"
+require_literal "$pkgbuild" "'gst-libav'"
+require_literal "$pkgbuild" 'cargo build --frozen --release --features desktop --bin balun'
+require_literal "$pkgbuild" 'validate-package-compliance.sh --elf target/release/balun'
+require_literal "$pkgbuild" 'validate-package-compliance.sh --tree "$pkgdir"'
+require_literal "$metadata_validator" 'build-aux/arch/PKGBUILD'
 
 "$script_dir/validate-package-metadata.sh" > /dev/null
 
