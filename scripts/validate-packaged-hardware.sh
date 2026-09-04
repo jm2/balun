@@ -14,6 +14,7 @@
 
 set -euo pipefail
 export LC_ALL=C
+umask 077
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info()  { printf "${GREEN}[balun-validation]${NC} %s\n" "$*"; }
@@ -90,32 +91,22 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 
-# Sanitizer function: scrubs IP addresses, device serials, RF frequencies, channel callsigns, and auth tokens
-sanitize_stream() {
-  sed -E \
-    -e 's/1040F090/\[TUNER_ID_1\]/g' \
-    -e 's/10809CF2/\[TUNER_ID_2\]/g' \
-    -e 's/192\.168\.1\.69/\[TUNER_IP_1\]/g' \
-    -e 's/192\.168\.1\.193/\[TUNER_IP_2\]/g' \
-    -e 's/2001:1960:2804:70ba:218:ddff:fe08:9cf/\[TUNER_IPV6_1\]/g' \
-    -e 's/fd58:f926:7f80:d778:218:ddff:fe08:9cf/\[TUNER_IPV6_2\]/g' \
-    -e 's/192\.168\.[0-9]{1,3}\.[0-9]{1,3}/\[TUNER_IP\]/g' \
-    -e 's/WTTV-DT|WTTV4\.2|CometTV|ROAR|Rewind|WRTV-HD|GRIT|LAFF|WFYI1|WFYI2|WFYI3|WXIN/\[CHANNEL_CALLSIGN\]/g' \
-    -e 's/[0-9]{8,10} Hz/\[RF_FREQ\]/g' \
-    -e 's/freq=[0-9]+/freq=\[RF_FREQ\]/g' \
-    -e 's/frequency=[0-9]+/frequency=\[RF_FREQ\]/g' \
-    -e 's/token=[a-zA-Z0-9_-]+/token=\[AUTH_TOKEN\]/g'
-}
+# shellcheck source=hardware-validation-privacy.sh
+. "${SCRIPT_DIR}/hardware-validation-privacy.sh"
 
 MOUNT_DIR=""
+SANITIZED_LOG=""
 cleanup() {
+  if [[ -n "$SANITIZED_LOG" ]]; then
+    rm -f -- "$SANITIZED_LOG" 2>/dev/null || true
+  fi
   if [[ -n "$MOUNT_DIR" && -d "$MOUNT_DIR" ]]; then
     info "Unmounting disk image at ${MOUNT_DIR}..."
     hdiutil detach "$MOUNT_DIR" -force 2>/dev/null || true
     rm -rf "$MOUNT_DIR" 2>/dev/null || true
   fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT HUP INT TERM
 
 # ── 1. Locate Packaged Artifact ──────────────────────────────────────────────
 step "1. Locating Packaged Artifact"
@@ -315,19 +306,12 @@ info "  GST_PLUGIN_SCANNER: ${APP_PATH}/Contents/MacOS/gst-plugin-scanner"
 info "  BALUN_LIVE_AUDIO_SINK: $AUDIO_SINK"
 info "  BALUN_LIVE_MODERN_CHANNEL: $MODERN_CHANNEL"
 
-RAW_LOG="$(mktemp "${TMPDIR:-/tmp}/balun-hardware-test.XXXXXX.log")"
 SANITIZED_LOG="$(mktemp "${TMPDIR:-/tmp}/balun-hardware-sanitized.XXXXXX.log")"
-
-cleanup_logs() {
-  rm -f "$RAW_LOG" "$SANITIZED_LOG" 2>/dev/null || true
-}
 
 info "Running live hardware acceptance test suite serially..."
 cargo test --manifest-path "${REPO_ROOT}/Cargo.toml" --features desktop --lib live_hardware -- --ignored --nocapture --test-threads=1 2>&1 \
-  | tee "$RAW_LOG" \
-  | sanitize_stream
-
-sanitize_stream < "$RAW_LOG" > "$SANITIZED_LOG"
+  | balun_sanitize_hardware_validation_stream \
+  | tee "$SANITIZED_LOG"
 
 # Verify all 4 tests passed
 grep -F "test result: ok. 4 passed; 0 failed" "$SANITIZED_LOG" >/dev/null \
@@ -404,5 +388,4 @@ if [[ -n "$OUTPUT_FILE" ]]; then
   info "Report written to $OUTPUT_FILE"
 fi
 
-cleanup_logs
 info "Real hardware validation of packaged artifacts completed successfully."
