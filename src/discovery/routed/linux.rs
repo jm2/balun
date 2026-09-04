@@ -1,9 +1,9 @@
 //! Verified Linux interface-pinned UDP socket construction.
 //!
 //! This layer creates an unconnected, nonblocking standard-library socket and
-//! keeps it inside an opaque capability. It never registers with an async
-//! runtime, exposes a raw descriptor, or sends a packet. Production
-//! route-derived execution remains deliberately unwired.
+//! keeps it inside an opaque capability. Construction performs no network I/O
+//! and exposes no raw descriptor. The production Linux routed-discovery runner
+//! consumes the capability only after approval and fresh-route revalidation.
 //!
 //! Linux added the `SO_BINDTOIFINDEX` readback used by this proof in 5.1 and
 //! made the first `SO_BINDTODEVICE` assignment unprivileged in 5.7. Balun does
@@ -15,11 +15,6 @@
 //! runner's authority check immediately before every datagram. The monitored
 //! runner arms route and store invalidation before consuming admission and
 //! retains it for the whole run.
-
-#![allow(
-    dead_code,
-    reason = "the monitored routed runner has no production caller until the approval UX lands"
-)]
 
 use std::fmt;
 use std::future::Future;

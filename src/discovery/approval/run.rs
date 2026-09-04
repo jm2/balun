@@ -1,13 +1,16 @@
 //! Packet-free admission for route-derived discovery runs.
 //!
-//! This boundary registers invalidation before durable reservation, maps the
-//! coarse persisted lease onto one absolute monotonic deadline, obtains a
-//! fresh route snapshot, and consumes authority through the store-owned gate.
-//! It deliberately opens no socket and remains unwired from production entry
-//! points.
+//! The packet-free machinery registers invalidation before durable reservation,
+//! maps the coarse persisted lease onto one absolute monotonic deadline,
+//! obtains a fresh route snapshot, and consumes authority through the
+//! store-owned gate.
+//! It deliberately opens no socket. The production Linux monitored runner
+//! consumes the shared clock, timeline, and admitted-scan capabilities; the
+//! earlier standalone admission boundary remains regression-covered but is not
+//! itself a production entry point.
 //!
-//! Only the Linux runner consumes this boundary today; other targets compile
-//! it for parity and admit its unused items rather than diverging the tree.
+//! Other targets compile these policy types for parity and admit their unused
+//! items rather than diverging the tree.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 
 use std::collections::BTreeMap;
@@ -98,8 +101,8 @@ pub(crate) struct RoutedClockReadError;
 /// Supplies clock readings from one stable wall-policy and monotonic epoch.
 ///
 /// A production implementation must obtain the two values as one conservative
-/// pair. It is intentionally not provided until the controller owns that
-/// clock lifecycle.
+/// pair. The Linux controller supplies that implementation and owns its clock
+/// lifecycle.
 pub(crate) trait RoutedAdmissionClock: Send + Sync {
     fn sample(&self) -> Result<RoutedClockSample, RoutedClockReadError>;
 }
@@ -537,8 +540,8 @@ impl RoutedInvalidationRegistration {
 
 impl Drop for RoutedInvalidationRegistration {
     fn drop(&mut self) {
-        // Any child clone retained by a future runner also becomes cancelled
-        // when the authority-owning registration is dropped.
+        // Any child clone retained by a consumer also becomes cancelled when
+        // the authority-owning registration is dropped.
         self.signal.cancel();
         let Some(hub) = self.hub.upgrade() else {
             return;
@@ -590,13 +593,13 @@ impl AuthorityRegistration for RoutedInvalidationRegistration {
 /// This value is non-cloneable. `absolute_deadline` is fixed before the final
 /// admission check and is never reconstructed from a relative duration, so
 /// store, snapshot, revalidation, and later queue delay all consume the same
-/// budget. A future runner must retain this value and observe both cancellation
-/// signals while it owns any derived socket work.
+/// budget. The consuming runner must retain this value and observe both
+/// cancellation signals while it owns any derived socket work.
 ///
 /// Dropping this value cancels its in-memory invalidation registration but
 /// deliberately does not weaken the durable crash-conservative reservation.
-/// The future consuming runner must own exact completion (including its own
-/// drop/error paths) before production wiring may use admitted authority.
+/// The consuming runner must own exact completion for every admitted scan,
+/// including its own drop and error paths.
 pub(crate) struct AdmittedRoutedScan<R: AuthorityRegistration = RoutedInvalidationRegistration> {
     scan: RevalidatedRoutedScan,
     absolute_deadline: Instant,

@@ -11,11 +11,6 @@
 //! activation callbacks are the only callers of `activate`, and the monitored
 //! runner in `runner` is the only consumer of the resulting epochs.
 
-#![allow(
-    dead_code,
-    reason = "the monitored routed runner has no production caller until the approval UX lands"
-)]
-
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
@@ -265,6 +260,10 @@ impl RoutedObserverCoordinator {
     }
 
     /// Synchronously revoke all combined in-memory authority.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained for explicit fail-closed revocation")
+    )]
     pub(crate) fn invalidate(&self) {
         let mut state = match self.inner.state.lock() {
             Ok(state) => state,
@@ -304,6 +303,10 @@ struct SourceSinkIdentity;
 pub(crate) struct RouteObserverSink {
     coordinator: Weak<CoordinatorInner>,
     incarnation: u64,
+    #[allow(
+        dead_code,
+        reason = "the strong reference itself proves that this exact source sink is live"
+    )]
     identity: Arc<SourceSinkIdentity>,
 }
 
@@ -337,6 +340,10 @@ impl fmt::Debug for RouteObserverSink {
 pub(crate) struct StoreObserverSink {
     coordinator: Weak<CoordinatorInner>,
     incarnation: u64,
+    #[allow(
+        dead_code,
+        reason = "the strong reference itself proves that this exact source sink is live"
+    )]
     identity: Arc<SourceSinkIdentity>,
 }
 

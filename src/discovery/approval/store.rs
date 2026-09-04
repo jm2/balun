@@ -122,14 +122,26 @@ impl StorePaths {
         Self { directory }
     }
 
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained for pathname-based backend parity")
+    )]
     fn state(&self) -> PathBuf {
         self.directory.join(STATE_FILE_NAME)
     }
 
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained for pathname-based backend parity")
+    )]
     fn key(&self) -> PathBuf {
         self.directory.join(KEY_FILE_NAME)
     }
 
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained for pathname-based backend parity")
+    )]
     fn lock(&self) -> PathBuf {
         self.directory.join(LOCK_FILE_NAME)
     }
@@ -642,6 +654,13 @@ pub(crate) struct StoreCommit {
 
 impl StoreCommit {
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "retained as a precise persistence result accessor"
+        )
+    )]
     pub(crate) const fn durability(self) -> CommitDurability {
         self.durability
     }
@@ -1036,6 +1055,10 @@ impl ApprovalStore {
 
     /// Revoke the exact proposal fingerprint. The immutable key and global
     /// run high-water are retained so an old completion can never be reused.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained for exact-proposal revocation parity")
+    )]
     pub(super) fn revoke(
         &self,
         proposal: &StoredRoutedProposal,
@@ -1719,6 +1742,13 @@ enum WriteCheckpoint {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DirectorySync {
     Confirmed,
+    #[cfg_attr(
+        target_os = "linux",
+        allow(
+            dead_code,
+            reason = "non-Unix backends may report unsupported directory sync"
+        )
+    )]
     Unsupported,
 }
 
