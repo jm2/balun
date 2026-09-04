@@ -315,8 +315,18 @@ mod linux {
             let thread = thread::Builder::new()
                 .name(SUPERVISOR_THREAD_NAME.to_owned())
                 .spawn(move || {
-                    let Ok(runtime) = Builder::new_current_thread().enable_all().build() else {
-                        return;
+                    let runtime = match Builder::new_current_thread().enable_all().build() {
+                        Ok(runtime) => runtime,
+                        Err(error) => {
+                            supervisor
+                                .observers
+                                .store(OBSERVERS_FAILED, Ordering::SeqCst);
+                            tracing::warn!(
+                                error_kind = ?error.kind(),
+                                "routed discovery supervisor runtime could not be created"
+                            );
+                            return;
+                        }
                     };
                     runtime.block_on(supervisor.run(receiver));
                 })
@@ -338,24 +348,38 @@ mod linux {
             let (reply, receiver) = oneshot::channel();
             let command = build(reply);
             let sender = self.commands.clone();
+            let observers = Arc::clone(&self.observers);
             Box::pin(async move {
                 if cancellation.is_cancelled() {
                     return Err(DiscoveryFailure::Internal);
                 }
-                sender
-                    .send(command)
-                    .await
-                    .map_err(|_| DiscoveryFailure::RoutedUnavailable)?;
+                if sender.send(command).await.is_err() {
+                    observers.store(OBSERVERS_FAILED, Ordering::SeqCst);
+                    tracing::warn!("routed discovery supervisor stopped accepting commands");
+                    return Err(DiscoveryFailure::RoutedUnavailable);
+                }
                 if abandon_on_cancel {
                     tokio::select! {
                         biased;
                         () = cancellation.cancelled() => Err(DiscoveryFailure::Internal),
-                        result = receiver => result.unwrap_or(Err(DiscoveryFailure::RoutedUnavailable)),
+                        result = receiver => match result {
+                            Ok(result) => result,
+                            Err(_) => {
+                                observers.store(OBSERVERS_FAILED, Ordering::SeqCst);
+                                tracing::warn!("routed discovery supervisor stopped before replying");
+                                Err(DiscoveryFailure::RoutedUnavailable)
+                            }
+                        },
                     }
                 } else {
-                    receiver
-                        .await
-                        .unwrap_or(Err(DiscoveryFailure::RoutedUnavailable))
+                    match receiver.await {
+                        Ok(result) => result,
+                        Err(_) => {
+                            observers.store(OBSERVERS_FAILED, Ordering::SeqCst);
+                            tracing::warn!("routed discovery supervisor stopped before replying");
+                            Err(DiscoveryFailure::RoutedUnavailable)
+                        }
+                    }
                 }
             })
         }
@@ -462,7 +486,21 @@ mod linux {
                         Some(command) => command,
                         None => break,
                     },
-                    _observing = await_replacement(self.runner.as_mut()) => continue,
+                    observing = await_replacement(self.runner.as_mut()) => {
+                        publish_observer_health(&self.observers, observing);
+                        if !observing {
+                            match self.runner.as_ref().and_then(Runner::observation_error) {
+                                Some(reason) => tracing::warn!(
+                                    reason = %reason,
+                                    "routed discovery observer replacement failed"
+                                ),
+                                None => tracing::warn!(
+                                    "routed discovery observer replacement failed"
+                                ),
+                            }
+                        }
+                        continue;
+                    },
                 };
                 self.handle(command).await;
             }
@@ -500,11 +538,16 @@ mod linux {
         }
 
         async fn propose(&mut self) -> Result<RoutedProposal, DiscoveryFailure> {
-            let runner = self.runner().await?;
-            let proposal = runner
-                .propose(routed_probe_config(), RoutedScanConfig::default())
-                .await
-                .map_err(failure)?;
+            let observers = Arc::clone(&self.observers);
+            let proposal = {
+                let runner = self.runner().await?;
+                let result = runner
+                    .propose(routed_probe_config(), RoutedScanConfig::default())
+                    .await;
+                publish_observer_health(&observers, runner.is_observing());
+                result
+            }
+            .map_err(failure)?;
             let token = RoutedApprovalToken::new(self.next_token);
             self.next_token = self.next_token.checked_add(1).unwrap_or(1);
             let summary: RoutedProposalSummary = proposal.summary().clone();
@@ -521,8 +564,14 @@ mod linux {
                 return Err(DiscoveryFailure::RoutedProposalChanged);
             };
             let proposal = latest.proposal.clone();
-            let runner = self.runner().await?;
-            let commit = runner.approve(&proposal).await.map_err(failure)?;
+            let observers = Arc::clone(&self.observers);
+            let commit = {
+                let runner = self.runner().await?;
+                let result = runner.approve(&proposal).await;
+                publish_observer_health(&observers, runner.is_observing());
+                result
+            }
+            .map_err(failure)?;
             if commit.is_confirmed() {
                 Ok(())
             } else {
@@ -535,21 +584,32 @@ mod linux {
             trigger: RoutedScanTrigger,
             cancellation: &CancellationToken,
         ) -> Result<RoutedRunOutcome, DiscoveryFailure> {
-            let runner = self.runner().await?;
-            let proposal = runner
-                .propose(routed_probe_config(), RoutedScanConfig::default())
-                .await
-                .map_err(failure)?;
+            let observers = Arc::clone(&self.observers);
+            let proposal = {
+                let runner = self.runner().await?;
+                let result = runner
+                    .propose(routed_probe_config(), RoutedScanConfig::default())
+                    .await;
+                publish_observer_health(&observers, runner.is_observing());
+                result
+            }
+            .map_err(failure)?;
             let interfaces = proposal
                 .summary()
                 .origins()
                 .iter()
                 .map(|origin| origin.interface_name().to_owned())
                 .collect::<Vec<_>>();
-            let run = runner
-                .run(proposal, trigger, cancellation)
-                .await
-                .map_err(failure)?;
+            let run = {
+                let runner = self
+                    .runner
+                    .as_mut()
+                    .ok_or(DiscoveryFailure::RoutedUnavailable)?;
+                let result = runner.run(proposal, trigger, cancellation).await;
+                publish_observer_health(&observers, runner.is_observing());
+                result
+            }
+            .map_err(failure)?;
             Ok(match run {
                 MonitoredRoutedRun::Completed(CompletedRoutedRun { result, .. }) => {
                     RoutedRunOutcome::Report {
@@ -567,8 +627,14 @@ mod linux {
         }
 
         async fn revoke_all(&mut self) -> Result<(), DiscoveryFailure> {
-            let runner = self.runner().await?;
-            runner.revoke_all().await.map_err(failure)?;
+            let observers = Arc::clone(&self.observers);
+            let result = {
+                let runner = self.runner().await?;
+                let result = runner.revoke_all().await;
+                publish_observer_health(&observers, runner.is_observing());
+                result
+            };
+            result.map_err(failure)?;
             self.latest = None;
             Ok(())
         }
@@ -580,20 +646,26 @@ mod linux {
                 let Some(parent) = self.directory.parent() else {
                     self.observers
                         .store(DIRECTORY_UNAVAILABLE, Ordering::SeqCst);
+                    tracing::warn!("routed approval storage has no private parent directory");
                     return Err(DiscoveryFailure::RoutedUnavailable);
                 };
-                if std::fs::create_dir_all(parent).is_err() {
+                if let Err(error) = std::fs::create_dir_all(parent) {
                     self.observers
                         .store(DIRECTORY_UNAVAILABLE, Ordering::SeqCst);
+                    tracing::warn!(
+                        error_kind = ?error.kind(),
+                        "routed approval parent directory could not be created"
+                    );
                     return Err(DiscoveryFailure::RoutedUnavailable);
                 }
                 // Load once before observing so the private directory and its
                 // lock exist; otherwise the observer's own exact reread would
                 // create them and reject its baseline as a concurrent change.
                 let store = Arc::new(ApprovalStore::new(StorePaths::new(self.directory.clone())));
-                if store.load().is_err() {
+                if let Err(error) = store.load() {
                     self.observers
                         .store(DIRECTORY_UNAVAILABLE, Ordering::SeqCst);
+                    tracing::warn!(reason = %error, "routed approval storage is unavailable");
                     return Err(DiscoveryFailure::RoutedUnavailable);
                 }
                 let started = MonitoredRoutedDiscovery::start(
@@ -611,8 +683,12 @@ mod linux {
                         self.observers.store(OBSERVERS_LIVE, Ordering::SeqCst);
                         self.runner = Some(runner);
                     }
-                    Err(_) => {
+                    Err(error) => {
                         self.observers.store(OBSERVERS_FAILED, Ordering::SeqCst);
+                        tracing::warn!(
+                            reason = %error,
+                            "routed discovery observers are unavailable"
+                        );
                         return Err(DiscoveryFailure::RoutedUnavailable);
                     }
                 }
@@ -625,9 +701,21 @@ mod linux {
 
     async fn await_replacement(runner: Option<&mut Runner>) -> bool {
         match runner {
-            Some(runner) => runner.await_replacement().await,
+            Some(runner) if runner.is_observing() => runner.await_replacement().await,
             None => std::future::pending().await,
+            Some(_) => std::future::pending().await,
         }
+    }
+
+    fn publish_observer_health(observers: &AtomicU8, observing: bool) {
+        observers.store(
+            if observing {
+                OBSERVERS_LIVE
+            } else {
+                OBSERVERS_FAILED
+            },
+            Ordering::SeqCst,
+        );
     }
 
     fn routed_probe_config() -> ProbeConfig {
@@ -641,7 +729,7 @@ mod linux {
     }
 
     fn failure(error: MonitoredRoutedError) -> DiscoveryFailure {
-        match error {
+        let failure = match error {
             MonitoredRoutedError::NotObserving | MonitoredRoutedError::Observers(_) => {
                 DiscoveryFailure::RoutedUnavailable
             }
@@ -653,7 +741,9 @@ mod linux {
             | MonitoredRoutedError::Admission(_)
             | MonitoredRoutedError::Store(_)
             | MonitoredRoutedError::Targets(_) => DiscoveryFailure::Internal,
-        }
+        };
+        tracing::warn!(reason = %error, ?failure, "routed discovery operation failed");
+        failure
     }
 
     fn scan_failure(error: DiscoveryError) -> DiscoveryFailure {
@@ -666,6 +756,20 @@ mod linux {
             | DiscoveryError::Task(_)
             | DiscoveryError::Cancelled
             | DiscoveryError::Protocol(_) => DiscoveryFailure::Internal,
+        }
+    }
+
+    #[cfg(test)]
+    mod health_tests {
+        use super::*;
+
+        #[test]
+        fn observer_health_can_recover_after_a_transient_failure() {
+            let observers = AtomicU8::new(OBSERVERS_FAILED);
+            publish_observer_health(&observers, true);
+            assert_eq!(observers.load(Ordering::SeqCst), OBSERVERS_LIVE);
+            publish_observer_health(&observers, false);
+            assert_eq!(observers.load(Ordering::SeqCst), OBSERVERS_FAILED);
         }
     }
 }
@@ -718,6 +822,21 @@ mod tests {
         assert_eq!(
             RoutedOriginsReceiver::new(receiver).receive().await,
             Err(DiscoveryFailure::Internal)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn linux_supervisor_reports_a_missing_private_parent() {
+        let service = LinuxRoutedDiscovery::start(std::path::PathBuf::from("/")).unwrap();
+        assert_eq!(service.availability(), Ok(()), "startup remains inert");
+        assert_eq!(
+            service.propose(CancellationToken::new()).await,
+            Err(DiscoveryFailure::RoutedUnavailable)
+        );
+        assert_eq!(
+            service.availability(),
+            Err(RoutedUnavailableReason::NoPrivateDirectory)
         );
     }
 

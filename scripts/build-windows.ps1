@@ -110,8 +110,10 @@
 
 .PARAMETER Run
     Build the release desktop application and launch the exact validated output
-    path. This cannot be combined with Diagnostic, InspectLocal, or a quick-exit
-    mode.
+    path with its console-enabled developer feature so Rust tracing remains
+    visible in this PowerShell session. Ordinary packaged release artifacts
+    remain GUI-subsystem applications. This cannot be combined with Diagnostic,
+    InspectLocal, or a quick-exit mode.
 
 .PARAMETER CargoUpdate
     Unavailable. Run cargo update directly when a deliberate dependency update
@@ -2972,12 +2974,13 @@ try {
         Write-Info 'Build-only run (-SkipBundle specified; packaging needs -Bundle, -Zip, or -InnoSetup).'
     }
     Assert-PlaybackRuntime $MsysLayout
+    $DesktopFeatureSet = if ($Run.IsPresent) { 'desktop,windows-console' } else { 'desktop' }
     $CargoArguments = @(
         'build',
         '--release',
         '--locked',
         '--features',
-        'desktop',
+        $DesktopFeatureSet,
         '--bin',
         'balun'
     ) + $TargetDirectoryArguments + $TargetArguments

@@ -13,6 +13,9 @@ authors = ["Balun Contributors"]
 default = []
 playback = ["dep:gstreamer"]
 desktop = ["dep:adw", "dep:gtk", "playback"]
+# Keep ordinary Windows release artifacts GUI-native while letting the
+# developer -Run path retain a console for tracing output.
+windows-console = []
 
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_6"], optional = true }

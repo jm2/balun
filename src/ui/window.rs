@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use adw::prelude::*;
 use balun::controller::{
-    ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryState,
-    ExactTargetTracker, RediscoveryQueue,
+    ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryFailure,
+    DiscoveryKind, DiscoveryState, DiscoveryStatus, ExactTargetTracker, RediscoveryQueue,
 };
 use balun::discovery::{
     DiscoveryEntry, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget,
@@ -690,11 +690,15 @@ fn connect_exact_discovery(
                                 .admit(target, admitted_accepted.borrow().discovery().generation());
                             admitted_cancel_button.set_visible(true);
                             admitted_cancel_button.set_sensitive(true);
+                            admitted_wiring
+                                .toast("Searching the entered address for an HDHomeRun device.");
                         }
                         Err(_) => {
                             admitted_exact_button.set_sensitive(true);
                             admitted_refresh_button.set_sensitive(true);
                             admitted_routed_button.set_sensitive(true);
+                            admitted_wiring
+                                .toast("Balun is busy; try the device address again in a moment.");
                         }
                     }
                 },
@@ -1079,6 +1083,26 @@ const fn resolution_failure_copy(error: HostnameResolutionError) -> &'static str
     }
 }
 
+const fn exact_settlement_failure_toast(discovery: DiscoveryState) -> Option<&'static str> {
+    match (discovery.kind(), discovery.status()) {
+        (DiscoveryKind::Exact, DiscoveryStatus::NoResponse) => {
+            Some("No valid HDHomeRun reply was received from the entered address.")
+        }
+        (
+            DiscoveryKind::Exact,
+            DiscoveryStatus::Failed(DiscoveryFailure::ExactTargetLimitReached),
+        ) => Some("The device address limit was reached for this session."),
+        (DiscoveryKind::Exact, DiscoveryStatus::Failed(_)) => {
+            Some("The exact-address device search failed.")
+        }
+        (DiscoveryKind::Exact, DiscoveryStatus::Idle) => {
+            Some("The exact-address device search was stopped.")
+        }
+        (DiscoveryKind::Exact, DiscoveryStatus::Ready | DiscoveryStatus::Refreshing) => None,
+        _ => Some("The exact-address device search was replaced before it completed."),
+    }
+}
+
 /// Main-context reactions the reducer runs after accepting a snapshot.
 struct SnapshotReactions {
     rediscovery: Rc<RediscoveryWiring>,
@@ -1128,8 +1152,17 @@ fn spawn_snapshot_reducer(
             let discovery = candidate.discovery();
             accepted.replace(candidate);
 
-            if let Some(target) = rediscovery.exact_tracker.borrow_mut().observe(discovery) {
+            let (reachable, settled) = {
+                let mut tracker = rediscovery.exact_tracker.borrow_mut();
+                let was_pending = tracker.is_pending();
+                let reachable = tracker.observe(discovery);
+                (reachable, was_pending && !tracker.is_pending())
+            };
+            if let Some(target) = reachable {
                 rediscovery.remember(RememberedTarget::Address(target));
+                rediscovery.toast("HDHomeRun device found.");
+            } else if settled && let Some(copy) = exact_settlement_failure_toast(discovery) {
+                rediscovery.toast(copy);
             }
             advance_rediscovery(&rediscovery, discovery);
             react_to_routed(&routed_ui, &accepted.borrow());
@@ -1241,6 +1274,54 @@ mod tests {
 
     use super::*;
     use balun::settings::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH};
+
+    #[test]
+    fn exact_address_settlement_has_bounded_failure_feedback() {
+        let generation = balun::controller::OperationGeneration::new(2);
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::exact_no_response(generation, 0)),
+            Some("No valid HDHomeRun reply was received from the entered address.")
+        );
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::failed_for(
+                generation,
+                DiscoveryKind::Exact,
+                DiscoveryFailure::Network,
+            )),
+            Some("The exact-address device search failed.")
+        );
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::failed_for(
+                generation,
+                DiscoveryKind::Exact,
+                DiscoveryFailure::ExactTargetLimitReached,
+            )),
+            Some("The device address limit was reached for this session.")
+        );
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::idle_for(
+                generation,
+                DiscoveryKind::Exact,
+            )),
+            Some("The exact-address device search was stopped.")
+        );
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::ready_for(
+                generation,
+                DiscoveryKind::Exact,
+                0,
+            )),
+            None
+        );
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::ready_for(
+                generation,
+                DiscoveryKind::Local,
+                0,
+            )),
+            Some("The exact-address device search was replaced before it completed.")
+        );
+    }
 
     #[test]
     fn window_keyboard_contract_filters_modifiers_and_ambient_locks() {

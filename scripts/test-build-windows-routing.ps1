@@ -621,6 +621,10 @@ exit $global:LASTEXITCODE
         'cargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> ' +
         "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
     )
+    $RunBuildCommand = (
+        'cargo <build> <--release> <--locked> <--features> <desktop,windows-console> ' +
+        "<--bin> <balun> <--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
+    )
     $DiagnosticBuildCommand = (
         'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
         "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
@@ -1091,7 +1095,7 @@ exit $global:LASTEXITCODE
         Invoke-TestHelper -Arguments @('-Run')
         Assert-ExpectedStatus 0
         Assert-ExpectedOutput 'Launching'
-        Assert-ExpectedLog $DesktopBuildCommand
+        Assert-ExpectedLog $RunBuildCommand
         Assert-ExpectedPkgConfigProbeSet
         $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = ''
     }
@@ -1109,6 +1113,7 @@ exit $global:LASTEXITCODE
         'io.github.jm2.Balun',
         "'--features',",
         "'desktop',",
+        "'desktop,windows-console'",
         "'gstreamer-1.0'",
         "'1.20'",
         "'libgstgtk4.dll'",

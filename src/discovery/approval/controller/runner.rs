@@ -265,7 +265,7 @@ impl RoutedAdmissionClock for SystemRoutedClock {
 }
 
 /// Topology-free reason one monitored operation did not complete.
-#[derive(Debug, Error)]
+#[derive(Error)]
 pub(crate) enum MonitoredRoutedError {
     #[error("routed observation is not established")]
     NotObserving,
@@ -277,10 +277,16 @@ pub(crate) enum MonitoredRoutedError {
     Admission(RoutedAdmissionError),
     #[error("approval storage failed: {0}")]
     Store(StoreError),
-    #[error("no routed candidates could be selected: {0}")]
+    #[error("no routed candidates could be selected")]
     Candidates(RouteCandidateError),
-    #[error("the revalidated targets were rejected: {0}")]
+    #[error("the revalidated routed targets were rejected")]
     Targets(RoutedTargetsError),
+}
+
+impl fmt::Debug for MonitoredRoutedError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, formatter)
+    }
 }
 
 /// What one monitored run did.
@@ -867,6 +873,38 @@ mod tests {
 
     fn ipnet(value: &str) -> IpNet {
         value.parse().expect("valid synthetic test network")
+    }
+
+    #[test]
+    fn monitored_errors_redact_candidate_and_target_payloads() {
+        let cases = [
+            (
+                MonitoredRoutedError::Candidates(RouteCandidateError::ExplicitIpv6(
+                    "fd00::/64".parse().expect("valid synthetic IPv6 network"),
+                )),
+                "fd00",
+                "no routed candidates could be selected",
+            ),
+            (
+                MonitoredRoutedError::Targets(RoutedTargetsError::NotPrivate(
+                    "198.51.100.8"
+                        .parse()
+                        .expect("valid synthetic IPv4 address"),
+                )),
+                "198.51.100.8",
+                "the revalidated routed targets were rejected",
+            ),
+        ];
+
+        for (error, secret, expected) in cases {
+            let display = error.to_string();
+            let debug = format!("{error:?}");
+            assert_eq!(display, expected);
+            assert_eq!(debug, expected);
+            assert!(!display.contains(secret));
+            assert!(!debug.contains(secret));
+            assert!(std::error::Error::source(&error).is_none());
+        }
     }
 
     fn tunnel_snapshot() -> RouteSnapshot {
