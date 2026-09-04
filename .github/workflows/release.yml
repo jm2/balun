@@ -97,6 +97,41 @@ jobs:
           echo "build_ref=${build_ref}" >> "${GITHUB_OUTPUT}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
+      # The draft's body is the changelog section for this exact version, so
+      # the release notes are reviewed in the tagged source, not typed later.
+      - name: Extract the release notes from the changelog
+        env:
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          python3 - "${VERSION}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          version = sys.argv[1]
+          text = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          section = re.search(
+              rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|^\[[^\]]+\]: |\Z)",
+              text,
+              re.M | re.S,
+          )
+          if section is None:
+              sys.exit(f"CHANGELOG.md has no '## [{version}]' section")
+          body = section.group(1).strip()
+          if not body:
+              sys.exit(f"CHANGELOG.md section for {version} is empty")
+          Path("release-notes").mkdir()
+          Path("release-notes/RELEASE_NOTES.md").write_text(body + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload the release notes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notes-${{ steps.source.outputs.version }}
+          path: release-notes/RELEASE_NOTES.md
+          if-no-files-found: error
+          retention-days: 7
+
   build:
     name: ${{ matrix.name }} candidate
     needs: prepare
@@ -633,6 +668,12 @@ jobs:
           name: release-assets-${{ needs.prepare.outputs.version }}
           path: release-assets
 
+      - name: Download the release notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-notes-${{ needs.prepare.outputs.version }}
+          path: release-notes
+
       # A rerun must never rewrite assets on a release a maintainer has already
       # published: only a missing release or exactly one unpublished draft for
       # this tag may proceed.
@@ -664,6 +705,7 @@ jobs:
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: Balun ${{ needs.prepare.outputs.version }}
+          body_path: release-notes/RELEASE_NOTES.md
           draft: true
           prerelease: ${{ contains(needs.prepare.outputs.version, '-') }}
           fail_on_unmatched_files: true
