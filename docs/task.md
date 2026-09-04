@@ -29,16 +29,17 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **23/30 (76.7%)** records complete. This is a dependency ledger,
+Current status: **25/30 (83.3%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
 ## Current focus
 
-The Linux live-hardware proofs recorded P0.2, P0.4, P0.6, P0.7, and the P0.8
-guide spike on 2026-09-03; P0.3 needs the macOS host, and P0.5 has its Linux
-and Windows inventories recorded and waits on the macOS one. P0.1, P1.1 to P1.6,
-P2.1 to P2.4, P3.1 to P3.3, P3.5, P3.6, P4.3, and P4.4 are complete.
+The Linux and macOS live-hardware proofs recorded P0.2, P0.3, P0.4, P0.6, P0.7,
+and the P0.8 guide spike; P0.5 has its Linux, Windows, and macOS inventories
+recorded and frozen. P0.1 to P0.8, P1.1 to P1.6, P2.1 to P2.4, P3.1 to P3.3,
+P3.5, P3.6, P4.3, and P4.4 are complete. Current focus is P3.4 (macOS package)
+and P2.5 (routed tunnel validation).
 
 ## P0 — Evidence and contract
 
@@ -49,14 +50,14 @@ P2.1 to P2.4, P3.1 to P3.3, P3.5, P3.6, P4.3, and P4.4 are complete.
 - [x] **P0.2 — Linux live-TV acceptance on real hardware.** Same checklist as
   P0.1 on the Linux development build, including audio.
 
-- [ ] **P0.3 — macOS live-TV acceptance on real hardware.** Same checklist as
+- [x] **P0.3 — macOS live-TV acceptance on real hardware.** Same checklist as
   P0.1 on the macOS development build, including audio.
 
 - [x] **P0.4 — Measure tune and teardown budgets.** Record first-frame time,
   channel-switch time, and tuner-release time on one device, and confirm the
   tuner is released on switch, Stop, device change, and window close.
 
-- [ ] **P0.5 — Freeze the per-platform plugin and codec contract.** From P0.1
+- [x] **P0.5 — Freeze the per-platform plugin and codec contract.** From P0.1
   to P0.3, record the exact GStreamer factories, decoders, and audio sinks each
   platform uses; this is the input to the packaged runtime closure.
 

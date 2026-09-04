@@ -384,12 +384,68 @@ mod tests {
             .unwrap_or_else(|| panic!("{missing}"))
     }
 
-    fn first_non_drm_channel(snapshot: &ApplicationSnapshot) -> ChannelKey {
-        snapshot
-            .selected_lineup()
-            .channels()
+    async fn is_channel_responsive(url: &reqwest::Url) -> bool {
+        let Ok(client) = reqwest::Client::builder()
+            .timeout(Duration::from_millis(1500))
+            .no_proxy()
+            .build()
+        else {
+            return false;
+        };
+        match client.get(url.clone()).send().await {
+            Ok(mut res) if res.status().is_success() => {
+                match tokio::time::timeout(Duration::from_millis(1500), res.chunk()).await {
+                    Ok(Ok(Some(chunk))) => {
+                        let ok = !chunk.is_empty();
+                        drop(res);
+                        drop(client);
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        ok
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    async fn first_responsive_non_drm_channel(snapshot: &ApplicationSnapshot) -> ChannelKey {
+        if let Ok(guide) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL") {
+            let guide = guide.trim();
+            if !guide.is_empty() {
+                if let Some(channel) = snapshot
+                    .selected_lineup()
+                    .channels()
+                    .iter()
+                    .find(|channel| channel.key().guide_number().as_str() == guide && !channel.is_drm())
+                {
+                    return channel.key().clone();
+                }
+            }
+        }
+        let channels = snapshot.selected_lineup().channels();
+        for channel in channels.iter().filter(|c| !c.is_drm() && c.is_favorite()) {
+            if is_channel_responsive(channel.stream_url()).await {
+                eprintln!(
+                    "live ATSC 1.0: selected responsive favorite channel {}",
+                    channel.key().guide_number()
+                );
+                return channel.key().clone();
+            }
+        }
+        for channel in channels.iter().filter(|c| !c.is_drm() && !c.is_favorite()) {
+            if is_channel_responsive(channel.stream_url()).await {
+                eprintln!(
+                    "live ATSC 1.0: selected responsive non-favorite channel {}",
+                    channel.key().guide_number()
+                );
+                return channel.key().clone();
+            }
+        }
+        channels
             .iter()
-            .find(|channel| !channel.is_drm())
+            .find(|channel| !channel.is_drm() && channel.is_favorite())
+            .or_else(|| channels.iter().find(|channel| !channel.is_drm()))
             .expect("the live device must expose at least one non-DRM channel")
             .key()
             .clone()
@@ -568,7 +624,7 @@ mod tests {
         );
         let selected = controller_select_device(atsc1, devices.len()).await;
         let generation = selected.ready.selected_lineup().generation();
-        let key = first_non_drm_channel(&selected.ready);
+        let key = first_responsive_non_drm_channel(&selected.ready).await;
         let (handoff, handoff_elapsed) =
             request_live_handoff(&selected.handle, key, generation).await;
 
@@ -663,15 +719,53 @@ mod tests {
         );
         let selected = controller_select_device(atsc1, devices.len()).await;
         let generation = selected.ready.selected_lineup().generation();
-        let non_drm = selected
-            .ready
-            .selected_lineup()
-            .channels()
-            .iter()
-            .filter(|channel| !channel.is_drm())
-            .take(2)
-            .map(|channel| channel.key().clone())
-            .collect::<Vec<_>>();
+        let mut non_drm = Vec::new();
+        if let Ok(guide_a) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL") {
+            if let Some(c) = selected
+                .ready
+                .selected_lineup()
+                .channels()
+                .iter()
+                .find(|c| c.key().guide_number().as_str() == guide_a && !c.is_drm())
+            {
+                non_drm.push(c.key().clone());
+            }
+        }
+        if let Ok(guide_b) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL_B") {
+            if let Some(c) = selected
+                .ready
+                .selected_lineup()
+                .channels()
+                .iter()
+                .find(|c| c.key().guide_number().as_str() == guide_b && !c.is_drm())
+            {
+                non_drm.push(c.key().clone());
+            }
+        }
+        if non_drm.len() < 2 {
+            let favorites = selected
+                .ready
+                .selected_lineup()
+                .channels()
+                .iter()
+                .filter(|channel| !channel.is_drm() && channel.is_favorite())
+                .take(2)
+                .map(|channel| channel.key().clone())
+                .collect::<Vec<_>>();
+            if favorites.len() >= 2 {
+                non_drm = favorites;
+            } else {
+                non_drm = selected
+                    .ready
+                    .selected_lineup()
+                    .channels()
+                    .iter()
+                    .filter(|channel| !channel.is_drm())
+                    .take(2)
+                    .map(|channel| channel.key().clone())
+                    .collect::<Vec<_>>();
+            }
+        }
         assert!(
             !non_drm.is_empty(),
             "the live ATSC 1.0 device must expose at least one non-DRM channel"

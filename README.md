@@ -14,10 +14,9 @@ merged across devices, no stream URL ever reaches the user interface, and the me
 receives neither a device address nor a stream URL. Playback errors may name the device and its
 address so you know which tuner failed.
 
-> **Pre-alpha.** Balun plays live TV on development builds (verified on Windows and Linux
+> **Pre-alpha.** Balun plays live TV on development builds (verified on Linux, macOS, and Windows
 > against real tuners). A Flatpak bundle and a Windows ZIP and installer are built and validated
-> in CI but not published, and macOS live-device acceptance is still open. The countable status
-> is in [`docs/task.md`](docs/task.md).
+> in CI but not published. The countable status is in [`docs/task.md`](docs/task.md).
 
 ## Features
 
@@ -30,7 +29,7 @@ address so you know which tuner failed.
 | Device metadata and lineup inspection without allocating a tuner | ✅ |
 | Adaptive three-pane GTK 4 / libadwaita window | ✅ |
 | Window size and maximized state remembered across launches | ✅ |
-| Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Windows and Linux against real tuners; macOS acceptance pending |
+| Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Linux, macOS, and Windows against real tuners |
 | Stop, volume, mute, and fullscreen controls | ✅ |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
 | Playback errors that name the device and channel | ✅ |
@@ -41,11 +40,11 @@ address so you know which tuner failed.
 | Route-derived tunnel discovery (Linux) | ✅ Approve each route set once; live proof on a tunnel pending |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
-| Audible output and complete codec contract | ⚠️ Audio verified on Windows and Linux; codec contract open until P0.5, see the support matrix |
+| Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, DMG, winget) | 🚧 A Flatpak bundle and a Windows ZIP and installer are built and validated in CI; nothing is published yet |
-| Cross-platform: Linux, macOS, Windows | ✅ Windows verified with real tuners; Linux covered by CI runtime smokes; macOS build-tested only |
+| Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 The product plan is [`docs/plan-v0.1.md`](docs/plan-v0.1.md), the countable ledger is
@@ -502,8 +501,8 @@ blocks the replies, use **Find device by address** with the tuner's IPv4 address
 Select a device to load its channel lineup. Type in the search field above the list to match a
 channel number or name, or press the star to show favorites only. Click a channel or press Enter
 to play it; moving the keyboard highlight alone never tunes. Protected channels are listed but
-cannot be activated. The player header has **Stop**, a volume slider, a mute toggle, and a fullscreen
-button; volume and mute carry across channel changes for the running session.
+cannot be activated. The player header has **Stop**, a volume slider, a mute toggle, and a
+fullscreen button; volume and mute carry across channel changes for the running session.
 
 ### Keyboard Shortcuts
 

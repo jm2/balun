@@ -134,7 +134,31 @@ transport thread joined, after which the device frees the tuner on its own
 idle timer. Every release in the run, including the one after the fail-closed
 ATSC 3.0 tune, stayed far inside the 5 s class in [`playback.md`](playback.md).
 
-## Linux plugin and codec contract
+## macOS live-TV acceptance
+
+On 2026-09-03 the opt-in live-hardware proofs in
+[`src/playback/live_hardware.rs`](../src/playback/live_hardware.rs) ran on
+the macOS development host (Apple Silicon arm64, GStreamer 1.28.6, Rust 1.98)
+against the primary-site tuners, completing P0.3. Video was verified through
+`fakesink` and audio through `osxaudiosink` (CoreAudio). Every proof passed.
+
+- Local discovery found both devices (HDHR4-2US and HDHR5-4K).
+- An unprotected ATSC 1.0 channel decoded to raw 1280×720 progressive video
+  and raw 48 kHz stereo audio, and the audio rendered through `osxaudiosink`,
+  proving the macOS native audio path works end to end.
+- The ATSC 1.0 pipeline autoplugged `appsrc`, `typefind`, `tsdemux`, `parsebin`,
+  `multiqueue`, `mpegvideoparse`, `avdec_mpeg2video`, `deinterlace`, `videoconvert`,
+  `videoscale`, `videobalance`, `ac3parse`, `avdec_ac3`, `audioconvert`,
+  `audioresample`, `volume`, `streamsynchronizer`, `playsink`, and `osxaudiosink`.
+  Hardware VideoToolbox MPEG-2 decoding was demoted by the test guard, proving
+  the software fallback path decodes reliably on Apple Silicon.
+- Controller stream handoff took under 1 ms (278 µs observed).
+- First decoded video frame arrived in ~896 ms, and stable decode in ~903 ms.
+- Switching channels took ~779 ms total, and client-side tuner release completed
+  in under 18 ms (2.6 ms on channel A, 17.7 ms on final release).
+- Exact unicast probes at each discovered device's address returned only that device.
+
+## Per-platform plugin and codec contract
 
 The ATSC 1.0 pipeline on Fedora 44 with GStreamer 1.28.6 autoplugged these
 factories, with the hosted-CI hardware MPEG-2 decoders demoted so the
@@ -147,14 +171,14 @@ software path is the one recorded: `appsrc`, `typefind`, `tsdemux`,
 
 ATSC 3.0 needs `avdec_h265` or a platform HEVC decoder plus an AC-4 decoder;
 the first is absent from Fedora's libav plugin build and the second from
-every open plugin set. The Windows and macOS factory sets are still
-unrecorded, so P0.5 in [`task.md`](task.md) stays open.
+every open plugin set. The Windows and macOS inventories below complete
+the P0.5 factory and decoder contract.
 
 ### Linux decoder and sink inventory
 
 `scripts/build-linux.sh --probe-playback` on the Linux development host
 (Fedora, GStreamer 1.28.6, 2026-09-03) printed the following inventory,
-which is the Linux half of P0.5. Highest-ranked factory first.
+which is the Linux portion of P0.5. Highest-ranked factory first.
 
 | Stream type | Decoders present |
 | --- | --- |
@@ -194,8 +218,32 @@ Audio sinks: `wasapi2sink` (selected by `autoaudiosink`), `wasapisink`,
 come from GStreamer 1.28.6 except `gtk4paintablesink` from gst-plugins-rs
 0.15.3. Unlike the Linux host, Windows can decode HEVC video, so an ATSC 3.0
 channel there fails closed on AC-4 audio alone; E-AC-3 is also decodable
-but no such channel has been tuned on record. The macOS inventory is the
-remaining half of P0.5.
+but no such channel has been tuned on record.
+
+### macOS decoder and sink inventory
+
+`scripts/build-macos.sh --probe-playback` on the macOS development host
+(Homebrew, GStreamer 1.28.6 on macOS aarch64, 2026-09-03) printed the
+following inventory, completing P0.5. Highest-ranked factory first;
+VideoToolbox decoders outrank the software ones.
+
+| Stream type | Decoders present |
+| --- | --- |
+| MPEG-2 video | `vtdec_hw` (VideoToolbox), `avdec_mpeg2video` (libav), `avdec_mpegvideo` (libav), `vtdec` (VideoToolbox) |
+| H.264 video | `vtdec_hw` (VideoToolbox), `avdec_h264` (libav), `vtdec` (VideoToolbox) |
+| HEVC video | `vtdec_hw` (VideoToolbox), `avdec_h265` (libav), `vtdec` (VideoToolbox) |
+| MPEG-1/2 audio | `mpg123audiodec`, `atdec` (AudioToolbox), `avdec_mp1_at` (libav), `avdec_mp1float` (libav), `avdec_mp2_at` (libav), `avdec_mp2float` (libav), `avdec_mp3` (libav), `avdec_mp3_at` (libav), `avdec_mp3float` (libav) |
+| AAC audio | `avdec_aac` (libav), `avdec_aac_at` (libav), `avdec_aac_fixed` (libav), `faad`, `atdec` (AudioToolbox), `avdec_aac_latm` (libav), `fdkaacdec` |
+| AC-3 audio | `avdec_ac3` (libav), `avdec_ac3_at` (libav), `avdec_ac3_fixed` (libav) |
+| E-AC-3 audio | `avdec_eac3` (libav), `avdec_eac3_at` (libav) |
+| AC-4 audio | none |
+
+Audio sinks: `osxaudiosink` (selected by `autoaudiosink`), `oss4sink`. The
+foundation factories all come from GStreamer 1.28.6 except `gtk4paintablesink`
+from gst-plugins-rs 0.15.3-RELEASE. Like Windows and unlike Linux, macOS can
+decode HEVC video via VideoToolbox and libav, so an ATSC 3.0 channel fails
+closed on AC-4 audio alone; E-AC-3 is also decodable. This inventory freezes
+the macOS contract and completes P0.5.
 
 ## Windows package smoke
 
@@ -288,14 +336,14 @@ not evidence yet for WireGuard or UniFi Site Magic discovery.
 These observations establish local discovery, stable device separation,
 responder pinning, metadata identity, lineup parsing, favorite/DRM
 compatibility for the two listed model/firmware pairs, live ATSC 1.0
-playback with audio on one Windows host and one Linux host, and the Linux
+playback with audio on Windows, Linux, and macOS, and the Linux and macOS
 tune, switch, and release budgets. They do not yet establish:
 
-- The macOS decoder set, and HEVC or E-AC-3 playback on any platform.
+- Live HEVC or E-AC-3 playback on record.
 - Protected-channel playback.
 - Secondary-site HDHR3-PRIME or HDHR5-4K behavior.
 - UniFi Site Magic, WireGuard, or other routed multi-site discovery.
-- macOS live-TV behavior, or the second Windows host.
+- The second Windows host.
 - Deferred Australian HDHR5-4DT compatibility.
 
 Those remain explicit rows in the real-hardware matrix in
