@@ -321,8 +321,8 @@ review's pull request.
 ## Delta check (2026-09-04)
 
 Scope: the 142 commits between the audited `8c0df0e` and `main` at `2e1a8c0`
-plus the open v0.1 pull requests #55 to #58. This is a contract re-check of
-the five areas above against the current code, not a second full audit.
+plus the v0.1 pull requests #55 to #59. This is a contract re-check of the
+five areas above against the current code, not a second full audit.
 
 Re-verified in place:
 
@@ -345,9 +345,15 @@ Re-verified in place:
 - The Linux package validator applies the forbidden-component policy to the
   reopened deb, RPM, and Arch payloads; those validators only ever receive
   artifacts the workflow itself just built.
-- The release workflow pins every action by commit, and #55 to #58 keep the
-  hidden helper flags (`--balun-platform-runtime-probe`,
+- #55 to #58 keep the hidden helper flags (`--balun-platform-runtime-probe`,
   `--balun-macos-install-key`) argument-free and fail-closed.
+- #59 (`.github/workflows/release.yml` and `ci.yml`): every `uses:` in both
+  workflows names a full commit, the Flatpak builder in CI included; the only
+  job with a write token still checks out no source, lists the tag's releases
+  and refuses to proceed unless none exists or exactly one unpublished draft
+  does, treating a failed lookup as a refusal; the draft body comes from the
+  tagged `CHANGELOG.md` section, not workflow input; and every package job
+  keeps `contents: read`. `actionlint` 1.7.12 and `yamllint` 1.37.1 pass.
 
 Still open:
 
