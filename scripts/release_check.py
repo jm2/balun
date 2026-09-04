@@ -84,10 +84,11 @@ def arch_pkgbuild_version(pkgbuild: str) -> str | None:
 def arch_pkgver_for_semver(version: str) -> str:
     """Encode a Semantic Version as a stable-upgrade-safe Arch ``pkgver``.
 
-    Raises ``ValueError`` for a prerelease identifier that contains a hyphen:
-    Arch forbids hyphens in ``pkgver`` and treats the only substitute, ``_``,
-    as a separator, so no encoding keeps SemVer's order between such
-    identifiers. Those tags are refused rather than mis-ordered.
+    Raises ``ValueError`` for a prerelease identifier that is neither all
+    digits nor all letters. Arch forbids hyphens in ``pkgver`` and ``vercmp``
+    compares every digit run numerically, so a hyphenated or mixed identifier
+    such as ``alpha10`` cannot keep SemVer's lexical order. Those tags are
+    refused rather than mis-ordered.
     """
     release, plus, build = version.partition("+")
     core, hyphen, prerelease = release.partition("-")
@@ -98,12 +99,15 @@ def arch_pkgver_for_semver(version: str) -> str:
         # text identifiers to retain SemVer's identifier-type precedence.
         identifiers = []
         for identifier in prerelease.split("."):
-            if "-" in identifier:
+            if identifier.isdigit():
+                identifiers.append(f"0.{identifier}")
+            elif identifier.isascii() and identifier.isalpha():
+                identifiers.append(f"1.{identifier}")
+            else:
                 raise ValueError(
-                    f"prerelease identifier {identifier!r} contains a hyphen, "
+                    f"prerelease identifier {identifier!r} mixes letters, digits, or hyphens, "
                     "which an Arch pkgver cannot order"
                 )
-            identifiers.append(f"0.{identifier}" if identifier.isdigit() else f"1.{identifier}")
         encoded += "pre." + ".".join(identifiers)
     if plus:
         # Build metadata never affects precedence, so it only needs a legal spelling.

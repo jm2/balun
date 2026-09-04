@@ -159,12 +159,14 @@ class ReleaseCheckTests(unittest.TestCase):
             "1.2.3+build_two",
         )
 
-    def test_arch_pkgver_refuses_a_hyphenated_prerelease_identifier(self) -> None:
-        # SemVer orders 1.2.3-alpha.a before 1.2.3-alpha-a, but Arch treats the
-        # only legal substitute for the hyphen as a separator, so the encoding
-        # cannot preserve that order and the tag is refused instead.
-        with self.assertRaises(ValueError):
-            release_check.arch_pkgver_for_semver("1.2.3-alpha-a")
+    def test_arch_pkgver_refuses_unorderable_prerelease_identifiers(self) -> None:
+        # SemVer orders 1.2.3-alpha.a before 1.2.3-alpha-a and 1.2.3-alpha10
+        # before 1.2.3-alpha2, but Arch treats the hyphen's only substitute as
+        # a separator and compares digit runs numerically, so neither identifier
+        # can keep its order and such tags are refused instead.
+        for version in ("1.2.3-alpha-a", "1.2.3-alpha10", "1.2.3-rc1.x"):
+            with self.assertRaises(ValueError, msg=version):
+                release_check.arch_pkgver_for_semver(version)
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             write_fixture(

@@ -151,8 +151,8 @@ rustup override and GitHub's rejected attempt to update the original copy under
 | `flatpak/test-permissions.sh` | Landed first against a synthetic manifest so the permission contract is reviewable before packaging |
 | `flatpak/validate-permissions.sh` | Adapted to Balun's exact permission allowlist; the real manifest must invoke it atomically when it lands |
 | `inno/tributary.iss` | Landed as `build-aux/inno/balun.iss`: a deterministic UUID version 5 application GUID, `bin\balun.exe` shortcut and uninstall targets, a numeric `VersionInfoVersion` beside the textual package version, and the product, description, and copyright version fields the helper reopens after compiling |
-| `arch/PKGBUILD` | Deferred with native distro packages |
-| `rpm/tributary.spec` | Deferred with native distro packages |
+| `arch/PKGBUILD` | Landed as `build-aux/arch/PKGBUILD` for the x86_64 release artifact; `release_check.py` binds its literal `pkgver` to the tag. |
+| `rpm/tributary.spec` | Not copied: Balun's x86_64/aarch64 RPM assets and requirements are declared through `Cargo.toml`'s `generate-rpm` metadata. Debian amd64/arm64 metadata lives beside it. |
 
 Balun's Flatpak baseline needs Wayland, fallback X11, IPC, PulseAudio, and
 network access for local HDHomeRun discovery/HTTP and explicit XMLTV URLs. It
