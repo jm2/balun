@@ -52,9 +52,10 @@ impl ExactTargetTracker {
     ///
     /// `network_changed` says the snapshot carries a new network-change
     /// reconciliation. The controller handles those ahead of queued commands
-    /// and republishes the unrelated current state in a new generation, so
-    /// until the admitted probe has been seen running, such a state does not
-    /// settle it: the probe is still queued and runs next.
+    /// and republishes the current state, whatever its kind and status, in a
+    /// new generation. Until the admitted probe has been seen running, such a
+    /// state settles nothing: the probe is still queued and runs next, so
+    /// even a republished earlier exact result must not be taken as its own.
     pub fn observe(
         &mut self,
         discovery: DiscoveryState,
@@ -70,15 +71,11 @@ impl ExactTargetTracker {
                 None
             }
             (_, DiscoveryStatus::Refreshing) => None,
+            _ if network_changed && !self.started => None,
             (DiscoveryKind::Exact, DiscoveryStatus::Ready) => {
                 self.pending = None;
                 Some(target)
             }
-            (DiscoveryKind::Exact, _) => {
-                self.pending = None;
-                None
-            }
-            _ if network_changed && !self.started => None,
             _ => {
                 self.pending = None;
                 None
@@ -285,6 +282,26 @@ mod tests {
             ),
             Some(target(1))
         );
+
+        // A republished earlier exact result is not the queued probe's own
+        // outcome either, whether it succeeded or failed.
+        for earlier in [
+            DiscoveryState::ready_for(generation(6), DiscoveryKind::Exact, 0),
+            DiscoveryState::exact_no_response(generation(6), 1),
+        ] {
+            let mut tracker = ExactTargetTracker::new();
+            tracker.admit(target(4), generation(5));
+            assert_eq!(tracker.observe(earlier, true), None, "{earlier:?}");
+            assert!(tracker.is_pending(), "{earlier:?}");
+            assert_eq!(
+                tracker.observe(
+                    DiscoveryState::ready_for(generation(7), DiscoveryKind::Exact, 0),
+                    false
+                ),
+                Some(target(4)),
+                "{earlier:?}"
+            );
+        }
 
         // Once the probe was seen running, a reconciliation that cancels it
         // settles the target like any other stop.
