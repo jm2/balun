@@ -6,7 +6,8 @@ package is built. It reads only committed files and reports every mismatch at
 once so a maintainer fixes them in one commit:
 
 - the tag is a v-prefixed Semantic Version;
-- ``Cargo.toml`` and ``Cargo.lock`` carry that version for the ``balun`` package;
+- ``Cargo.toml`` and ``Cargo.lock`` carry that version, while the Arch PKGBUILD
+  carries its stable-upgrade-safe, hyphen-free ``pkgver`` encoding;
 - ``CHANGELOG.md`` has a ``## [<version>]`` section and its compare link; and
 - the AppStream metainfo lists that version as its newest ``<release>``.
 """
@@ -26,6 +27,7 @@ CARGO_MANIFEST = Path("Cargo.toml")
 CARGO_LOCKFILE = Path("Cargo.lock")
 CHANGELOG = Path("CHANGELOG.md")
 METAINFO = Path("data/io.github.jm2.Balun.metainfo.xml")
+ARCH_PKGBUILD = Path("build-aux/arch/PKGBUILD")
 PACKAGE_NAME = "balun"
 
 
@@ -73,6 +75,46 @@ def cargo_lock_version(lockfile: str, package: str) -> str | None:
     return None
 
 
+def arch_pkgbuild_version(pkgbuild: str) -> str | None:
+    """Return the literal top-level ``pkgver`` from an Arch PKGBUILD."""
+    match = re.search(r"^pkgver=([^\s#]+)\s*$", pkgbuild, re.M)
+    return match.group(1) if match else None
+
+
+def arch_pkgver_for_semver(version: str) -> str:
+    """Encode a Semantic Version as a stable-upgrade-safe Arch ``pkgver``.
+
+    Raises ``ValueError`` for a prerelease identifier that is neither all
+    digits nor all letters. Arch forbids hyphens in ``pkgver`` and ``vercmp``
+    compares every digit run numerically, so a hyphenated or mixed identifier
+    such as ``alpha10`` cannot keep SemVer's lexical order. Those tags are
+    refused rather than mis-ordered.
+    """
+    release, plus, build = version.partition("+")
+    core, hyphen, prerelease = release.partition("-")
+    encoded = core
+    if hyphen:
+        # vercmp sorts a letter suffix before the corresponding stable
+        # version. Within that suffix, numeric identifiers must sort before
+        # text identifiers to retain SemVer's identifier-type precedence.
+        identifiers = []
+        for identifier in prerelease.split("."):
+            if identifier.isdigit():
+                identifiers.append(f"0.{identifier}")
+            elif identifier.isascii() and identifier.isalpha():
+                identifiers.append(f"1.{identifier}")
+            else:
+                raise ValueError(
+                    f"prerelease identifier {identifier!r} mixes letters, digits, or hyphens, "
+                    "which an Arch pkgver cannot order"
+                )
+        encoded += "pre." + ".".join(identifiers)
+    if plus:
+        # Build metadata never affects precedence, so it only needs a legal spelling.
+        encoded += "+" + build.replace("-", "_")
+    return encoded
+
+
 def changelog_has_release(changelog: str, version: str) -> tuple[bool, bool]:
     """Whether the changelog has the version's section and its compare link."""
     section = re.search(rf"^## \[{re.escape(version)}\]", changelog, re.M) is not None
@@ -103,6 +145,20 @@ def check_release(root: Path, tag: str) -> list[str]:
         problems.append(f"{CARGO_LOCKFILE} has no {PACKAGE_NAME} package")
     elif lock_version != version:
         problems.append(f"{CARGO_LOCKFILE} records {PACKAGE_NAME} {lock_version}, not {version}")
+
+    pkgbuild_version = arch_pkgbuild_version(read_text(root, ARCH_PKGBUILD))
+    try:
+        expected_pkgbuild_version = arch_pkgver_for_semver(version)
+    except ValueError as error:
+        problems.append(f"tag {tag} has no Arch pkgver encoding: {error}")
+    else:
+        if pkgbuild_version is None:
+            problems.append(f"{ARCH_PKGBUILD} has no literal pkgver")
+        elif pkgbuild_version != expected_pkgbuild_version:
+            problems.append(
+                f"{ARCH_PKGBUILD} pkgver is {pkgbuild_version}, "
+                f"not {expected_pkgbuild_version} for {version}"
+            )
 
     section, link = changelog_has_release(read_text(root, CHANGELOG), version)
     if not section:

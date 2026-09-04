@@ -376,12 +376,12 @@ coverage, and the installed-runtime playback probes:
 The check, Clippy, and coverage modes include the desktop feature by default, and Clippy runs with
 `-D warnings` in both the debug and release profiles. `--probe-playback` (`-ProbePlayback`) runs the
 same installed-runtime probes CI uses on every platform, prints the installed decoder and audio-sink
-inventory for the codec contract, and cannot be combined with `--diagnostic`. Linux native-package
-modes and the macOS app/DMG modes build, inspect, and reopen their outputs; `--flatpak` remains
-release-workflow-owned rather than a Linux helper mode. The Windows helper's `-Bundle`, `-Zip`, and
-`-InnoSetup` use the selected x86_64 or ARM64 profile to stage, probe, and archive the package as
-described under [Windows](#windows). None of the helpers installs its packagers or dependencies.
-The helpers keep Tributary's filenames and flags;
+inventory for the codec contract, and cannot be combined with `--diagnostic`. The Linux helper's
+`--deb`, `--rpm`, and `--arch-pkg` build and reopen a native package with a preinstalled pinned
+packager; `--flatpak` stays release-workflow-owned. The macOS helper's `--app` and `--dmg` and the
+Windows helper's `-Bundle`, `-Zip`, and `-InnoSetup` use the selected profile to stage, probe, and
+archive the package as described under [Windows](#windows). None of the helpers installs its
+packagers or dependencies. The helpers keep Tributary's filenames and flags;
 [`docs/tributary-build-infrastructure.md`](docs/tributary-build-infrastructure.md) is the port
 ledger.
 

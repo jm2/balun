@@ -289,6 +289,10 @@ pub(crate) enum MonitoredRoutedRun {
     /// The reservation was published, the scan ran, and completion settled.
     Completed(CompletedRoutedRun),
     /// No approval exists for this exact proposal; nothing was published.
+    #[allow(
+        dead_code,
+        reason = "the runner result mirrors the exact store decision before the controller closes it to a category"
+    )]
     NeedsApproval(RoutedProposalSummary),
     /// Automatic runs are cooling down; nothing was published.
     CoolingDown { remaining: Duration },
@@ -296,6 +300,10 @@ pub(crate) enum MonitoredRoutedRun {
     Busy,
     /// The store published the reservation but could not confirm it, so no
     /// permit exists and the lease must expire on its own.
+    #[allow(
+        dead_code,
+        reason = "the runner result mirrors the exact store decision before the controller closes it to a category"
+    )]
     PublishedWithoutPermit { durability: CommitDurability },
 }
 
@@ -303,10 +311,18 @@ pub(crate) enum MonitoredRoutedRun {
 #[derive(Debug)]
 pub(crate) struct CompletedRoutedRun {
     /// The outcome the durable store was told.
+    #[allow(
+        dead_code,
+        reason = "the controller consumes the report while this preserves the settled outcome"
+    )]
     pub(crate) outcome: RoutedScanOutcome,
     /// The scan's own report or the transport-level reason it stopped.
     pub(crate) result: Result<DiscoveryReport, DiscoveryError>,
     /// How the store settled the reservation.
+    #[allow(
+        dead_code,
+        reason = "the controller consumes the report while this preserves the settlement decision"
+    )]
     pub(crate) completion: StoredCompletionDecision,
 }
 
@@ -358,12 +374,20 @@ impl<F: ObserverPairFactory, P: RoutedTargetProber> MonitoredRoutedDiscovery<F, 
 
     /// Why the last observer replacement failed, if it did.
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "this private inspection API is retained beside route_snapshot"
+    )]
     pub(crate) fn observation_error(&self) -> Option<ObserverPairFailure> {
         self.observation_error
     }
 
     /// The route snapshot the live pair baselined.
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "this private inspection API is retained beside observation_error"
+    )]
     pub(crate) fn route_snapshot(&self) -> Option<&RouteSnapshot> {
         self.live.as_ref().map(|live| &live.snapshot)
     }

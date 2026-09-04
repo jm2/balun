@@ -107,8 +107,8 @@ impl RevalidatedRoutedScan {
     /// the remaining reservation lease at `validated_at`.
     ///
     /// The original uncapped configuration is deliberately unavailable from
-    /// this capability, so a future runner cannot select the wrong budget. A
-    /// delayed runner must still shorten this value again or reject the
+    /// this capability, so the runner cannot select the wrong budget. A delayed
+    /// run must still shorten this value again or reject the
     /// expired absolute reservation before opening a socket.
     #[must_use]
     pub(crate) const fn scan_config(&self) -> RoutedScanConfig {
@@ -165,8 +165,8 @@ pub(crate) enum RoutedRevalidationError {
 /// Candidate selection and proposal construction are repeated with no explicit
 /// ranges and with exactly the configs retained by the permit. Stable plan
 /// equality ignores only the transient interface identifier. The output then
-/// uses the fresh identifier, so an old ifindex/LUID can never reach a future
-/// socket-pinning layer.
+/// uses the fresh identifier, so an old ifindex/LUID can never reach the
+/// subsequent Linux socket-pinning layer.
 pub(crate) fn revalidate_routed_scan(
     permit: RoutedScanPermit,
     snapshot: &RouteSnapshot,
