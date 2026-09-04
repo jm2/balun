@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-09-04
+
 ### Added
+
+- **Prerelease verification and checksums** — Add the immutable release verification check
+  (`scripts/release_check.py`) ensuring Semantic Version agreement across Cargo manifests, the
+  lockfile, AppStream metainfo, and changelog release links, and enforce exact release candidate
+  inventories and SHA-256 digests (`SHA256SUMS.txt`).
 
 - **Multi-site hardware matrix** — Document the secondary tuner and tunnel compatibility matrix in
   `docs/compatibility-v0.1.md`, covering the secondary-site HDHR3-PRIME (CableCARD/QAM, 3 tuners)
@@ -257,4 +264,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
   decoder, so those channels fail closed and cannot be transcoded.
 
-[Unreleased]: https://github.com/jm2/balun/commits/main
+[Unreleased]: https://github.com/jm2/balun/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jm2/balun/releases/tag/v0.1.0
