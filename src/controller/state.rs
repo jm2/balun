@@ -546,6 +546,26 @@ impl DiscoveryState {
     }
 }
 
+/// Ticket for one exact-address search admitted through a controller handle:
+/// the number of exact searches admitted so far, including this one. The
+/// controller processes commands in order and counts each exact search it
+/// processes, so a snapshot's [`ApplicationSnapshot::exact_searches`] reaches
+/// the ticket exactly while that search's states are published.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ExactSearchTicket(u64);
+
+impl ExactSearchTicket {
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
 /// Topology-free outcome of the latest network-change reconciliation.
 ///
 /// The sequence starts at zero and advances once per reconciliation, so a

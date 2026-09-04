@@ -8,7 +8,8 @@ use std::sync::Arc;
 use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryFailure,
-    DiscoveryKind, DiscoveryState, DiscoveryStatus, ExactTargetTracker, RediscoveryQueue,
+    DiscoveryKind, DiscoveryState, DiscoveryStatus, ExactSearchOutcome, ExactTargetTracker,
+    RediscoveryQueue,
 };
 use balun::discovery::{
     DiscoveryEntry, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget,
@@ -414,14 +415,7 @@ pub(crate) fn build(
     });
 
     connect_refresh(&device_sidebar, &handle);
-    connect_exact_discovery(
-        &window,
-        &device_sidebar,
-        &handle,
-        &accepted,
-        &exact_tracker,
-        &wiring,
-    );
+    connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
     connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
     let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
     connect_routed_discovery(&window, &device_sidebar, &routed_ui);
@@ -628,12 +622,10 @@ fn connect_exact_discovery(
     window: &adw::ApplicationWindow,
     sidebar: &device_sidebar::DeviceSidebar,
     controller: &ControllerHandle,
-    accepted: &Rc<RefCell<Arc<ApplicationSnapshot>>>,
     exact_tracker: &Rc<RefCell<ExactTargetTracker>>,
     wiring: &Rc<RediscoveryWiring>,
 ) {
     let controller = controller.clone();
-    let accepted = Rc::clone(accepted);
     let exact_tracker = Rc::clone(exact_tracker);
     let wiring = Rc::clone(wiring);
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
@@ -654,7 +646,6 @@ fn connect_exact_discovery(
             };
 
             let admitted_controller = controller.clone();
-            let admitted_accepted = Rc::clone(&accepted);
             let admitted_tracker = Rc::clone(&exact_tracker);
             let admitted_wiring = Rc::clone(&wiring);
             let admitted_cancel_button = cancel_discovery_button.clone();
@@ -681,18 +672,11 @@ fn connect_exact_discovery(
                     admitted_exact_button.set_sensitive(false);
                     admitted_refresh_button.set_sensitive(false);
                     admitted_routed_button.set_sensitive(false);
-                    match admitted_controller.try_send(ControllerCommand::DiscoverExact(target)) {
-                        Ok(()) => {
-                            // Remember the address only once a newer exact
-                            // operation reports a valid reply from it.
-                            {
-                                let accepted = admitted_accepted.borrow();
-                                admitted_tracker.borrow_mut().admit(
-                                    target,
-                                    accepted.discovery().generation(),
-                                    accepted.exact_searches(),
-                                );
-                            }
+                    match admitted_controller.try_discover_exact(target) {
+                        Ok(ticket) => {
+                            // Remember the address only once this search
+                            // reports a valid reply from it.
+                            admitted_tracker.borrow_mut().admit(target, ticket);
                             admitted_cancel_button.set_visible(true);
                             admitted_cancel_button.set_sensitive(true);
                             admitted_wiring
@@ -1088,6 +1072,9 @@ const fn resolution_failure_copy(error: HostnameResolutionError) -> &'static str
     }
 }
 
+const EXACT_SEARCH_REPLACED_COPY: &str =
+    "The exact-address device search was replaced before it completed.";
+
 const fn exact_settlement_failure_toast(discovery: DiscoveryState) -> Option<&'static str> {
     match (discovery.kind(), discovery.status()) {
         (DiscoveryKind::Exact, DiscoveryStatus::NoResponse) => {
@@ -1104,7 +1091,7 @@ const fn exact_settlement_failure_toast(discovery: DiscoveryState) -> Option<&'s
             Some("The exact-address device search was stopped.")
         }
         (DiscoveryKind::Exact, DiscoveryStatus::Ready | DiscoveryStatus::Refreshing) => None,
-        _ => Some("The exact-address device search was replaced before it completed."),
+        _ => Some(EXACT_SEARCH_REPLACED_COPY),
     }
 }
 
@@ -1158,17 +1145,22 @@ fn spawn_snapshot_reducer(
             let exact_searches = candidate.exact_searches();
             accepted.replace(candidate);
 
-            let (reachable, settled) = {
-                let mut tracker = rediscovery.exact_tracker.borrow_mut();
-                let was_pending = tracker.is_pending();
-                let reachable = tracker.observe(discovery, exact_searches);
-                (reachable, was_pending && !tracker.is_pending())
-            };
-            if let Some(target) = reachable {
-                rediscovery.remember(RememberedTarget::Address(target));
-                rediscovery.toast("HDHomeRun device found.");
-            } else if settled && let Some(copy) = exact_settlement_failure_toast(discovery) {
-                rediscovery.toast(copy);
+            let outcome = rediscovery
+                .exact_tracker
+                .borrow_mut()
+                .observe(discovery, exact_searches);
+            match outcome {
+                ExactSearchOutcome::Pending => {}
+                ExactSearchOutcome::Reachable(target) => {
+                    rediscovery.remember(RememberedTarget::Address(target));
+                    rediscovery.toast("HDHomeRun device found.");
+                }
+                ExactSearchOutcome::Settled => {
+                    if let Some(copy) = exact_settlement_failure_toast(discovery) {
+                        rediscovery.toast(copy);
+                    }
+                }
+                ExactSearchOutcome::Superseded => rediscovery.toast(EXACT_SEARCH_REPLACED_COPY),
             }
             advance_rediscovery(&rediscovery, discovery);
             react_to_routed(&routed_ui, &accepted.borrow());
@@ -2254,14 +2246,7 @@ mod tests {
                 });
 
                 connect_refresh(&device_sidebar, &handle);
-                connect_exact_discovery(
-                    &window,
-                    &device_sidebar,
-                    &handle,
-                    &accepted,
-                    &exact_tracker,
-                    &wiring,
-                );
+                connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
                 connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
                 let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
                 connect_routed_discovery(&window, &device_sidebar, &routed_ui);

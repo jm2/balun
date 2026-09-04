@@ -5,35 +5,43 @@
 //! these helpers to decide, from successive discovery states alone, when a
 //! target proved reachable and when the next remembered target may be sent.
 
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 
 use crate::discovery::ExactDiscoveryTarget;
 use crate::settings::MAX_REMEMBERED_TARGETS;
 
-use super::state::{DiscoveryKind, DiscoveryState, DiscoveryStatus, OperationGeneration};
+use super::state::{
+    DiscoveryKind, DiscoveryState, DiscoveryStatus, ExactSearchTicket, OperationGeneration,
+};
 
-/// Tracks one admitted exact target until its probe settles.
+/// Tracks one admitted exact target until its own search settles.
 ///
-/// A target is reported back only when a newer exact operation reaches
-/// `Ready`, which the controller publishes solely after a direct reply from
-/// that address. Any other settled outcome, including a superseding local
-/// refresh, discards the pending target without reporting it.
-///
-/// States are matched only once the snapshot's exact-search count has
-/// advanced past the count observed at admission: the controller processes
-/// network changes ahead of queued commands and republishes the current
-/// state, whatever its kind, in a new generation, so a state published before
-/// the admitted search was processed can never be its outcome.
+/// A target is reported back only when its search reaches `Ready`, which the
+/// controller publishes solely after a direct reply from that address. The
+/// search is identified by its [`ExactSearchTicket`]: states published before
+/// the controller processed it, including a network-change republish of an
+/// earlier result, are ignored, and a snapshot whose count has moved past the
+/// ticket means a later exact search superseded it.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ExactTargetTracker {
-    pending: Option<PendingExactTarget>,
+    pending: Option<(ExactDiscoveryTarget, ExactSearchTicket)>,
 }
 
+/// What one discovery state did to the pending exact target.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PendingExactTarget {
-    target: ExactDiscoveryTarget,
-    generation: OperationGeneration,
-    exact_searches: u64,
+pub enum ExactSearchOutcome {
+    /// Nothing is pending, the search has not been processed, or it is still
+    /// running.
+    Pending,
+    /// The pending target answered; remember it.
+    Reachable(ExactDiscoveryTarget),
+    /// The pending target's own search ended without a valid reply, or a
+    /// local or routed search took over its lane; the state says which.
+    Settled,
+    /// A later exact search was processed before this target's result was
+    /// observed.
+    Superseded,
 }
 
 impl ExactTargetTracker {
@@ -42,20 +50,10 @@ impl ExactTargetTracker {
         Self { pending: None }
     }
 
-    /// Record that `target` was admitted while the discovery lane showed
-    /// generation `observed` and `exact_searches` processed searches. A later
-    /// admission replaces an unsettled one.
-    pub fn admit(
-        &mut self,
-        target: ExactDiscoveryTarget,
-        observed: OperationGeneration,
-        exact_searches: u64,
-    ) {
-        self.pending = Some(PendingExactTarget {
-            target,
-            generation: observed,
-            exact_searches,
-        });
+    /// Record that `target` was admitted with `ticket`. A later admission
+    /// replaces an unsettled one.
+    pub fn admit(&mut self, target: ExactDiscoveryTarget, ticket: ExactSearchTicket) {
+        self.pending = Some((target, ticket));
     }
 
     /// Whether an admitted target is still waiting for its outcome.
@@ -64,29 +62,33 @@ impl ExactTargetTracker {
         self.pending.is_some()
     }
 
-    /// Feed the newest discovery state and the snapshot's exact-search
-    /// count; returns the target that proved reachable, if this state settled
-    /// it successfully.
+    /// Feed the newest discovery state and the snapshot's count of processed
+    /// exact searches.
     pub fn observe(
         &mut self,
         discovery: DiscoveryState,
         exact_searches: u64,
-    ) -> Option<ExactDiscoveryTarget> {
-        let pending = self.pending?;
-        if exact_searches <= pending.exact_searches || discovery.generation() <= pending.generation
-        {
-            return None;
-        }
-        match (discovery.kind(), discovery.status()) {
-            (_, DiscoveryStatus::Refreshing) => None,
-            (DiscoveryKind::Exact, DiscoveryStatus::Ready) => {
+    ) -> ExactSearchOutcome {
+        let Some((target, ticket)) = self.pending else {
+            return ExactSearchOutcome::Pending;
+        };
+        match exact_searches.cmp(&ticket.get()) {
+            Ordering::Less => ExactSearchOutcome::Pending,
+            Ordering::Greater => {
                 self.pending = None;
-                Some(pending.target)
+                ExactSearchOutcome::Superseded
             }
-            _ => {
-                self.pending = None;
-                None
-            }
+            Ordering::Equal => match (discovery.kind(), discovery.status()) {
+                (_, DiscoveryStatus::Refreshing) => ExactSearchOutcome::Pending,
+                (DiscoveryKind::Exact, DiscoveryStatus::Ready) => {
+                    self.pending = None;
+                    ExactSearchOutcome::Reachable(target)
+                }
+                _ => {
+                    self.pending = None;
+                    ExactSearchOutcome::Settled
+                }
+            },
         }
     }
 }
@@ -201,22 +203,27 @@ mod tests {
         OperationGeneration::new(value)
     }
 
+    fn ticket(value: u64) -> ExactSearchTicket {
+        ExactSearchTicket::new(value)
+    }
+
     #[test]
-    fn tracker_reports_a_target_only_after_a_newer_exact_ready_state() {
+    fn tracker_reports_a_target_only_when_its_own_search_is_ready() {
         let mut tracker = ExactTargetTracker::new();
-        tracker.admit(target(1), generation(3), 0);
+        tracker.admit(target(1), ticket(1));
         assert!(tracker.is_pending());
 
         assert_eq!(
-            tracker.observe(DiscoveryState::idle(generation(3)), 1),
-            None
+            tracker.observe(DiscoveryState::idle(generation(3)), 0),
+            ExactSearchOutcome::Pending,
+            "a state published before the search was processed is ignored"
         );
         assert_eq!(
             tracker.observe(
                 DiscoveryState::refreshing_for(generation(4), DiscoveryKind::Exact),
                 1
             ),
-            None
+            ExactSearchOutcome::Pending
         );
         assert!(
             tracker.is_pending(),
@@ -227,7 +234,7 @@ mod tests {
                 DiscoveryState::ready_for(generation(4), DiscoveryKind::Exact, 0),
                 1
             ),
-            Some(target(1))
+            ExactSearchOutcome::Reachable(target(1))
         );
         assert!(!tracker.is_pending());
         assert_eq!(
@@ -235,13 +242,13 @@ mod tests {
                 DiscoveryState::ready_for(generation(5), DiscoveryKind::Exact, 0),
                 2
             ),
-            None,
+            ExactSearchOutcome::Pending,
             "a reported target is not reported twice"
         );
     }
 
     #[test]
-    fn tracker_discards_the_target_on_every_other_settled_outcome() {
+    fn tracker_settles_on_every_other_outcome_of_its_own_search() {
         let outcomes = [
             DiscoveryState::exact_no_response(generation(2), 1),
             DiscoveryState::failed_for(
@@ -249,13 +256,22 @@ mod tests {
                 DiscoveryKind::Exact,
                 DiscoveryFailure::Internal,
             ),
+            DiscoveryState::failed_for(
+                generation(2),
+                DiscoveryKind::Exact,
+                DiscoveryFailure::ExactTargetLimitReached,
+            ),
             DiscoveryState::ready_for(generation(2), DiscoveryKind::Local, 0),
             DiscoveryState::idle_for(generation(2), DiscoveryKind::Exact),
         ];
         for outcome in outcomes {
             let mut tracker = ExactTargetTracker::new();
-            tracker.admit(target(1), generation(1), 0);
-            assert_eq!(tracker.observe(outcome, 1), None, "{outcome:?}");
+            tracker.admit(target(1), ticket(4));
+            assert_eq!(
+                tracker.observe(outcome, 4),
+                ExactSearchOutcome::Settled,
+                "{outcome:?}"
+            );
             assert!(!tracker.is_pending(), "{outcome:?}");
         }
     }
@@ -263,40 +279,48 @@ mod tests {
     #[test]
     fn tracker_ignores_states_published_before_its_search_was_processed() {
         let mut tracker = ExactTargetTracker::new();
-        tracker.admit(target(1), generation(3), 7);
+        tracker.admit(target(1), ticket(8));
 
-        // A network-change reconciliation outranks the queued search and
-        // republishes the current state, whatever it is, in a new generation.
-        for republished in [
-            DiscoveryState::ready_for(generation(4), DiscoveryKind::Local, 0),
+        // An earlier exact search's result still in the receiver, or a
+        // network-change republish of any current state, carries a lower
+        // count and cannot be this search's outcome.
+        for earlier in [
             DiscoveryState::ready_for(generation(4), DiscoveryKind::Exact, 0),
             DiscoveryState::exact_no_response(generation(4), 1),
-            DiscoveryState::idle_for(generation(4), DiscoveryKind::Exact),
+            DiscoveryState::ready_for(generation(5), DiscoveryKind::Local, 0),
+            DiscoveryState::idle_for(generation(5), DiscoveryKind::Exact),
         ] {
-            assert_eq!(tracker.observe(republished, 7), None, "{republished:?}");
-            assert!(tracker.is_pending(), "{republished:?}");
+            assert_eq!(
+                tracker.observe(earlier, 7),
+                ExactSearchOutcome::Pending,
+                "{earlier:?}"
+            );
+            assert!(tracker.is_pending(), "{earlier:?}");
         }
 
         // The search's own result settles it even when its start, its result,
         // and a later reconciliation were coalesced into one snapshot.
         assert_eq!(
             tracker.observe(
-                DiscoveryState::ready_for(generation(6), DiscoveryKind::Exact, 0),
+                DiscoveryState::ready_for(generation(7), DiscoveryKind::Exact, 0),
                 8
             ),
-            Some(target(1))
+            ExactSearchOutcome::Reachable(target(1))
         );
         assert!(!tracker.is_pending());
+    }
 
-        // A search that ran and was then superseded before its result was
-        // observed is still discarded without being reported.
-        tracker.admit(target(2), generation(6), 8);
+    #[test]
+    fn tracker_reports_a_later_exact_search_as_superseding() {
+        let mut tracker = ExactTargetTracker::new();
+        tracker.admit(target(1), ticket(2));
         assert_eq!(
             tracker.observe(
-                DiscoveryState::ready_for(generation(8), DiscoveryKind::Local, 0),
-                9
+                DiscoveryState::ready_for(generation(9), DiscoveryKind::Exact, 0),
+                3
             ),
-            None
+            ExactSearchOutcome::Superseded,
+            "a later search's reply is never attributed to the pending target"
         );
         assert!(!tracker.is_pending());
     }
@@ -304,15 +328,15 @@ mod tests {
     #[test]
     fn tracker_keeps_only_the_latest_admission() {
         let mut tracker = ExactTargetTracker::new();
-        tracker.admit(target(1), generation(1), 0);
-        tracker.admit(target(2), generation(2), 1);
+        tracker.admit(target(1), ticket(1));
+        tracker.admit(target(2), ticket(2));
 
         assert_eq!(
             tracker.observe(
                 DiscoveryState::ready_for(generation(3), DiscoveryKind::Exact, 0),
                 2
             ),
-            Some(target(2))
+            ExactSearchOutcome::Reachable(target(2))
         );
     }
 

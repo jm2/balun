@@ -5,7 +5,7 @@ use std::future::Future;
 use std::io;
 use std::net::IpAddr;
 use std::pin::Pin;
-use std::sync::{Arc, mpsc as std_mpsc};
+use std::sync::{Arc, Mutex, mpsc as std_mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,9 +23,9 @@ use super::routed::{
 };
 use super::{
     ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryKind,
-    DiscoveryState, DiscoveryStatus, LineupFailure, NetworkChangeSummary, OperationGeneration,
-    SelectedLineupState, SelectedLineupStatus, SnapshotRevision, StateError, StreamHandoff,
-    StreamHandoffError, StreamHandoffReceiver, StreamSelection,
+    DiscoveryState, DiscoveryStatus, ExactSearchTicket, LineupFailure, NetworkChangeSummary,
+    OperationGeneration, SelectedLineupState, SelectedLineupStatus, SnapshotRevision, StateError,
+    StreamHandoff, StreamHandoffError, StreamHandoffReceiver, StreamSelection,
 };
 use super::{
     RoutedApprovalToken, RoutedAvailability, RoutedDiscoveryState, RoutedProposalState,
@@ -321,6 +321,9 @@ pub struct ControllerHandle {
     commands: mpsc::Sender<ActorCommand>,
     shutdown: CancellationToken,
     snapshots: watch::Receiver<Arc<ApplicationSnapshot>>,
+    /// Exact searches admitted through every clone of this handle, in the
+    /// order the actor will process them; shared so tickets stay in step.
+    exact_searches: Arc<Mutex<u64>>,
 }
 
 /// Unique owner of the controller thread and its deterministic shutdown.
@@ -439,6 +442,7 @@ impl ControllerRuntime {
         match ready_receiver.recv() {
             Ok(Ok(())) => Ok(Self {
                 handle: ControllerHandle {
+                    exact_searches: Arc::new(Mutex::new(0)),
                     commands: command_sender,
                     shutdown,
                     snapshots: snapshot_receiver,
@@ -523,7 +527,28 @@ impl Drop for ControllerRuntime {
 impl ControllerHandle {
     /// Try to admit a command without waiting for queue capacity.
     pub fn try_send(&self, command: ControllerCommand) -> Result<(), ControllerCommandError> {
+        if let ControllerCommand::DiscoverExact(target) = command {
+            return self.try_discover_exact(target).map(|_| ());
+        }
         self.try_send_actor(ActorCommand::Controller(command))
+    }
+
+    /// Admit an exact-address search and return its ticket. Every exact
+    /// search is counted here, whichever clone sends it, so the ticket names
+    /// the snapshot count at which the actor publishes this search's states.
+    pub fn try_discover_exact(
+        &self,
+        target: ExactDiscoveryTarget,
+    ) -> Result<ExactSearchTicket, ControllerCommandError> {
+        let mut admitted = self
+            .exact_searches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.try_send_actor(ActorCommand::Controller(ControllerCommand::DiscoverExact(
+            target,
+        )))?;
+        *admitted = admitted.saturating_add(1);
+        Ok(ExactSearchTicket::new(*admitted))
     }
 
     /// Admit one private, one-shot stream request into the controller FIFO.
@@ -3564,6 +3589,7 @@ mod tests {
             watch::channel(Arc::new(ApplicationSnapshot::initial()));
         let shutdown = CancellationToken::new();
         let controller = ControllerHandle {
+            exact_searches: Arc::new(Mutex::new(0)),
             commands: sender,
             shutdown: shutdown.clone(),
             snapshots: snapshot_receiver,
