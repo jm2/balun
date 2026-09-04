@@ -159,23 +159,26 @@ pub fn emit_macos_install_key_if_requested() -> Result<bool, PlatformRuntimeErro
     if !parse_macos_install_key_request(env::args_os())? {
         return Ok(false);
     }
+    emit_macos_install_key().map(|()| true)
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        let exe =
-            env::current_exe().map_err(|_| PlatformRuntimeError::MacInstallKeyBundleLayout)?;
-        let install_key = macos_install_key_for_executable(&exe)?;
-        let response = render_install_key(install_key);
-        debug_assert_eq!(response.len(), 16);
-        let mut stdout = std::io::stdout().lock();
-        stdout
-            .write_all(response.as_bytes())
-            .and_then(|()| stdout.flush())
-            .map_err(|_| PlatformRuntimeError::MacInstallKeyOutput)?;
-        return Ok(true);
-    }
+/// Write the packaged application's install key for the launcher.
+#[cfg(target_os = "macos")]
+fn emit_macos_install_key() -> Result<(), PlatformRuntimeError> {
+    let exe = env::current_exe().map_err(|_| PlatformRuntimeError::MacInstallKeyBundleLayout)?;
+    let install_key = macos_install_key_for_executable(&exe)?;
+    let response = render_install_key(install_key);
+    debug_assert_eq!(response.len(), 16);
+    let mut stdout = std::io::stdout().lock();
+    stdout
+        .write_all(response.as_bytes())
+        .and_then(|()| stdout.flush())
+        .map_err(|_| PlatformRuntimeError::MacInstallKeyOutput)
+}
 
-    #[cfg(not(target_os = "macos"))]
+/// The hidden request is meaningful only inside the packaged macOS bundle.
+#[cfg(not(target_os = "macos"))]
+fn emit_macos_install_key() -> Result<(), PlatformRuntimeError> {
     Err(PlatformRuntimeError::MacInstallKeyUnsupported)
 }
 
