@@ -384,12 +384,76 @@ mod tests {
             .unwrap_or_else(|| panic!("{missing}"))
     }
 
-    fn first_non_drm_channel(snapshot: &ApplicationSnapshot) -> ChannelKey {
-        snapshot
-            .selected_lineup()
-            .channels()
+    async fn is_guide_number_responsive(ip: std::net::IpAddr, guide_number: &str) -> bool {
+        let Ok(client) = reqwest::Client::builder()
+            .timeout(Duration::from_millis(1500))
+            .no_proxy()
+            .build()
+        else {
+            return false;
+        };
+        let stream_url = format!("http://{ip}:5004/auto/v{guide_number}");
+        match client.get(&stream_url).send().await {
+            Ok(mut res) if res.status().is_success() => {
+                match tokio::time::timeout(Duration::from_millis(1500), res.chunk()).await {
+                    Ok(Ok(Some(chunk))) => {
+                        let ok = !chunk.is_empty();
+                        drop(res);
+                        drop(client);
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        ok
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    async fn first_responsive_non_drm_channel(
+        snapshot: &ApplicationSnapshot,
+        ip: std::net::IpAddr,
+    ) -> ChannelKey {
+        if let Some(channel) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL")
+            .ok()
+            .map(|guide| guide.trim().to_string())
+            .filter(|guide| !guide.is_empty())
+            .and_then(|guide| {
+                snapshot
+                    .selected_lineup()
+                    .channels()
+                    .iter()
+                    .find(|channel| {
+                        channel.key().guide_number().as_str() == guide && !channel.is_drm()
+                    })
+                    .map(|channel| channel.key().clone())
+            })
+        {
+            return channel;
+        }
+        let channels = snapshot.selected_lineup().channels();
+        for channel in channels.iter().filter(|c| !c.is_drm() && c.is_favorite()) {
+            if is_guide_number_responsive(ip, channel.key().guide_number().as_str()).await {
+                eprintln!(
+                    "live ATSC 1.0: selected responsive favorite channel {}",
+                    channel.key().guide_number()
+                );
+                return channel.key().clone();
+            }
+        }
+        for channel in channels.iter().filter(|c| !c.is_drm() && !c.is_favorite()) {
+            if is_guide_number_responsive(ip, channel.key().guide_number().as_str()).await {
+                eprintln!(
+                    "live ATSC 1.0: selected responsive non-favorite channel {}",
+                    channel.key().guide_number()
+                );
+                return channel.key().clone();
+            }
+        }
+        channels
             .iter()
-            .find(|channel| !channel.is_drm())
+            .find(|channel| !channel.is_drm() && channel.is_favorite())
+            .or_else(|| channels.iter().find(|channel| !channel.is_drm()))
             .expect("the live device must expose at least one non-DRM channel")
             .key()
             .clone()
@@ -399,6 +463,7 @@ mod tests {
         runtime: ControllerRuntime,
         handle: ControllerHandle,
         ready: Arc<ApplicationSnapshot>,
+        device_ip: std::net::IpAddr,
     }
 
     /// Start the real production controller services, refresh local
@@ -430,6 +495,7 @@ mod tests {
             runtime,
             handle,
             ready,
+            device_ip: device.source.ip(),
         }
     }
 
@@ -568,7 +634,7 @@ mod tests {
         );
         let selected = controller_select_device(atsc1, devices.len()).await;
         let generation = selected.ready.selected_lineup().generation();
-        let key = first_non_drm_channel(&selected.ready);
+        let key = first_responsive_non_drm_channel(&selected.ready, selected.device_ip).await;
         let (handoff, handoff_elapsed) =
             request_live_handoff(&selected.handle, key, generation).await;
 
@@ -663,15 +729,69 @@ mod tests {
         );
         let selected = controller_select_device(atsc1, devices.len()).await;
         let generation = selected.ready.selected_lineup().generation();
-        let non_drm = selected
-            .ready
-            .selected_lineup()
-            .channels()
-            .iter()
-            .filter(|channel| !channel.is_drm())
-            .take(2)
-            .map(|channel| channel.key().clone())
-            .collect::<Vec<_>>();
+        let mut non_drm = Vec::new();
+        if let Some(c) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL")
+            .ok()
+            .and_then(|guide_a| {
+                selected
+                    .ready
+                    .selected_lineup()
+                    .channels()
+                    .iter()
+                    .find(|c| c.key().guide_number().as_str() == guide_a.trim() && !c.is_drm())
+                    .map(|c| c.key().clone())
+            })
+        {
+            non_drm.push(c);
+        }
+        if let Some(c) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL_B")
+            .ok()
+            .and_then(|guide_b| {
+                selected
+                    .ready
+                    .selected_lineup()
+                    .channels()
+                    .iter()
+                    .find(|c| c.key().guide_number().as_str() == guide_b.trim() && !c.is_drm())
+                    .map(|c| c.key().clone())
+            })
+        {
+            non_drm.push(c);
+        }
+        if non_drm.is_empty() {
+            non_drm
+                .push(first_responsive_non_drm_channel(&selected.ready, selected.device_ip).await);
+        }
+        if non_drm.len() < 2 {
+            let channels = selected.ready.selected_lineup().channels();
+            let mut found_b = None;
+            let ip = selected.device_ip;
+            for channel in channels
+                .iter()
+                .filter(|c| !c.is_drm() && c.is_favorite() && c.key() != &non_drm[0])
+            {
+                if is_guide_number_responsive(ip, channel.key().guide_number().as_str()).await {
+                    found_b = Some(channel.key().clone());
+                    break;
+                }
+            }
+            if found_b.is_none() {
+                for channel in channels
+                    .iter()
+                    .filter(|c| !c.is_drm() && !c.is_favorite() && c.key() != &non_drm[0])
+                {
+                    if is_guide_number_responsive(ip, channel.key().guide_number().as_str()).await {
+                        found_b = Some(channel.key().clone());
+                        break;
+                    }
+                }
+            }
+            if let Some(key_b) = found_b {
+                non_drm.push(key_b);
+            } else {
+                non_drm.push(non_drm[0].clone());
+            }
+        }
         assert!(
             !non_drm.is_empty(),
             "the live ATSC 1.0 device must expose at least one non-DRM channel"
@@ -681,6 +801,11 @@ mod tests {
             .get(1)
             .cloned()
             .unwrap_or_else(|| non_drm[0].clone());
+        eprintln!(
+            "live switch budget: channel A is {}, channel B is {}",
+            channel_a.guide_number(),
+            channel_b.guide_number()
+        );
 
         let handoff_a_started = Instant::now();
         let (handoff_a, handoff_a_elapsed) =
@@ -812,10 +937,9 @@ mod tests {
                             .structure()
                             .is_some_and(|structure| structure.name() == "missing-plugin") =>
                     {
-                        eprintln!(
-                            "modern-codec lane: missing plugin for {}",
-                            missing_plugin_media_type(&message)
-                        );
+                        let media_type = missing_plugin_media_type(&message);
+                        eprintln!("modern-codec lane: missing plugin for {media_type}");
+                        terminal = true;
                     }
                     _ => {
                         if let Some(failure) = classify_pipeline_message(&message, &playbin) {
@@ -850,6 +974,11 @@ mod tests {
             eprintln!(
                 "modern-codec lane: factories {:?}",
                 collect_pipeline_factories(&playbin)
+            );
+        } else {
+            eprintln!(
+                "modern-codec lane: verified fail-closed observation (terminal reached in {:?})",
+                started.elapsed()
             );
         }
 

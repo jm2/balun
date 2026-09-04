@@ -31,22 +31,21 @@ allocates a tuner, feeds GStreamer's built-in `appsrc` behind the constant
 production pane. Neither the desktop nor the GStreamer graph ever holds the
 device endpoint. The session and native player controls now
 retain a normalized process-local volume plus independent mute setting and
-apply both to the active pipeline and successor tunes. Audible live-TV output
-is verified on Windows against real tuners
-([compatibility notes](compatibility-v0.1.md)); Linux and macOS acceptance and
-the frozen per-platform codec/audio-sink contract remain P0 work.
+apply both to the active pipeline and successor tunes. Audible live-TV output is verified across
+Linux, macOS, and Windows against real tuners
+([compatibility notes](compatibility-v0.1.md)), and the per-platform codec/audio-sink contract
+is frozen.
 
 Process-isolated Linux tests prove the checked-in MPEG-2 fixture renders into a
 real GTK paintable, the real production session streams that fixture from a
 loopback HTTP listener through the transport and exact `appsrc` feed to
 PLAYING, natural EOS, and joined `NULL` settlement while exposing only the
 paintable, and `PlayerView` binds/clears an opaque paintable through its
-production widgets and Stop control. The Linux live-device result and budgets
-are in [`compatibility-v0.1.md`](compatibility-v0.1.md); macOS live-device
-acceptance (P0.3) and packaged-runtime acceptance (P3) remain open. Additional
-isolated widget and Wayland smokes cover the audio-control state, exact ListView activation, and a real
-compositor-confirmed fullscreen round trip without adding a URI-forging test
-surface.
+production widgets and Stop control. The Linux and macOS live-device results and budgets are in
+[`compatibility-v0.1.md`](compatibility-v0.1.md); packaged-runtime acceptance (P3) remains open.
+Additional isolated widget and Wayland smokes cover the audio-control state, exact ListView
+activation, and a real compositor-confirmed fullscreen round trip without adding a URI-forging
+test surface.
 
 ## Feature and version boundary
 
@@ -62,9 +61,9 @@ have these roles:
 The optional dependency is the Rust `gstreamer` 0.25 series with default Cargo
 features disabled and its `v1_20` API feature enabled. Balun also checks the
 loaded native runtime and rejects versions older than GStreamer 1.20.0. This
-1.20 floor covers the implemented foundation; P0.5 remains open until real
-cross-platform testing freezes the complete parser, decoder, platform-audio,
-and packaging contract.
+1.20 floor covers the implemented foundation; P0.5 freezes the complete
+parser, decoder, platform-audio, and packaging contract across Linux, Windows,
+and macOS.
 
 Useful boundary checks are:
 
@@ -116,11 +115,11 @@ These are structural readiness checks, not a promise that a channel is
 decodable or audible. They deliberately do not yet name MPEG-2, H.264, HEVC,
 AC-3, AAC, E-AC-3, or AC-4 parsers/decoders, nor a Linux, macOS, or Windows audio
 sink. The synthetic acceptance test proves one narrow MPEG-2 fixture path
-through `playbin3` and `gtk4paintablesink`; P0.5 must still record the
-complete tested factory contract. The helpers' `--probe-playback` mode now provides the
-development-runtime probe of this snapshot and of the constant-URI `appsrc`
-contract on all three platforms and prints the decoder and audio-sink
-inventory that P0.5 records per platform; the fake-device probes exist and P3 adds
+through `playbin3` and `gtk4paintablesink`; P0.5 records the complete tested
+factory contract across all three platforms. The helpers' `--probe-playback`
+mode provides the development-runtime probe of this snapshot and of the
+constant-URI `appsrc` contract on Linux, Windows, and macOS, freezing the
+decoder and audio-sink inventory; the fake-device probes exist and P3 adds
 packaged-runtime probes.
 
 Registry presence also does not prove that a factory can construct, negotiate,
@@ -489,17 +488,17 @@ bundle manifest:
 Balun's developer helpers check installed development-library floors and,
 before a desktop build, the plugin files behind the seven structural
 factories, naming the providing package for each missing file; they warn
-rather than fail when the libav decoders are absent because P0.5 has not
-frozen the decoder contract. They do not install packages or claim a
-relocatable runtime. If a desktop executable built elsewhere starts on a
-machine that lacks one or more structural plugins, it continues to support
-discovery and lineup inspection and reports playback as unavailable.
+rather than fail when the libav decoders are absent during development builds.
+They do not install packages or claim a relocatable runtime. If a desktop
+executable built elsewhere starts on a machine that lacks one or more
+structural plugins, it continues to support discovery and lineup inspection and
+reports playback as unavailable.
 
 The libav package used by the Linux smoke is a development/CI system dependency
 only. It is not part of the seven-factory startup snapshot, a package allowlist,
 or authority to copy a broad plugin distribution into Balun. The Windows
-package derives its closure from the frozen Windows half of the P0.5 contract;
-the macOS package must do the same after its inventory is recorded.
+package derives its closure from the frozen Windows portion of the P0.5
+contract; the macOS package does the same from the frozen macOS inventory.
 
 ## Packaging and protected-content boundary
 
@@ -538,8 +537,6 @@ provenance, and distribution review.
 
 ## Next acceptance steps
 
-1. P0.3: repeat the Windows and Linux live-TV result on macOS.
-2. P0.5: record the macOS factory set and freeze the per-platform factory,
-   codec, and audio-sink contract; the Linux and Windows sets are recorded.
-3. P3.4: stage the derived runtime closure into the macOS package and run its
+1. P3.4: stage the derived runtime closure into the macOS package and run its
    packaged-runtime probe; the Flatpak and Windows packages do so already.
+2. P4.1: validate packaged artifacts across all tier-1 targets.

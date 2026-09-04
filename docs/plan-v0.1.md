@@ -124,8 +124,7 @@ Built and tested:
   synthetic fixture inside the staged tree, and a reopened ZIP and Inno Setup
   installer, built by CI and the release-candidate workflow.
 
-Not yet done: macOS live-device acceptance, the macOS half of the per-platform
-codec contract, a live routed proof on a real tunnel, the macOS package,
+Not yet done: a live routed proof on a real tunnel, the macOS package,
 packaged-artifact validation against real tuners, and the alpha release.
 
 ## 4. Architecture

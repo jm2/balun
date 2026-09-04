@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **macOS live-TV acceptance** — Exercise the live-hardware acceptance suite on macOS against
+  physical HDHomeRun tuners, completing P0.3. Unprotected ATSC 1.0 channels play with progressive
+  video and decoded audio rendered through `osxaudiosink`, channel switches settle within 780 ms,
+  and client-side tuner release finishes in under 18 ms.
+- **macOS codec and audio sink contract** — Record the macOS decoder and sink inventory from
+  `scripts/build-macos.sh --probe-playback`, completing P0.5. VideoToolbox decoders outrank software
+  libav decoders for H.264 and HEVC video; libav decodes MPEG-2 video; AudioToolbox, libav, and
+  mpg123 provide MPEG-1/2, AAC, and AC-3 audio; `osxaudiosink` is the verified platform audio sink;
+  and AC-4 audio fails closed as on other platforms.
 - **HDHomeRun discovery** — Discover tuners on every attached interface with IPv4 broadcast and
   IPv6 multicast, probe one exact address for a tuner behind WireGuard or another routed link, or
   enumerate one explicitly approved private range no wider than `/24` from the diagnostic.
@@ -226,8 +235,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limitations
 
-- **macOS live-device acceptance pending** — Live TV with audio is verified on Windows and Linux
-  development builds against real tuners; macOS has not yet been exercised against real hardware.
 - **No live-tuner acceptance of a package yet** — The Windows package proves that its staged
   runtime decodes the synthetic fixture and launches; tuning real channels from a package is
   P4.1, and the packaged app shares GStreamer's default per-user registry cache.
