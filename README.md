@@ -14,11 +14,9 @@ merged across devices, no stream URL ever reaches the user interface, and the me
 receives neither a device address nor a stream URL. Playback errors may name the device and its
 address so you know which tuner failed.
 
-> **v0.1 release candidate.** Balun plays live TV on Linux, macOS, and Windows and has been
-> verified against real tuners. Release automation is configured for the complete 12-binary
-> `0.1.0` inventory; the final tagged build, checksum review, and publication remain. Check
-> [Releases](https://github.com/jm2/balun/releases) for availability, and build from source until
-> `v0.1.0` appears there. The countable status is in [`docs/task.md`](docs/task.md).
+> **v0.1.0.** Balun plays live TV on Linux, macOS, and Windows and has been verified against real
+> tuners. Pre-built packages are on the [Releases](https://github.com/jm2/balun/releases) page;
+> the countable status is in [`docs/task.md`](docs/task.md).
 
 ## Features
 
@@ -45,14 +43,13 @@ address so you know which tuner failed.
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | 🚧 12-binary release inventory configured; final tagged build and publication pending |
+| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Direct downloads from the Releases page; no COPR, AUR, or winget yet |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
-The Linux qualifier applies only to the opt-in route-table-derived proposal and route-change
-monitor. Those native route integrations are currently implemented only on Linux. Ordinary local
-broadcast and multicast discovery, exact IP or hostname discovery, and remembered targets work on
-Linux, macOS, and Windows.
+The Linux qualifier covers only the opt-in route-table-derived proposal and the route-change
+monitor. Local broadcast and multicast discovery, exact IP or hostname discovery, and remembered
+targets work on Linux, macOS, and Windows.
 
 The product plan is [`docs/plan-v0.1.md`](docs/plan-v0.1.md), the countable ledger is
 [`docs/task.md`](docs/task.md), sanitized hardware observations are in
@@ -92,14 +89,10 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 
 ## Installation
 
-Balun `0.1.0` is being prepared for its first binary release. The release workflow is configured
-to build the assets below from the final tag and verify their exact inventory and checksums.
-Pre-built packages become official only when the draft is published on the
-[Releases](https://github.com/jm2/balun/releases) page. If a `v0.1.0` release is not visible there,
-build from source below. Balun does not yet publish through COPR, the AUR, or winget; the first
-release uses direct downloads.
-
-Download `SHA256SUMS.txt` with the package and verify its SHA-256 entry before installing it.
+Pre-built packages for Linux (Flatpak, `.deb`, `.rpm`, Arch), macOS (`.dmg`), and Windows
+(`.exe` installer, `.zip`) are on the [Releases](https://github.com/jm2/balun/releases) page. Balun
+does not yet publish through COPR, the AUR, or winget. Download `SHA256SUMS.txt` with the package
+and verify its SHA-256 entry before installing.
 
 ### Linux
 
