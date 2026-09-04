@@ -359,13 +359,13 @@ Still open:
 ## Follow-ups
 
 - Add jitter to the routed pacing or amend plan §5 and ADR-0001 (P2).
-- Refuse loopback in `DiscoveryClient` `invalid_target`.
-- Wrap `DeviceHttpError::Transport` in a URL-stripping newtype and render serde
-  positions only.
 - Approval store: document the key threat model and add an unsupported-version
-  quarantine reason when P2.2 wires it.
-- Pin the flatpak-builder action and its `gnome-50` image; review the
-  publication job with #18 (P3.5).
-- Repeat this review when P2.2 connects the routed sender and when the macOS
-  package lands (P3.4); the Windows package (P3.3) was re-audited above.
-  Re-audit new log sites against the `Debug` list.
+  quarantine reason.
+- The CI Flatpak job's `gnome-50` builder image is still a moving tag; pin it
+  by digest when the next runtime bump lands.
+- Re-audit new log sites against the `Debug` list at the next review.
+
+Closed by the 2026-09-04 delta check: loopback refusal in `DiscoveryClient`,
+the URL-stripped `DeviceHttpError::Transport`, the pinned flatpak-builder
+action (#59), and the repeat review owed once the routed sender (P2) and the
+macOS package (P3.4) landed.

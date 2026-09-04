@@ -14,9 +14,11 @@ merged across devices, no stream URL ever reaches the user interface, and the me
 receives neither a device address nor a stream URL. Playback errors may name the device and its
 address so you know which tuner failed.
 
-> **v0.1.0.** Balun plays live TV on Linux, macOS, and Windows and has been verified against real
-> tuners. Pre-built packages are on the [Releases](https://github.com/jm2/balun/releases) page;
-> the countable status is in [`docs/task.md`](docs/task.md).
+> **v0.1.0 release candidate.** Balun plays live TV on Linux, macOS, and Windows and has been
+> verified against real tuners. The release workflow builds the twelve packages below from the
+> `v0.1.0` tag; until that release is visible on the
+> [Releases](https://github.com/jm2/balun/releases) page, build from source. The countable status
+> is in [`docs/task.md`](docs/task.md).
 
 ## Features
 
@@ -43,7 +45,7 @@ address so you know which tuner failed.
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Direct downloads from the Releases page; no COPR, AUR, or winget yet |
+| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | 🚧 Built by the release workflow; published with `v0.1.0` as direct downloads, no COPR, AUR, or winget yet |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
@@ -90,9 +92,10 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 ## Installation
 
 Pre-built packages for Linux (Flatpak, `.deb`, `.rpm`, Arch), macOS (`.dmg`), and Windows
-(`.exe` installer, `.zip`) are on the [Releases](https://github.com/jm2/balun/releases) page. Balun
-does not yet publish through COPR, the AUR, or winget. Download `SHA256SUMS.txt` with the package
-and verify its SHA-256 entry before installing.
+(`.exe` installer, `.zip`) are published on the [Releases](https://github.com/jm2/balun/releases)
+page with each release; `v0.1.0` is the first. If it is not visible there yet, build from source
+below. Balun does not yet publish through COPR, the AUR, or winget. Download `SHA256SUMS.txt` with
+the package and verify its SHA-256 entry before installing.
 
 ### Linux
 
