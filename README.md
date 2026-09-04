@@ -460,7 +460,8 @@ python3 scripts/release_check.py --tag v0.1.0
 
 Push a signed, annotated `v` tag and run the **Release candidate** workflow with it. The workflow
 repeats the check, builds every artifact from that one commit, verifies the exact inventory, and
-creates a draft GitHub release with `SHA256SUMS.txt`; publishing it is a manual step.
+creates a draft GitHub release with `SHA256SUMS.txt` and the changelog section as its notes. It
+refuses to touch a release that is already published; publishing the draft is a manual step.
 
 ### Release component policy
 
