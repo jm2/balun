@@ -111,10 +111,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MPEG-2 fixture decoded through the production stream transport), reopens the ZIP against the
   staged tree, and `-InnoSetup` compiles `balun-setup.exe` from a new Inno Setup recipe with a
   deterministic application GUID. The release component policy is applied at every copy, during
-  import traversal, over the completed tree, and inside the reopened archive. Strict x86_64
-  CLANG64 and ARM64 CLANGARM64 profiles bind the Rust target, MSYS2 prefix, every PE machine type,
-  the probe receipt, and the Inno Setup architecture as one tuple. CI builds and reopens both ZIPs;
-  the release-candidate workflow adds both ZIPs and both installers to the exact inventory.
+  import traversal, over the completed tree, and inside the reopened archive.
+- **Windows ARM64 packages** — Add a strict CLANGARM64 profile beside x86_64 CLANG64, binding the
+  Rust target, MSYS2 prefix, every PE machine type, probe receipt, and Inno Setup architecture as
+  one tuple. CI builds and reopens both ZIPs; the release-candidate workflow adds both ZIPs and both
+  installers to the exact inventory.
 - **Release automation** — The release-candidate workflow now checks that the tag agrees with
   `Cargo.toml`, `Cargo.lock`, the Arch recipe, the changelog section and compare link, and the
   AppStream release (`scripts/release_check.py`). It requires exactly 12 binary artifacts—two
@@ -181,10 +182,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   socket that re-checks authority and its pin before every datagram, and settles completion
   durably on every exit path. The controller offers it as a lane of its own (propose, approve,
   run, revoke) with topology-free snapshot state and copy for every decision.
-- **Routed tunnel discovery (Linux)** — A tunnel-search button in the device sidebar runs the
-  approved routed scan. The first search shows the exact routes, address count, and packet budget
-  and asks for approval once per route set; approval is remembered on disk, cooldown and busy
-  decisions are shown in place, Stop cancels the scan, and **Forget routed approvals** revokes
+- **Route-table-derived tunnel discovery (Linux)** — A tunnel-search button in the device sidebar
+  runs the approved routed scan. The first search shows the exact routes, address count, and packet
+  budget and asks for approval once per route set; approval is remembered on disk, cooldown and
+  busy decisions are shown in place, Stop cancels the scan, and **Forget routed approvals** revokes
   them.
 - **Live-hardware proofs** — Opt-in, display-free tests that discover the real tuners, tune an
   unprotected ATSC 1.0 channel with decoded video and audio, switch channels, observe the ATSC 3.0
@@ -230,6 +231,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Smooth audio from the first second** — The pipeline now waits for the first stream bytes
   before it starts the live clock, so a slow tuner lock no longer leaves every audio buffer late
   and stuttering until the next channel change.
+- **Visible exact-address discovery** — A manually entered IP address now shows an immediate search
+  notice and a terminal notice for a valid reply, no reply, failure, stop, replacement, session
+  limit, or a busy controller.
+- **Actionable routed-discovery failures** — Routed failures now publish and log the topology-safe
+  availability reason, and refresh it after every routed control or discovery outcome so recovery
+  clears a stale unavailable state.
+- **Windows developer-run logging** — `.\scripts\build-windows.ps1 -Run` now uses a console-attached
+  release-profile developer build so default `info` tracing remains visible in PowerShell. The
+  distributed ZIP and installer remain GUI-subsystem applications.
+- **macOS launcher runtime dependency** — The signed `Balun-bin` now derives its own canonical
+  install-key hash for the launcher, removing `/usr/bin/perl` from ordinary packaged app launches.
+  Perl remains a build/check-only package-policy validation tool.
 
 ### Security
 
@@ -246,7 +259,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caps devices, locators, and origins and refuses conflicting DeviceID ownership.
 - **Bounded routed discovery** — Range enumeration requires an explicit RFC 1918 range no wider
   than `/24`, caps candidates, rate, and concurrency, and keeps point-to-point interfaces out of
-  ordinary local discovery. Automatic route-derived authority fails closed on ambiguous topology,
+  ordinary local discovery. Route-table-derived authority fails closed on ambiguous topology,
   changed policy, clock rollback, or uncertain durability; the Linux production runner rechecks
   that authority and its pinned interface before every datagram.
 - **Playback component boundary** — The required GStreamer factories are a startup capability
@@ -276,6 +289,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Binary publication is manual** — The complete package inventory can remain a draft after every
   build, payload, runtime, checksum, and inventory gate passes. It is official only when the
   `v0.1.0` release is visible on GitHub Releases.
+- **Packaged live-tuner acceptance remains open** — Package and synthetic-runtime gates cover the
+  configured candidates, but the recorded Linux and Windows physical-tuner trials used development
+  builds and no complete cross-platform packaged result has been recorded for P4.1.
 - **Architecture evidence differs** — ARM64 Linux and Windows candidates run native CI build and
   package gates, but the recorded physical-tuner trials are platform-level evidence and do not
   separately cover every CPU architecture and package format.

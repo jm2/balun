@@ -65,7 +65,7 @@ hostile-bundle resource budgets remain future hardening.
 | --- | --- |
 | `build-linux.sh` | Adapted to a no-option locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, GTK/libadwaita/GStreamer floor checks, an exact native target, repository-local Cargo output, and ELF inspection. `--deb`, `--rpm`, and `--arch-pkg` require pinned preinstalled packagers, reuse the reviewed build or recipe, validate the locally produced package, and never install dependencies; Flatpak remains workflow-owned. |
 | `build-macos.sh` | Adapted to a no-option native locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, dependency and plugin gates, exact target binding, and pinned Mach-O inspection. `--app` assembles and ad-hoc signs the reviewed transitive dylib and 21-plugin closure, then runs a relocated isolated runtime probe; `--dmg` creates and reopens the drag-to-Applications image. Notarization remains unavailable. |
-| `build-windows.ps1` | Adapted to Tributary's desktop-default semantics with strict x86_64 CLANG64 and ARM64 CLANGARM64 profiles. The selected Rust target binds the MSYS2 environment, package prefix, PE machine type, probe receipt, and Inno architecture. `-Run`, `-Diagnostic`, and `-InspectLocal` keep their narrow routes; `-Bundle`, `-Zip`, and `-InnoSetup` (with `-SkipBundle` and `-NoCargoBuild`) stage, probe, and reopen the matching package. `-Package` and `-Installer` remain invalid; `-CargoUpdate` stays unavailable. |
+| `build-windows.ps1` | Adapted to Tributary's desktop-default semantics with strict x86_64 CLANG64 and ARM64 CLANGARM64 profiles. The selected Rust target binds the MSYS2 environment, package prefix, PE machine type, probe receipt, and Inno architecture. `-Run` alone adds the console-attached developer feature to a release-profile build; package modes omit it and remain GUI-subsystem applications. `-Diagnostic` and `-InspectLocal` keep their narrow routes; `-Bundle`, `-Zip`, and `-InnoSetup` (with `-SkipBundle` and `-NoCargoBuild`) stage, probe, and reopen the matching package. `-Package` and `-Installer` remain invalid; `-CargoUpdate` stays unavailable. |
 | `macos-icon-bundle-policy.sh` | Adapted bundle icon gate with Balun identity and private temporary names |
 | `macos-package-policy.sh` | Adapted bounded Mach-O, completed-tree, signing, and reopened-DMG gate; broad copy-any-allowed-plugin staging API removed |
 | `sync_rust_toolchain.py` | Ported against Balun's MSRV declarations and wired into CI and the release-candidate workflow |
@@ -132,6 +132,11 @@ isolated relocated probe, and reopen the DMG. Windows owns the compiler,
 and installer gates described below. The release-candidate workflow selects
 diagnostic routes explicitly and admits only the exact public package
 inventory.
+
+The packaged macOS launcher asks the signed `Balun-bin` to derive its canonical
+install-key hash, so an ordinary app launch does not execute Perl. Perl remains
+a build/check-only tool for bounded package-policy validation, including the
+Arch recipe's `checkdepends`; it is not an installed runtime dependency.
 
 The Fedora desktop CI image installs `gstreamer1-plugin-libav` solely to decode
 the pinned synthetic MPEG-2 test fixture. That host development dependency is

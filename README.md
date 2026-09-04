@@ -15,8 +15,8 @@ receives neither a device address nor a stream URL. Playback errors may name the
 address so you know which tuner failed.
 
 > **v0.1 release candidate.** Balun plays live TV on Linux, macOS, and Windows and has been
-> verified against real tuners. The complete `0.1.0` binary inventory is in final candidate
-> validation; publishing the draft release remains a manual step. Check
+> verified against real tuners. Release automation is configured for the complete 12-binary
+> `0.1.0` inventory; the final tagged build, checksum review, and publication remain. Check
 > [Releases](https://github.com/jm2/balun/releases) for availability, and build from source until
 > `v0.1.0` appears there. The countable status is in [`docs/task.md`](docs/task.md).
 
@@ -39,17 +39,18 @@ address so you know which tuner failed.
 | Fixed, endpoint-free playback error messages | ✅ |
 | Windows local discovery | ✅ |
 | Network-change handling (Linux) | ✅ Stale addresses expire and routed scans stop when adapters or routes change; nothing rescans on its own |
-| Automatic route-derived tunnel scanning (Linux) | ✅ Approve each route set once; verified across an owned routed WireGuard tunnel |
+| Opt-in route-table-derived tunnel search (Linux) | ✅ Approve each route set once; verified across an owned routed WireGuard tunnel |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | 🚧 Complete `0.1.0` candidate inventory; draft publication pending |
+| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | 🚧 12-binary release inventory configured; final tagged build and publication pending |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
-The Linux qualifier applies only to automatic route-table-derived subnet scanning. Ordinary local
+The Linux qualifier applies only to the opt-in route-table-derived proposal and route-change
+monitor. Those native route integrations are currently implemented only on Linux. Ordinary local
 broadcast and multicast discovery, exact IP or hostname discovery, and remembered targets work on
 Linux, macOS, and Windows.
 
@@ -91,10 +92,12 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 
 ## Installation
 
-Balun `0.1.0` is in final release-candidate validation. Pre-built packages become official only
-when the draft is published on the [Releases](https://github.com/jm2/balun/releases) page. If a
-`v0.1.0` release is not visible there, build from source below. Balun does not yet publish through
-COPR, the AUR, or winget; the first release uses direct downloads.
+Balun `0.1.0` is being prepared for its first binary release. The release workflow is configured
+to build the assets below from the final tag and verify their exact inventory and checksums.
+Pre-built packages become official only when the draft is published on the
+[Releases](https://github.com/jm2/balun/releases) page. If a `v0.1.0` release is not visible there,
+build from source below. Balun does not yet publish through COPR, the AUR, or winget; the first
+release uses direct downloads.
 
 Download `SHA256SUMS.txt` with the package and verify its SHA-256 entry before installing it.
 
@@ -186,7 +189,7 @@ sudo dnf install gtk4-devel libadwaita-devel gstreamer1-devel \
 
 ```bash
 sudo pacman -S gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-good \
-  gst-plugins-bad gst-plugin-gtk4 gst-libav pkgconf base-devel
+  gst-plugins-bad-libs gst-plugin-gtk4 gst-libav pkgconf base-devel
 ```
 
 Then build:
@@ -294,8 +297,9 @@ GST_DEBUG=2 RUST_LOG=balun=debug cargo run --locked --features desktop --bin bal
 
 Balun logs discovery, lineup, tune, and playback outcomes to standard error at `info` by default;
 `RUST_LOG` selects the level, as in Tributary. A playback failure logs the native GStreamer error
-behind its fixed category. Release builds on Windows detach from the console, so use a debug
-build there to read the log.
+behind its fixed category. On Windows, `.\scripts\build-windows.ps1 -Run` uses a console-attached
+release-profile developer build, so those logs remain visible in the invoking PowerShell session.
+The distributed ZIP and installer remain GUI-subsystem applications and do not attach a console.
 
 ### Discovery diagnostic
 
@@ -583,8 +587,8 @@ blocks the replies, use **Find device by address** with the tuner's IPv4 address
 On Linux, **Search routes behind your tunnel** can derive a bounded private-address proposal from
 an active tunnel route. Balun shows the address count and packet budget before the first run and
 searches only after approval; **Forget routed approvals** revokes the remembered route-set
-approval. This automatic route-table integration is the Linux-only feature. It is separate from
-the cross-platform exact address and hostname path above.
+approval. This opt-in route-table provider and change monitor are the Linux-only feature. They are
+separate from the cross-platform exact address and hostname path above.
 
 ### Watching a channel
 

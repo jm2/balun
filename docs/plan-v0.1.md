@@ -23,15 +23,15 @@ reliably. It is not a DVR, a tuner administration tool, or a guide service.
 The end goal for v0.1.0: a user on Linux, macOS, or Windows installs a
 package, sees local tuners and any remembered remote tuner, picks a device and a
 channel, watches it with sound, switches channels, and quits without leaving a
-tuner allocated. On Linux, an explicitly approved routed scan can also find
-tuners across a tunnel.
+tuner allocated. On Linux, an explicitly approved route-table-derived scan can
+also find tuners across a tunnel.
 
 Primary goals:
 
 - Discover HDHomeRun tuners on ordinary local networks with a fixed packet
   budget and no traffic while idle.
 - Reach tuners across routed networks such as WireGuard by exact address or
-  hostname, and on Linux by a bounded, user-approved routed scan.
+  hostname, and on Linux by a bounded, user-approved route-table-derived scan.
 - Keep every device's lineup visibly and structurally separate.
 - Start, switch, and stop live TV predictably without leaking tuner
   allocations.
@@ -50,8 +50,8 @@ Included:
 - IPv4 broadcast and non-link-local IPv6 multicast tuner discovery.
 - Exact IP address entry, hostname entry, and remembered targets rediscovered
   at startup.
-- Bounded, user-approved routed discovery on Linux; exact and hostname targets
-  on macOS and Windows.
+- Bounded, user-approved route-table-derived discovery on Linux; exact and
+  hostname targets on macOS and Windows.
 - Multiple devices in a device sidebar, one selected device's lineup in a
   channel sidebar, with favorite, HD, and protected badges.
 - Playback of unprotected channels with the installed or bundled GStreamer
@@ -109,40 +109,33 @@ Built and tested:
 - Live TV verified by the owner on the Windows development build against real
   tuners: ATSC 1.0 channels play with audio; ATSC 3.0 channels fail closed on
   AC-4 ([compatibility notes](compatibility-v0.1.md)).
-
 - Versioned, atomic settings that remember the window size and maximized
   state and the exact addresses that answered, which are probed again at
   launch; storage for user-assigned names is reserved.
-
 - Hostname entry resolved on the controller to a bounded set of unicast
   addresses, probed one at a time and remembered by name.
-
-- Self-contained Windows x86_64 and ARM64 packages: a reviewed,
-  capability-derived GStreamer closure staged from the matching MSYS2 CLANG64
-  or CLANGARM64 profile, architecture and PE-import inspection, completed-tree
-  checks, a packaged-runtime probe that decodes the synthetic fixture, and
-  reopened ZIPs and Inno Setup installers.
-
-- Native Linux packages: Debian amd64 and arm64, RPM x86_64 and aarch64, and
-  Arch x86_64 packages built from locked inputs with pinned, preinstalled
-  packagers and format-specific reopened-artifact validation, alongside the
-  two Flatpak architectures.
-
+- Windows x86_64 and ARM64 package profiles: a reviewed, capability-derived
+  GStreamer closure staged from the matching MSYS2 CLANG64 or CLANGARM64
+  profile, architecture and PE-import inspection, completed-tree checks, a
+  packaged-runtime probe, and reopened ZIP and Inno Setup gates.
+- Native Linux package paths: Debian amd64 and arm64, RPM x86_64 and aarch64,
+  and Arch x86_64 built from locked inputs with pinned, preinstalled packagers
+  and format-specific reopened-artifact validation, alongside the two Flatpak
+  architectures.
 - Live routed tunnel discovery and multi-site validation verified across a real
   tunnel (UniFi Site Magic / WireGuard): broadcast isolation preserved, traffic
   budget measured (64 pkt/s, < 6.5 KB/s peak, 0 idle traffic), and distinct
   identity maintained across primary and secondary sites (P2.5).
-
 - Sanitized hardware matrix complete across primary and secondary sites
   (HDHR4-2US, two HDHR5-4K units, and HDHR3-PRIME): Clear QAM, ATSC 1.0/3.0,
   CableCARD DRM refusal, and 503 tuner-busy handling verified (P4.2).
-
 - macOS package (`Balun.app` and `Balun.dmg`) built with hardened launcher
   environment, transitive dynamic library resolution, and isolated runtime
   probe loopback (P3.4).
-
-- Packaged-artifact validation verified on real hardware across Linux, macOS,
-  and Windows with empirical tune, switch, and release budgets (P4.1).
+- Package and runtime gates cover the configured artifacts, and macOS has a
+  dedicated packaged-hardware validation path. The recorded Linux and Windows
+  live-tuner runs used development builds, so cross-platform packaged
+  acceptance remains open (P4.1).
 
 ## 4. Architecture
 
@@ -333,13 +326,16 @@ CI on every push and pull request: Linux quality (policy tests, fmt, strict
 Clippy, debug and release tests), MSRV, Linux desktop (build, installed-runtime
 probes, Wayland lifecycle smokes), macOS app smoke, and Windows x86_64 and ARM64
 compile/package smoke lanes that build through the same helpers developers use.
-A manual release-candidate workflow builds an immutable tag on all three
-platforms and requires exactly 12 public binary artifacts plus
-`SHA256SUMS.txt`.
+A manual release-candidate workflow is configured to build the commit resolved
+from an annotated tag on all three platforms and require exactly 12 public
+binary artifacts plus `SHA256SUMS.txt`.
 
 Release contract:
 
-- Accept only a signed, annotated, v-prefixed Semantic Version tag on `main`.
+- As maintainer procedure, create a signed, annotated, v-prefixed Semantic
+  Version tag from the reviewed `main` release commit. The workflow verifies
+  the annotated Semantic Version shape and resolves its commit; it does not
+  verify the signer or `main` ancestry.
 - Build every package from that one SHA with locked dependencies and pinned
   actions.
 - Stage only a capability-derived GStreamer closure into self-contained
@@ -369,11 +365,11 @@ hostname entry, errors that name the device, the missing-codec message,
 search and favorites, keyboard navigation. Exit: a user can set up two sites'
 tuners once and use the viewer without the diagnostic.
 
-**P2 — Routed discovery (Linux).** Connect the monitored runner to the existing
-approval store and observers, add the approval and progress UX, reconcile
-network changes, expose diagnostics, and prove one routed case plus two-site
-multi-device validation. Exit: local and remote tuners coexist within the
-documented traffic budget with deterministic cancellation and revocation.
+**P2 — Route-table-derived discovery (Linux).** Connect the monitored runner to
+the existing approval store and observers, add the approval and progress UX,
+reconcile network changes, expose diagnostics, and prove one routed case plus
+two-site multi-device validation. Exit: local and remote tuners coexist within
+the documented traffic budget with deterministic cancellation and revocation.
 
 **P3 — Packages.** Desktop metadata and assets; Flatpak, Debian, RPM, and Arch
 packages; Windows x86_64 and ARM64 ZIPs and installers; and the Apple Silicon
