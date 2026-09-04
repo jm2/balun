@@ -96,7 +96,11 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 
 MOUNT_DIR=""
 SANITIZED_LOG=""
+INSTALL_KEY_OUTPUT=""
 cleanup() {
+  if [[ -n "$INSTALL_KEY_OUTPUT" ]]; then
+    rm -f -- "$INSTALL_KEY_OUTPUT" 2>/dev/null || true
+  fi
   if [[ -n "$SANITIZED_LOG" ]]; then
     rm -f -- "$SANITIZED_LOG" 2>/dev/null || true
   fi
@@ -196,6 +200,16 @@ grep -F 'GST_PLUGIN_PATH=' "$LAUNCHER" >/dev/null \
   || fail "Launcher does not configure GST_PLUGIN_PATH"
 grep -F 'GST_PLUGIN_SCANNER=' "$LAUNCHER" >/dev/null \
   || fail "Launcher does not configure GST_PLUGIN_SCANNER"
+grep -F '"$DIR/Balun-bin" --balun-macos-install-key' "$LAUNCHER" >/dev/null \
+  || fail "Launcher does not invoke the signed install-key helper directly"
+grep -F '[[ ! "$INSTALL_KEY_RESPONSE" =~ ^([0-9a-f]{16})/$ ]]' "$LAUNCHER" >/dev/null \
+  || fail "Launcher does not validate the exact install-key helper protocol"
+if grep -Eiq '(^|[^[:alnum:]_])perl([^[:alnum:]_]|$)' "$LAUNCHER"; then
+  fail "Launcher retains a Perl runtime dependency"
+fi
+if grep -F 'APP_ROOT=' "$LAUNCHER" >/dev/null; then
+  fail "Launcher supplies an application path to the install-key helper"
+fi
 grep -F 'exec "$DIR/Balun-bin" "$@"' "$LAUNCHER" >/dev/null \
   || fail "Launcher does not forward execution to Balun-bin"
 info "Launcher environment blinding and argument forwarding verified."
@@ -232,6 +246,21 @@ step "3. Verifying Deep Strict Code Signatures"
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 info "Deep strict code signature verification passed."
+
+INSTALL_KEY_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/balun-install-key.XXXXXX")"
+if ! env DYLD_LIBRARY_PATH="${FRAMEWORKS_DIR}" \
+    "${MACOS_DIR}/Balun-bin" --balun-macos-install-key \
+    > "$INSTALL_KEY_OUTPUT"; then
+  fail "Signed install-key helper returned a failure status"
+fi
+INSTALL_KEY_BYTES="$(wc -c < "$INSTALL_KEY_OUTPUT" | tr -d '[:space:]')"
+[[ "$INSTALL_KEY_BYTES" == 16 ]] \
+  || fail "Signed install-key helper did not emit exactly 16 bytes"
+grep -Eq '^[0-9a-f]{16}$' "$INSTALL_KEY_OUTPUT" \
+  || fail "Signed install-key helper did not emit lowercase hexadecimal"
+rm -f -- "$INSTALL_KEY_OUTPUT"
+INSTALL_KEY_OUTPUT=""
+info "Signed install-key helper protocol verified without starting the GUI."
 
 # ── 4. Relocated Read-Only Runtime Probe Loopback ────────────────────────────
 step "4. Relocated Read-Only Runtime Probe Loopback"
