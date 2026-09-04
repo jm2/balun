@@ -143,8 +143,8 @@ class ReleaseCheckTests(unittest.TestCase):
     def test_arch_pkgver_uses_a_stable_upgrade_safe_prerelease_marker(self) -> None:
         self.assertEqual(release_check.arch_pkgver_for_semver("1.2.3"), "1.2.3")
         self.assertEqual(
-            release_check.arch_pkgver_for_semver("1.2.3-alpha-beta.1+build-two"),
-            "1.2.3pre.1.alpha_beta.0.1+build_two",
+            release_check.arch_pkgver_for_semver("1.2.3-alpha.beta.1+build-two"),
+            "1.2.3pre.1.alpha.1.beta.0.1+build_two",
         )
         self.assertEqual(
             release_check.arch_pkgver_for_semver("1.2.3-alpha"),
@@ -158,6 +158,26 @@ class ReleaseCheckTests(unittest.TestCase):
             release_check.arch_pkgver_for_semver("1.2.3+build-two"),
             "1.2.3+build_two",
         )
+
+    def test_arch_pkgver_refuses_a_hyphenated_prerelease_identifier(self) -> None:
+        # SemVer orders 1.2.3-alpha.a before 1.2.3-alpha-a, but Arch treats the
+        # only legal substitute for the hyphen as a separator, so the encoding
+        # cannot preserve that order and the tag is refused instead.
+        with self.assertRaises(ValueError):
+            release_check.arch_pkgver_for_semver("1.2.3-alpha-a")
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_fixture(
+                root,
+                manifest_version="1.2.3-alpha-a",
+                lock_version="1.2.3-alpha-a",
+                changelog_version="1.2.3-alpha-a",
+                metainfo_version="1.2.3-alpha-a",
+            )
+            problems = release_check.check_release(root, "v1.2.3-alpha-a")
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("no Arch pkgver encoding", problems[0])
+            self.assertIn("'alpha-a'", problems[0])
 
 
 if __name__ == "__main__":

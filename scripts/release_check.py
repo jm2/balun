@@ -82,7 +82,13 @@ def arch_pkgbuild_version(pkgbuild: str) -> str | None:
 
 
 def arch_pkgver_for_semver(version: str) -> str:
-    """Encode a Semantic Version as a stable-upgrade-safe Arch ``pkgver``."""
+    """Encode a Semantic Version as a stable-upgrade-safe Arch ``pkgver``.
+
+    Raises ``ValueError`` for a prerelease identifier that contains a hyphen:
+    Arch forbids hyphens in ``pkgver`` and treats the only substitute, ``_``,
+    as a separator, so no encoding keeps SemVer's order between such
+    identifiers. Those tags are refused rather than mis-ordered.
+    """
     release, plus, build = version.partition("+")
     core, hyphen, prerelease = release.partition("-")
     encoded = core
@@ -90,14 +96,17 @@ def arch_pkgver_for_semver(version: str) -> str:
         # vercmp sorts a letter suffix before the corresponding stable
         # version. Within that suffix, numeric identifiers must sort before
         # text identifiers to retain SemVer's identifier-type precedence.
-        identifiers = (
-            f"0.{identifier}"
-            if identifier.isdigit()
-            else f"1.{identifier.replace('-', '_')}"
-            for identifier in prerelease.split(".")
-        )
+        identifiers = []
+        for identifier in prerelease.split("."):
+            if "-" in identifier:
+                raise ValueError(
+                    f"prerelease identifier {identifier!r} contains a hyphen, "
+                    "which an Arch pkgver cannot order"
+                )
+            identifiers.append(f"0.{identifier}" if identifier.isdigit() else f"1.{identifier}")
         encoded += "pre." + ".".join(identifiers)
     if plus:
+        # Build metadata never affects precedence, so it only needs a legal spelling.
         encoded += "+" + build.replace("-", "_")
     return encoded
 
@@ -134,14 +143,18 @@ def check_release(root: Path, tag: str) -> list[str]:
         problems.append(f"{CARGO_LOCKFILE} records {PACKAGE_NAME} {lock_version}, not {version}")
 
     pkgbuild_version = arch_pkgbuild_version(read_text(root, ARCH_PKGBUILD))
-    expected_pkgbuild_version = arch_pkgver_for_semver(version)
-    if pkgbuild_version is None:
-        problems.append(f"{ARCH_PKGBUILD} has no literal pkgver")
-    elif pkgbuild_version != expected_pkgbuild_version:
-        problems.append(
-            f"{ARCH_PKGBUILD} pkgver is {pkgbuild_version}, "
-            f"not {expected_pkgbuild_version} for {version}"
-        )
+    try:
+        expected_pkgbuild_version = arch_pkgver_for_semver(version)
+    except ValueError as error:
+        problems.append(f"tag {tag} has no Arch pkgver encoding: {error}")
+    else:
+        if pkgbuild_version is None:
+            problems.append(f"{ARCH_PKGBUILD} has no literal pkgver")
+        elif pkgbuild_version != expected_pkgbuild_version:
+            problems.append(
+                f"{ARCH_PKGBUILD} pkgver is {pkgbuild_version}, "
+                f"not {expected_pkgbuild_version} for {version}"
+            )
 
     section, link = changelog_has_release(read_text(root, CHANGELOG), version)
     if not section:
