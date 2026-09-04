@@ -590,7 +590,7 @@ const fn routed_unavailable_banner_title(reason: RoutedUnavailableReason) -> &'s
         }
         RoutedUnavailableReason::NoPrivateDirectory => "Routed approval storage is unavailable.",
         RoutedUnavailableReason::ObserversUnavailable => {
-            "This host's routes cannot be modeled or watched; find the device by address instead."
+            "Route or approval monitoring is unavailable on this host; find the device by address instead."
         }
     }
 }
@@ -732,7 +732,7 @@ const fn routed_unavailable_description(reason: RoutedUnavailableReason) -> &'st
             "Balun could not open its private storage for routed approvals."
         }
         RoutedUnavailableReason::ObserversUnavailable => {
-            "Balun could not model or watch this host's routes, so route-derived discovery is off; the log names the cause. Find the device by address instead."
+            "Balun could not model or watch this host's routes or its routed-approval storage, so route-derived discovery is off; the log names the cause. Find the device by address instead."
         }
     }
 }
@@ -1068,8 +1068,8 @@ mod tests {
             ),
             (
                 RoutedUnavailableReason::ObserversUnavailable,
-                "Balun could not model or watch this host's routes, so route-derived discovery is off; the log names the cause. Find the device by address instead.",
-                "This host's routes cannot be modeled or watched; find the device by address instead.",
+                "Balun could not model or watch this host's routes or its routed-approval storage, so route-derived discovery is off; the log names the cause. Find the device by address instead.",
+                "Route or approval monitoring is unavailable on this host; find the device by address instead.",
             ),
         ];
         for (reason, description, banner) in cases {
