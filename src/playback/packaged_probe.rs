@@ -129,11 +129,18 @@ pub(super) fn run(plugin_dir: &Path) -> Result<(), PackagedProbeError> {
         bundled_factory(factory.name(), &canonical_plugin_dir)?;
     }
     verify_decoder_contract(&canonical_plugin_dir)?;
-    let audio_sink_factory = bundled_factory("wasapi2sink", &canonical_plugin_dir)?;
+    #[cfg(target_os = "macos")]
+    let _ranks = prefer_software_mpeg2_decoders();
+    #[cfg(target_os = "windows")]
+    let sink_name = "wasapi2sink";
+    #[cfg(target_os = "macos")]
+    let sink_name = "osxaudiosink";
+
+    let audio_sink_factory = bundled_factory(sink_name, &canonical_plugin_dir)?;
     audio_sink_factory
         .create()
         .build()
-        .map_err(|_| PackagedProbeError::ElementConstruction("wasapi2sink"))?;
+        .map_err(|_| PackagedProbeError::ElementConstruction(sink_name))?;
     bundled_factory("autoaudiosink", &canonical_plugin_dir)?;
     let fakesink_factory = bundled_factory("fakesink", &canonical_plugin_dir)?;
     let playbin_factory = bundled_factory("playbin3", &canonical_plugin_dir)?;
@@ -604,6 +611,33 @@ fn write_fully(stream: &mut TcpStream, bytes: &[u8], stop: &AtomicBool) -> std::
 /// Whether an I/O error is a socket timeout.
 fn is_timeout(error: &std::io::Error) -> bool {
     matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
+}
+
+#[cfg(target_os = "macos")]
+struct DecoderRankGuard {
+    original: Vec<(gst::PluginFeature, gst::Rank)>,
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for DecoderRankGuard {
+    fn drop(&mut self) {
+        for (feature, rank) in self.original.drain(..) {
+            feature.set_rank(rank);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn prefer_software_mpeg2_decoders() -> DecoderRankGuard {
+    let registry = gst::Registry::get();
+    let mut original = Vec::new();
+    for name in ["vtdec_hw", "vtdec"] {
+        if let Some(feature) = registry.lookup_feature(name) {
+            original.push((feature.clone(), feature.rank()));
+            feature.set_rank(gst::Rank::NONE);
+        }
+    }
+    DecoderRankGuard { original }
 }
 
 #[cfg(test)]

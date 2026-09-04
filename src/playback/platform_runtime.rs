@@ -23,13 +23,17 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-/// Hidden argument the Windows packaging helper passes with a fresh, empty
+/// Hidden argument the Windows and macOS packaging helpers pass with a fresh, empty
 /// cache root. Nothing else is accepted on the command line.
 pub const PLATFORM_RUNTIME_PROBE_FLAG: &str = "--balun-platform-runtime-probe";
 /// File the probe writes into its cache root after every check passed.
 pub const WINDOWS_PROBE_SENTINEL_NAME: &str = "balun-platform-runtime-probe.ok";
 /// Exact sentinel content; the packaging helper compares the bytes.
 pub const WINDOWS_PROBE_SENTINEL: &[u8] = b"balun-windows-runtime-probe-v1\n";
+/// File the macOS probe writes into its cache root after every check passed.
+pub const MACOS_PROBE_SENTINEL_NAME: &str = "balun-platform-runtime-probe.ok";
+/// Exact sentinel content for macOS; the packaging helper compares the bytes.
+pub const MACOS_PROBE_SENTINEL: &[u8] = b"balun-macos-runtime-probe-v1\n";
 /// The one GStreamer variable the probe accepts, naming the fresh registry.
 pub const REGISTRY_ENVIRONMENT_KEY: &str = "GST_REGISTRY";
 
@@ -53,11 +57,14 @@ pub enum PlatformRuntimeError {
     #[error("the platform runtime probe requires an explicit cache root")]
     MissingCacheRoot,
     /// The probe was requested on a platform without a self-contained package.
-    #[error("the platform runtime probe is only available in the Windows package")]
+    #[error("the platform runtime probe is only available in the self-contained package")]
     ProbeUnsupported,
     /// The executable is not inside the documented package layout.
     #[error("the platform runtime probe requires the self-contained Windows package layout")]
     PackageLayout,
+    /// The executable is not inside the documented macOS bundle layout.
+    #[error("the platform runtime probe requires the self-contained macOS bundle layout")]
+    MacBundleLayout,
     /// The cache root was relative.
     #[error("the platform runtime probe cache root must be absolute")]
     CacheRootNotAbsolute,
@@ -106,7 +113,7 @@ pub enum PlatformRuntimeError {
     #[error("the platform runtime probe could not write its sentinel")]
     Sentinel,
     /// The packaged playback probe failed.
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     #[error("the packaged playback probe failed: {0}")]
     Probe(#[from] super::packaged_probe::PackagedProbeError),
 }
@@ -137,8 +144,24 @@ fn configure_for_platform(
     Ok(ToolkitPreparation::ProbeCompleted)
 }
 
-#[cfg(not(target_os = "windows"))]
-/// Refuse the probe outside the Windows package and continue otherwise.
+#[cfg(target_os = "macos")]
+/// Run the probe when one was requested on macOS; an ordinary launch continues untouched.
+fn configure_for_platform(
+    probe_root: Option<&Path>,
+) -> Result<ToolkitPreparation, PlatformRuntimeError> {
+    let Some(probe_root) = probe_root else {
+        return Ok(ToolkitPreparation::Continue);
+    };
+    let exe = env::current_exe()
+        .and_then(|exe| exe.canonicalize())
+        .map_err(|_| PlatformRuntimeError::MacBundleLayout)?;
+    let layout = detect_macos_bundle(&exe).ok_or(PlatformRuntimeError::MacBundleLayout)?;
+    run_macos_runtime_probe(&layout, probe_root)?;
+    Ok(ToolkitPreparation::ProbeCompleted)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+/// Refuse the probe outside the Windows or macOS packages and continue otherwise.
 fn configure_for_platform(
     probe_root: Option<&Path>,
 ) -> Result<ToolkitPreparation, PlatformRuntimeError> {
@@ -207,6 +230,232 @@ fn run_windows_runtime_probe(
         WINDOWS_PROBE_SENTINEL,
     )?;
     Ok(())
+}
+
+/// The self-contained macOS application bundle as seen from the running executable.
+#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MacBundleLayout {
+    pub app_root: PathBuf,
+    pub contents_dir: PathBuf,
+    pub macos_dir: PathBuf,
+    pub resources_dir: PathBuf,
+    pub plugin_dir: PathBuf,
+    pub scanner: PathBuf,
+}
+
+/// Recognize the documented .app bundle shape around a canonical executable path.
+#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+pub fn detect_macos_bundle(exe: &Path) -> Option<MacBundleLayout> {
+    let macos_dir = exe.parent()?;
+    if macos_dir.file_name()? != "MacOS" {
+        return None;
+    }
+    let contents_dir = macos_dir.parent()?;
+    if contents_dir.file_name()? != "Contents" {
+        return None;
+    }
+    let app_root = contents_dir.parent()?;
+    if app_root.extension()? != "app" {
+        return None;
+    }
+    let plist_path = contents_dir.join("Info.plist");
+    let resources_dir = contents_dir.join("Resources");
+    let plugin_dir = resources_dir.join("lib").join("gstreamer-1.0");
+    let scanner = macos_dir.join("gst-plugin-scanner");
+
+    if !exe.is_file() || !plist_path.is_file() || !resources_dir.is_dir() || !plugin_dir.is_dir() {
+        return None;
+    }
+
+    let plist = std::fs::read(&plist_path).ok()?;
+    if plist.len() > 1024 * 1024 {
+        return None;
+    }
+    let plist_text = std::str::from_utf8(&plist).ok()?;
+    if !plist_text.contains("<key>CFBundlePackageType</key>")
+        || !plist_text.contains("<string>APPL</string>")
+        || !plist_text.contains("<key>CFBundleExecutable</key>")
+    {
+        return None;
+    }
+
+    Some(MacBundleLayout {
+        app_root: app_root.to_path_buf(),
+        contents_dir: contents_dir.to_path_buf(),
+        macos_dir: macos_dir.to_path_buf(),
+        resources_dir,
+        plugin_dir,
+        scanner,
+    })
+}
+
+/// Check if any mutable cache files exist inside the signed application bundle.
+#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+pub fn bundle_contains_mutable_cache(layout: &MacBundleLayout) -> bool {
+    layout.macos_dir.join("gst-registry.bin").exists()
+        || layout
+            .resources_dir
+            .join("lib/gdk-pixbuf-2.0/2.10.0/loaders.cache")
+            .exists()
+        || layout
+            .resources_dir
+            .join("lib/gstreamer-1.0/gst-registry.bin")
+            .exists()
+}
+
+/// User runtime cache paths segregated by platform, architecture, and install path hash.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeCachePaths {
+    pub root: PathBuf,
+    pub gst_registry: PathBuf,
+    pub pixbuf_loaders: PathBuf,
+}
+
+/// 64-bit FNV-1a hash of the canonical install root path.
+#[allow(dead_code)]
+pub fn stable_path_fingerprint(path: &Path) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in path.to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// Calculate dedicated, install-keyed user cache paths.
+#[allow(dead_code)]
+pub fn runtime_cache_paths(
+    cache_base: &Path,
+    platform: &str,
+    architecture: &str,
+    install_root: &Path,
+) -> Result<RuntimeCachePaths, PlatformRuntimeError> {
+    if !cache_base.is_absolute() {
+        return Err(PlatformRuntimeError::CacheRootNotAbsolute);
+    }
+    if has_relative_components(cache_base) {
+        return Err(PlatformRuntimeError::CacheRootRelativeComponents);
+    }
+    if platform.is_empty() || architecture.is_empty() {
+        return Err(PlatformRuntimeError::CacheRootUnavailable);
+    }
+
+    let install_key = stable_path_fingerprint(install_root);
+    let root = cache_base
+        .join("balun")
+        .join("runtime")
+        .join(format!("{platform}-{architecture}"))
+        .join(format!("{install_key:016x}"));
+
+    Ok(RuntimeCachePaths {
+        gst_registry: root.join("gstreamer").join("registry.bin"),
+        pixbuf_loaders: root.join("gdk-pixbuf").join("loaders.cache"),
+        root,
+    })
+}
+
+#[cfg(target_os = "macos")]
+/// Run every probe stage in order and write the sentinel last on macOS.
+fn run_macos_runtime_probe(
+    layout: &MacBundleLayout,
+    requested_cache_root: &Path,
+) -> Result<(), PlatformRuntimeError> {
+    reject_inherited_macos_probe_environment(env::vars_os().map(|(key, _)| key), layout)?;
+    if bundle_contains_mutable_cache(layout) {
+        return Err(PlatformRuntimeError::RegistryInsideInstall);
+    }
+    if !layout.scanner.is_file() {
+        return Err(PlatformRuntimeError::ScannerMissing);
+    }
+    let cache_root = validate_probe_cache_root(requested_cache_root, &layout.app_root)?;
+    let registry = probe_registry_path(
+        env::var_os(REGISTRY_ENVIRONMENT_KEY).as_deref(),
+        &cache_root,
+    )?;
+    preflight_macos_plugin_scanner(&layout.scanner)?;
+    super::packaged_probe::run(&layout.plugin_dir)?;
+    verify_probe_registry(&registry, &layout.app_root)?;
+    if bundle_contains_mutable_cache(layout) {
+        return Err(PlatformRuntimeError::RegistryInsideInstall);
+    }
+    atomic_replace(
+        &cache_root.join(MACOS_PROBE_SENTINEL_NAME),
+        MACOS_PROBE_SENTINEL,
+    )?;
+    Ok(())
+}
+
+#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+fn reject_inherited_macos_probe_environment(
+    keys: impl IntoIterator<Item = OsString>,
+    layout: &MacBundleLayout,
+) -> Result<(), PlatformRuntimeError> {
+    let mut forbidden = Vec::new();
+    for key in keys {
+        let name = key.to_string_lossy().to_ascii_uppercase();
+        if matches!(
+            name.as_str(),
+            "HTTP_PROXY"
+                | "HTTPS_PROXY"
+                | "ALL_PROXY"
+                | "NO_PROXY"
+                | "GIO_EXTRA_MODULES"
+                | "GIO_USE_PROXY_RESOLVER"
+        ) {
+            forbidden.push(name);
+            continue;
+        }
+        if name.starts_with("GST_") {
+            match name.as_str() {
+                "GST_REGISTRY" | "GST_REGISTRY_1_0" => {}
+                "GST_PLUGIN_SYSTEM_PATH" | "GST_PLUGIN_SYSTEM_PATH_1_0" => {
+                    if env::var_os(&key).is_some_and(|val| !val.is_empty()) {
+                        forbidden.push(name);
+                    }
+                }
+                "GST_PLUGIN_PATH" | "GST_PLUGIN_PATH_1_0" => {
+                    if let Some(val) = env::var_os(&key) {
+                        let p = PathBuf::from(val);
+                        if let Ok(canon) = p.canonicalize() {
+                            if let Ok(expected) = layout.plugin_dir.canonicalize() {
+                                if canon != expected {
+                                    forbidden.push(name);
+                                }
+                            } else {
+                                forbidden.push(name);
+                            }
+                        } else {
+                            forbidden.push(name);
+                        }
+                    }
+                }
+                "GST_PLUGIN_SCANNER" | "GST_PLUGIN_SCANNER_1_0" => {
+                    if let Some(val) = env::var_os(&key) {
+                        let p = PathBuf::from(val);
+                        if let Ok(canon) = p.canonicalize() {
+                            if let Ok(expected) = layout.scanner.canonicalize() {
+                                if canon != expected {
+                                    forbidden.push(name);
+                                }
+                            } else {
+                                forbidden.push(name);
+                            }
+                        } else {
+                            forbidden.push(name);
+                        }
+                    }
+                }
+                _ => forbidden.push(name),
+            }
+        }
+    }
+    forbidden.sort();
+    match forbidden.into_iter().next() {
+        Some(name) => Err(PlatformRuntimeError::InheritedEnvironment(name)),
+        None => Ok(()),
+    }
 }
 
 /// Fail closed on any inherited variable that could redirect GStreamer, GIO,
@@ -340,8 +589,56 @@ fn terminate_windows_scanner(child: &mut std::process::Child) -> Result<(), Plat
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn preflight_macos_plugin_scanner(scanner: &Path) -> Result<(), PlatformRuntimeError> {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let mut child = Command::new(scanner)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| PlatformRuntimeError::ScannerStart)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if scanner_no_args_exit_code_is_expected(status.code()) {
+                    return Ok(());
+                }
+                return Err(PlatformRuntimeError::ScannerStatus);
+            }
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => {
+                terminate_macos_scanner(&mut child)?;
+                return Err(PlatformRuntimeError::ScannerDeadline);
+            }
+            Err(_) => {
+                terminate_macos_scanner(&mut child)?;
+                return Err(PlatformRuntimeError::ScannerStatus);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn terminate_macos_scanner(child: &mut std::process::Child) -> Result<(), PlatformRuntimeError> {
+    let killed = child.kill().is_ok();
+    let waited = child.wait().is_ok();
+    if !killed || !waited {
+        return Err(PlatformRuntimeError::ScannerTermination);
+    }
+    Ok(())
+}
+
 /// `gst-plugin-scanner` exits with status 1 when started without arguments.
-#[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
+#[cfg_attr(
+    not(any(test, target_os = "windows", target_os = "macos")),
+    allow(dead_code)
+)]
 fn scanner_no_args_exit_code_is_expected(code: Option<i32>) -> bool {
     code == Some(1)
 }
@@ -715,9 +1012,154 @@ mod tests {
         assert_eq!(WINDOWS_PROBE_SENTINEL, b"balun-windows-runtime-probe-v1\n");
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[test]
-    fn probe_is_unsupported_outside_the_windows_package() {
+    fn macos_sentinel_and_error_definitions() {
+        assert_eq!(MACOS_PROBE_SENTINEL, b"balun-macos-runtime-probe-v1\n");
+        assert_eq!(MACOS_PROBE_SENTINEL_NAME, "balun-platform-runtime-probe.ok");
+        assert_eq!(
+            PlatformRuntimeError::MacBundleLayout.to_string(),
+            "the platform runtime probe requires the self-contained macOS bundle layout"
+        );
+    }
+
+    fn write_fake_mac_app(root: &Path) -> PathBuf {
+        let contents = root.join("Balun.app").join("Contents");
+        let macos = contents.join("MacOS");
+        let resources = contents.join("Resources");
+        let plugins = resources.join("lib").join("gstreamer-1.0");
+        fs::create_dir_all(&macos).unwrap();
+        fs::create_dir_all(&plugins).unwrap();
+        fs::write(
+            contents.join("Info.plist"),
+            "<plist><dict><key>CFBundleExecutable</key><string>Balun</string>\
+             <key>CFBundlePackageType</key><string>APPL</string></dict></plist>",
+        )
+        .unwrap();
+        let exe = macos.join("Balun-bin");
+        fs::write(&exe, b"binary").unwrap();
+        let scanner = macos.join("gst-plugin-scanner");
+        fs::write(&scanner, b"scanner").unwrap();
+        exe
+    }
+
+    #[test]
+    fn mac_bundle_detection_requires_complete_exact_shape() {
+        let temp = tempfile::tempdir().unwrap();
+        let exe = write_fake_mac_app(temp.path());
+        let layout = detect_macos_bundle(&exe).expect("bundle should be detected");
+        assert_eq!(layout.app_root, temp.path().join("Balun.app"));
+        assert_eq!(
+            layout.plugin_dir,
+            temp.path()
+                .join("Balun.app/Contents/Resources/lib/gstreamer-1.0")
+        );
+        assert_eq!(
+            layout.scanner,
+            temp.path()
+                .join("Balun.app/Contents/MacOS/gst-plugin-scanner")
+        );
+
+        fs::remove_file(temp.path().join("Balun.app/Contents/Info.plist")).unwrap();
+        assert!(detect_macos_bundle(&exe).is_none());
+    }
+
+    #[test]
+    fn mac_suffix_only_and_false_app_shapes_are_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let fake = temp.path().join("Fake.app/NotContents/MacOS");
+        fs::create_dir_all(&fake).unwrap();
+        let exe = fake.join("Balun-bin");
+        fs::write(&exe, b"binary").unwrap();
+        assert!(detect_macos_bundle(&exe).is_none());
+
+        let exe = write_fake_mac_app(temp.path());
+        fs::write(
+            temp.path().join("Balun.app/Contents/Info.plist"),
+            "<plist><dict><key>CFBundleExecutable</key><string>Balun</string></dict></plist>",
+        )
+        .unwrap();
+        assert!(detect_macos_bundle(&exe).is_none());
+    }
+
+    #[test]
+    fn cache_paths_are_user_scoped_and_never_install_scoped() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache_base = temp.path().join("Library/Caches");
+        let install_root = temp.path().join("Applications/Balun.app");
+        let paths = runtime_cache_paths(&cache_base, "macos", "aarch64", &install_root).unwrap();
+        assert!(
+            paths
+                .root
+                .starts_with(cache_base.join("balun").join("runtime"))
+        );
+        assert!(!paths.gst_registry.starts_with(&install_root));
+        assert!(!paths.pixbuf_loaders.starts_with(&install_root));
+        assert_eq!(
+            paths.gst_registry.file_name(),
+            Some(std::ffi::OsStr::new("registry.bin"))
+        );
+        assert_eq!(
+            paths.pixbuf_loaders.file_name(),
+            Some(std::ffi::OsStr::new("loaders.cache"))
+        );
+    }
+
+    #[test]
+    fn cache_paths_separate_platform_architecture_and_install_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("cache");
+        let first_install = temp.path().join("A/Balun.app");
+        let moved_install = temp.path().join("B/Balun.app");
+        let mac_arm = runtime_cache_paths(&base, "macos", "aarch64", &first_install).unwrap();
+        let mac_x64 = runtime_cache_paths(&base, "macos", "x86_64", &first_install).unwrap();
+        let win_arm = runtime_cache_paths(&base, "windows", "aarch64", &first_install).unwrap();
+        let moved = runtime_cache_paths(&base, "macos", "aarch64", &moved_install).unwrap();
+        assert_ne!(mac_arm.root, mac_x64.root);
+        assert_ne!(mac_arm.root, win_arm.root);
+        assert_ne!(mac_arm.root, moved.root);
+        assert_eq!(
+            runtime_cache_paths(
+                &base.join("../redirect"),
+                "macos",
+                "aarch64",
+                &first_install
+            ),
+            Err(PlatformRuntimeError::CacheRootRelativeComponents)
+        );
+    }
+
+    #[test]
+    fn bundle_contains_mutable_cache_checks_all_known_locations() {
+        let temp = tempfile::tempdir().unwrap();
+        let exe = write_fake_mac_app(temp.path());
+        let layout = detect_macos_bundle(&exe).unwrap();
+        assert!(!bundle_contains_mutable_cache(&layout));
+
+        let gst_reg = layout.macos_dir.join("gst-registry.bin");
+        fs::write(&gst_reg, b"cache").unwrap();
+        assert!(bundle_contains_mutable_cache(&layout));
+        fs::remove_file(&gst_reg).unwrap();
+
+        let pixbuf_cache_dir = layout.resources_dir.join("lib/gdk-pixbuf-2.0/2.10.0");
+        fs::create_dir_all(&pixbuf_cache_dir).unwrap();
+        let pixbuf_cache = pixbuf_cache_dir.join("loaders.cache");
+        fs::write(&pixbuf_cache, b"cache").unwrap();
+        assert!(bundle_contains_mutable_cache(&layout));
+        fs::remove_file(&pixbuf_cache).unwrap();
+
+        assert!(!bundle_contains_mutable_cache(&layout));
+    }
+
+    #[test]
+    fn stable_path_fingerprint_matches_deterministic_vector() {
+        let hash = stable_path_fingerprint(Path::new("/Applications/Balun.app"));
+        assert_eq!(hash, 0x9692_5b5f_60eb_b3db);
+        assert_eq!(format!("{hash:016x}"), "96925b5f60ebb3db");
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[test]
+    fn probe_is_unsupported_outside_the_supported_packages() {
         assert_eq!(
             configure_for_platform(Some(Path::new("/tmp/cache"))),
             Err(PlatformRuntimeError::ProbeUnsupported)

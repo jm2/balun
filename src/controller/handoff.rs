@@ -96,10 +96,10 @@ impl StreamHandoff {
         Self::new(channel_key, selection_generation, uri)
     }
 
-    /// Build the one handoff the packaged Windows runtime probe feeds to the
+    /// Build the one handoff the packaged Windows or macOS runtime probe feeds to the
     /// production source policy: a loopback fixture URL that never leaves
     /// the probe process. The desktop binary cannot reach this constructor.
-    #[cfg(all(feature = "desktop", target_os = "windows"))]
+    #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
     pub(crate) fn packaged_probe_fixture(
         channel_key: ChannelKey,
         selection_generation: OperationGeneration,
