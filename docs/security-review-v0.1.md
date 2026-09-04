@@ -318,6 +318,44 @@ review's pull request.
 
 - macOS live-device acceptance (P0.3) exercises the same path.
 
+## Delta check (2026-09-04)
+
+Scope: the 142 commits between the audited `8c0df0e` and `main` at `2e1a8c0`
+plus the open v0.1 pull requests #55 to #58. This is a contract re-check of
+the five areas above against the current code, not a second full audit.
+
+Re-verified in place:
+
+- Device HTTP still disables redirects, Referer, and proxies
+  (`src/hdhr/http.rs` `build_client`), and the stream transport does the same
+  (`src/playback/transport.rs`); transport errors are rendered through
+  `reqwest::Error::without_url`, which closes the URL-stripping follow-up.
+- `DeviceAuth` appears only in fixtures and the settings forbidden-string test;
+  no production path reads it. Loopback targets are refused in
+  `src/discovery/manual.rs` and `local.rs`, closing that follow-up.
+- `settings.json` is created with mode `0o600` (`src/settings/mod.rs`).
+- The routed runner re-checks authority, the deadline, and the interface pin
+  before every datagram (`src/discovery/approval/controller/runner.rs`).
+- The Windows console feature exists only for the developer `-Run` build;
+  `src/main.rs` keeps the GUI subsystem for every other release build, and #56
+  refuses to stage a console-subsystem `balun.exe` into a package.
+- The packaged macOS launcher accepts the install-key helper's output only
+  when it matches `^[0-9a-f]{16}/$` before using it in a cache path, creates
+  the cache with `umask 077`, and no longer executes Perl (#58).
+- The Linux package validator applies the forbidden-component policy to the
+  reopened deb, RPM, and Arch payloads; those validators only ever receive
+  artifacts the workflow itself just built.
+- The release workflow pins every action by commit, and #55 to #58 keep the
+  hidden helper flags (`--balun-platform-runtime-probe`,
+  `--balun-macos-install-key`) argument-free and fail-closed.
+
+Still open:
+
+- Routed pacing has no jitter (plan §5, ADR-0001).
+- The approval store has no unsupported-version quarantine reason.
+- The hostname resolver, network-change reconciliation, and Windows ARM64
+  profile were reviewed for bounds and fail-closed defaults only.
+
 ## Follow-ups
 
 - Add jitter to the routed pacing or amend plan §5 and ADR-0001 (P2).
