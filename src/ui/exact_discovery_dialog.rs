@@ -1,5 +1,8 @@
 //! Bounded, topology-redacting address-or-hostname discovery admission dialog.
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
 use adw::prelude::*;
 use balun::discovery::{
     DiscoveryEntry, InvalidDiscoveryEntry, InvalidExactDiscoveryTarget, InvalidHostnameTarget,
@@ -70,8 +73,24 @@ pub(crate) fn present(
     // The dialog owns the entry through its extra child. A strong dialog
     // capture here would complete a dialog -> entry -> handler -> dialog
     // cycle and retain the raw address after the dialog closes.
+    // libadwaita closes an alert dialog before it emits the button's
+    // `response` (`emit_response` calls `adw_dialog_close`, whose `closed`
+    // signal runs synchronously), so the `closed` handler below has already
+    // wiped the entry by the time the response handler runs. The validated
+    // parse of the current text is therefore kept beside the entry on every
+    // change and consumed at the response boundary; the widget text is never
+    // re-read there. Only a parser-approved value is ever stored, and any
+    // response, including cancel, drops it.
+    let admitted: Rc<RefCell<Option<DiscoveryEntry>>> = Rc::new(RefCell::new(None));
+    // Set once the dialog is closing: the close-time `set_text("")` below
+    // emits `changed` synchronously and must not wipe the stored admission
+    // before the response handler consumes it.
+    let closing = Rc::new(Cell::new(false));
+
     let dialog_for_validation = dialog.downgrade();
     let validation_for_entry = validation.downgrade();
+    let admitted_for_entry = Rc::clone(&admitted);
+    let closing_for_entry = Rc::clone(&closing);
     entry.connect_changed(move |entry| {
         let Some(dialog) = upgrade_signal_target(&dialog_for_validation) else {
             return;
@@ -79,31 +98,23 @@ pub(crate) fn present(
         let Some(validation) = upgrade_signal_target(&validation_for_entry) else {
             return;
         };
-        apply_admission(
-            &dialog,
-            entry,
-            &validation,
-            admission(entry.text().as_str()),
-        );
+        let admission = admission(entry.text().as_str());
+        record_admission(closing_for_entry.get(), &admission, &admitted_for_entry);
+        apply_admission(&dialog, entry, &validation, admission);
     });
 
-    // Dialog-owned signal handlers also keep only weak child references. The
+    // Dialog-owned signal handlers keep only weak child references. The
     // normal widget hierarchy is the sole owner of address-bearing entry
     // state and can therefore release it as soon as the dialog is closed.
-    let entry_for_response = entry.downgrade();
-    dialog.connect_response(Some(FIND_RESPONSE), move |_, _| {
-        // Reparse at the response boundary rather than trusting stale widget
-        // sensitivity. Only the validated value can become a controller
-        // command; rejected text is dropped without formatting or logging it.
-        let Some(entry) = upgrade_signal_target(&entry_for_response) else {
-            return;
-        };
-        if let Some(entry) = admission(entry.text().as_str()).entry {
+    let admitted_for_response = Rc::clone(&admitted);
+    dialog.connect_response(None, move |_, response| {
+        if let Some(entry) = take_admitted(response, &admitted_for_response) {
             on_admit(entry);
         }
     });
     let entry_for_close = entry.downgrade();
     dialog.connect_closed(move |_| {
+        closing.set(true);
         if let Some(entry) = upgrade_signal_target(&entry_for_close) {
             entry.set_text("");
         }
@@ -112,6 +123,29 @@ pub(crate) fn present(
 
     dialog.set_focus(Some(&entry));
     dialog.present(Some(parent));
+}
+
+/// Store the parser-approved value of the entry's current text after a user
+/// edit. The close-time clear also emits `changed`, but it must leave the
+/// value the pending response handler is about to consume in place.
+fn record_admission(
+    closing: bool,
+    admission: &Admission,
+    admitted: &RefCell<Option<DiscoveryEntry>>,
+) {
+    if !closing {
+        admitted.replace(admission.entry.clone());
+    }
+}
+
+/// Consume the stored admission for `response`: only the Find response admits
+/// it, and every response, including cancel or close, clears it.
+fn take_admitted(
+    response: &str,
+    admitted: &RefCell<Option<DiscoveryEntry>>,
+) -> Option<DiscoveryEntry> {
+    let entry = admitted.borrow_mut().take();
+    (response == FIND_RESPONSE).then_some(entry).flatten()
 }
 
 fn upgrade_signal_target<T>(target: &gtk::glib::WeakRef<T>) -> Option<T>
@@ -224,6 +258,46 @@ mod tests {
         assert!(upgrade_signal_target(&owner_lifetime).is_none());
         child.activate(None);
         assert!(!upgraded_after_release.get());
+    }
+
+    #[test]
+    fn admission_survives_the_dialog_closing_before_its_response() {
+        // libadwaita order for a button: `closed` (the entry is cleared) and
+        // only then `response`, so the response boundary must not depend on
+        // the widget text.
+        let admitted = RefCell::new(None);
+        record_admission(false, &admission("192.0.2.40"), &admitted);
+        // Closing clears the entry, which re-enters `changed` with "" before
+        // the response handler runs; that edit must not wipe the admission.
+        record_admission(true, &admission(""), &admitted);
+        assert!(
+            admission("").entry.is_none(),
+            "the cleared entry admits nothing"
+        );
+        assert_eq!(
+            take_admitted(FIND_RESPONSE, &admitted),
+            DiscoveryEntry::parse("192.0.2.40").ok()
+        );
+        // A user edit that empties the entry does drop the admission.
+        record_admission(false, &admission("192.0.2.40"), &admitted);
+        record_admission(false, &admission(""), &admitted);
+        assert_eq!(take_admitted(FIND_RESPONSE, &admitted), None);
+        assert_eq!(
+            take_admitted(FIND_RESPONSE, &admitted),
+            None,
+            "an admission is consumed once"
+        );
+
+        admitted.replace(admission("tuner.example").entry);
+        assert_eq!(
+            take_admitted(CANCEL_RESPONSE, &admitted),
+            None,
+            "cancel admits nothing"
+        );
+        assert!(
+            admitted.borrow().is_none(),
+            "cancel also drops the stored entry"
+        );
     }
 
     #[test]
