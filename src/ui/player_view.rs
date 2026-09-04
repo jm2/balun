@@ -486,6 +486,7 @@ impl PlayerView {
     fn apply_paintable(&self, paintable: Option<&gtk::gdk::Paintable>) -> bool {
         self.picture.set_paintable(paintable);
         let has_video = paintable.is_some();
+        self.picture.set_visible(has_video);
         self.status.set_visible(!has_video);
         has_video
     }
@@ -709,6 +710,7 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         .can_shrink(true)
         .content_fit(gtk::ContentFit::Contain)
         .accessible_role(gtk::AccessibleRole::Img)
+        .visible(false)
         .hexpand(true)
         .vexpand(true)
         .build();
@@ -952,6 +954,7 @@ mod tests {
 
         assert_eq!(view.picture.content_fit(), gtk::ContentFit::Contain);
         assert_eq!(view.picture.accessible_role(), gtk::AccessibleRole::Img);
+        assert!(!view.picture.is_visible());
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
         assert_eq!(view.status.title(), "Playback initialization unavailable");
@@ -1125,14 +1128,18 @@ mod tests {
         view.stop_button.set_sensitive(true);
         view.stop_button.emit_clicked();
         assert!(view.picture.paintable().is_none());
+        assert!(!view.picture.is_visible());
         assert!(view.status.is_visible());
         assert_eq!(view.status.title(), "Playback initialization unavailable");
         assert!(!view.stop_button.is_sensitive());
         assert!(task_dropped.get());
 
         assert!(view.apply_paintable(Some(&paintable)));
+        assert!(view.picture.is_visible());
+        assert!(!view.status.is_visible());
         view.stop_button.set_sensitive(true);
         view.shut_down().unwrap();
+        assert!(!view.picture.is_visible());
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
         assert!(!view.stop_button.is_sensitive());

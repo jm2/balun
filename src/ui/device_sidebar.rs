@@ -78,12 +78,10 @@ impl DeviceSidebar {
     /// via Enter key or single click.
     pub(crate) fn connect_device_activated<F>(&self, callback: F)
     where
-        F: Fn() + 'static,
+        F: Fn(u32) + 'static,
     {
-        let selection = self.selection.clone();
         self.list.connect_activate(move |_, position| {
-            selection.set_selected(position);
-            callback();
+            callback(position);
         });
     }
 
@@ -297,6 +295,7 @@ pub(crate) fn build() -> DeviceSidebar {
     }
 }
 
+/// Synthesize the list view's activation signal from a single primary click.
 fn single_click_activation(list_item: &gtk::ListItem) -> gtk::GestureClick {
     let gesture = gtk::GestureClick::builder()
         .button(gtk::gdk::BUTTON_PRIMARY)

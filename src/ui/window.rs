@@ -854,14 +854,29 @@ fn connect_device_selection(
     let applying_snapshot = sidebar.snapshot_application_flag();
     let accepted = Rc::clone(accepted);
     let controller = controller.clone();
-    let player_view = Rc::downgrade(player_view);
-    sidebar.connect_device_activated({
-        let layout = layout.clone();
-        move || {
-            layout.set_device_selected(true);
-            layout.show_channels();
+    let selection = sidebar.selection().clone();
+    let accepted_for_activated = Rc::clone(&accepted);
+    let layout_for_activated = layout.clone();
+    sidebar.connect_device_activated(move |position| {
+        let target_device = selection
+            .item(position)
+            .and_then(|item| item.downcast::<DeviceRowObject>().ok())
+            .and_then(|row| row.device_id());
+        let authoritative = accepted_for_activated.borrow().selected_device();
+        if target_device.is_some() && target_device == authoritative {
+            // The row activated is already the admitted, authoritative device.
+            // Selection change notification will not fire, so restore the
+            // channel lineup view directly.
+            layout_for_activated.set_device_selected(true);
+            layout_for_activated.show_channels();
+        } else {
+            // Selecting a different device triggers selection-notify, which
+            // gates channel navigation on controller admission.
+            selection.set_selected(position);
         }
     });
+    let player_view = Rc::downgrade(player_view);
+    let layout_for_notify = layout.clone();
     sidebar
         .selection()
         .connect_selected_notify(move |selection| {
@@ -886,6 +901,10 @@ fn connect_device_selection(
                     // cancel and publish the next selection generation.
                     if let Some(player_view) = player_view.upgrade() {
                         let _ = player_view.stop();
+                    }
+                    if selected_device.is_some() {
+                        layout_for_notify.set_device_selected(true);
+                        layout_for_notify.show_channels();
                     }
                 }
                 Err(_) => {

@@ -47,6 +47,7 @@ struct SidebarSyncState {
 }
 
 impl SidebarSyncState {
+    /// Synchronize the filter criteria from widget state and update presentation.
     fn sync(&self) {
         let Some(search) = self.search.upgrade() else {
             return;
@@ -82,6 +83,7 @@ impl SidebarSyncState {
         self.update_presentation();
     }
 
+    /// Reconcile sidebar widget visibility, sensitivity, and empty-state messaging.
     fn update_presentation(&self) {
         let Some(search) = self.search.upgrade() else {
             return;
