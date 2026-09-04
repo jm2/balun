@@ -174,9 +174,12 @@ require_packaging_runtime()
     require_command codesign 'install Xcode Command Line Tools via xcode-select --install'
     require_command ditto 'install Xcode Command Line Tools via xcode-select --install'
     require_command iconutil 'install Xcode Command Line Tools via xcode-select --install'
+    require_command plutil 'install Xcode Command Line Tools via xcode-select --install'
+    require_command sips 'install Xcode Command Line Tools via xcode-select --install'
 
     if $make_dmg; then
         require_command create-dmg 'install create-dmg via brew install create-dmg'
+        require_command hdiutil 'install the macOS disk-image tools'
     fi
 
     local plugin_directory missing
@@ -324,6 +327,7 @@ repository_root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
 target_directory="$repository_root/target"
 coverage_target_directory="$target_directory/llvm-cov-target"
 policy_helper="$script_dir/macos-package-policy.sh"
+icon_policy_helper="$script_dir/macos-icon-bundle-policy.sh"
 policy_file="$repository_root/build-aux/packaging/forbidden-bundled-components.txt"
 coverage_version='cargo-llvm-cov 0.8.7'
 application_id='io.github.jm2.Balun'
@@ -357,6 +361,10 @@ if [ "$mode" = build ]; then
         fail "Required macOS package-policy helper is unavailable or unsafe: $policy_helper"
     [ -f "$policy_file" ] && [ ! -L "$policy_file" ] || \
         fail "Pinned macOS component policy is unavailable or unsafe: $policy_file"
+    if $make_app || $make_dmg; then
+        [ -f "$icon_policy_helper" ] && [ ! -L "$icon_policy_helper" ] || \
+            fail "Required macOS icon-policy helper is unavailable or unsafe: $icon_policy_helper"
+    fi
 fi
 
 resolve_native_target
@@ -470,6 +478,18 @@ declare -F macos_validate_macho_copy_control >/dev/null 2>&1 \
 declare -F macos_validate_bundle_copy_control >/dev/null 2>&1 \
     || fail 'macOS package-policy helper does not provide macos_validate_bundle_copy_control.'
 
+if $make_app || $make_dmg; then
+    # shellcheck source=scripts/macos-icon-bundle-policy.sh
+    source "$icon_policy_helper"
+    declare -F macos_validate_icon_sources >/dev/null 2>&1 \
+        || fail 'macOS icon-policy helper does not provide macos_validate_icon_sources.'
+    declare -F macos_validate_app_icon_bundle >/dev/null 2>&1 \
+        || fail 'macOS icon-policy helper does not provide macos_validate_app_icon_bundle.'
+    readonly MACOS_SIPS_COMMAND=/usr/bin/sips
+    readonly MACOS_PLUTIL_COMMAND=/usr/bin/plutil
+    readonly MACOS_ICONUTIL_COMMAND=/usr/bin/iconutil
+fi
+
 balun_macos_sha256()
 {
     /usr/bin/shasum -a 256 "$1"
@@ -553,33 +573,23 @@ APP_ROOT="$(cd "$CONTENTS_DIR/.." && pwd -P)"
 # Blind the app to Homebrew by stripping it from PATH
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
-if [[ -z "${DYLD_LIBRARY_PATH+x}" ]]; then
-  export DYLD_LIBRARY_PATH="$BUNDLE_ROOT/Frameworks"
-fi
-
-if [[ -z "${GST_PLUGIN_SYSTEM_PATH+x}" ]]; then
-  export GST_PLUGIN_SYSTEM_PATH=""
-fi
-
-if [[ -z "${GST_PLUGIN_PATH+x}" ]]; then
-  export GST_PLUGIN_PATH="$BUNDLE_ROOT/Resources/lib/gstreamer-1.0"
-fi
-
-if [[ -z "${GST_PLUGIN_SCANNER+x}" ]]; then
-  export GST_PLUGIN_SCANNER="$DIR/gst-plugin-scanner"
-fi
-
-if [[ -z "${XDG_DATA_DIRS+x}" ]]; then
-  export XDG_DATA_DIRS="$BUNDLE_ROOT/Resources/share"
-fi
-
-if [[ -z "${GTK_DATA_PREFIX+x}" ]]; then
-  export GTK_DATA_PREFIX="$BUNDLE_ROOT/Resources"
-fi
-
-if [[ -z "${GSETTINGS_SCHEMA_DIR+x}" ]]; then
-  export GSETTINGS_SCHEMA_DIR="$BUNDLE_ROOT/Resources/share/glib-2.0/schemas"
-fi
+# Own every runtime search path. An ambient shell, Homebrew installation, or
+# test harness must not redirect the signed package to outside components.
+unset DYLD_FALLBACK_LIBRARY_PATH
+export DYLD_LIBRARY_PATH="$BUNDLE_ROOT/Frameworks"
+unset GST_PLUGIN_SYSTEM_PATH_1_0
+export GST_PLUGIN_SYSTEM_PATH=""
+unset GST_PLUGIN_PATH_1_0
+export GST_PLUGIN_PATH="$BUNDLE_ROOT/Resources/lib/gstreamer-1.0"
+unset GST_PLUGIN_SCANNER_1_0
+export GST_PLUGIN_SCANNER="$DIR/gst-plugin-scanner"
+export XDG_DATA_DIRS="$BUNDLE_ROOT/Resources/share"
+export GTK_DATA_PREFIX="$BUNDLE_ROOT/Resources"
+export GSETTINGS_SCHEMA_DIR="$BUNDLE_ROOT/Resources/share/glib-2.0/schemas"
+unset GDK_PIXBUF_MODULEDIR GTK_PATH
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
+unset http_proxy https_proxy all_proxy no_proxy
+unset GIO_EXTRA_MODULES GIO_USE_PROXY_RESOLVER
 
 # Check if running under platform runtime probe
 PROBE_CACHE=""
@@ -592,10 +602,6 @@ for arg in "$@"; do
   PREV="$arg"
 done
 
-if [[ -n "$PROBE_CACHE" ]]; then
-  exec "$DIR/Balun-bin" "$@"
-fi
-
 # Calculate 16-hex FNV-1a hash of canonical bundle root path
 INSTALL_KEY="$(/usr/bin/perl -e '
   use Math::BigInt;
@@ -607,7 +613,9 @@ INSTALL_KEY="$(/usr/bin/perl -e '
     $h ^= $b;
     $h = ($h * $prime) & $mask;
   }
-  printf("%016s\n", $h->as_hex() =~ s/^0x//r);
+  my $hex = $h->as_hex();
+  $hex =~ s/^0x//;
+  print(("0" x (16 - length($hex))) . $hex . "\n");
 ' "$APP_ROOT")"
 ARCH="$(uname -m)"
 if [[ "$ARCH" == "arm64" ]]; then
@@ -615,22 +623,48 @@ if [[ "$ARCH" == "arm64" ]]; then
 fi
 CACHE_ROOT="$HOME/Library/Caches/balun/runtime/macos-${ARCH}/${INSTALL_KEY}"
 
-mkdir -p "$CACHE_ROOT/gstreamer"
-mkdir -p "$CACHE_ROOT/gdk-pixbuf"
+umask 077
+if ! mkdir -p "$CACHE_ROOT/gstreamer" "$CACHE_ROOT/gdk-pixbuf"; then
+  printf 'Balun could not create its runtime cache under %s\n' "$CACHE_ROOT" >&2
+  exit 1
+fi
 
-if [[ -z "${GST_REGISTRY+x}" ]]; then
+unset GST_REGISTRY_1_0
+if [[ -n "$PROBE_CACHE" ]]; then
+  export GST_REGISTRY="$PROBE_CACHE/registry.bin"
+else
   export GST_REGISTRY="$CACHE_ROOT/gstreamer/registry.bin"
 fi
-
-if [[ -z "${GDK_PIXBUF_MODULE_FILE+x}" ]]; then
-  export GDK_PIXBUF_MODULE_FILE="$CACHE_ROOT/gdk-pixbuf/loaders.cache"
-fi
+export GDK_PIXBUF_MODULE_FILE="$CACHE_ROOT/gdk-pixbuf/loaders.cache"
 
 LOADERS_DIR="$BUNDLE_ROOT/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders"
-if [[ ! -f "$GDK_PIXBUF_MODULE_FILE" ]]; then
-  if [[ -x "$DIR/gdk-pixbuf-query-loaders" && -d "$LOADERS_DIR" ]]; then
-    "$DIR/gdk-pixbuf-query-loaders" "$LOADERS_DIR"/*.dylib > "$GDK_PIXBUF_MODULE_FILE" 2>/dev/null || true
+if [[ ! -s "$GDK_PIXBUF_MODULE_FILE" ]]; then
+  if [[ ! -x "$DIR/gdk-pixbuf-query-loaders" || ! -d "$LOADERS_DIR" ]]; then
+    printf 'Balun packaged pixbuf loader support is unavailable.\n' >&2
+    exit 1
   fi
+
+  shopt -s nullglob
+  LOADER_MODULES=("$LOADERS_DIR"/*.so "$LOADERS_DIR"/*.dylib)
+  shopt -u nullglob
+  if [[ ${#LOADER_MODULES[@]} -eq 0 ]]; then
+    printf 'Balun package contains no pixbuf loader modules.\n' >&2
+    exit 1
+  fi
+
+  LOADER_CACHE_TEMP="$(/usr/bin/mktemp "${GDK_PIXBUF_MODULE_FILE}.tmp.XXXXXX")" || exit 1
+  if ! "$DIR/gdk-pixbuf-query-loaders" "${LOADER_MODULES[@]}" > "$LOADER_CACHE_TEMP" 2>/dev/null; then
+    /bin/rm -f "$LOADER_CACHE_TEMP"
+    printf 'Balun could not generate its pixbuf loader cache.\n' >&2
+    exit 1
+  fi
+  if [[ ! -s "$LOADER_CACHE_TEMP" ]] \
+      || ! /usr/bin/grep -F "$LOADERS_DIR/" "$LOADER_CACHE_TEMP" >/dev/null; then
+    /bin/rm -f "$LOADER_CACHE_TEMP"
+    printf 'Balun generated an invalid pixbuf loader cache.\n' >&2
+    exit 1
+  fi
+  /bin/mv -f "$LOADER_CACHE_TEMP" "$GDK_PIXBUF_MODULE_FILE"
 fi
 
 exec "$DIR/Balun-bin" "$@"
@@ -638,12 +672,15 @@ EOF
 chmod +x "${BIN_DEST}"
 
 # ── Icons & Schemas ──────────────────────────────────────────────────────────
+if ! macos_validate_icon_sources "data/balun.iconset" \
+    "data/icons/hicolor" "$BUNDLE_ID"; then
+    fail "App-owned icon sources failed macOS icon policy: $MACOS_ICON_POLICY_REASON"
+fi
 mkdir -p "${RESOURCES_DIR}/share/icons"
 cp -RL "${BREW_PREFIX}/share/icons/hicolor" "${RESOURCES_DIR}/share/icons/" 2>/dev/null || true
 cp -RL "${BREW_PREFIX}/share/icons/Adwaita" "${RESOURCES_DIR}/share/icons/" 2>/dev/null || true
-if [[ -d "data/icons/hicolor" ]]; then
-    cp -R "data/icons/hicolor"/* "${RESOURCES_DIR}/share/icons/hicolor/" 2>/dev/null || true
-fi
+mkdir -p "${RESOURCES_DIR}/share/icons/hicolor"
+cp -R "data/icons/hicolor/." "${RESOURCES_DIR}/share/icons/hicolor/"
 if command -v gtk4-update-icon-cache &>/dev/null; then
     gtk4-update-icon-cache -f -t "${RESOURCES_DIR}/share/icons/hicolor" 2>/dev/null || true
     gtk4-update-icon-cache -f -t "${RESOURCES_DIR}/share/icons/Adwaita" 2>/dev/null || true
@@ -682,10 +719,11 @@ cp "$gst_scanner_src" "$GST_SCANNER_DEST"
 chmod u+w "$GST_SCANNER_DEST"
 
 # ── Icon & Info.plist ────────────────────────────────────────────────────────
-if [[ -d "data/balun.iconset" ]] && command -v iconutil &>/dev/null; then
-    iconutil -c icns -o "${RESOURCES_DIR}/balun.icns" "data/balun.iconset"
-    info "App icon created via iconutil."
-fi
+"$MACOS_ICONUTIL_COMMAND" -c icns -o "${RESOURCES_DIR}/balun.icns" \
+    "data/balun.iconset"
+[ -s "${RESOURCES_DIR}/balun.icns" ] \
+    || fail "iconutil did not produce a non-empty app icon"
+info "App icon created via iconutil."
 
 cat > "${APP_BUNDLE}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -844,7 +882,6 @@ for dylib in "${FRAMEWORKS_DIR}"/*.dylib; do
     chmod u+w "$dylib"
     install_name_tool -id "@executable_path/../Frameworks/$(basename "$dylib")" "$dylib" 2>/dev/null || true
     while IFS= read -r libpath; do
-        local dep_base
         dep_base="$(basename "$libpath")"
         if [[ -f "${FRAMEWORKS_DIR}/${dep_base}" ]]; then
             install_name_tool -change "$libpath" "@executable_path/../Frameworks/${dep_base}" "$dylib" 2>/dev/null || true
@@ -889,6 +926,12 @@ rm -f "${RESOURCES_DIR}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
 rm -f "${APP_BUNDLE}/Contents/MacOS/gst-registry.bin"
 
 # ── Package Policy Validation ────────────────────────────────────────────────
+info "Validating staged app icons..."
+if ! macos_validate_app_icon_bundle "$APP_BUNDLE" "$BUNDLE_ID"; then
+    fail "Application bundle failed macOS icon policy: $MACOS_ICON_POLICY_REASON"
+fi
+info "macOS icon policy passed for $APP_BUNDLE."
+
 info "Validating package against macOS copy-control policy..."
 if ! macos_validate_bundle_copy_control "$APP_BUNDLE"; then
     fail "Application bundle failed macOS component policy: $MACOS_PACKAGE_POLICY_REASON"
@@ -918,15 +961,19 @@ codesign --force --sign - "${BIN_DEST}"
 codesign --force --deep --sign - "$APP_BUNDLE"
 
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+if ! macos_validate_app_icon_bundle "$APP_BUNDLE" "$BUNDLE_ID"; then
+    fail "Signed application bundle failed macOS icon policy: $MACOS_ICON_POLICY_REASON"
+fi
 info "Code signature verified before runtime probe."
 
 # ── Relocated Read-Only Runtime Probe ────────────────────────────────────────
 PROBE_PARENT="dist/Balun Runtime Probe With Spaces"
 PROBE_APP="${PROBE_PARENT}/${APP_NAME}.app"
 PROBE_CACHE="$(mktemp -d "${TMPDIR:-/tmp}/Balun Runtime Cache With Spaces.XXXXXX")"
+PROBE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/Balun Runtime Home With Spaces.XXXXXX")"
 cleanup_probe() {
     chmod -R u+w "$PROBE_PARENT" 2>/dev/null || true
-    rm -rf "$PROBE_PARENT" "$PROBE_CACHE"
+    rm -rf "$PROBE_PARENT" "$PROBE_CACHE" "$PROBE_HOME"
 }
 trap cleanup_probe EXIT
 rm -rf "$PROBE_PARENT"
@@ -935,21 +982,29 @@ ditto "$APP_BUNDLE" "$PROBE_APP"
 chmod -R a-w "$PROBE_APP"
 
 info "Running relocated read-only runtime probe loopback..."
-GST_REGISTRY="$PROBE_CACHE/gstreamer/registry.bin" \
-env -u GST_REGISTRY_1_0 \
-    -u GDK_PIXBUF_MODULE_FILE \
-    -u GST_PLUGIN_PATH \
-    -u GST_PLUGIN_PATH_1_0 \
-    -u GST_PLUGIN_SYSTEM_PATH \
-    -u GST_PLUGIN_SYSTEM_PATH_1_0 \
-    -u GST_PLUGIN_SCANNER \
-    -u GST_PLUGIN_SCANNER_1_0 \
-    -u GDK_PIXBUF_MODULEDIR \
-    -u XDG_DATA_DIRS \
-    -u GTK_DATA_PREFIX \
-    -u GSETTINGS_SCHEMA_DIR \
-    -u GTK_PATH \
-    -u DYLD_LIBRARY_PATH \
+HOME="$PROBE_HOME" \
+GST_REGISTRY="$PROBE_CACHE/hostile-registry.bin" \
+GST_REGISTRY_1_0="$PROBE_CACHE/hostile-registry-v1.bin" \
+GDK_PIXBUF_MODULE_FILE="$PROBE_CACHE/hostile-loaders.cache" \
+GDK_PIXBUF_MODULEDIR="$PROBE_CACHE/hostile-loaders" \
+GST_PLUGIN_PATH="$PROBE_CACHE/hostile-plugins" \
+GST_PLUGIN_PATH_1_0="$PROBE_CACHE/hostile-plugins-v1" \
+GST_PLUGIN_SYSTEM_PATH="$PROBE_CACHE/hostile-system-plugins" \
+GST_PLUGIN_SYSTEM_PATH_1_0="$PROBE_CACHE/hostile-system-plugins-v1" \
+GST_PLUGIN_SCANNER="$PROBE_CACHE/hostile-scanner" \
+GST_PLUGIN_SCANNER_1_0="$PROBE_CACHE/hostile-scanner-v1" \
+XDG_DATA_DIRS="$PROBE_CACHE/hostile-data" \
+GTK_DATA_PREFIX="$PROBE_CACHE/hostile-gtk-data" \
+GSETTINGS_SCHEMA_DIR="$PROBE_CACHE/hostile-schemas" \
+GTK_PATH="$PROBE_CACHE/hostile-gtk" \
+DYLD_LIBRARY_PATH="$PROBE_CACHE/hostile-libraries" \
+DYLD_FALLBACK_LIBRARY_PATH="$PROBE_CACHE/hostile-fallback-libraries" \
+HTTP_PROXY="http://127.0.0.1:9" \
+HTTPS_PROXY="http://127.0.0.1:9" \
+ALL_PROXY="socks5://127.0.0.1:9" \
+NO_PROXY="invalid.example" \
+GIO_EXTRA_MODULES="$PROBE_CACHE/hostile-gio-modules" \
+GIO_USE_PROXY_RESOLVER="dummy" \
     "$PROBE_APP/Contents/MacOS/${APP_NAME}" \
     --balun-platform-runtime-probe "$PROBE_CACHE"
 
@@ -958,8 +1013,23 @@ SENTINEL_FILE="$PROBE_CACHE/balun-platform-runtime-probe.ok"
 SENTINEL_CONTENT="$(cat "$SENTINEL_FILE")"
 [[ "$SENTINEL_CONTENT" == "balun-macos-runtime-probe-v1" ]] || fail "runtime probe sentinel content mismatch: $SENTINEL_CONTENT"
 
-PROBE_GST_CACHE="$(find "$PROBE_CACHE" -type f -name 'registry.bin' -print | sed -n '1p')"
-[[ -n "$PROBE_GST_CACHE" ]] || fail "runtime probe did not create the GStreamer user cache"
+PROBE_GST_CACHE="$PROBE_CACHE/registry.bin"
+[[ -s "$PROBE_GST_CACHE" ]] \
+    || fail "runtime probe did not create the expected non-empty GStreamer cache"
+
+PROBE_PIXBUF_CACHES=()
+while IFS= read -r cache_path; do
+    PROBE_PIXBUF_CACHES+=("$cache_path")
+done < <(find "$PROBE_HOME/Library/Caches/balun/runtime" \
+    -type f -name 'loaders.cache' -print)
+[[ ${#PROBE_PIXBUF_CACHES[@]} -eq 1 ]] \
+    || fail "runtime probe did not create exactly one pixbuf loader cache"
+PROBE_PIXBUF_CACHE="${PROBE_PIXBUF_CACHES[0]}"
+[[ -s "$PROBE_PIXBUF_CACHE" ]] \
+    || fail "runtime probe created an empty pixbuf loader cache"
+grep -F "$PROBE_APP/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders/" \
+    "$PROBE_PIXBUF_CACHE" >/dev/null \
+    || fail "runtime probe pixbuf cache does not reference the relocated bundle"
 if [[ -e "$PROBE_APP/Contents/MacOS/gst-registry.bin" \
    || -e "$PROBE_APP/Contents/Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache" ]]; then
     fail "runtime probe wrote a mutable cache inside the signed app"
@@ -974,7 +1044,8 @@ cleanup_probe
 if $make_dmg; then
     info "Creating .dmg disk image via create-dmg..."
     mkdir -p dist
-    rm -f "dist/${APP_NAME}.dmg"
+    DMG_PATH="dist/${APP_NAME}.dmg"
+    rm -f "$DMG_PATH"
     create-dmg \
         --volname "${APP_NAME}" \
         --window-pos 200 120 \
@@ -982,10 +1053,41 @@ if $make_dmg; then
         --icon-size 100 \
         --app-drop-link 450 185 \
         --skip-jenkins \
-        "dist/${APP_NAME}.dmg" \
+        "$DMG_PATH" \
         "${APP_BUNDLE}"
-    [ -s "dist/${APP_NAME}.dmg" ] || fail "create-dmg did not produce a non-empty DMG"
-    info "DMG created: $(pwd)/dist/${APP_NAME}.dmg"
+    [ -s "$DMG_PATH" ] || fail "create-dmg did not produce a non-empty DMG"
+    hdiutil verify "$DMG_PATH" >/dev/null \
+        || fail "hdiutil could not verify the created DMG"
+
+    DMG_MOUNT="$(mktemp -d "${TMPDIR:-/tmp}/Balun DMG Mount With Spaces.XXXXXX")"
+    DMG_ATTACHED=false
+    cleanup_dmg() {
+        if $DMG_ATTACHED; then
+            hdiutil detach "$DMG_MOUNT" >/dev/null 2>&1 || true
+        fi
+        rmdir "$DMG_MOUNT" 2>/dev/null || true
+    }
+    trap cleanup_dmg EXIT
+    hdiutil attach -nobrowse -readonly -mountpoint "$DMG_MOUNT" \
+        "$DMG_PATH" >/dev/null \
+        || fail "hdiutil could not mount the created DMG read-only"
+    DMG_ATTACHED=true
+    MOUNTED_APP="$DMG_MOUNT/${APP_NAME}.app"
+    [ -d "$MOUNTED_APP" ] \
+        || fail "mounted DMG does not contain ${APP_NAME}.app"
+    if ! macos_validate_bundle_copy_control "$MOUNTED_APP"; then
+        fail "DMG app failed macOS component policy: $MACOS_PACKAGE_POLICY_REASON"
+    fi
+    if ! macos_validate_app_icon_bundle "$MOUNTED_APP" "$BUNDLE_ID"; then
+        fail "DMG app failed macOS icon policy: $MACOS_ICON_POLICY_REASON"
+    fi
+    codesign --verify --deep --strict --verbose=2 "$MOUNTED_APP"
+    hdiutil detach "$DMG_MOUNT" >/dev/null \
+        || fail "hdiutil could not detach the verified DMG"
+    DMG_ATTACHED=false
+    rmdir "$DMG_MOUNT"
+    trap - EXIT
+    info "DMG verified after read-only remount: $(pwd)/$DMG_PATH"
 fi
 
 info "Done."
