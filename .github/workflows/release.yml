@@ -633,6 +633,32 @@ jobs:
           name: release-assets-${{ needs.prepare.outputs.version }}
           path: release-assets
 
+      # A rerun must never rewrite assets on a release a maintainer has already
+      # published: only a missing release or exactly one unpublished draft for
+      # this tag may proceed.
+      - name: Refuse to modify a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          mapfile -t drafts < <(
+            gh api --paginate "repos/${REPOSITORY}/releases" \
+              --jq ".[] | select(.tag_name == \"${TAG}\") | .draft"
+          )
+          case "${#drafts[@]}:${drafts[0]:-}" in
+            0:) echo "No release exists for ${TAG}; a draft will be created" ;;
+            1:true) echo "One unpublished draft exists for ${TAG}; its assets will be replaced" ;;
+            1:false)
+              echo "Release ${TAG} is already published; refusing to modify it" >&2
+              exit 1
+              ;;
+            *)
+              echo "Found ${#drafts[@]} releases for ${TAG}; refusing to guess which to update" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Create or update the draft release for the validated tag
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
