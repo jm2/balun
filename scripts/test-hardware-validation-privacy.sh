@@ -19,6 +19,7 @@ fail()
 input='DeviceAuth=synthetic-secret token=test-token auth_token=another-token
 callsign=TEST-DT signal=92 strength=81 channel_name="Synthetic News"
 IPv4 192.0.2.44 IPv6 2001:db8::8 link-v6 fe80::1234:5678:9abc:def0 full-v6 2001:0db8:0000:0000:0000:0000:0000:0008
+adjacent-v6 2001:db8::1 fe80::2 ::1 packets=42
 tuner 105A1232 DeviceId(274338354) device_id=105A1232
 587000000 Hz freq=593000000 frequency=599000000
 test playback::live_hardware::tests firmware=20260313 build=89ABCDEF
@@ -52,6 +53,7 @@ done
 for useful_line in \
     'callsign=[CHANNEL_NAME] signal=92 strength=81 channel_name="[CHANNEL_NAME]"' \
     'IPv4 [IP_ADDRESS] IPv6 [IP_ADDRESS] link-v6 [IP_ADDRESS] full-v6 [IP_ADDRESS]' \
+    'adjacent-v6 [IP_ADDRESS] [IP_ADDRESS] [IP_ADDRESS] packets=42' \
     'test playback::live_hardware::tests firmware=20260313 build=89ABCDEF' \
     '2026-09-04T15:42:05.075786Z INFO GStreamer 1.28.6 model=HDHR5-4K tuners=4 channels=72' \
     'live ATSC 1.0: selected responsive favorite channel 5.1' \
