@@ -4,19 +4,20 @@
 
 .DESCRIPTION
     Builds Balun's GTK4/libadwaita/GStreamer desktop application with the MSYS2
-    CLANG64 toolchain. With no mode, this runs a locked release build and
+    CLANG64 or CLANGARM64 toolchain. With no mode, this runs a locked release build and
     requires a nonempty, regular, non-reparse-point balun.exe at Cargo's
     expected output path. It does not launch, bundle, or install the application.
 
     A lightweight cross-platform HDHomeRun live TV viewer
     Application ID: io.github.jm2.Balun
 
-    The helper selects x86_64-pc-windows-gnullvm, verifies that Rust target is
-    installed, discovers a standard MSYS2 installation automatically,
-    configures its CLANG64 compiler and pkg-config paths, and checks the GTK
-    4.16, libadwaita 1.6, and GStreamer 1.20 development-library floors. Only
-    the x86_64 CLANG64 environment is supported; ARM64 Windows is not supported
-    yet. Before a desktop build it also requires the
+    The helper selects the x86_64-pc-windows-gnullvm or
+    aarch64-pc-windows-gnullvm profile, verifies that Rust target is installed,
+    discovers a standard MSYS2 installation automatically, configures the
+    matching CLANG64 or CLANGARM64 compiler and pkg-config paths, and checks the
+    GTK 4.16, libadwaita 1.6, and GStreamer 1.20 development-library floors.
+    RUST_TARGET selects a profile explicitly; otherwise the native Windows
+    architecture is used. Before a desktop build it also requires the
     GStreamer runtime plugin files that provide playbin3, appsrc, tsdemux,
     deinterlace, and gtk4paintablesink, and warns when the libav broadcast
     decoders are absent. Use Msys2Root only for a nonstandard MSYS2
@@ -93,7 +94,8 @@
 
 .PARAMETER Msys2Root
     Optional root of a nonstandard MSYS2 installation. When omitted, the helper
-    checks MSYS2_ROOT, CLANG64 tools already on PATH, C:\msys64, and the common
+    checks MSYS2_ROOT, matching CLANG64 or CLANGARM64 tools already on PATH,
+    C:\msys64, and the common
     GitHub Actions temporary installation location.
 
 .PARAMETER Diagnostic
@@ -154,21 +156,47 @@ $ApplicationId = 'io.github.jm2.Balun'
 $ProductName = 'Balun'
 $DesktopBinaryName = 'balun.exe'
 $DiagnosticBinaryName = 'balun-discover.exe'
-$DesktopRustTarget = 'x86_64-pc-windows-gnullvm'
-$MsysEnvironment = 'clang64'
-$MsysPackagePrefix = 'mingw-w64-clang-x86_64'
+$WindowsDesktopProfiles = @(
+    [pscustomobject]@{
+        Name = 'x86_64'
+        RustTarget = 'x86_64-pc-windows-gnullvm'
+        MsysEnvironment = 'clang64'
+        MsysSystem = 'CLANG64'
+        MsysPackagePrefix = 'mingw-w64-clang-x86_64'
+        PeMachine = [uint16]0x8664
+        PeMachineName = 'AMD64'
+        InnoTargetArchitecture = 'x64'
+    },
+    [pscustomobject]@{
+        Name = 'aarch64'
+        RustTarget = 'aarch64-pc-windows-gnullvm'
+        MsysEnvironment = 'clangarm64'
+        MsysSystem = 'CLANGARM64'
+        MsysPackagePrefix = 'mingw-w64-clang-aarch64'
+        PeMachine = [uint16]0xAA64
+        PeMachineName = 'ARM64'
+        InnoTargetArchitecture = 'arm64'
+    }
+)
+$DesktopBuildProfile = $null
+$DesktopRustTarget = $null
+$MsysEnvironment = $null
+$MsysSystem = $null
+$MsysPackagePrefix = $null
+$ExpectedPeMachine = [uint16]0
+$ExpectedPeMachineName = $null
 $RequiredCoverageVersion = 'cargo-llvm-cov 0.8.7'
 $Msys2RootSpecified = $PSBoundParameters.ContainsKey('Msys2Root')
 $DistributionName = 'balun-windows'
 $ZipFileName = 'balun-windows.zip'
 $InstallerBaseName = 'balun-setup'
 $InnoScriptRelativePath = 'build-aux\inno\balun.iss'
-$InnoTargetArchitecture = 'x64'
+$InnoTargetArchitecture = $null
 $PlatformProbeFlag = '--balun-platform-runtime-probe'
 $PlatformProbeSentinelName = 'balun-platform-runtime-probe.ok'
 $PlatformProbeSentinel = "balun-windows-runtime-probe-v1`n"
-$ProbeReceiptSuffix = '.probe-v1'
-$ProbeReceiptHeader = 'balun-windows-runtime-probe-v1'
+$ProbeReceiptSuffix = '.probe-v2'
+$ProbeReceiptHeader = 'balun-windows-runtime-probe-v2'
 $RequiredIconEntryCount = 7
 $PlatformProbeDeadlineMs = 90000
 $PlatformProbeOutputLimit = 1MB
@@ -309,6 +337,102 @@ function Test-IsWindowsHost {
     return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 }
 
+function Get-DesktopBuildProfileForTarget {
+    param([string]$Target)
+
+    foreach ($candidateProfile in $WindowsDesktopProfiles) {
+        if ($candidateProfile.RustTarget -ceq $Target) { return $candidateProfile }
+    }
+    return $null
+}
+
+function Get-NativeWindowsDesktopRustTarget {
+    $probeTypeName = 'Balun.Windows.NativeArchitectureProbe'
+    if ($null -eq ($probeTypeName -as [type])) {
+        try {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace Balun.Windows
+{
+    public static class NativeArchitectureProbe
+    {
+        [DllImport("kernel32.dll", ExactSpelling = true)]
+        private static extern IntPtr GetCurrentProcess();
+
+        [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWow64Process2(
+            IntPtr process,
+            out ushort processMachine,
+            out ushort nativeMachine
+        );
+
+        public static bool Query(out ushort processMachine, out ushort nativeMachine)
+        {
+            return IsWow64Process2(
+                GetCurrentProcess(),
+                out processMachine,
+                out nativeMachine
+            );
+        }
+    }
+}
+'@ -ErrorAction Stop
+        }
+        catch {
+            Exit-WithError (
+                'Native Windows architecture detection could not be loaded; ' +
+                'set RUST_TARGET explicitly to a supported Windows desktop target.'
+            )
+        }
+    }
+
+    if ($null -eq ($probeTypeName -as [type])) {
+        Exit-WithError (
+            'Native Windows architecture detection is unavailable; set ' +
+            'RUST_TARGET explicitly to a supported Windows desktop target.'
+        )
+    }
+
+    $ignoredProcessMachine = [uint16]0
+    $nativeMachine = [uint16]0
+    try {
+        $probeSucceeded = [Balun.Windows.NativeArchitectureProbe]::Query(
+            [ref]$ignoredProcessMachine,
+            [ref]$nativeMachine
+        )
+    }
+    catch {
+        Exit-WithError (
+            'Native Windows architecture detection failed; set RUST_TARGET ' +
+            'explicitly to a supported Windows desktop target.'
+        )
+    }
+
+    if (-not $probeSucceeded) {
+        $nativeError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        Exit-WithError (
+            "Native Windows architecture detection failed with Win32 error " +
+            "$nativeError; set RUST_TARGET explicitly to a supported Windows " +
+            'desktop target.'
+        )
+    }
+
+    switch ($nativeMachine) {
+        ([uint16]0x8664) { return 'x86_64-pc-windows-gnullvm' }
+        ([uint16]0xAA64) { return 'aarch64-pc-windows-gnullvm' }
+        default {
+            $renderedMachine = '0x{0:X4}' -f $nativeMachine
+            Exit-WithError (
+                "Native Windows architecture $renderedMachine is unsupported; " +
+                'set RUST_TARGET explicitly to a supported Windows desktop target.'
+            )
+        }
+    }
+}
+
 if ($Run.IsPresent -and -not (Test-IsWindowsHost)) {
     Exit-WithUsageError '-Run can launch the Windows desktop application only from Windows.'
 }
@@ -379,24 +503,70 @@ function Resolve-DiagnosticRustTarget {
 }
 
 function Resolve-DesktopRustTarget {
-    if (-not [string]::IsNullOrWhiteSpace($env:RUST_TARGET)) {
-        Assert-BoundedWindowsRustTarget $env:RUST_TARGET
-        if ($env:RUST_TARGET -cne $DesktopRustTarget) {
+    $target = $env:RUST_TARGET
+    if ([string]::IsNullOrWhiteSpace($target)) {
+        if (-not (Test-IsWindowsHost)) {
             Exit-WithUsageError (
-                "The Windows desktop helper requires RUST_TARGET=$DesktopRustTarget " +
-                'to match the MSYS2 CLANG64 GTK libraries.'
+                'A non-Windows host must set RUST_TARGET to a supported Windows ' +
+                'desktop target; this helper will not install a cross-compilation target.'
             )
         }
-        return $env:RUST_TARGET
+        $target = Get-NativeWindowsDesktopRustTarget
+    }
+    else {
+        Assert-BoundedWindowsRustTarget $target
     }
 
-    if (-not (Test-IsWindowsHost)) {
+    $buildProfile = Get-DesktopBuildProfileForTarget $target
+    if ($null -eq $buildProfile) {
+        $supportedTargets = @($WindowsDesktopProfiles | ForEach-Object {
+            $_.RustTarget
+        }) -join ' or '
         Exit-WithUsageError (
-            "A non-Windows host must set RUST_TARGET=$DesktopRustTarget; " +
-            'this helper will not install a cross-compilation target.'
+            "The Windows desktop helper supports RUST_TARGET=$supportedTargets only."
         )
     }
-    return $DesktopRustTarget
+
+    foreach ($declaration in @(
+        [pscustomobject]@{
+            Name = 'MSYS_ENV'
+            Actual = $env:MSYS_ENV
+            Expected = $buildProfile.MsysEnvironment
+        },
+        [pscustomobject]@{
+            Name = 'MSYSTEM'
+            Actual = $env:MSYSTEM
+            Expected = $buildProfile.MsysSystem
+        },
+        [pscustomobject]@{
+            Name = 'MINGW_PACKAGE_PREFIX'
+            Actual = $env:MINGW_PACKAGE_PREFIX
+            Expected = $buildProfile.MsysPackagePrefix
+        },
+        [pscustomobject]@{
+            Name = 'INNO_ARCH'
+            Actual = $env:INNO_ARCH
+            Expected = $buildProfile.InnoTargetArchitecture
+        }
+    )) {
+        if (-not [string]::IsNullOrWhiteSpace($declaration.Actual) -and
+            $declaration.Actual -cne $declaration.Expected) {
+            Exit-WithUsageError (
+                "RUST_TARGET=$target requires $($declaration.Name)=" +
+                "$($declaration.Expected), not $($declaration.Actual)."
+            )
+        }
+    }
+
+    $script:DesktopBuildProfile = $buildProfile
+    $script:DesktopRustTarget = $buildProfile.RustTarget
+    $script:MsysEnvironment = $buildProfile.MsysEnvironment
+    $script:MsysSystem = $buildProfile.MsysSystem
+    $script:MsysPackagePrefix = $buildProfile.MsysPackagePrefix
+    $script:ExpectedPeMachine = [uint16]$buildProfile.PeMachine
+    $script:ExpectedPeMachineName = $buildProfile.PeMachineName
+    $script:InnoTargetArchitecture = $buildProfile.InnoTargetArchitecture
+    return $buildProfile.RustTarget
 }
 
 # A read-only replacement for Tributary's automatic `rustup target add`: the
@@ -640,18 +810,18 @@ function Resolve-Msys2Layout {
             Get-Msys2Layout $candidates[0]
         }
         Exit-WithError (
-            "MSYS2 CLANG64 is incomplete under $($incomplete.Root); missing: " +
+            "MSYS2 $MsysSystem is incomplete under $($incomplete.Root); missing: " +
             "$($incomplete.Missing -join ', '). Install the " +
-            'mingw-w64-clang-x86_64-gtk4, ' +
-            'mingw-w64-clang-x86_64-libadwaita, ' +
-            'mingw-w64-clang-x86_64-gstreamer, ' +
-            'mingw-w64-clang-x86_64-pkg-config, and ' +
-            'mingw-w64-clang-x86_64-toolchain packages.'
+            "$MsysPackagePrefix-gtk4, " +
+            "$MsysPackagePrefix-libadwaita, " +
+            "$MsysPackagePrefix-gstreamer, " +
+            "$MsysPackagePrefix-pkg-config, and " +
+            "$MsysPackagePrefix-toolchain packages."
         )
     }
 
     Exit-WithError (
-        'Could not locate an MSYS2 CLANG64 installation automatically. ' +
+        "Could not locate an MSYS2 $MsysSystem installation automatically. " +
         'Install MSYS2 at C:\msys64 or pass its root once with -Msys2Root.'
     )
 }
@@ -707,7 +877,7 @@ function Assert-PkgConfigFloor {
     if ($LASTEXITCODE -ne 0) {
         Exit-WithError (
             "$Package >= $MinimumVersion was not found in $($Layout.Prefix). " +
-            "Install or update mingw-w64-clang-x86_64-$InstallPackage in MSYS2 CLANG64."
+            "Install or update $MsysPackagePrefix-$InstallPackage in MSYS2 $MsysSystem."
         )
     }
 }
@@ -724,7 +894,7 @@ function Assert-PlaybackRuntime {
             "GStreamer plugin directory $pluginDirectory is missing. Install the " +
             "$MsysPackagePrefix-gstreamer, $MsysPackagePrefix-gst-plugins-base, " +
             "$MsysPackagePrefix-gst-plugins-good, $MsysPackagePrefix-gst-plugins-bad, and " +
-            "$MsysPackagePrefix-gst-plugins-rs packages in MSYS2 CLANG64."
+            "$MsysPackagePrefix-gst-plugins-rs packages in MSYS2 $MsysSystem."
         )
     }
     $required = @(
@@ -749,7 +919,7 @@ function Assert-PlaybackRuntime {
         Exit-WithError (
             "Required GStreamer playback runtime is incomplete in ${pluginDirectory}: " +
             ($missing -join '; ') +
-            '. Install the matching packages in MSYS2 CLANG64 and retry.'
+            ". Install the matching packages in MSYS2 $MsysSystem and retry."
         )
     }
     $libavPath = Join-Path $pluginDirectory 'libgstlibav.dll'
@@ -1453,7 +1623,12 @@ function Assert-WindowsApplicationResourceContract {
         throw 'Expected Windows application version is empty or contains unsupported characters'
     }
 
-    Assert-MzHeader $applicationFull "Windows application resource target ($applicationLabel)"
+    Assert-PeMachine `
+        -Path $applicationFull `
+        -Label "Windows application resource target ($applicationLabel)" `
+        -ExpectedMachine $ExpectedPeMachine `
+        -ExpectedMachineName $ExpectedPeMachineName `
+        -ProfileName $DesktopBuildProfile.Name
 
     $applicationSnapshot = "$($applicationItem.Length):$($applicationItem.LastWriteTimeUtc.Ticks)"
     $lines = @(Invoke-BoundedPeResourceInspection `
@@ -1693,6 +1868,91 @@ function Assert-MzHeader {
     }
 }
 
+# Read the COFF machine directly from a PE file without loading or executing
+# it. The profile binds every build output, packaging tool, and staged binary
+# to one architecture, preventing a valid-looking mixed CLANG64/CLANGARM64
+# tree from reaching the runtime probe or installer.
+function Get-PeMachine {
+    param([string]$Path, [string]$Label)
+
+    $stream = [System.IO.File]::Open(
+        $Path,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::Read
+    )
+    $reader = $null
+    try {
+        if ($stream.Length -lt 0x40) {
+            throw "$Label is too short to contain a PE header"
+        }
+        $reader = [System.IO.BinaryReader]::new(
+            $stream,
+            [System.Text.Encoding]::ASCII,
+            $true
+        )
+        if ($reader.ReadByte() -ne 0x4D -or $reader.ReadByte() -ne 0x5A) {
+            throw "$Label does not have an MZ header"
+        }
+        $stream.Position = 0x3C
+        $peOffset = [uint64]$reader.ReadUInt32()
+        if ($peOffset -lt 0x40 -or $peOffset -gt ([uint64]$stream.Length - 6)) {
+            throw "$Label has an invalid PE header offset"
+        }
+        $stream.Position = [int64]$peOffset
+        $signature = $reader.ReadBytes(4)
+        if ($signature.Length -ne 4 -or
+            $signature[0] -ne 0x50 -or $signature[1] -ne 0x45 -or
+            $signature[2] -ne 0 -or $signature[3] -ne 0) {
+            throw "$Label does not have a PE signature"
+        }
+        return [uint16]$reader.ReadUInt16()
+    }
+    finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+        $stream.Dispose()
+    }
+}
+
+function Assert-PeMachine {
+    param(
+        [string]$Path,
+        [string]$Label,
+        [uint16]$ExpectedMachine,
+        [string]$ExpectedMachineName,
+        [string]$ProfileName
+    )
+
+    $actualMachine = Get-PeMachine $Path $Label
+    if ($actualMachine -ne $ExpectedMachine) {
+        $actual = '0x{0:X4}' -f $actualMachine
+        $expected = '{0} (0x{1:X4})' -f $ExpectedMachineName, $ExpectedMachine
+        throw "$Label has PE machine $actual; Windows profile $ProfileName requires $expected"
+    }
+}
+
+function Assert-Msys2ToolMachineContract {
+    param([pscustomobject]$Layout)
+
+    foreach ($tool in @(
+        [pscustomobject]@{ Name = 'pkg-config'; Path = $Layout.PkgConfig },
+        [pscustomobject]@{ Name = 'clang'; Path = $Layout.Clang },
+        [pscustomobject]@{ Name = 'clang++'; Path = $Layout.Clangxx },
+        [pscustomobject]@{ Name = 'llvm-ar'; Path = $Layout.ArchiveTool },
+        [pscustomobject]@{ Name = 'llvm-dlltool'; Path = $Layout.DllTool }
+    )) {
+        # Platform-neutral routing tests use executable shell fixtures without
+        # an .exe suffix. Real Windows MSYS2 tools are PE executables.
+        if ([System.IO.Path]::GetExtension([string]$tool.Path) -ine '.exe') { continue }
+        Assert-PeMachine `
+            -Path $tool.Path `
+            -Label "MSYS2 $($tool.Name) tool" `
+            -ExpectedMachine $ExpectedPeMachine `
+            -ExpectedMachineName $ExpectedPeMachineName `
+            -ProfileName $DesktopBuildProfile.Name
+    }
+}
+
 function Get-WindowsBundlePeTargets {
     param([string]$RootFull)
     return @(Get-WindowsTreeMembersWithoutReparseTraversal $RootFull | Where-Object {
@@ -1747,7 +2007,12 @@ function Assert-WindowsBundlePeImportPolicy {
     $targets = [System.Collections.Generic.List[string]]::new()
     $targetSnapshot = @{}
     foreach ($targetItem in $targetItems) {
-        Assert-MzHeader $targetItem.FullName "Final PE import target $($targetItem.Name)"
+        Assert-PeMachine `
+            -Path $targetItem.FullName `
+            -Label "Final PE import target $($targetItem.Name)" `
+            -ExpectedMachine $ExpectedPeMachine `
+            -ExpectedMachineName $ExpectedPeMachineName `
+            -ProfileName $DesktopBuildProfile.Name
         $fullPath = [System.IO.Path]::GetFullPath($targetItem.FullName)
         $targets.Add($fullPath)
         $targetSnapshot[$fullPath] = "$($targetItem.Length):$($targetItem.LastWriteTimeUtc.Ticks)"
@@ -1864,6 +2129,11 @@ function Get-WindowsProbeReceiptLines {
     param([Parameter(Mandatory = $true)][string]$Root)
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add($ProbeReceiptHeader)
+    $lines.Add("profile=$($DesktopBuildProfile.Name)")
+    $lines.Add("rust-target=$DesktopRustTarget")
+    $lines.Add("msys-environment=$MsysEnvironment")
+    $lines.Add(('pe-machine=0x{0:X4}' -f $ExpectedPeMachine))
+    $lines.Add("inno-architecture=$InnoTargetArchitecture")
     foreach ($anchor in $ProbeReceiptAnchors) {
         $path = Join-Path $Root $anchor
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -1979,10 +2249,23 @@ function Get-PackagingTools {
     }
     if ($missing.Count -gt 0) {
         Exit-WithError (
-            "Required packaging tools are missing from MSYS2 CLANG64: $($missing -join '; '). " +
+            "Required packaging tools are missing from MSYS2 ${MsysSystem}: $($missing -join '; '). " +
             "Install the $MsysPackagePrefix-llvm, $MsysPackagePrefix-gstreamer, " +
             "$MsysPackagePrefix-glib2, and $MsysPackagePrefix-gtk4 packages."
         )
+    }
+    foreach ($name in $tools.Keys) {
+        try {
+            Assert-PeMachine `
+                -Path ([string]$tools[$name]) `
+                -Label "MSYS2 $name packaging tool" `
+                -ExpectedMachine $ExpectedPeMachine `
+                -ExpectedMachineName $ExpectedPeMachineName `
+                -ProfileName $DesktopBuildProfile.Name
+        }
+        catch {
+            Exit-WithError "Packaging tool architecture validation failed: $($_.Exception.Message)"
+        }
     }
     return [pscustomobject]$tools
 }
@@ -2028,6 +2311,15 @@ function Get-ValidatedWindowsBundleCopySourceItem {
     if (Test-ForbiddenBundledComponentName $sourceItem.Name) {
         throw "Refusing to copy forbidden bundled component: $($sourceItem.Name)"
     }
+    if ($sourceItem.Extension -ieq '.dll' -or $sourceItem.Extension -ieq '.drv' -or
+        $sourceItem.Extension -ieq '.exe') {
+        Assert-PeMachine `
+            -Path $sourceItem.FullName `
+            -Label "Windows bundle source $($sourceItem.Name)" `
+            -ExpectedMachine $ExpectedPeMachine `
+            -ExpectedMachineName $ExpectedPeMachineName `
+            -ProfileName $DesktopBuildProfile.Name
+    }
     return $sourceItem
 }
 
@@ -2068,6 +2360,22 @@ function Copy-IfNewer {
     if ($null -eq $destinationItem) {
         Copy-Item -LiteralPath $sourceItem.FullName -Destination $Dst
         return $true
+    }
+    if ($sourceItem.Extension -ieq '.dll' -or $sourceItem.Extension -ieq '.drv' -or
+        $sourceItem.Extension -ieq '.exe') {
+        $destinationMachine = [uint16]0
+        try {
+            $destinationMachine = Get-PeMachine `
+                $destinationItem.FullName `
+                "Existing Windows bundle file $($destinationItem.Name)"
+        }
+        catch {
+            $destinationMachine = [uint16]0
+        }
+        if ($destinationMachine -ne $ExpectedPeMachine) {
+            Copy-Item -LiteralPath $sourceItem.FullName -Destination $Dst -Force
+            return $true
+        }
     }
     if ($sourceItem.LastWriteTimeUtc -gt $destinationItem.LastWriteTimeUtc -or
         $sourceItem.Length -ne $destinationItem.Length) {
@@ -2249,7 +2557,7 @@ function Invoke-WindowsPackageStaging {
         Exit-WithError (
             "The reviewed GStreamer plugin closure is incomplete in $($Layout.PluginDirectory): " +
             ($missingPlugins -join '; ') +
-            '. Install the matching packages in MSYS2 CLANG64 and retry.'
+            ". Install the matching packages in MSYS2 $MsysSystem and retry."
         )
     }
     foreach ($member in @(Get-WindowsTreeMembersWithoutReparseTraversal $pluginDir)) {
@@ -2332,6 +2640,12 @@ function Invoke-WindowsPackageStaging {
                     }
                     break
                 }
+                Assert-PeMachine `
+                    -Path $candidate `
+                    -Label "Staged PE target $([System.IO.Path]::GetFileName($candidate))" `
+                    -ExpectedMachine $ExpectedPeMachine `
+                    -ExpectedMachineName $ExpectedPeMachineName `
+                    -ProfileName $DesktopBuildProfile.Name
                 $batchTargets.Add($candidate)
                 $batchArgumentCharacters += $candidateCharacters
                 $offset++
@@ -2721,8 +3035,14 @@ try {
     if (-not $DiagnosticMode) {
         Assert-DesktopRustTargetInstalled $RustTarget
         $MsysLayout = Resolve-Msys2Layout
+        try {
+            Assert-Msys2ToolMachineContract $MsysLayout
+        }
+        catch {
+            Exit-WithError "MSYS2 tool architecture validation failed: $($_.Exception.Message)"
+        }
         Initialize-DesktopBuildEnvironment $MsysLayout
-        Write-Info "Using MSYS2 CLANG64 at $($MsysLayout.Prefix)."
+        Write-Info "Using MSYS2 $MsysSystem at $($MsysLayout.Prefix)."
         Assert-PkgConfigFloor $MsysLayout 'gtk4' '4.16' 'gtk4'
         Assert-PkgConfigFloor $MsysLayout 'libadwaita-1' '1.6' 'libadwaita'
         Assert-PkgConfigFloor $MsysLayout 'gstreamer-1.0' '1.20' 'gstreamer'
@@ -2986,6 +3306,17 @@ try {
 
     $BinaryPath = Join-Path $RepositoryRoot "target\$RustTarget\release\$DesktopBinaryName"
     $BinaryItem = Get-ValidatedBuildOutput $BinaryPath 'desktop application'
+    try {
+        Assert-PeMachine `
+            -Path $BinaryItem.FullName `
+            -Label 'Desktop application output' `
+            -ExpectedMachine $ExpectedPeMachine `
+            -ExpectedMachineName $ExpectedPeMachineName `
+            -ProfileName $DesktopBuildProfile.Name
+    }
+    catch {
+        Exit-WithError "Desktop output architecture validation failed: $($_.Exception.Message)"
+    }
     Write-Info "Application ID: $ApplicationId"
     Write-Info "Desktop output: $($BinaryItem.FullName)"
 

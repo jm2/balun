@@ -260,8 +260,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-24.04
     env:
-      ACTIONLINT_VERSION: 1.7.7
-      ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -360,6 +360,12 @@ jobs:
   platform-smoke:
     name: ${{ matrix.name }} compile smoke
     runs-on: ${{ matrix.runner }}
+    env:
+      RUST_TARGET: ${{ matrix.desktop_target }}
+      MSYS_ENV: ${{ matrix.msys_env }}
+      MSYSTEM: ${{ matrix.msystem }}
+      MINGW_PACKAGE_PREFIX: ${{ matrix.mingw_package_prefix }}
+      INNO_ARCH: ${{ matrix.inno_arch }}
     # Cap the job so a hung MSYS2 mirror fails fast and re-runs instead of
     # stalling to the 6-hour ceiling; the Windows package closure needs the
     # extra headroom.
@@ -374,6 +380,21 @@ jobs:
           - name: Windows
             runner: windows-2025
             desktop_target: x86_64-pc-windows-gnullvm
+            windows_arch: x86_64
+            msys_env: clang64
+            msystem: CLANG64
+            mingw_package_prefix: mingw-w64-clang-x86_64
+            inno_arch: x64
+            msys_cache: true
+          - name: Windows ARM64
+            runner: windows-11-arm
+            desktop_target: aarch64-pc-windows-gnullvm
+            windows_arch: aarch64
+            msys_env: clangarm64
+            msystem: CLANGARM64
+            mingw_package_prefix: mingw-w64-clang-aarch64
+            inno_arch: arm64
+            msys_cache: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -409,21 +430,22 @@ jobs:
         env:
           __SETUP_MSYS2_USE_MAIN_MIRROR_ONLY: 'true'
         with:
-          msystem: CLANG64
+          msystem: ${{ matrix.msystem }}
           path-type: inherit
           update: true
-          cache: true
+          # setup-msys2's package-cache cleanup is flaky on native ARM64.
+          cache: ${{ matrix.msys_cache }}
           install: >-
-            mingw-w64-clang-x86_64-gtk4
-            mingw-w64-clang-x86_64-gstreamer
-            mingw-w64-clang-x86_64-gst-plugins-base
-            mingw-w64-clang-x86_64-gst-plugins-good
-            mingw-w64-clang-x86_64-gst-plugins-bad
-            mingw-w64-clang-x86_64-gst-plugins-rs
-            mingw-w64-clang-x86_64-gst-libav
-            mingw-w64-clang-x86_64-libadwaita
-            mingw-w64-clang-x86_64-pkg-config
-            mingw-w64-clang-x86_64-toolchain
+            ${{ matrix.mingw_package_prefix }}-gtk4
+            ${{ matrix.mingw_package_prefix }}-gstreamer
+            ${{ matrix.mingw_package_prefix }}-gst-plugins-base
+            ${{ matrix.mingw_package_prefix }}-gst-plugins-good
+            ${{ matrix.mingw_package_prefix }}-gst-plugins-bad
+            ${{ matrix.mingw_package_prefix }}-gst-plugins-rs
+            ${{ matrix.mingw_package_prefix }}-gst-libav
+            ${{ matrix.mingw_package_prefix }}-libadwaita
+            ${{ matrix.mingw_package_prefix }}-pkg-config
+            ${{ matrix.mingw_package_prefix }}-toolchain
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
@@ -500,7 +522,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: balun-windows-x86_64
+          name: balun-windows-${{ matrix.windows_arch }}
           path: dist/balun-windows.zip
           if-no-files-found: error
           retention-days: 7
