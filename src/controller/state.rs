@@ -546,6 +546,26 @@ impl DiscoveryState {
     }
 }
 
+/// Ticket for one exact-address search admitted through a controller handle:
+/// the number of exact searches admitted so far, including this one. The
+/// controller processes commands in order and counts each exact search it
+/// processes, so a snapshot's [`ApplicationSnapshot::exact_searches`] reaches
+/// the ticket exactly while that search's states are published.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ExactSearchTicket(u64);
+
+impl ExactSearchTicket {
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
 /// Topology-free outcome of the latest network-change reconciliation.
 ///
 /// The sequence starts at zero and advances once per reconciliation, so a
@@ -736,6 +756,7 @@ pub struct ApplicationSnapshot {
     selected_lineup: SelectedLineupState,
     routed: RoutedDiscoveryState,
     network: NetworkChangeSummary,
+    exact_searches: u64,
 }
 
 impl ApplicationSnapshot {
@@ -804,6 +825,7 @@ impl ApplicationSnapshot {
             selected_lineup,
             routed: RoutedDiscoveryState::default(),
             network: NetworkChangeSummary::INITIAL,
+            exact_searches: 0,
         })
     }
 
@@ -822,6 +844,14 @@ impl ApplicationSnapshot {
         self
     }
 
+    /// Attach the number of exact-address searches the controller has
+    /// processed so far; it carries no generation of its own.
+    #[must_use]
+    pub const fn with_exact_searches(mut self, exact_searches: u64) -> Self {
+        self.exact_searches = exact_searches;
+        self
+    }
+
     #[must_use]
     pub fn initial() -> Self {
         Self {
@@ -834,6 +864,7 @@ impl ApplicationSnapshot {
             selected_lineup: SelectedLineupState::unselected(OperationGeneration::INITIAL),
             routed: RoutedDiscoveryState::default(),
             network: NetworkChangeSummary::INITIAL,
+            exact_searches: 0,
         }
     }
 
@@ -880,6 +911,14 @@ impl ApplicationSnapshot {
     #[must_use]
     pub const fn network(&self) -> NetworkChangeSummary {
         self.network
+    }
+
+    /// Exact-address searches the controller has processed, whether they
+    /// started or were refused at admission. A republished state whose count
+    /// has not advanced predates every search queued after it.
+    #[must_use]
+    pub const fn exact_searches(&self) -> u64 {
+        self.exact_searches
     }
 
     /// Whether this publication can safely replace `previous` in a reducer.

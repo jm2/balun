@@ -6,7 +6,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, DiscoveryFailure, DiscoveryKind, DiscoveryStatus, NetworkChangeSummary,
-    RoutedAvailability,
+    RoutedAvailability, RoutedUnavailableReason,
 };
 
 use super::objects::DeviceRowObject;
@@ -121,8 +121,10 @@ impl DeviceSidebar {
         self.refresh_button.set_sensitive(actions.start_sensitive);
         self.exact_discovery_button
             .set_sensitive(actions.start_sensitive);
-        let routed_available = snapshot.routed().availability() == RoutedAvailability::Available;
-        self.routed_discovery_button.set_visible(routed_available);
+        let routed_availability = snapshot.routed().availability();
+        let routed_available = routed_availability == RoutedAvailability::Available;
+        self.routed_discovery_button
+            .set_visible(routed_search_visible(routed_availability));
         self.routed_discovery_button
             .set_sensitive(actions.start_sensitive);
         self.routed_menu_button.set_visible(routed_available);
@@ -138,6 +140,7 @@ impl DeviceSidebar {
             discovery.kind(),
             discovery.status(),
             !show_status,
+            routed_availability,
         );
         let network = snapshot.network();
         if self.network_sequence.replace(network.sequence()) != network.sequence()
@@ -153,6 +156,7 @@ impl DeviceSidebar {
             discovery.kind(),
             discovery.status(),
             discovery.issue_count(),
+            routed_availability,
         );
         self.stack.set_visible_child_name(if show_status {
             STATUS_PAGE_NAME
@@ -160,6 +164,14 @@ impl DeviceSidebar {
             DEVICE_LIST_PAGE_NAME
         });
     }
+}
+
+const fn routed_search_visible(availability: RoutedAvailability) -> bool {
+    matches!(
+        availability,
+        RoutedAvailability::Available
+            | RoutedAvailability::Unavailable(RoutedUnavailableReason::ObserversUnavailable)
+    )
 }
 
 /// Build the device pane without starting discovery or any other network work.
@@ -446,8 +458,14 @@ fn apply_empty_presentation(
     discovery_kind: DiscoveryKind,
     discovery_status: DiscoveryStatus,
     issue_count: u16,
+    routed_availability: RoutedAvailability,
 ) {
-    let presentation = discovery_presentation(discovery_kind, discovery_status, issue_count);
+    let presentation = discovery_presentation_for_availability(
+        discovery_kind,
+        discovery_status,
+        issue_count,
+        routed_availability,
+    );
     status.set_icon_name(Some(presentation.icon_name));
     status.set_title(presentation.title);
     status.set_description(Some(presentation.description));
@@ -458,14 +476,36 @@ fn apply_terminal_banner(
     discovery_kind: DiscoveryKind,
     discovery_status: DiscoveryStatus,
     has_device_rows: bool,
+    routed_availability: RoutedAvailability,
 ) {
-    if let Some(title) = terminal_banner_title(discovery_kind, discovery_status, has_device_rows) {
+    if let Some(title) = terminal_banner_title_for_availability(
+        discovery_kind,
+        discovery_status,
+        has_device_rows,
+        routed_availability,
+    ) {
         banner.set_title(title);
         banner.set_revealed(true);
     } else {
         banner.set_revealed(false);
         banner.set_title("");
     }
+}
+
+fn terminal_banner_title_for_availability(
+    kind: DiscoveryKind,
+    status: DiscoveryStatus,
+    has_device_rows: bool,
+    routed_availability: RoutedAvailability,
+) -> Option<&'static str> {
+    if kind == DiscoveryKind::Routed
+        && status == DiscoveryStatus::Failed(DiscoveryFailure::RoutedUnavailable)
+        && has_device_rows
+        && let RoutedAvailability::Unavailable(reason) = routed_availability
+    {
+        return Some(routed_unavailable_banner_title(reason));
+    }
+    terminal_banner_title(kind, status, has_device_rows)
 }
 
 /// Keep relevant terminal discovery outcomes visible when retained device
@@ -537,6 +577,21 @@ fn routed_failure_banner_title(failure: DiscoveryFailure) -> &'static str {
         | DiscoveryFailure::Network
         | DiscoveryFailure::ExactTargetLimitReached
         | DiscoveryFailure::Internal => "Routed discovery failed.",
+    }
+}
+
+const fn routed_unavailable_banner_title(reason: RoutedUnavailableReason) -> &'static str {
+    match reason {
+        RoutedUnavailableReason::UnsupportedPlatform => {
+            "Automatic route discovery is unsupported on this platform."
+        }
+        RoutedUnavailableReason::NotConfigured => {
+            "This Balun session has no routed discovery service."
+        }
+        RoutedUnavailableReason::NoPrivateDirectory => "Routed approval storage is unavailable.",
+        RoutedUnavailableReason::ObserversUnavailable => {
+            "Linux route or approval monitoring is unavailable."
+        }
     }
 }
 
@@ -646,6 +701,39 @@ fn discovery_presentation(
             },
             description: discovery_failure_description(kind, failure),
         },
+    }
+}
+
+fn discovery_presentation_for_availability(
+    kind: DiscoveryKind,
+    status: DiscoveryStatus,
+    issue_count: u16,
+    routed_availability: RoutedAvailability,
+) -> DiscoveryPresentation {
+    let mut presentation = discovery_presentation(kind, status, issue_count);
+    if kind == DiscoveryKind::Routed
+        && status == DiscoveryStatus::Failed(DiscoveryFailure::RoutedUnavailable)
+        && let RoutedAvailability::Unavailable(reason) = routed_availability
+    {
+        presentation.description = routed_unavailable_description(reason);
+    }
+    presentation
+}
+
+const fn routed_unavailable_description(reason: RoutedUnavailableReason) -> &'static str {
+    match reason {
+        RoutedUnavailableReason::UnsupportedPlatform => {
+            "Automatic route-derived discovery is not supported here; find the device by address instead."
+        }
+        RoutedUnavailableReason::NotConfigured => {
+            "This Balun session was started without a routed discovery service."
+        }
+        RoutedUnavailableReason::NoPrivateDirectory => {
+            "Balun could not open its private storage for routed approvals."
+        }
+        RoutedUnavailableReason::ObserversUnavailable => {
+            "Balun could not monitor Linux routes or routed-approval changes."
+        }
     }
 }
 
@@ -958,6 +1046,69 @@ mod tests {
             terminal_banner_title(DiscoveryKind::Routed, DiscoveryStatus::Refreshing, true),
             None
         );
+    }
+
+    #[test]
+    fn routed_unavailable_copy_explains_the_snapshot_reason() {
+        let cases = [
+            (
+                RoutedUnavailableReason::UnsupportedPlatform,
+                "Automatic route-derived discovery is not supported here; find the device by address instead.",
+                "Automatic route discovery is unsupported on this platform.",
+            ),
+            (
+                RoutedUnavailableReason::NotConfigured,
+                "This Balun session was started without a routed discovery service.",
+                "This Balun session has no routed discovery service.",
+            ),
+            (
+                RoutedUnavailableReason::NoPrivateDirectory,
+                "Balun could not open its private storage for routed approvals.",
+                "Routed approval storage is unavailable.",
+            ),
+            (
+                RoutedUnavailableReason::ObserversUnavailable,
+                "Balun could not monitor Linux routes or routed-approval changes.",
+                "Linux route or approval monitoring is unavailable.",
+            ),
+        ];
+        for (reason, description, banner) in cases {
+            let availability = RoutedAvailability::Unavailable(reason);
+            let presentation = discovery_presentation_for_availability(
+                DiscoveryKind::Routed,
+                DiscoveryStatus::Failed(DiscoveryFailure::RoutedUnavailable),
+                0,
+                availability,
+            );
+            assert_eq!(presentation.description, description);
+            assert_eq!(
+                terminal_banner_title_for_availability(
+                    DiscoveryKind::Routed,
+                    DiscoveryStatus::Failed(DiscoveryFailure::RoutedUnavailable),
+                    true,
+                    availability,
+                ),
+                Some(banner)
+            );
+        }
+    }
+
+    #[test]
+    fn transient_routed_observer_failure_keeps_a_retry_action() {
+        assert!(routed_search_visible(RoutedAvailability::Available));
+        assert!(routed_search_visible(RoutedAvailability::Unavailable(
+            RoutedUnavailableReason::ObserversUnavailable
+        )));
+        for reason in [
+            RoutedUnavailableReason::UnsupportedPlatform,
+            RoutedUnavailableReason::NotConfigured,
+            RoutedUnavailableReason::NoPrivateDirectory,
+        ] {
+            assert!(!routed_search_visible(RoutedAvailability::Unavailable(
+                reason
+            )));
+        }
+        assert!(!routed_search_visible(RoutedAvailability::Unknown));
     }
 
     #[test]

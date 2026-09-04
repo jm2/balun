@@ -12,7 +12,7 @@ pub use handoff::{StreamHandoff, StreamHandoffError, StreamHandoffReceiver, Stre
 #[cfg(target_os = "linux")]
 pub use network::LinuxNetworkChangeSource;
 pub use network::{NetworkChangeSource, UnavailableNetworkChangeSource};
-pub use remembered::{ExactTargetTracker, RediscoveryQueue, RediscoveryStep};
+pub use remembered::{ExactSearchOutcome, ExactTargetTracker, RediscoveryQueue, RediscoveryStep};
 pub use resolution::HostnameResolutionReceiver;
 #[cfg(target_os = "linux")]
 pub use routed::{LinuxRoutedDiscovery, RoutedStartError};
@@ -29,9 +29,9 @@ pub use runtime::{
 };
 pub use state::{
     ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryKind,
-    DiscoveryState, DiscoveryStatus, LineupFailure, MAX_CHANNEL_NAME_BYTES, MAX_DEVICE_LOCATORS,
-    MAX_DEVICE_SUMMARIES, MAX_DEVICE_TEXT_BYTES, MAX_SELECTED_CHANNELS, NetworkChangeSummary,
-    OperationGeneration, RoutedApprovalToken, RoutedAvailability, RoutedDiscoveryState,
-    RoutedProposalState, RoutedProposalStatus, RoutedUnavailableReason, SelectedLineupState,
-    SelectedLineupStatus, SnapshotRevision, StateError,
+    DiscoveryState, DiscoveryStatus, ExactSearchTicket, LineupFailure, MAX_CHANNEL_NAME_BYTES,
+    MAX_DEVICE_LOCATORS, MAX_DEVICE_SUMMARIES, MAX_DEVICE_TEXT_BYTES, MAX_SELECTED_CHANNELS,
+    NetworkChangeSummary, OperationGeneration, RoutedApprovalToken, RoutedAvailability,
+    RoutedDiscoveryState, RoutedProposalState, RoutedProposalStatus, RoutedUnavailableReason,
+    SelectedLineupState, SelectedLineupStatus, SnapshotRevision, StateError,
 };

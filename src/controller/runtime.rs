@@ -5,7 +5,7 @@ use std::future::Future;
 use std::io;
 use std::net::IpAddr;
 use std::pin::Pin;
-use std::sync::{Arc, mpsc as std_mpsc};
+use std::sync::{Arc, Mutex, mpsc as std_mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,9 +23,9 @@ use super::routed::{
 };
 use super::{
     ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryKind,
-    DiscoveryState, DiscoveryStatus, LineupFailure, NetworkChangeSummary, OperationGeneration,
-    SelectedLineupState, SelectedLineupStatus, SnapshotRevision, StateError, StreamHandoff,
-    StreamHandoffError, StreamHandoffReceiver, StreamSelection,
+    DiscoveryState, DiscoveryStatus, ExactSearchTicket, LineupFailure, NetworkChangeSummary,
+    OperationGeneration, SelectedLineupState, SelectedLineupStatus, SnapshotRevision, StateError,
+    StreamHandoff, StreamHandoffError, StreamHandoffReceiver, StreamSelection,
 };
 use super::{
     RoutedApprovalToken, RoutedAvailability, RoutedDiscoveryState, RoutedProposalState,
@@ -173,9 +173,12 @@ fn default_routed_service() -> Arc<dyn RoutedDiscoveryService> {
     };
     match super::routed::LinuxRoutedDiscovery::start(directory.join(ROUTED_APPROVAL_DIRECTORY)) {
         Ok(service) => Arc::new(service),
-        Err(_) => Arc::new(UnavailableRoutedDiscovery::new(
-            RoutedUnavailableReason::ObserversUnavailable,
-        )),
+        Err(error) => {
+            tracing::warn!(reason = %error, "routed discovery supervisor could not start");
+            Arc::new(UnavailableRoutedDiscovery::new(
+                RoutedUnavailableReason::ObserversUnavailable,
+            ))
+        }
     }
 }
 
@@ -318,6 +321,9 @@ pub struct ControllerHandle {
     commands: mpsc::Sender<ActorCommand>,
     shutdown: CancellationToken,
     snapshots: watch::Receiver<Arc<ApplicationSnapshot>>,
+    /// Exact searches admitted through every clone of this handle, in the
+    /// order the actor will process them; shared so tickets stay in step.
+    exact_searches: Arc<Mutex<u64>>,
 }
 
 /// Unique owner of the controller thread and its deterministic shutdown.
@@ -436,6 +442,7 @@ impl ControllerRuntime {
         match ready_receiver.recv() {
             Ok(Ok(())) => Ok(Self {
                 handle: ControllerHandle {
+                    exact_searches: Arc::new(Mutex::new(0)),
                     commands: command_sender,
                     shutdown,
                     snapshots: snapshot_receiver,
@@ -520,7 +527,28 @@ impl Drop for ControllerRuntime {
 impl ControllerHandle {
     /// Try to admit a command without waiting for queue capacity.
     pub fn try_send(&self, command: ControllerCommand) -> Result<(), ControllerCommandError> {
+        if let ControllerCommand::DiscoverExact(target) = command {
+            return self.try_discover_exact(target).map(|_| ());
+        }
         self.try_send_actor(ActorCommand::Controller(command))
+    }
+
+    /// Admit an exact-address search and return its ticket. Every exact
+    /// search is counted here, whichever clone sends it, so the ticket names
+    /// the snapshot count at which the actor publishes this search's states.
+    pub fn try_discover_exact(
+        &self,
+        target: ExactDiscoveryTarget,
+    ) -> Result<ExactSearchTicket, ControllerCommandError> {
+        let mut admitted = self
+            .exact_searches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.try_send_actor(ActorCommand::Controller(ControllerCommand::DiscoverExact(
+            target,
+        )))?;
+        *admitted = admitted.saturating_add(1);
+        Ok(ExactSearchTicket::new(*admitted))
     }
 
     /// Admit one private, one-shot stream request into the controller FIFO.
@@ -622,6 +650,7 @@ struct ControllerActor {
     network_source: Arc<dyn NetworkChangeSource>,
     network_changes: Option<mpsc::Receiver<NetworkChange>>,
     network: NetworkChangeSummary,
+    exact_searches: u64,
 }
 
 impl ControllerActor {
@@ -666,6 +695,7 @@ impl ControllerActor {
             network_source,
             network_changes: None,
             network: NetworkChangeSummary::INITIAL,
+            exact_searches: 0,
         }
     }
 
@@ -853,7 +883,7 @@ impl ControllerActor {
                     DiscoveryKind::Routed,
                     DiscoveryFailure::RoutedProposalChanged,
                 );
-                tracing::warn!(status = ?self.discovery.status(), "discovery failed");
+                self.log_discovery_outcome();
             }
             Some(scope) => {
                 let generation = self.next_discovery_generation()?;
@@ -994,6 +1024,7 @@ impl ControllerActor {
         };
         active.cancellation.cancel();
         let _ = active.task.await;
+        self.refresh_routed_availability();
     }
 
     fn finish_routed_control(
@@ -1045,8 +1076,70 @@ impl ControllerActor {
             RoutedProposalStatus::None => None,
             _ => self.routed.cooldown_seconds(),
         };
-        self.routed = RoutedDiscoveryState::new(self.routed.availability(), proposal, cooldown);
+        let availability = self.routed_service_availability();
+        if let RoutedAvailability::Unavailable(reason) = availability {
+            tracing::warn!(?reason, "routed discovery control is unavailable");
+        }
+        self.routed = RoutedDiscoveryState::new(availability, proposal, cooldown);
         self.publish()
+    }
+
+    fn routed_service_availability(&self) -> RoutedAvailability {
+        match self.routed_service.availability() {
+            Ok(()) => RoutedAvailability::Available,
+            Err(reason) => RoutedAvailability::Unavailable(reason),
+        }
+    }
+
+    fn refresh_routed_availability(&mut self) -> Option<RoutedUnavailableReason> {
+        let availability = self.routed_service_availability();
+        self.routed = RoutedDiscoveryState::new(
+            availability,
+            self.routed.proposal(),
+            self.routed.cooldown_seconds(),
+        );
+        match availability {
+            RoutedAvailability::Unavailable(reason) => Some(reason),
+            RoutedAvailability::Unknown | RoutedAvailability::Available => None,
+        }
+    }
+
+    /// Emit useful, topology-safe discovery telemetry and refresh routed
+    /// availability after every routed completion.
+    fn log_discovery_outcome(&mut self) {
+        let kind = self.discovery.kind();
+        let status = self.discovery.status();
+        let generation = self.discovery.generation().get();
+        let issue_count = self.discovery.issue_count();
+        let unavailable_reason = if kind == DiscoveryKind::Routed {
+            self.refresh_routed_availability()
+        } else {
+            None
+        };
+
+        match (status, unavailable_reason) {
+            (DiscoveryStatus::Failed(_), Some(reason)) => {
+                tracing::warn!(?kind, ?status, ?reason, generation, "discovery failed")
+            }
+            (DiscoveryStatus::Failed(_), None) => {
+                tracing::warn!(?kind, ?status, generation, "discovery failed");
+            }
+            (_, Some(reason)) => tracing::warn!(
+                ?kind,
+                ?status,
+                ?reason,
+                generation,
+                issue_count,
+                "discovery completed but routed discovery is now unavailable"
+            ),
+            _ => tracing::info!(
+                ?kind,
+                ?status,
+                generation,
+                issue_count,
+                "discovery completed"
+            ),
+        }
     }
 
     async fn start_discovery(
@@ -1063,13 +1156,18 @@ impl ControllerActor {
             return Ok(());
         }
         let generation = self.next_discovery_generation()?;
+        if matches!(scope, DiscoveryScope::Exact(_)) {
+            // Counted before either publication below so a consumer can tell
+            // this search's states from a republished earlier one.
+            self.exact_searches = self.exact_searches.saturating_add(1);
+        }
         if exact_target_limit_reached {
             self.discovery = DiscoveryState::failed_for(
                 generation,
                 DiscoveryKind::Exact,
                 DiscoveryFailure::ExactTargetLimitReached,
             );
-            tracing::warn!(status = ?self.discovery.status(), "discovery failed");
+            self.log_discovery_outcome();
             self.publish()?;
             return Ok(());
         }
@@ -1086,6 +1184,11 @@ impl ControllerActor {
                 RoutedDiscoveryState::new(self.routed.availability(), self.routed.proposal(), None);
         }
         self.discovery = DiscoveryState::refreshing_for(generation, scope.kind());
+        tracing::info!(
+            kind = ?scope.kind(),
+            generation = generation.get(),
+            "discovery started"
+        );
         self.publish()?;
 
         let cancellation = self.shutdown.child_token();
@@ -1162,8 +1265,12 @@ impl ControllerActor {
         let Some(active) = self.active_discovery.take() else {
             return;
         };
+        let routed = active.scope.kind() == DiscoveryKind::Routed;
         active.cancellation.cancel();
         let _ = active.task.await;
+        if routed {
+            self.refresh_routed_availability();
+        }
     }
 
     async fn cancel_active_selection(&mut self) {
@@ -1279,6 +1386,7 @@ impl ControllerActor {
                             } else {
                                 None
                             };
+                            self.log_discovery_outcome();
                             self.publish()?;
                             self.spawn_selection(pending_selection);
                             return Ok(true);
@@ -1321,6 +1429,7 @@ impl ControllerActor {
                                 self.selected_lineup = SelectedLineupState::unselected(generation);
                                 self.selected_snapshot = None;
                             }
+                            self.log_discovery_outcome();
                             self.publish()?;
                             return Ok(true);
                         }
@@ -1331,7 +1440,7 @@ impl ControllerActor {
                             completion.scope.kind(),
                             DiscoveryFailure::Internal,
                         );
-                        tracing::warn!(status = ?self.discovery.status(), "discovery failed");
+                        self.log_discovery_outcome();
                     }
                 }
             }
@@ -1341,7 +1450,7 @@ impl ControllerActor {
                     completion.scope.kind(),
                     failure,
                 );
-                tracing::warn!(status = ?self.discovery.status(), "discovery failed");
+                self.log_discovery_outcome();
             }
         }
         self.publish()?;
@@ -1778,7 +1887,8 @@ impl ControllerActor {
             self.selected_lineup.clone(),
         )?
         .with_routed(self.routed)
-        .with_network(self.network);
+        .with_network(self.network)
+        .with_exact_searches(self.exact_searches);
         self.revision = revision;
         self.snapshots.send_replace(Arc::new(snapshot));
         Ok(())
@@ -3479,6 +3589,7 @@ mod tests {
             watch::channel(Arc::new(ApplicationSnapshot::initial()));
         let shutdown = CancellationToken::new();
         let controller = ControllerHandle {
+            exact_searches: Arc::new(Mutex::new(0)),
             commands: sender,
             shutdown: shutdown.clone(),
             snapshots: snapshot_receiver,
@@ -4841,6 +4952,7 @@ mod tests {
     }
 
     struct ScriptedRoutedState {
+        availability: Mutex<Result<(), RoutedUnavailableReason>>,
         proposals: Mutex<VecDeque<RoutedStep<RoutedProposal>>>,
         approvals: Mutex<VecDeque<RoutedStep<()>>>,
         runs: Mutex<VecDeque<RoutedStep<RoutedRunOutcome>>>,
@@ -4858,6 +4970,7 @@ mod tests {
         fn new(origins: Vec<RoutedProposalOriginSummary>) -> Self {
             Self {
                 shared: Arc::new(ScriptedRoutedState {
+                    availability: Mutex::new(Ok(())),
                     proposals: Mutex::new(VecDeque::new()),
                     approvals: Mutex::new(VecDeque::new()),
                     runs: Mutex::new(VecDeque::new()),
@@ -4882,6 +4995,14 @@ mod tests {
 
         fn script_revoke(&self, step: RoutedStep<()>) {
             self.shared.revokes.lock().unwrap().push_back(step);
+        }
+
+        fn set_unavailable(&self, reason: RoutedUnavailableReason) {
+            *self.shared.availability.lock().unwrap() = Err(reason);
+        }
+
+        fn set_available(&self) {
+            *self.shared.availability.lock().unwrap() = Ok(());
         }
 
         fn calls(&self) -> Vec<RoutedCall> {
@@ -4921,7 +5042,7 @@ mod tests {
 
     impl RoutedDiscoveryService for ScriptedRoutedService {
         fn availability(&self) -> Result<(), RoutedUnavailableReason> {
-            Ok(())
+            *self.shared.availability.lock().unwrap()
         }
 
         fn propose(&self, cancellation: CancellationToken) -> RoutedFuture<RoutedProposal> {
@@ -5317,6 +5438,148 @@ mod tests {
         .await;
         assert_eq!(ready.discovery().kind(), DiscoveryKind::Local);
         assert_eq!(ready.devices().len(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routed_unavailable_completion_publishes_the_service_reason() {
+        let routed = ScriptedRoutedService::new(Vec::new());
+        routed.script_run(RoutedStep::Immediate(Err(
+            DiscoveryFailure::RoutedUnavailable,
+        )));
+        let (controller, _discovery, _starts) = start_routed(routed.clone());
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        routed.set_unavailable(RoutedUnavailableReason::ObserversUnavailable);
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        let unavailable = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status()
+                == DiscoveryStatus::Failed(DiscoveryFailure::RoutedUnavailable)
+        })
+        .await;
+        assert_eq!(
+            unavailable.routed().availability(),
+            RoutedAvailability::Unavailable(RoutedUnavailableReason::ObserversUnavailable)
+        );
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routed_successful_completion_refreshes_the_service_reason() {
+        let routed = ScriptedRoutedService::new(Vec::new());
+        routed.script_run(RoutedStep::Immediate(Ok(routed_outcome(
+            Vec::new(),
+            &["synthetic-controller-tunnel"],
+        ))));
+        let (controller, _discovery, _starts) = start_routed(routed.clone());
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        routed.set_unavailable(RoutedUnavailableReason::ObserversUnavailable);
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        let unavailable = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().kind() == DiscoveryKind::Routed
+                && snapshot.discovery().status() == DiscoveryStatus::NoResponse
+        })
+        .await;
+        assert_eq!(
+            unavailable.routed().availability(),
+            RoutedAvailability::Unavailable(RoutedUnavailableReason::ObserversUnavailable)
+        );
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routed_proposal_completion_refreshes_recovered_availability() {
+        let summary = tunnel_summary();
+        let routed = ScriptedRoutedService::new(Vec::new());
+        routed.set_unavailable(RoutedUnavailableReason::ObserversUnavailable);
+        let (release, release_rx) = oneshot::channel();
+        routed.script_proposal(RoutedStep::Gated {
+            release: release_rx,
+        });
+        let (controller, _discovery, _starts) = start_routed(routed.clone());
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::ProposeRoutedDiscovery)
+            .unwrap();
+        let proposing = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.routed().proposal() == RoutedProposalStatus::Proposing
+        })
+        .await;
+        assert_eq!(
+            proposing.routed().availability(),
+            RoutedAvailability::Unavailable(RoutedUnavailableReason::ObserversUnavailable)
+        );
+        routed.set_available();
+        release
+            .send(Ok(RoutedProposal::new(
+                RoutedApprovalToken::new(1),
+                summary,
+            )))
+            .expect("the gated routed proposal should still be in flight");
+        let recovered = wait_for_snapshot(&mut snapshots, |snapshot| {
+            matches!(
+                snapshot.routed().proposal(),
+                RoutedProposalStatus::Proposed(_)
+            )
+        })
+        .await;
+        assert_eq!(
+            recovered.routed().availability(),
+            RoutedAvailability::Available
+        );
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routed_cancel_refreshes_changed_service_availability() {
+        let routed = ScriptedRoutedService::new(Vec::new());
+        let (started, started_rx) = std_mpsc::channel();
+        let (cancelled, cancelled_rx) = std_mpsc::channel();
+        routed.script_run(RoutedStep::UntilCancelled { started, cancelled });
+        let (controller, _discovery, _starts) = start_routed(routed.clone());
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().kind() == DiscoveryKind::Routed
+                && snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+        started_rx
+            .recv_timeout(WAIT)
+            .expect("the routed run should be active before cancellation");
+        routed.set_unavailable(RoutedUnavailableReason::ObserversUnavailable);
+        handle.try_send(ControllerCommand::CancelDiscovery).unwrap();
+        cancelled_rx
+            .recv_timeout(WAIT)
+            .expect("the routed run should observe cancellation");
+        let idle = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().kind() == DiscoveryKind::Routed
+                && snapshot.discovery().status() == DiscoveryStatus::Idle
+        })
+        .await;
+        assert_eq!(
+            idle.routed().availability(),
+            RoutedAvailability::Unavailable(RoutedUnavailableReason::ObserversUnavailable)
+        );
         controller.shutdown().unwrap();
     }
 

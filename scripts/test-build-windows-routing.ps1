@@ -1478,8 +1478,8 @@ exit $global:LASTEXITCODE
             $DesktopTarget
         }
         $NativeRunBuildCommand = (
-            'cargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> ' +
-            "<--target-dir> <$FixtureTargetRoot> <--target> <$NativeRunTarget>"
+            'cargo <build> <--release> <--locked> <--features> <desktop,windows-console> ' +
+            "<--bin> <balun> <--target-dir> <$FixtureTargetRoot> <--target> <$NativeRunTarget>"
         )
         $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = Join-Path $env:SystemRoot 'System32\whoami.exe'
         Invoke-TestHelper -Arguments @('-Run')
@@ -1514,6 +1514,7 @@ exit $global:LASTEXITCODE
         '$ignoredProcessMachine',
         "'--features',",
         "'desktop',",
+        "'desktop,windows-console'",
         "'gstreamer-1.0'",
         "'1.20'",
         "'libgstgtk4.dll'",

@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use adw::prelude::*;
 use balun::controller::{
-    ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryState,
-    ExactTargetTracker, RediscoveryQueue,
+    ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryFailure,
+    DiscoveryKind, DiscoveryState, DiscoveryStatus, ExactSearchOutcome, ExactTargetTracker,
+    RediscoveryQueue,
 };
 use balun::discovery::{
     DiscoveryEntry, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget,
@@ -414,14 +415,7 @@ pub(crate) fn build(
     });
 
     connect_refresh(&device_sidebar, &handle);
-    connect_exact_discovery(
-        &window,
-        &device_sidebar,
-        &handle,
-        &accepted,
-        &exact_tracker,
-        &wiring,
-    );
+    connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
     connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
     let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
     connect_routed_discovery(&window, &device_sidebar, &routed_ui);
@@ -628,12 +622,10 @@ fn connect_exact_discovery(
     window: &adw::ApplicationWindow,
     sidebar: &device_sidebar::DeviceSidebar,
     controller: &ControllerHandle,
-    accepted: &Rc<RefCell<Arc<ApplicationSnapshot>>>,
     exact_tracker: &Rc<RefCell<ExactTargetTracker>>,
     wiring: &Rc<RediscoveryWiring>,
 ) {
     let controller = controller.clone();
-    let accepted = Rc::clone(accepted);
     let exact_tracker = Rc::clone(exact_tracker);
     let wiring = Rc::clone(wiring);
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
@@ -654,7 +646,6 @@ fn connect_exact_discovery(
             };
 
             let admitted_controller = controller.clone();
-            let admitted_accepted = Rc::clone(&accepted);
             let admitted_tracker = Rc::clone(&exact_tracker);
             let admitted_wiring = Rc::clone(&wiring);
             let admitted_cancel_button = cancel_discovery_button.clone();
@@ -681,20 +672,22 @@ fn connect_exact_discovery(
                     admitted_exact_button.set_sensitive(false);
                     admitted_refresh_button.set_sensitive(false);
                     admitted_routed_button.set_sensitive(false);
-                    match admitted_controller.try_send(ControllerCommand::DiscoverExact(target)) {
-                        Ok(()) => {
-                            // Remember the address only once a newer exact
-                            // operation reports a valid reply from it.
-                            admitted_tracker
-                                .borrow_mut()
-                                .admit(target, admitted_accepted.borrow().discovery().generation());
+                    match admitted_controller.try_discover_exact(target) {
+                        Ok(ticket) => {
+                            // Remember the address only once this search
+                            // reports a valid reply from it.
+                            admitted_tracker.borrow_mut().admit(target, ticket);
                             admitted_cancel_button.set_visible(true);
                             admitted_cancel_button.set_sensitive(true);
+                            admitted_wiring
+                                .toast("Searching the entered address for an HDHomeRun device.");
                         }
                         Err(_) => {
                             admitted_exact_button.set_sensitive(true);
                             admitted_refresh_button.set_sensitive(true);
                             admitted_routed_button.set_sensitive(true);
+                            admitted_wiring
+                                .toast("Balun is busy; try the device address again in a moment.");
                         }
                     }
                 },
@@ -1079,6 +1072,29 @@ const fn resolution_failure_copy(error: HostnameResolutionError) -> &'static str
     }
 }
 
+const EXACT_SEARCH_REPLACED_COPY: &str =
+    "The exact-address device search was replaced before it completed.";
+
+const fn exact_settlement_failure_toast(discovery: DiscoveryState) -> Option<&'static str> {
+    match (discovery.kind(), discovery.status()) {
+        (DiscoveryKind::Exact, DiscoveryStatus::NoResponse) => {
+            Some("No valid HDHomeRun reply was received from the entered address.")
+        }
+        (
+            DiscoveryKind::Exact,
+            DiscoveryStatus::Failed(DiscoveryFailure::ExactTargetLimitReached),
+        ) => Some("The device address limit was reached for this session."),
+        (DiscoveryKind::Exact, DiscoveryStatus::Failed(_)) => {
+            Some("The exact-address device search failed.")
+        }
+        (DiscoveryKind::Exact, DiscoveryStatus::Idle) => {
+            Some("The exact-address device search was stopped.")
+        }
+        (DiscoveryKind::Exact, DiscoveryStatus::Ready | DiscoveryStatus::Refreshing) => None,
+        _ => Some(EXACT_SEARCH_REPLACED_COPY),
+    }
+}
+
 /// Main-context reactions the reducer runs after accepting a snapshot.
 struct SnapshotReactions {
     rediscovery: Rc<RediscoveryWiring>,
@@ -1126,10 +1142,25 @@ fn spawn_snapshot_reducer(
             channel_sidebar.apply_snapshot(&candidate);
             layout.set_device_selected(candidate.selected_device().is_some());
             let discovery = candidate.discovery();
+            let exact_searches = candidate.exact_searches();
             accepted.replace(candidate);
 
-            if let Some(target) = rediscovery.exact_tracker.borrow_mut().observe(discovery) {
-                rediscovery.remember(RememberedTarget::Address(target));
+            let outcome = rediscovery
+                .exact_tracker
+                .borrow_mut()
+                .observe(discovery, exact_searches);
+            match outcome {
+                ExactSearchOutcome::Pending => {}
+                ExactSearchOutcome::Reachable(target) => {
+                    rediscovery.remember(RememberedTarget::Address(target));
+                    rediscovery.toast("HDHomeRun device found.");
+                }
+                ExactSearchOutcome::Settled => {
+                    if let Some(copy) = exact_settlement_failure_toast(discovery) {
+                        rediscovery.toast(copy);
+                    }
+                }
+                ExactSearchOutcome::Superseded => rediscovery.toast(EXACT_SEARCH_REPLACED_COPY),
             }
             advance_rediscovery(&rediscovery, discovery);
             react_to_routed(&routed_ui, &accepted.borrow());
@@ -1241,6 +1272,54 @@ mod tests {
 
     use super::*;
     use balun::settings::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH};
+
+    #[test]
+    fn exact_address_settlement_has_bounded_failure_feedback() {
+        let generation = balun::controller::OperationGeneration::new(2);
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::exact_no_response(generation, 0)),
+            Some("No valid HDHomeRun reply was received from the entered address.")
+        );
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::failed_for(
+                generation,
+                DiscoveryKind::Exact,
+                DiscoveryFailure::Network,
+            )),
+            Some("The exact-address device search failed.")
+        );
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::failed_for(
+                generation,
+                DiscoveryKind::Exact,
+                DiscoveryFailure::ExactTargetLimitReached,
+            )),
+            Some("The device address limit was reached for this session.")
+        );
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::idle_for(
+                generation,
+                DiscoveryKind::Exact,
+            )),
+            Some("The exact-address device search was stopped.")
+        );
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::ready_for(
+                generation,
+                DiscoveryKind::Exact,
+                0,
+            )),
+            None
+        );
+        assert_eq!(
+            exact_settlement_failure_toast(DiscoveryState::ready_for(
+                generation,
+                DiscoveryKind::Local,
+                0,
+            )),
+            Some("The exact-address device search was replaced before it completed.")
+        );
+    }
 
     #[test]
     fn window_keyboard_contract_filters_modifiers_and_ambient_locks() {
@@ -2167,14 +2246,7 @@ mod tests {
                 });
 
                 connect_refresh(&device_sidebar, &handle);
-                connect_exact_discovery(
-                    &window,
-                    &device_sidebar,
-                    &handle,
-                    &accepted,
-                    &exact_tracker,
-                    &wiring,
-                );
+                connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
                 connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
                 let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
                 connect_routed_discovery(&window, &device_sidebar, &routed_ui);
