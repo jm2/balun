@@ -2,7 +2,7 @@
 Deterministic command-routing tests for scripts/build-windows.ps1.
 
 Each invocation runs in a fresh child PowerShell process with fake Cargo and
-MSYS2 CLANG64 commands. No compiler, installer, package manager, network
+MSYS2 CLANG64/CLANGARM64 commands. No compiler, installer, package manager, network
 access, GUI toolkit, or Balun artifact is required.
 #>
 
@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDirectory = Split-Path -Parent $PSCommandPath
 $HelperUnderTest = Join-Path $ScriptDirectory 'build-windows.ps1'
+$InnoRecipeUnderTest = Join-Path $ScriptDirectory '..\build-aux\inno\balun.iss'
 $TemporaryRoot = Join-Path (
     [System.IO.Path]::GetTempPath()
 ) "balun-windows-routing-$([Guid]::NewGuid().ToString('N'))"
@@ -29,9 +30,14 @@ $FakeMsysPrefix = Join-Path $FakeMsysRoot 'clang64'
 $FakeMsysBin = Join-Path $FakeMsysPrefix 'bin'
 $FakePkgConfigDirectory = Join-Path $FakeMsysPrefix 'lib\pkgconfig'
 $FakePluginDirectory = Join-Path $FakeMsysPrefix 'lib\gstreamer-1.0'
+$FakeArmMsysPrefix = Join-Path $FakeMsysRoot 'clangarm64'
+$FakeArmMsysBin = Join-Path $FakeArmMsysPrefix 'bin'
+$FakeArmPkgConfigDirectory = Join-Path $FakeArmMsysPrefix 'lib\pkgconfig'
+$FakeArmPluginDirectory = Join-Path $FakeArmMsysPrefix 'lib\gstreamer-1.0'
 $IncompleteMsysRoot = Join-Path $TemporaryRoot 'incomplete-msys2'
 $PowerShellExecutable = (Get-Process -Id $PID).Path
 $DesktopTarget = 'x86_64-pc-windows-gnullvm'
+$ArmDesktopTarget = 'aarch64-pc-windows-gnullvm'
 $EnvironmentNames = @(
     'BALUN_WINDOWS_HELPER',
     'BALUN_WINDOWS_TEST_LOG',
@@ -51,12 +57,21 @@ $EnvironmentNames = @(
     'BALUN_WINDOWS_FAKE_ZERO_BINARY',
     'BALUN_WINDOWS_FAKE_DIRECTORY_BINARY',
     'BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY',
+    'BALUN_WINDOWS_FAKE_PE_MACHINE',
+    'BALUN_WINDOWS_FAKE_NATIVE_PROBE',
+    'BALUN_WINDOWS_FAKE_PROCESS_MACHINE',
+    'BALUN_WINDOWS_FAKE_NATIVE_MACHINE',
+    'BALUN_WINDOWS_FAKE_NATIVE_PROBE_SUCCESS',
     'BALUN_WINDOWS_TEST_RESTRICTED_PATH',
     'CARGO_BUILD_TARGET',
     'CARGO_LLVM_COV_BUILD_DIR',
     'CARGO_LLVM_COV_TARGET_DIR',
     'CARGO_TARGET_DIR',
     'MSYS2_ROOT',
+    'MSYS_ENV',
+    'MSYSTEM',
+    'MINGW_PACKAGE_PREFIX',
+    'INNO_ARCH',
     'RUST_TARGET'
 )
 $OriginalEnvironment = @{}
@@ -171,28 +186,36 @@ function Assert-DesktopTargetProbe {
     .SYNOPSIS
         Require exactly one recorded rustc target probe for the desktop target.
     #>
+    param([string]$ExpectedTarget = $DesktopTarget)
+
     $Lines = @([System.IO.File]::ReadAllLines($TargetProbeLog))
-    if ($Lines.Count -ne 1 -or $Lines[0] -cne "target-libdir <$DesktopTarget>") {
+    if ($Lines.Count -ne 1 -or $Lines[0] -cne "target-libdir <$ExpectedTarget>") {
         Assert-RoutingTestFailure "unexpected Rust target probe: $($Lines -join '; ')"
     }
 }
 
 function Assert-DesktopEnvironment {
+    param(
+        [string]$ExpectedPkgConfig = $FakePkgConfigCommand,
+        [string]$ExpectedPkgConfigDirectory = $FakePkgConfigDirectory,
+        [string]$ExpectedBin = $FakeMsysBin
+    )
+
     $EnvironmentText = [System.IO.File]::ReadAllText($EnvironmentLog)
     foreach ($Expected in @(
-        "PKG_CONFIG=<$FakePkgConfigCommand>",
-        "PKG_CONFIG_PATH=<$FakePkgConfigDirectory>",
-        "PKG_CONFIG_LIBDIR=<$FakePkgConfigDirectory>",
+        "PKG_CONFIG=<$ExpectedPkgConfig>",
+        "PKG_CONFIG_PATH=<$ExpectedPkgConfigDirectory>",
+        "PKG_CONFIG_LIBDIR=<$ExpectedPkgConfigDirectory>",
         'PKG_CONFIG_ALLOW_CROSS=<1>',
-        "TARGET_PKG_CONFIG=<$FakePkgConfigCommand>",
-        "TARGET_PKG_CONFIG_PATH=<$FakePkgConfigDirectory>",
-        "TARGET_PKG_CONFIG_LIBDIR=<$FakePkgConfigDirectory>",
+        "TARGET_PKG_CONFIG=<$ExpectedPkgConfig>",
+        "TARGET_PKG_CONFIG_PATH=<$ExpectedPkgConfigDirectory>",
+        "TARGET_PKG_CONFIG_LIBDIR=<$ExpectedPkgConfigDirectory>",
         'TARGET_PKG_CONFIG_ALLOW_CROSS=<1>',
-        "PATH_FIRST=<$FakeMsysBin>",
-        "CC=<$FakeMsysBin$([System.IO.Path]::DirectorySeparatorChar)clang$FakeToolSuffix>",
-        "CXX=<$FakeMsysBin$([System.IO.Path]::DirectorySeparatorChar)clang++$FakeToolSuffix>",
-        "AR=<$FakeMsysBin$([System.IO.Path]::DirectorySeparatorChar)llvm-ar$FakeToolSuffix>",
-        "DLLTOOL=<$FakeMsysBin$([System.IO.Path]::DirectorySeparatorChar)llvm-dlltool$FakeToolSuffix>"
+        "PATH_FIRST=<$ExpectedBin>",
+        "CC=<$ExpectedBin$([System.IO.Path]::DirectorySeparatorChar)clang$FakeToolSuffix>",
+        "CXX=<$ExpectedBin$([System.IO.Path]::DirectorySeparatorChar)clang++$FakeToolSuffix>",
+        "AR=<$ExpectedBin$([System.IO.Path]::DirectorySeparatorChar)llvm-ar$FakeToolSuffix>",
+        "DLLTOOL=<$ExpectedBin$([System.IO.Path]::DirectorySeparatorChar)llvm-dlltool$FakeToolSuffix>"
     )) {
         if (-not $EnvironmentText.Contains($Expected)) {
             Assert-RoutingTestFailure "desktop environment is missing: $Expected"
@@ -214,49 +237,126 @@ function Assert-CoverageEnvironment {
     }
 }
 
+function New-FakePeFile {
+    param([string]$Path, [uint16]$Machine)
+
+    $Bytes = [byte[]]::new(0x86)
+    $Bytes[0] = 0x4D
+    $Bytes[1] = 0x5A
+    [BitConverter]::GetBytes([uint32]0x80).CopyTo($Bytes, 0x3C)
+    $Bytes[0x80] = 0x50
+    $Bytes[0x81] = 0x45
+    [BitConverter]::GetBytes($Machine).CopyTo($Bytes, 0x84)
+    [System.IO.File]::WriteAllBytes($Path, $Bytes)
+}
+
+function Set-DesktopProfileEnvironment {
+    param([ValidateSet('x86_64', 'aarch64')][string]$Architecture)
+
+    if ($Architecture -ceq 'aarch64') {
+        $env:RUST_TARGET = $ArmDesktopTarget
+        $env:MSYS_ENV = 'clangarm64'
+        $env:MSYSTEM = 'CLANGARM64'
+        $env:MINGW_PACKAGE_PREFIX = 'mingw-w64-clang-aarch64'
+        $env:INNO_ARCH = 'arm64'
+    }
+    else {
+        $env:RUST_TARGET = $DesktopTarget
+        $env:MSYS_ENV = 'clang64'
+        $env:MSYSTEM = 'CLANG64'
+        $env:MINGW_PACKAGE_PREFIX = 'mingw-w64-clang-x86_64'
+        $env:INNO_ARCH = 'x64'
+    }
+}
+
+function Get-NativeDesktopTestArchitecture {
+    $OsArchitecture = (
+        [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    ).ToString()
+    switch ($OsArchitecture) {
+        'X64' { return 'x86_64' }
+        'Arm64' { return 'aarch64' }
+        default {
+            Assert-RoutingTestFailure (
+                "unsupported Windows test host architecture: $OsArchitecture"
+            )
+        }
+    }
+}
+
+function Clear-DesktopProfileDeclarations {
+    foreach ($Name in @('MSYS_ENV', 'MSYSTEM', 'MINGW_PACKAGE_PREFIX', 'INNO_ARCH')) {
+        [Environment]::SetEnvironmentVariable(
+            $Name,
+            '',
+            [EnvironmentVariableTarget]::Process
+        )
+    }
+}
+
 try {
     [System.IO.Directory]::CreateDirectory($FixtureScripts) | Out-Null
     [System.IO.Directory]::CreateDirectory($RestrictedPath) | Out-Null
-    [System.IO.Directory]::CreateDirectory($FakeMsysBin) | Out-Null
-    [System.IO.Directory]::CreateDirectory($FakePkgConfigDirectory) | Out-Null
-    [System.IO.Directory]::CreateDirectory($FakePluginDirectory) | Out-Null
-    foreach ($Plugin in @(
-        'libgstcoreelements', 'libgstplayback', 'libgstapp', 'libgsttypefindfunctions',
-        'libgstdeinterlace', 'libgstmpegtsdemux', 'libgstgtk4', 'libgstlibav'
-    )) {
-        [System.IO.File]::WriteAllBytes(
-            (Join-Path $FakePluginDirectory "$Plugin.dll"),
-            [byte[]]@(0x4d, 0x5a)
-        )
-    }
     [System.IO.Directory]::CreateDirectory($IncompleteMsysRoot) | Out-Null
     Copy-Item -LiteralPath $HelperUnderTest -Destination $FixtureHelper
 
     $WindowsHost = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
     $FakeToolSuffix = if ($WindowsHost) { '.exe' } else { '' }
-    foreach ($Tool in @('clang', 'clang++', 'llvm-ar', 'llvm-dlltool')) {
-        [System.IO.File]::WriteAllBytes(
-            (Join-Path $FakeMsysBin "$Tool$FakeToolSuffix"),
-            [byte[]]@(0x4d, 0x5a)
-        )
+    $FakeProfiles = @(
+        [pscustomobject]@{
+            Target = $DesktopTarget
+            Bin = $FakeMsysBin
+            PkgConfigDirectory = $FakePkgConfigDirectory
+            PluginDirectory = $FakePluginDirectory
+            Machine = [uint16]0x8664
+        },
+        [pscustomobject]@{
+            Target = $ArmDesktopTarget
+            Bin = $FakeArmMsysBin
+            PkgConfigDirectory = $FakeArmPkgConfigDirectory
+            PluginDirectory = $FakeArmPluginDirectory
+            Machine = [uint16]0xAA64
+        }
+    )
+    foreach ($FakeProfile in $FakeProfiles) {
+        [System.IO.Directory]::CreateDirectory($FakeProfile.Bin) | Out-Null
+        [System.IO.Directory]::CreateDirectory($FakeProfile.PkgConfigDirectory) | Out-Null
+        [System.IO.Directory]::CreateDirectory($FakeProfile.PluginDirectory) | Out-Null
+        foreach ($Plugin in @(
+            'libgstcoreelements', 'libgstplayback', 'libgstapp', 'libgsttypefindfunctions',
+            'libgstdeinterlace', 'libgstmpegtsdemux', 'libgstgtk4', 'libgstlibav'
+        )) {
+            New-FakePeFile `
+                (Join-Path $FakeProfile.PluginDirectory "$Plugin.dll") `
+                $FakeProfile.Machine
+        }
+        foreach ($Tool in @('clang', 'clang++', 'llvm-ar', 'llvm-dlltool')) {
+            New-FakePeFile `
+                (Join-Path $FakeProfile.Bin "$Tool$FakeToolSuffix") `
+                $FakeProfile.Machine
+        }
     }
 
     if ($WindowsHost) {
         $FakePkgConfigCommand = Join-Path $FakeMsysBin 'pkg-config.cmd'
+        $FakeArmPkgConfigCommand = Join-Path $FakeArmMsysBin 'pkg-config.cmd'
         $PkgConfigSource = @'
 @echo off
 >>"%BALUN_WINDOWS_TEST_PKG_LOG%" echo pkg-config ^<%1^> ^<%2^> ^<%3^>
 if not "%BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE%"=="" if /I not "%~3"=="%BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE%" exit /b 0
 exit /b %BALUN_WINDOWS_FAKE_PKG_STATUS%
 '@
-        [System.IO.File]::WriteAllText(
-            $FakePkgConfigCommand,
-            $PkgConfigSource,
-            [System.Text.Encoding]::ASCII
-        )
+        foreach ($PkgConfigCommand in @($FakePkgConfigCommand, $FakeArmPkgConfigCommand)) {
+            [System.IO.File]::WriteAllText(
+                $PkgConfigCommand,
+                $PkgConfigSource,
+                [System.Text.Encoding]::ASCII
+            )
+        }
     }
     else {
         $FakePkgConfigCommand = Join-Path $FakeMsysBin 'pkg-config'
+        $FakeArmPkgConfigCommand = Join-Path $FakeArmMsysBin 'pkg-config'
         $PkgConfigSource = @'
 #!/bin/sh
 printf 'pkg-config <%s> <%s> <%s>\n' "$1" "$2" "$3" >> "$BALUN_WINDOWS_TEST_PKG_LOG"
@@ -265,17 +365,19 @@ if [ -n "$BALUN_WINDOWS_FAKE_PKG_FAIL_PACKAGE" ] && [ "$3" != "$BALUN_WINDOWS_FA
 fi
 exit "$BALUN_WINDOWS_FAKE_PKG_STATUS"
 '@
-        [System.IO.File]::WriteAllText(
-            $FakePkgConfigCommand,
-            $PkgConfigSource,
-            [System.Text.UTF8Encoding]::new($false)
-        )
-        [System.IO.File]::SetUnixFileMode(
-            $FakePkgConfigCommand,
-            [System.IO.UnixFileMode]::UserRead -bor
-                [System.IO.UnixFileMode]::UserWrite -bor
-                [System.IO.UnixFileMode]::UserExecute
-        )
+        foreach ($PkgConfigCommand in @($FakePkgConfigCommand, $FakeArmPkgConfigCommand)) {
+            [System.IO.File]::WriteAllText(
+                $PkgConfigCommand,
+                $PkgConfigSource,
+                [System.Text.UTF8Encoding]::new($false)
+            )
+            [System.IO.File]::SetUnixFileMode(
+                $PkgConfigCommand,
+                [System.IO.UnixFileMode]::UserRead -bor
+                    [System.IO.UnixFileMode]::UserWrite -bor
+                    [System.IO.UnixFileMode]::UserExecute
+            )
+        }
     }
 
     $RunnerSource = @'
@@ -319,7 +421,14 @@ function global:cargo {
         "cargo $RenderedArguments`n"
     )
 
-    $TargetToken = 'x86_64_pc_windows_gnullvm'
+    $TargetIndex = [Array]::IndexOf([object[]]$args, '--target')
+    $CargoTarget = if ($TargetIndex -ge 0 -and $TargetIndex + 1 -lt $args.Count) {
+        $args[$TargetIndex + 1].ToString()
+    }
+    else {
+        'x86_64-pc-windows-gnullvm'
+    }
+    $TargetToken = $CargoTarget.Replace('-', '_').Replace('.', '_')
     $PathFirst = @($env:PATH -split [regex]::Escape(
         [string][System.IO.Path]::PathSeparator
     ))[0]
@@ -364,9 +473,8 @@ function global:cargo {
         }
         $ArtifactDirectory = $args[$TargetDirectoryIndex + 1].ToString()
 
-        $TargetIndex = [Array]::IndexOf([object[]]$args, '--target')
         if ($TargetIndex -ge 0) {
-            $ArtifactDirectory = Join-Path $ArtifactDirectory $args[$TargetIndex + 1].ToString()
+            $ArtifactDirectory = Join-Path $ArtifactDirectory $CargoTarget
         }
         $ArtifactDirectory = Join-Path $ArtifactDirectory 'release'
         [System.IO.Directory]::CreateDirectory($ArtifactDirectory) | Out-Null
@@ -390,14 +498,60 @@ function global:cargo {
             Copy-Item -LiteralPath $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY -Destination $ArtifactPath
         }
         else {
-            [System.IO.File]::WriteAllBytes(
-                $ArtifactPath,
-                [byte[]]@(0x4d, 0x5a)
-            )
+            $Machine = if (-not [string]::IsNullOrWhiteSpace(
+                $env:BALUN_WINDOWS_FAKE_PE_MACHINE
+            )) {
+                [Convert]::ToUInt16($env:BALUN_WINDOWS_FAKE_PE_MACHINE, 16)
+            }
+            elseif ($CargoTarget.StartsWith('aarch64-', [StringComparison]::Ordinal)) {
+                [uint16]0xAA64
+            }
+            else {
+                [uint16]0x8664
+            }
+            $Bytes = [byte[]]::new(0x86)
+            $Bytes[0] = 0x4D
+            $Bytes[1] = 0x5A
+            [BitConverter]::GetBytes([uint32]0x80).CopyTo($Bytes, 0x3C)
+            $Bytes[0x80] = 0x50
+            $Bytes[0x81] = 0x45
+            [BitConverter]::GetBytes([uint16]$Machine).CopyTo($Bytes, 0x84)
+            [System.IO.File]::WriteAllBytes($ArtifactPath, $Bytes)
         }
     }
 
     $global:LASTEXITCODE = $Status
+}
+
+if ([int]$env:BALUN_WINDOWS_FAKE_NATIVE_PROBE -eq 1) {
+    Add-Type -TypeDefinition @"
+using System;
+
+namespace Balun.Windows
+{
+    public static class NativeArchitectureProbe
+    {
+        public static bool Query(out ushort processMachine, out ushort nativeMachine)
+        {
+            processMachine = Convert.ToUInt16(
+                Environment.GetEnvironmentVariable(
+                    "BALUN_WINDOWS_FAKE_PROCESS_MACHINE"
+                ),
+                16
+            );
+            nativeMachine = Convert.ToUInt16(
+                Environment.GetEnvironmentVariable(
+                    "BALUN_WINDOWS_FAKE_NATIVE_MACHINE"
+                ),
+                16
+            );
+            return Environment.GetEnvironmentVariable(
+                "BALUN_WINDOWS_FAKE_NATIVE_PROBE_SUCCESS"
+            ) == "1";
+        }
+    }
+}
+"@
 }
 
 if ([int]$env:BALUN_WINDOWS_FAKE_CARGO_AVAILABLE -ne 1) {
@@ -433,13 +587,18 @@ exit $global:LASTEXITCODE
     $env:BALUN_WINDOWS_FAKE_ZERO_BINARY = '0'
     $env:BALUN_WINDOWS_FAKE_DIRECTORY_BINARY = '0'
     $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = ''
+    $env:BALUN_WINDOWS_FAKE_PE_MACHINE = ''
+    $env:BALUN_WINDOWS_FAKE_NATIVE_PROBE = '0'
+    $env:BALUN_WINDOWS_FAKE_PROCESS_MACHINE = '8664'
+    $env:BALUN_WINDOWS_FAKE_NATIVE_MACHINE = '8664'
+    $env:BALUN_WINDOWS_FAKE_NATIVE_PROBE_SUCCESS = '1'
     $env:BALUN_WINDOWS_TEST_RESTRICTED_PATH = $RestrictedPath
     $env:CARGO_BUILD_TARGET = 'i686-pc-windows-msvc'
     $env:CARGO_LLVM_COV_BUILD_DIR = Join-Path $TemporaryRoot 'caller llvm-cov build override'
     $env:CARGO_LLVM_COV_TARGET_DIR = Join-Path $TemporaryRoot 'caller llvm-cov target override'
     $env:CARGO_TARGET_DIR = Join-Path $TemporaryRoot 'caller cargo target override'
     $env:MSYS2_ROOT = $FakeMsysRoot
-    $env:RUST_TARGET = $DesktopTarget
+    Set-DesktopProfileEnvironment 'x86_64'
 
     Invoke-TestHelper -Arguments @('-Help')
     Assert-ExpectedStatus 0
@@ -621,10 +780,6 @@ exit $global:LASTEXITCODE
         'cargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> ' +
         "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
     )
-    $RunBuildCommand = (
-        'cargo <build> <--release> <--locked> <--features> <desktop,windows-console> ' +
-        "<--bin> <balun> <--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
-    )
     $DiagnosticBuildCommand = (
         'cargo <build> <--release> <--locked> <--bin> <balun-discover> ' +
         "<--target-dir> <$FixtureTargetRoot> <--target> <$DesktopTarget>"
@@ -639,6 +794,87 @@ exit $global:LASTEXITCODE
     Assert-DesktopTargetProbe
     Assert-DesktopEnvironment
 
+    # The ARM64 profile is one indivisible tuple: Cargo target, CLANGARM64
+    # prefix and tools, target-scoped pkg-config variables, PE machine, receipt,
+    # and Inno architecture all derive from the selected Rust target.
+    $ArmDesktopBuildCommand = (
+        'cargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$ArmDesktopTarget>"
+    )
+    Set-DesktopProfileEnvironment 'aarch64'
+    Invoke-TestHelper -Arguments @('-Check')
+    Assert-ExpectedStatus 0
+    Assert-ExpectedOutput "Using MSYS2 CLANGARM64 at $FakeArmMsysPrefix"
+    Assert-ExpectedLog (
+        'cargo <check> <--all-targets> <--all-features> <--locked> ' +
+        "<--target-dir> <$FixtureTargetRoot> <--target> <$ArmDesktopTarget>"
+    )
+    Assert-ExpectedPkgConfigProbeSet
+    Assert-DesktopTargetProbe $ArmDesktopTarget
+    Assert-DesktopEnvironment `
+        $FakeArmPkgConfigCommand `
+        $FakeArmPkgConfigDirectory `
+        $FakeArmMsysBin
+
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 0
+    Assert-ExpectedOutput 'Desktop output:'
+    Assert-ExpectedLog $ArmDesktopBuildCommand
+    Assert-DesktopTargetProbe $ArmDesktopTarget
+    Assert-DesktopEnvironment `
+        $FakeArmPkgConfigCommand `
+        $FakeArmPkgConfigDirectory `
+        $FakeArmMsysBin
+
+    # A successful Cargo command cannot smuggle an AMD64 executable into the
+    # ARM profile (or vice versa).
+    $env:BALUN_WINDOWS_FAKE_PE_MACHINE = '8664'
+    Invoke-TestHelper -Arguments @()
+    Assert-ExpectedStatus 1
+    Assert-ExpectedOutput 'Desktop output architecture validation failed'
+    Assert-ExpectedOutput 'Windows profile aarch64 requires ARM64 (0xAA64)'
+    Assert-ExpectedLog $ArmDesktopBuildCommand
+    $env:BALUN_WINDOWS_FAKE_PE_MACHINE = ''
+
+    foreach ($MixedDeclaration in @(
+        [pscustomobject]@{ Name = 'MSYS_ENV'; Wrong = 'clang64'; Expected = 'clangarm64' },
+        [pscustomobject]@{ Name = 'MSYSTEM'; Wrong = 'CLANG64'; Expected = 'CLANGARM64' },
+        [pscustomobject]@{
+            Name = 'MINGW_PACKAGE_PREFIX'
+            Wrong = 'mingw-w64-clang-x86_64'
+            Expected = 'mingw-w64-clang-aarch64'
+        },
+        [pscustomobject]@{ Name = 'INNO_ARCH'; Wrong = 'x64'; Expected = 'arm64' }
+    )) {
+        [Environment]::SetEnvironmentVariable(
+            $MixedDeclaration.Name,
+            $MixedDeclaration.Wrong,
+            [EnvironmentVariableTarget]::Process
+        )
+        Invoke-TestHelper -Arguments @('-Check')
+        Assert-ExpectedStatus 2
+        Assert-ExpectedOutput (
+            "RUST_TARGET=$ArmDesktopTarget requires $($MixedDeclaration.Name)=" +
+            "$($MixedDeclaration.Expected), not $($MixedDeclaration.Wrong)"
+        )
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+        Set-DesktopProfileEnvironment 'aarch64'
+    }
+
+    if ($WindowsHost) {
+        $FakeArmClang = Join-Path $FakeArmMsysBin 'clang.exe'
+        New-FakePeFile $FakeArmClang ([uint16]0x8664)
+        Invoke-TestHelper -Arguments @('-Check')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'MSYS2 tool architecture validation failed'
+        Assert-ExpectedOutput 'Windows profile aarch64 requires ARM64 (0xAA64)'
+        Assert-EmptyLog $CommandLog 'Cargo'
+        New-FakePeFile $FakeArmClang ([uint16]0xAA64)
+    }
+
+    Set-DesktopProfileEnvironment 'x86_64'
+
     # -SkipBundle alone is the build-only default.
     Invoke-TestHelper -Arguments @('-SkipBundle')
     Assert-ExpectedStatus 0
@@ -646,62 +882,97 @@ exit $global:LASTEXITCODE
     Assert-ExpectedOutput 'Desktop output:'
     Assert-ExpectedLog $DesktopBuildCommand
 
-    # Package modes resolve every packaging input before any build: the shared
-    # component policy, the PE inspector, the plugin scanner, and the GLib and
-    # GTK resource tools. The fixture repository starts without the policy.
-    Invoke-TestHelper -Arguments @('-Bundle')
-    Assert-ExpectedStatus 1
-    Assert-ExpectedOutput 'Required bundled-component policy is missing'
-    Assert-EmptyLog $CommandLog 'Cargo'
+    if ($WindowsHost) {
+        # Package modes resolve every packaging input before any build: the shared
+        # component policy, the PE inspector, the plugin scanner, and the GLib and
+        # GTK resource tools. The fixture repository starts without the policy.
+        Invoke-TestHelper -Arguments @('-Bundle')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'Required bundled-component policy is missing'
+        Assert-EmptyLog $CommandLog 'Cargo'
 
-    $FixturePolicyDirectory = Join-Path $FixtureRoot 'build-aux\packaging'
-    [System.IO.Directory]::CreateDirectory($FixturePolicyDirectory) | Out-Null
-    [System.IO.File]::WriteAllLines(
-        (Join-Path $FixtureRoot 'Cargo.toml'),
-        @('[package]', 'name = "balun"', 'version = "0.1.0-routing"')
-    )
-    Copy-Item -LiteralPath (
-        Join-Path $ScriptDirectory '..\build-aux\packaging\forbidden-bundled-components.txt'
-    ) -Destination (Join-Path $FixturePolicyDirectory 'forbidden-bundled-components.txt')
-    Invoke-TestHelper -Arguments @('-Zip')
-    Assert-ExpectedStatus 1
-    Assert-ExpectedOutput 'Required packaging tools are missing from MSYS2 CLANG64'
-    Assert-ExpectedOutput 'llvm-readobj.exe'
-    Assert-EmptyLog $CommandLog 'Cargo'
+        $FixturePolicyDirectory = Join-Path $FixtureRoot 'build-aux\packaging'
+        [System.IO.Directory]::CreateDirectory($FixturePolicyDirectory) | Out-Null
+        [System.IO.File]::WriteAllLines(
+            (Join-Path $FixtureRoot 'Cargo.toml'),
+            @('[package]', 'name = "balun"', 'version = "0.1.0-routing"')
+        )
+        Copy-Item -LiteralPath (
+            Join-Path $ScriptDirectory '..\build-aux\packaging\forbidden-bundled-components.txt'
+        ) -Destination (Join-Path $FixturePolicyDirectory 'forbidden-bundled-components.txt')
+        Invoke-TestHelper -Arguments @('-Zip')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'Required packaging tools are missing from MSYS2 CLANG64'
+        Assert-ExpectedOutput 'llvm-readobj.exe'
+        Assert-EmptyLog $CommandLog 'Cargo'
 
-    $FakeScannerDirectory = Join-Path $FakeMsysPrefix 'libexec\gstreamer-1.0'
-    [System.IO.Directory]::CreateDirectory($FakeScannerDirectory) | Out-Null
-    foreach ($FakeTool in @(
-        (Join-Path $FakeMsysBin 'llvm-readobj.exe'),
-        (Join-Path $FakeMsysBin 'glib-compile-schemas.exe'),
-        (Join-Path $FakeMsysBin 'gtk4-update-icon-cache.exe'),
-        (Join-Path $FakeScannerDirectory 'gst-plugin-scanner.exe')
-    )) {
-        [System.IO.File]::WriteAllBytes($FakeTool, [byte[]]@(0x4d, 0x5a))
+        $FakePackagingProfiles = @(
+            [pscustomobject]@{
+                Prefix = $FakeMsysPrefix
+                Bin = $FakeMsysBin
+                Machine = [uint16]0x8664
+            },
+            [pscustomobject]@{
+                Prefix = $FakeArmMsysPrefix
+                Bin = $FakeArmMsysBin
+                Machine = [uint16]0xAA64
+            }
+        )
+        foreach ($FakePackagingProfile in $FakePackagingProfiles) {
+            $FakeScannerDirectory = Join-Path $FakePackagingProfile.Prefix 'libexec\gstreamer-1.0'
+            [System.IO.Directory]::CreateDirectory($FakeScannerDirectory) | Out-Null
+            foreach ($FakeTool in @(
+                (Join-Path $FakePackagingProfile.Bin 'llvm-readobj.exe'),
+                (Join-Path $FakePackagingProfile.Bin 'glib-compile-schemas.exe'),
+                (Join-Path $FakePackagingProfile.Bin 'gtk4-update-icon-cache.exe'),
+                (Join-Path $FakeScannerDirectory 'gst-plugin-scanner.exe')
+            )) {
+                New-FakePeFile $FakeTool $FakePackagingProfile.Machine
+            }
+        }
+
+        # Packaging tools are architecture-bound before Cargo or any inspector
+        # is allowed to run.
+        Set-DesktopProfileEnvironment 'aarch64'
+        $FakeArmInspector = Join-Path $FakeArmMsysBin 'llvm-readobj.exe'
+        New-FakePeFile $FakeArmInspector ([uint16]0x8664)
+        Invoke-TestHelper -Arguments @('-Bundle')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'Packaging tool architecture validation failed'
+        Assert-ExpectedOutput 'Windows profile aarch64 requires ARM64 (0xAA64)'
+        Assert-EmptyLog $CommandLog 'Cargo'
+        New-FakePeFile $FakeArmInspector ([uint16]0xAA64)
+        Set-DesktopProfileEnvironment 'x86_64'
+
+        # Installer-only mode needs an existing, receipted tree and starts no build.
+        Invoke-TestHelper -Arguments @('-InnoSetup', '-SkipBundle')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'No staged Windows bundle exists'
+        Assert-EmptyLog $CommandLog 'Cargo'
+
+        # -NoCargoBuild packages only an executable that already exists.
+        Invoke-TestHelper -Arguments @('-Zip', '-NoCargoBuild')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'Skipping the cargo build (-NoCargoBuild specified)'
+        Assert-ExpectedOutput 'The expected desktop application output path is not a nonempty regular'
+        Assert-EmptyLog $CommandLog 'Cargo'
+
+        # A package mode builds the desktop first, then fails closed at the
+        # application resource gate because the fake inspector cannot run.
+        Invoke-TestHelper -Arguments @('-Bundle')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'Package version:'
+        Assert-ExpectedOutput 'Built application resource validation failed'
+        Assert-ExpectedLog $DesktopBuildCommand
+        Assert-ExpectedPkgConfigProbeSet
+        Assert-DesktopTargetProbe
     }
-
-    # Installer-only mode needs an existing, receipted tree and starts no build.
-    Invoke-TestHelper -Arguments @('-InnoSetup', '-SkipBundle')
-    Assert-ExpectedStatus 1
-    Assert-ExpectedOutput 'No staged Windows bundle exists'
-    Assert-EmptyLog $CommandLog 'Cargo'
-
-    # -NoCargoBuild packages only an executable that already exists.
-    Invoke-TestHelper -Arguments @('-Zip', '-NoCargoBuild')
-    Assert-ExpectedStatus 1
-    Assert-ExpectedOutput 'Skipping the cargo build (-NoCargoBuild specified)'
-    Assert-ExpectedOutput 'The expected desktop application output path is not a nonempty regular'
-    Assert-EmptyLog $CommandLog 'Cargo'
-
-    # A package mode builds the desktop first, then fails closed at the
-    # application resource gate because the fake inspector cannot run.
-    Invoke-TestHelper -Arguments @('-Bundle')
-    Assert-ExpectedStatus 1
-    Assert-ExpectedOutput 'Package version:'
-    Assert-ExpectedOutput 'Built application resource validation failed'
-    Assert-ExpectedLog $DesktopBuildCommand
-    Assert-ExpectedPkgConfigProbeSet
-    Assert-DesktopTargetProbe
+    else {
+        Invoke-TestHelper -Arguments @('-Bundle')
+        Assert-ExpectedStatus 2
+        Assert-ExpectedOutput '-Bundle stages and probes the Windows package only from Windows'
+        Assert-EmptyLog $CommandLog 'Cargo'
+    }
 
     $ProbeCommands = (
         'cargo <test> <--release> <--locked> <--features> <desktop> <--lib> ' +
@@ -960,10 +1231,115 @@ exit $global:LASTEXITCODE
         Assert-EmptyLog $PkgConfigLog 'pkg-config'
         $env:BALUN_WINDOWS_FAKE_RUSTC_AVAILABLE = '1'
 
+        # The native-machine result, not the current PowerShell process
+        # machine, selects the default desktop profile. These conflicting
+        # fixtures model an x64 shell emulated on ARM64 and the inverse so the
+        # expectation does not duplicate the helper's detection logic.
+        $NativeMachineCases = @(
+            [pscustomobject]@{
+                ProcessMachine = '8664'
+                NativeMachine = 'AA64'
+                Architecture = 'aarch64'
+                Target = $ArmDesktopTarget
+            },
+            [pscustomobject]@{
+                ProcessMachine = 'AA64'
+                NativeMachine = '8664'
+                Architecture = 'x86_64'
+                Target = $DesktopTarget
+            }
+        )
+        $env:BALUN_WINDOWS_FAKE_NATIVE_PROBE = '1'
+        foreach ($NativeMachineCase in $NativeMachineCases) {
+            $env:BALUN_WINDOWS_FAKE_PROCESS_MACHINE = $NativeMachineCase.ProcessMachine
+            $env:BALUN_WINDOWS_FAKE_NATIVE_MACHINE = $NativeMachineCase.NativeMachine
+            $env:BALUN_WINDOWS_FAKE_NATIVE_PROBE_SUCCESS = '1'
+            $env:RUST_TARGET = ''
+            Clear-DesktopProfileDeclarations
+            $ExpectedNativeBuildCommand = (
+                'cargo <build> <--release> <--locked> <--features> <desktop> ' +
+                '<--bin> <balun> ' +
+                "<--target-dir> <$FixtureTargetRoot> " +
+                "<--target> <$($NativeMachineCase.Target)>"
+            )
+            Invoke-TestHelper -Arguments @()
+            Assert-ExpectedStatus 0
+            Assert-ExpectedLog $ExpectedNativeBuildCommand
+            Assert-ExpectedPkgConfigProbeSet
+            Assert-DesktopTargetProbe $NativeMachineCase.Target
+            if ($NativeMachineCase.Architecture -ceq 'aarch64') {
+                Assert-DesktopEnvironment `
+                    $FakeArmPkgConfigCommand `
+                    $FakeArmPkgConfigDirectory `
+                    $FakeArmMsysBin
+            }
+            else {
+                Assert-DesktopEnvironment
+            }
+        }
+
+        # A caller-selected target bypasses native probing completely.
+        Set-DesktopProfileEnvironment 'aarch64'
+        $env:BALUN_WINDOWS_FAKE_NATIVE_PROBE_SUCCESS = '0'
+        Invoke-TestHelper -Arguments @('-Check')
+        Assert-ExpectedStatus 0
+        Assert-ExpectedLog (
+            'cargo <check> <--all-targets> <--all-features> <--locked> ' +
+            "<--target-dir> <$FixtureTargetRoot> <--target> <$ArmDesktopTarget>"
+        )
+        Assert-DesktopTargetProbe $ArmDesktopTarget
+
+        $env:RUST_TARGET = ''
+        Clear-DesktopProfileDeclarations
+        Invoke-TestHelper -Arguments @()
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'Native Windows architecture detection failed with Win32 error'
+        Assert-ExpectedOutput 'set RUST_TARGET explicitly'
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+        Assert-EmptyLog $TargetProbeLog 'Rust target probe'
+
+        $env:BALUN_WINDOWS_FAKE_NATIVE_PROBE_SUCCESS = '1'
+        $env:BALUN_WINDOWS_FAKE_NATIVE_MACHINE = '014C'
+        Invoke-TestHelper -Arguments @()
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'Native Windows architecture 0x014C is unsupported'
+        Assert-ExpectedOutput 'set RUST_TARGET explicitly'
+        Assert-EmptyLog $CommandLog 'Cargo'
+        Assert-EmptyLog $PkgConfigLog 'pkg-config'
+        Assert-EmptyLog $TargetProbeLog 'Rust target probe'
+
+        # Exercise the real Windows API as well. OSArchitecture supplies the
+        # independent expectation even when this PowerShell process is
+        # running under emulation.
+        $env:BALUN_WINDOWS_FAKE_NATIVE_PROBE = '0'
+        $NativeDesktopArchitecture = Get-NativeDesktopTestArchitecture
+        $NativeDesktopTarget = if ($NativeDesktopArchitecture -ceq 'aarch64') {
+            $ArmDesktopTarget
+        }
+        else {
+            $DesktopTarget
+        }
+        $NativeDesktopBuildCommand = (
+            'cargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> ' +
+            "<--target-dir> <$FixtureTargetRoot> <--target> <$NativeDesktopTarget>"
+        )
+        $env:RUST_TARGET = ''
+        Clear-DesktopProfileDeclarations
         Invoke-TestHelper -Arguments @()
         Assert-ExpectedStatus 0
-        Assert-ExpectedLog $DesktopBuildCommand
+        Assert-ExpectedLog $NativeDesktopBuildCommand
         Assert-ExpectedPkgConfigProbeSet
+        Assert-DesktopTargetProbe $NativeDesktopTarget
+        if ($NativeDesktopArchitecture -ceq 'aarch64') {
+            Assert-DesktopEnvironment `
+                $FakeArmPkgConfigCommand `
+                $FakeArmPkgConfigDirectory `
+                $FakeArmMsysBin
+        }
+        else {
+            Assert-DesktopEnvironment
+        }
     }
     else {
         Invoke-TestHelper -Arguments @('-Diagnostic')
@@ -972,7 +1348,7 @@ exit $global:LASTEXITCODE
         Assert-EmptyLog $CommandLog 'Cargo'
         Assert-EmptyLog $PkgConfigLog 'pkg-config'
     }
-    $env:RUST_TARGET = $DesktopTarget
+    Set-DesktopProfileEnvironment 'x86_64'
 
     $env:BALUN_WINDOWS_FAKE_PKG_STATUS = '31'
     Invoke-TestHelper -Arguments @()
@@ -1067,7 +1443,9 @@ exit $global:LASTEXITCODE
     $env:RUST_TARGET = 'x86_64-pc-windows-msvc'
     Invoke-TestHelper -Arguments @('-Check')
     Assert-ExpectedStatus 2
-    Assert-ExpectedOutput "requires RUST_TARGET=$DesktopTarget"
+    Assert-ExpectedOutput 'supports RUST_TARGET='
+    Assert-ExpectedOutput $DesktopTarget
+    Assert-ExpectedOutput $ArmDesktopTarget
     Assert-EmptyLog $CommandLog 'Cargo'
     Assert-EmptyLog $PkgConfigLog 'pkg-config'
 
@@ -1091,13 +1469,26 @@ exit $global:LASTEXITCODE
     $env:MSYS2_ROOT = $FakeMsysRoot
 
     if ($WindowsHost) {
+        $NativeDesktopArchitecture = Get-NativeDesktopTestArchitecture
+        Set-DesktopProfileEnvironment $NativeDesktopArchitecture
+        $NativeRunTarget = if ($NativeDesktopArchitecture -ceq 'aarch64') {
+            $ArmDesktopTarget
+        }
+        else {
+            $DesktopTarget
+        }
+        $NativeRunBuildCommand = (
+            'cargo <build> <--release> <--locked> <--features> <desktop,windows-console> ' +
+            "<--bin> <balun> <--target-dir> <$FixtureTargetRoot> <--target> <$NativeRunTarget>"
+        )
         $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = Join-Path $env:SystemRoot 'System32\whoami.exe'
         Invoke-TestHelper -Arguments @('-Run')
         Assert-ExpectedStatus 0
         Assert-ExpectedOutput 'Launching'
-        Assert-ExpectedLog $RunBuildCommand
+        Assert-ExpectedLog $NativeRunBuildCommand
         Assert-ExpectedPkgConfigProbeSet
         $env:BALUN_WINDOWS_FAKE_RUN_SYSTEM_BINARY = ''
+        Set-DesktopProfileEnvironment 'x86_64'
     }
     else {
         Invoke-TestHelper -Arguments @('-Run')
@@ -1111,6 +1502,16 @@ exit $global:LASTEXITCODE
     foreach ($RequiredText in @(
         'A lightweight cross-platform HDHomeRun live TV viewer',
         'io.github.jm2.Balun',
+        "RustTarget = 'x86_64-pc-windows-gnullvm'",
+        "RustTarget = 'aarch64-pc-windows-gnullvm'",
+        "MsysEnvironment = 'clangarm64'",
+        "MsysSystem = 'CLANGARM64'",
+        "MsysPackagePrefix = 'mingw-w64-clang-aarch64'",
+        "PeMachine = [uint16]0xAA64",
+        "InnoTargetArchitecture = 'arm64'",
+        'IsWow64Process2(',
+        'out ushort nativeMachine',
+        '$ignoredProcessMachine',
         "'--features',",
         "'desktop',",
         "'desktop,windows-console'",
@@ -1133,14 +1534,32 @@ exit $global:LASTEXITCODE
         '''--coff-resources "''',
         "= '--balun-platform-runtime-probe'",
         '= "balun-windows-runtime-probe-v1`n"',
+        "= 'balun-windows-runtime-probe-v2'",
+        '$lines.Add("rust-target=$DesktopRustTarget")',
+        '$lines.Add("msys-environment=$MsysEnvironment")',
+        '$lines.Add("inno-architecture=$InnoTargetArchitecture")',
         '[System.Environment]::SystemDirectory',
         "['GST_REGISTRY'] = `$probeRegistry",
         'Assert-WindowsZipMatchesTree $zipPath $Distribution',
         "= 'build-aux\inno\balun.iss'",
-        'Assert-WindowsProbeReceipt $Distribution'
+        'Assert-WindowsProbeReceipt $Distribution',
+        'Assert-Msys2ToolMachineContract $MsysLayout',
+        'Assert-PeMachine',
+        '"/DTargetArch=$InnoTargetArchitecture"'
     )) {
         if (-not $HelperText.Contains($RequiredText)) {
             Assert-RoutingTestFailure "helper is missing required text: $RequiredText"
+        }
+    }
+    foreach ($ForbiddenText in @(
+        'RuntimeInformation]::ProcessArchitecture',
+        'PROCESSOR_ARCHITECTURE',
+        'PROCESSOR_ARCHITEW6432'
+    )) {
+        if ($HelperText.Contains($ForbiddenText)) {
+            Assert-RoutingTestFailure (
+                "helper still uses process-derived native architecture: $ForbiddenText"
+            )
         }
     }
     # Packaging may copy, archive, and launch bounded inspectors and the
@@ -1149,6 +1568,24 @@ exit $global:LASTEXITCODE
     if ($HelperText -match '(?im)^\s*(cargo\s+install|rustup\s+(target|component)\s+add|winget|choco|pacman)(\s|$)' -or
         $HelperText -match '(?i)\b(Expand-Archive|Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer|curl|wget|git)\b') {
         Assert-RoutingTestFailure 'helper contains installer, downloader, or update logic'
+    }
+
+    $InnoText = [System.IO.File]::ReadAllText($InnoRecipeUnderTest)
+    foreach ($RequiredText in @(
+        '#if TargetArch == "arm64"',
+        'ArchitecturesAllowed=arm64',
+        'ArchitecturesInstallIn64BitMode=arm64',
+        '#elif TargetArch == "x64"',
+        'ArchitecturesAllowed=x64compatible',
+        'ArchitecturesInstallIn64BitMode=x64compatible',
+        '#error Unsupported TargetArch; expected x64 or arm64'
+    )) {
+        if (-not $InnoText.Contains($RequiredText)) {
+            Assert-RoutingTestFailure "Inno recipe is missing required text: $RequiredText"
+        }
+    }
+    if ($InnoText.Contains('ARM64 Windows is not supported yet')) {
+        Assert-RoutingTestFailure 'Inno recipe still rejects ARM64 Windows'
     }
 
     Write-Output 'build-windows desktop command-routing tests passed'

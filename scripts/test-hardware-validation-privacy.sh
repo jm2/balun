@@ -78,5 +78,11 @@ grep -F '| tee "$SANITIZED_LOG"' "$validator" >/dev/null \
     || fail 'sanitized log is not written after stream filtering'
 grep -F 'rm -f -- "$SANITIZED_LOG"' "$validator" >/dev/null \
     || fail 'temporary sanitized log is not covered by global cleanup'
+grep -F '"${MACOS_DIR}/Balun-bin" --balun-macos-install-key' "$validator" >/dev/null \
+    || fail 'validator does not execute the signed install-key helper'
+grep -F 'Signed install-key helper did not emit exactly 16 bytes' "$validator" >/dev/null \
+    || fail 'validator does not enforce the exact install-key output length'
+grep -F 'Launcher retains a Perl runtime dependency' "$validator" >/dev/null \
+    || fail 'validator does not reject Perl in the shipped launcher'
 
 printf 'hardware-validation privacy tests passed\n'
