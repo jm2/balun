@@ -46,12 +46,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Strict Clippy on every native lane** — The macOS and Windows jobs now lint the desktop and
   diagnostic targets with warnings denied in both profiles, as Tributary does, so platform-only
   dead code fails CI instead of surfacing in a developer's build log.
-- **Desktop metadata and icon** — Add the `io.github.jm2.Balun` desktop entry, AppStream
-  metainfo, and an application icon: a dark-bezelled Trinitron-style CRT showing colour bars,
-  with rabbit ears joined by a balun, speaker slots, knobs, and a power light, and no text. The
-  SVG is the only source; `scripts/render-icons.py` renders the hicolor sizes from 16 to 512 px,
-  a 1024 px master, the macOS icon set, and the Windows `.ico`, and a CI job validates the set.
-  Packages are still to come.
+- **Keyboard navigation and accessibility** — Full keyboard navigation and accessible roles across
+  the device sidebar, channel sidebar, and player pane. Tab and Shift+Tab traverse controls across
+  panes, arrow keys navigate items, Enter and Space activate them, and `Ctrl+F` focuses the channel
+  search field. Dedicated accessible roles, names, and shortcuts describe controls for assistive
+  technologies.
+- **Desktop metadata and assets** — Add the `io.github.jm2.Balun` desktop entry, AppStream
+  metainfo, an application icon, and a 1280×720 (16:9) AppStream screenshot depicting tuner
+  discovery, channel lineup, and live playback. The screenshot strictly adheres to Balun's
+  privacy and identity contracts with sanitized RFC 5737 addresses, synthetic test device IDs,
+  and simulated station names. CI validates icon formats and screenshot dimensions.
 - **Flatpak bundle** — Add the `io.github.jm2.Balun` manifest on the GNOME 50 runtime with the
   reviewed six-entry permission policy, the Freedesktop ffmpeg-full codec extension, an offline
   cargo build from generated locked sources, build-time and installed-bundle checks that the
