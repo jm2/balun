@@ -29,16 +29,19 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **30/30 (100.0%)** records complete. This is a dependency ledger,
+Current status: **28/30 (93.3%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
 ## Current focus
 
-All 30 records across P0 through P4 are complete and merged onto `main`. Linux,
-macOS, and Windows live playback, codec contracts, routed tunnel discovery, and
-packaged desktop bundles (Flatpak, Windows ZIP/installer, and macOS DMG) are fully
-validated against real physical hardware and pass 100% green CI gates.
+The remaining records are P4.1 and P4.5. P4.1 still needs packaged live-tuner
+acceptance across Linux, macOS, and Windows; the recorded Linux and Windows
+trials used development builds, and the macOS validation path does not supply
+the missing cross-platform evidence. For P4.5, the maintainer then creates a
+signed, annotated tag from the release commit, runs the release-candidate
+workflow, reviews its exact 12-artifact inventory and checksums, and publishes
+the draft. An unpublished draft does not count as a release.
 
 ## P0 — Evidence and contract
 
@@ -95,7 +98,7 @@ validated against real physical hardware and pass 100% green CI gates.
 - [x] **P1.6 — Complete keyboard navigation and accessibility.** Review both
   sidebars and the player for focus order, labels, and keyboard operation.
 
-## P2 — Routed discovery (Linux)
+## P2 — Route-table-derived discovery (Linux)
 
 - [x] **P2.1 — Connect the monitored routed runner.** Replace and rebaseline
   the observer pair after store publication, serialize the final pre-send
@@ -122,28 +125,27 @@ validated against real physical hardware and pass 100% green CI gates.
 - [x] **P3.1 — Add desktop metadata and assets.** Land the icon, desktop entry,
   AppStream metadata, and a screenshot with exact Balun identity data.
 
-- [x] **P3.2 — Build Flatpak x86_64 and aarch64.** Generate locked sources,
-  stage the capability-derived runtime, keep the reviewed permission policy,
-  and validate the reopened bundle.
+- [x] **P3.2 — Build the Linux package set.** Validate Flatpak x86_64/aarch64,
+  Debian amd64/arm64, RPM x86_64/aarch64, and Arch x86_64 from locked inputs;
+  reopen every artifact through its format-specific gates.
 
-- [x] **P3.3 — Build the Windows x86_64 ZIP and installer.** Stage the GTK and
-  GStreamer closure, validate PE imports and the completed tree, and reopen
-  both artifacts.
+- [x] **P3.3 — Build the Windows ZIPs and installers.** Stage strict x86_64 and
+  ARM64 GTK/GStreamer closures, validate PE architecture, imports, and the
+  completed tree, and reopen all four artifacts.
 
 - [x] **P3.4 — Build the macOS arm64 app and DMG.** Complete the app tree,
   runtime closure, Mach-O inspection, signing policy, and reopened DMG check.
 
-- [x] **P3.5 — Complete release automation.** Build every configured release
-  artifact from one signed annotated tag, require an exact artifact inventory
-  and checksums, create a draft release, and confine release-write authority to
-  the final no-source job.
+- [x] **P3.5 — Complete release automation.** Build from one maintainer-signed,
+  annotated tag, require 12 public binaries and `SHA256SUMS.txt`, create a draft,
+  and confine release-write authority to the final no-source job.
 
 - [x] **P3.6 — Harden CI for packages.** Add the dependency audit and
   Markdown, TOML, YAML, and GitHub Actions linting.
 
 ## P4 — v0.1.0
 
-- [x] **P4.1 — Validate packaged artifacts on every platform.** Record
+- [ ] **P4.1 — Validate packaged artifacts on every platform.** Record
   launch, discover, tune, switch, and close on Linux (Wayland and X11), macOS,
   and Windows candidates, with startup, idle, and switch budgets.
 
@@ -159,8 +161,8 @@ validated against real physical hardware and pass 100% green CI gates.
   supported devices, platforms, codecs, and limitations from evidence; add
   CONTRIBUTING and SECURITY.
 
-- [x] **P4.5 — Cut and publish the prerelease.** Pass every gate, create the
-  signed annotated `v0.1.0` tag, validate the artifact set, and publish
+- [ ] **P4.5 — Cut and publish v0.1.0.** Pass every gate, have the maintainer
+  create a signed, annotated `v0.1.0` tag, validate the artifact set, and publish
   release notes.
 
 ## Explicitly outside v0.1
@@ -168,7 +170,7 @@ validated against real physical hardware and pass 100% green CI gates.
 - Guide data: XMLTV, the HDHomeRun XMLTV API, and an in-band crawl of each
   full multiplex are v0.2 candidates; P0.8 ruled out now/next from the playing
   stream.
-- Native macOS and Windows automatic route providers.
+- Native macOS and Windows route-table providers and observers.
 - SBOM, build provenance, scheduled fuzzing, and a coverage ratchet: beta.
 - Code of conduct, support policy, and issue forms until there are
   contributors.

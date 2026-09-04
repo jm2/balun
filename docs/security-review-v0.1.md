@@ -318,16 +318,69 @@ review's pull request.
 
 - macOS live-device acceptance (P0.3) exercises the same path.
 
+## Delta check (2026-09-04)
+
+Scope: the 142 commits between the audited `8c0df0e` and `main` at `2e1a8c0`
+plus the v0.1 pull requests #55 to #59. This is a contract re-check of the
+five areas above against the current code, not a second full audit.
+
+Re-verified in place:
+
+- Device HTTP still disables redirects, Referer, and proxies
+  (`src/hdhr/http.rs` `build_client`), and the stream transport does the same
+  (`src/playback/transport.rs`); transport errors are rendered through
+  `reqwest::Error::without_url`, which closes the URL-stripping follow-up.
+- `DeviceAuth` appears only in fixtures and the settings forbidden-string test;
+  no production path reads it. Loopback targets are refused by the desktop
+  parser (`src/discovery/manual.rs`) and skipped in interface enumeration
+  (`local.rs`); `DiscoveryClient::invalid_target` still accepts them, so the
+  diagnostic's `--target` follow-up stays open.
+- `settings.json` is created with mode `0o600` (`src/settings/mod.rs`).
+- The routed runner re-checks authority, the deadline, and the interface pin
+  before every datagram (`src/discovery/approval/controller/runner.rs`).
+- The Windows console feature exists only for the developer `-Run` build;
+  `src/main.rs` keeps the GUI subsystem for every other release build, and #56
+  refuses to stage a console-subsystem `balun.exe` into a package.
+- The packaged macOS launcher accepts the install-key helper's output only
+  when it matches `^[0-9a-f]{16}/$` before using it in a cache path, creates
+  the cache with `umask 077`, and no longer executes Perl (#58).
+- The Linux package validator applies the forbidden-component policy to the
+  reopened deb, RPM, and Arch payloads; those validators only ever receive
+  artifacts the workflow itself just built.
+- #55 to #58 keep the hidden helper flags (`--balun-platform-runtime-probe`,
+  `--balun-macos-install-key`) argument-free and fail-closed.
+- #59 (`.github/workflows/release.yml` and `ci.yml`): every `uses:` in both
+  workflows names a full commit, the Flatpak builder in CI included; the only
+  job with a write token still checks out no source, lists the tag's releases
+  and refuses to proceed unless none exists or exactly one unpublished draft
+  does, treating a failed lookup as a refusal; the draft body comes from the
+  tagged `CHANGELOG.md` section, not workflow input; and every package job
+  keeps `contents: read`. `actionlint` 1.7.12 and `yamllint` 1.37.1 pass.
+
+Still open:
+
+- Routed pacing has no jitter (plan §5, ADR-0001).
+- `DiscoveryClient::invalid_target` does not refuse loopback (§1).
+- `DeviceHttpError::Json` and `LineupError::Json` still render serde's message
+  (§3); both wrap `serde_json::Error` directly.
+- The approval store has no unsupported-version quarantine reason.
+- The hostname resolver, network-change reconciliation, and Windows ARM64
+  profile were reviewed for bounds and fail-closed defaults only.
+
 ## Follow-ups
 
 - Add jitter to the routed pacing or amend plan §5 and ADR-0001 (P2).
-- Refuse loopback in `DiscoveryClient` `invalid_target`.
-- Wrap `DeviceHttpError::Transport` in a URL-stripping newtype and render serde
-  positions only.
+- Refuse loopback in `DiscoveryClient` `invalid_target` so `balun-discover
+  --target` cannot probe it.
+- Render `DeviceHttpError::Json` and `LineupError::Json` as serde positions
+  only, without the message that can echo a device-chosen value.
 - Approval store: document the key threat model and add an unsupported-version
-  quarantine reason when P2.2 wires it.
-- Pin the flatpak-builder action and its `gnome-50` image; review the
-  publication job with #18 (P3.5).
-- Repeat this review when P2.2 connects the routed sender and when the macOS
-  package lands (P3.4); the Windows package (P3.3) was re-audited above.
-  Re-audit new log sites against the `Debug` list.
+  quarantine reason.
+- The CI Flatpak job's `gnome-50` builder image is still a moving tag; pin it
+  by digest when the next runtime bump lands.
+- Re-audit new log sites against the `Debug` list at the next review.
+
+Closed by the 2026-09-04 delta check: the URL-stripped
+`DeviceHttpError::Transport`, the pinned flatpak-builder action (#59), and the
+repeat review owed once the routed sender (P2) and the macOS package (P3.4)
+landed.

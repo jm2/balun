@@ -1,6 +1,6 @@
 # Balun v0.1 support matrix
 
-- Status: Active
+- Status: Release candidate
 - Last updated: 2026-09-04
 
 This matrix is derived from the sanitized evidence in
@@ -12,15 +12,18 @@ it is unsupported. Every ✅ is traceable to a section of the compatibility note
 
 | Platform | Build | Local discovery | Live TV with audio | Packages |
 | --- | --- | --- | --- | --- |
-| Linux | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | 🚧 Flatpak built and validated in CI; not published |
-| Windows | CI and development hosts | ✅ One host; second host awaits retest | ✅ Development build, one host | 🚧 ZIP and installer built and validated in CI; not published |
-| macOS | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | ❌ Not yet published |
+| Linux | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | 🚧 Configured: Flatpak x86_64/aarch64; deb amd64/arm64; rpm x86_64/aarch64; Arch x86_64 |
+| Windows | CI and development hosts | ✅ One host; second host awaits retest | ✅ Development build, one host | 🚧 Configured: ZIP and installer for x86_64 and ARM64 |
+| macOS | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | 🚧 Configured: Apple Silicon DMG |
 
-The Flatpak bundle (P3.2) and the Windows ZIP and installer (P3.3) are built and validated in
-CI but not published; the macOS package (P3.4) is open. Until a package is validated against real
-tuners (P4.1) and published, every platform builds from source as the README describes. The
-Windows package stages the decoders in its column of the codec table; the other platforms use
-the installed runtime.
+The table names the configured `0.1.0` inventory. The release workflow is configured to build,
+inspect, reopen, and checksum every package from the final tag, but the final tagged set has not
+yet been produced or published on the [Releases](https://github.com/jm2/balun/releases) page. The
+Live TV column records development-build evidence, not packaged live-tuner acceptance. A macOS
+packaged-hardware validation path exists, but cross-platform packaged acceptance remains P4.1.
+Architecture-specific entries do not extend the physical-tuner evidence to every CPU and format.
+The Windows and macOS packages stage reviewed decoder closures; Flatpak uses its runtime, and the
+native Linux packages use the distribution's installed runtime.
 
 ## Devices
 
@@ -45,16 +48,19 @@ The deferred HDHR5-4DT is an Australian unit; no regional or DVB-T support is cl
 | Hostname | Covered by tests and exact unicast target proofs | One name, resolved to at most four unicast addresses |
 | Remembered targets | ✅ Re-probed across launches; secondary tuners rediscovered | Nothing after the first successful probe |
 | Approved private range (`balun-discover` only) | ✅ Diagnostic only | One RFC 1918 range no wider than `/24` that you own or administer |
-| Route-derived tunnel discovery (Linux) | ✅ Verified over routed tunnel; candidate preview, approval, and traffic budget measured | Explicit approval of the previewed candidates and packet budget |
-| Route-derived discovery (macOS, Windows) | ❌ Not in v0.1 | An exact address or hostname instead |
+| Opt-in route-table-derived tunnel search (Linux) | ✅ Verified over routed tunnel; candidate preview, approval, and traffic budget measured | Explicit approval of the previewed candidates and packet budget |
+| Route-table-derived tunnel search (macOS, Windows) | ❌ Not in v0.1 | Use an exact address or hostname instead |
 
-Local discovery sends nothing at launch beyond the remembered targets. The approved-range scan is
-a diagnostic for a network you administer, not a desktop feature.
+Local discovery sends nothing at launch beyond the remembered targets. Local broadcast and
+multicast, exact IP and hostname targets, and remembered targets work on every supported platform;
+only the opt-in route-table provider and route-change monitor are Linux-only. The approved-range
+scan is a diagnostic for a network you administer, not a desktop feature.
 
 ## Codecs
 
-On Linux and macOS, decoders come from the installed GStreamer runtime; the Windows package
-bundles the decoders listed in its column. Balun transcodes nothing.
+Native Linux packages use the distribution's GStreamer runtime, and Flatpak uses its platform
+runtime. The macOS and Windows packages carry their reviewed decoder closures. Balun transcodes
+nothing.
 
 | Stream type | Linux | Windows | macOS |
 | --- | --- | --- | --- |
@@ -82,14 +88,16 @@ bundles the decoders listed in its column. Balun transcodes nothing.
 - No recording, timeshift, transcoding, or tuner configuration.
 - Lineups are never merged across devices.
 - ATSC 3.0 AC-4 playback is not guaranteed on any platform.
-- Routed discovery on macOS and Windows is exact-address or hostname only.
+- The opt-in route-table-derived tunnel search is Linux-only; macOS and Windows still support
+  local, exact-address, hostname, and remembered-target discovery.
 
 ## Evidence
 
 - Platforms: [Windows live-TV trial](compatibility-v0.1.md#windows-live-tv-trial),
   [Linux live-TV acceptance](compatibility-v0.1.md#linux-live-tv-acceptance),
-  [macOS live-TV acceptance](compatibility-v0.1.md#macos-live-tv-acceptance); ledger P0.1 to
-  P0.3 and P3.2 to P3.4.
+  [macOS live-TV acceptance](compatibility-v0.1.md#macos-live-tv-acceptance), and
+  [Windows package smoke](compatibility-v0.1.md#windows-package-smoke); ledger P0.1 to P0.3 and
+  P3.2 to P3.4. Cross-platform packaged live-tuner acceptance remains P4.1.
 - Devices:
   [Primary metadata and lineup](compatibility-v0.1.md#primary-site-metadata-and-lineup-probe),
   [Secondary validation](compatibility-v0.1.md#secondary-site-metadata-and-playback-validation),

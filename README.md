@@ -14,9 +14,11 @@ merged across devices, no stream URL ever reaches the user interface, and the me
 receives neither a device address nor a stream URL. Playback errors may name the device and its
 address so you know which tuner failed.
 
-> **Pre-alpha.** Balun plays live TV on development builds (verified on Linux, macOS, and Windows
-> against real tuners). A Flatpak bundle and a Windows ZIP and installer are built and validated
-> in CI but not published. The countable status is in [`docs/task.md`](docs/task.md).
+![Balun main window](data/screenshots/balun-main-window.png)
+
+> **v0.1.0.** Balun plays live TV on Linux, macOS, and Windows and has been verified against real
+> tuners. Pre-built packages are on the [Releases](https://github.com/jm2/balun/releases) page;
+> the countable status is in [`docs/task.md`](docs/task.md).
 
 ## Features
 
@@ -36,16 +38,20 @@ address so you know which tuner failed.
 | Channel search and favorites-only filter | ✅ |
 | Fixed, endpoint-free playback error messages | ✅ |
 | Windows local discovery | ✅ |
-| Network-change handling (Linux) | ✅ Stale addresses expire and routed scans stop when adapters or routes change; nothing rescans on its own |
-| Route-derived tunnel discovery (Linux) | ✅ Approve each route set once; verified across an owned routed WireGuard tunnel |
-| Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
+| Network-change handling | 🚧 Linux: stale addresses expire and routed scans stop when adapters or routes change, and nothing rescans on its own; macOS and Windows in a future release |
+| Route-table-derived tunnel discovery | 🚧 Linux: approve each route set once, verified across an owned routed WireGuard tunnel; macOS and Windows in a future release |
+| Program guide (in-band PSIP/EIT, XMLTV) | 🚧 Future release |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, DMG, winget) | 🚧 Flatpak, Windows ZIP/installer, and macOS DMG are built and validated in CI; nothing is published yet |
+| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Direct downloads from the Releases page; no COPR, AUR, or winget yet |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Light & dark mode | ✅ Automatic (libadwaita) |
+
+Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
+today. Local broadcast and multicast discovery, exact IP or hostname discovery, and remembered
+targets work on Linux, macOS, and Windows.
 
 The product plan is [`docs/plan-v0.1.md`](docs/plan-v0.1.md), the countable ledger is
 [`docs/task.md`](docs/task.md), sanitized hardware observations are in
@@ -85,10 +91,47 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 
 ## Installation
 
-No packages are published yet; build from source as described below. CI builds and validates
-a Flatpak bundle and a Windows x86_64 ZIP on every change, and the release-candidate workflow
-builds the Flatpak bundles, the Windows ZIP, and the Windows installer as internal artifacts.
-The Windows ZIP unpacks to `balun-windows\`; run `bin\balun.exe` from there.
+Pre-built packages for Linux (Flatpak, `.deb`, `.rpm`, Arch), macOS (`.dmg`), and Windows
+(`.exe` installer, `.zip`) are available on the [Releases](https://github.com/jm2/balun/releases)
+page. Balun does not yet publish through COPR, the AUR, or winget. Download `SHA256SUMS.txt` with
+the package and verify its SHA-256 entry before installing.
+
+### Linux
+
+| Distribution | Assets |
+| --- | --- |
+| Any (Flatpak) | `balun-linux-x86_64.flatpak`, `balun-linux-aarch64.flatpak` |
+| Debian / Ubuntu | `balun-amd64.deb`, `balun-arm64.deb` |
+| Fedora / RPM-based | `balun-x86_64.rpm`, `balun-aarch64.rpm` |
+| Arch Linux | `balun-x86_64.pkg.tar.zst` |
+
+```bash
+flatpak install --user ./balun-linux-x86_64.flatpak
+sudo apt install ./balun-amd64.deb
+sudo dnf install ./balun-x86_64.rpm
+sudo pacman -U ./balun-x86_64.pkg.tar.zst
+```
+
+Native packages need GTK 4.16 and libadwaita 1.6 from the distribution; use the Flatpak where the
+host repositories are older.
+
+### macOS
+
+Apple Silicon: `balun-macos-aarch64.dmg`. Mount it and drag **Balun** to Applications.
+
+> **macOS note:** The `.dmg` is ad-hoc signed but not notarized, so Gatekeeper will block it on
+> first launch. After mounting the DMG and dragging Balun to Applications, run:
+>
+> ```bash
+> xattr -cr /Applications/Balun.app
+> ```
+>
+> Then open normally. This is only needed once.
+
+### Windows
+
+`balun-windows-x86_64-setup.exe` or `balun-windows-aarch64-setup.exe` installs Balun. The matching
+`.zip` is a portable tree: unpack it to `balun-windows\` and run `bin\balun.exe`.
 
 ---
 
@@ -107,6 +150,10 @@ The default feature set builds the GTK-free core library and `balun-discover`; t
 application needs `--features desktop`.
 
 ### Linux
+
+Check `pkg-config --modversion gtk4` first. Debian 12 and Ubuntu 24.04 ship GTK and libadwaita
+versions below Balun's floors, so their standard repositories are not sufficient without a newer
+distribution or backports; the Flatpak avoids that host-toolkit requirement.
 
 **Debian / Ubuntu:**
 
@@ -128,7 +175,7 @@ sudo dnf install gtk4-devel libadwaita-devel gstreamer1-devel \
 
 ```bash
 sudo pacman -S gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-good \
-  gst-plugins-bad gst-plugin-gtk4 gst-libav pkgconf base-devel
+  gst-plugins-bad-libs gst-plugin-gtk4 gst-libav pkgconf base-devel
 ```
 
 Then build:
@@ -139,8 +186,11 @@ cargo build --release --locked --features desktop --bin balun
 ./scripts/build-linux.sh
 ```
 
-The helper checks the development-library floors and the GStreamer plugin files before building,
-names the package for anything missing, and writes `target/<native-target>/release/balun`.
+The helper checks the development-library floors and GStreamer plugin files before building,
+names the package for anything missing, and writes `target/<native-target>/release/balun`. Its
+`--deb`, `--rpm`, and `--arch-pkg` modes build and reopen the native package for the current
+supported architecture; they require the pinned packager to be installed already and never
+install tools or dependencies themselves.
 
 ### macOS
 
@@ -153,39 +203,51 @@ brew install gtk4 libadwaita pkgconf gstreamer
 
 The `gstreamer` formula supplies the base, good, bad, and gst-plugins-rs plugins. The helper
 validates the resulting Mach-O against the release component policy and writes
-`target/<native-target>/release/balun`; it does not create an app bundle or DMG yet.
+`target/<native-target>/release/balun`. Use `--app` to assemble, ad-hoc sign, relocate, and probe
+`dist/Balun.app`, or `--dmg` to add a reopened drag-to-Applications `dist/Balun.dmg`.
 
 ### Windows
 
-Requires [MSYS2](https://www.msys2.org) with the CLANG64 environment:
+Requires [MSYS2](https://www.msys2.org) with the native LLVM environment:
 
-```powershell
-# In an MSYS2 CLANG64 shell:
-pacman -S mingw-w64-clang-x86_64-gtk4 \
-          mingw-w64-clang-x86_64-libadwaita \
-          mingw-w64-clang-x86_64-gstreamer \
-          mingw-w64-clang-x86_64-gst-plugins-base \
-          mingw-w64-clang-x86_64-gst-plugins-good \
-          mingw-w64-clang-x86_64-gst-plugins-bad \
-          mingw-w64-clang-x86_64-gst-plugins-rs \
-          mingw-w64-clang-x86_64-gst-libav \
-          mingw-w64-clang-x86_64-pkg-config \
-          mingw-w64-clang-x86_64-toolchain
+| Windows architecture | MSYS2 shell | Package prefix | Rust target |
+| --- | --- | --- | --- |
+| x86_64 | CLANG64 | `mingw-w64-clang-x86_64` | `x86_64-pc-windows-gnullvm` |
+| ARM64 | CLANGARM64 | `mingw-w64-clang-aarch64` | `aarch64-pc-windows-gnullvm` |
+
+In the matching MSYS2 shell, its `MINGW_PACKAGE_PREFIX` selects the native packages:
+
+```bash
+pacman -S "${MINGW_PACKAGE_PREFIX}-gtk4" \
+          "${MINGW_PACKAGE_PREFIX}-libadwaita" \
+          "${MINGW_PACKAGE_PREFIX}-gstreamer" \
+          "${MINGW_PACKAGE_PREFIX}-gst-plugins-base" \
+          "${MINGW_PACKAGE_PREFIX}-gst-plugins-good" \
+          "${MINGW_PACKAGE_PREFIX}-gst-plugins-bad" \
+          "${MINGW_PACKAGE_PREFIX}-gst-plugins-rs" \
+          "${MINGW_PACKAGE_PREFIX}-gst-libav" \
+          "${MINGW_PACKAGE_PREFIX}-pkg-config" \
+          "${MINGW_PACKAGE_PREFIX}-toolchain"
 ```
 
-Then, in PowerShell:
+Then install the matching Rust target and build in PowerShell:
 
 ```powershell
-# Ensure Rust's LLVM target is installed:
+# x86_64 Windows:
 rustup target add x86_64-pc-windows-gnullvm
+
+# ARM64 Windows (use this target instead):
+rustup target add aarch64-pc-windows-gnullvm
 
 # Build the desktop shell (add -Run to launch it):
 .\scripts\build-windows.ps1
 ```
 
 The helper detects a standard MSYS2 installation (pass `-Msys2Root C:\path\to\msys64` otherwise),
-verifies the plugin files, and writes `target\x86_64-pc-windows-gnullvm\release\balun.exe`. This
-is a developer build against the installed MSYS2 runtime, not a portable bundle or installer.
+selects the profile matching native Windows unless `RUST_TARGET` names one explicitly, rejects a
+mixed CLANG64/CLANGARM64 environment, verifies every PE architecture and plugin file, and writes
+the executable under `target\<rust-target>\release\balun.exe`. This is a developer build against
+the installed MSYS2 runtime, not a portable bundle or installer.
 
 To package it:
 
@@ -221,8 +283,9 @@ GST_DEBUG=2 RUST_LOG=balun=debug cargo run --locked --features desktop --bin bal
 
 Balun logs discovery, lineup, tune, and playback outcomes to standard error at `info` by default;
 `RUST_LOG` selects the level, as in Tributary. A playback failure logs the native GStreamer error
-behind its fixed category. Release builds on Windows detach from the console, so use a debug
-build there to read the log.
+behind its fixed category. On Windows, `.\scripts\build-windows.ps1 -Run` uses a console-attached
+release-profile developer build, so those logs remain visible in the invoking PowerShell session.
+The distributed ZIP and installer remain GUI-subsystem applications and do not attach a console.
 
 ### Discovery diagnostic
 
@@ -280,6 +343,11 @@ coverage, and the installed-runtime playback probes:
 ./scripts/build-linux.sh --coverage        # or build-macos.sh --coverage
 ./scripts/build-linux.sh --probe-playback  # or build-macos.sh --probe-playback
 ./scripts/build-linux.sh --diagnostic      # GTK-free balun-discover build
+./scripts/build-linux.sh --deb             # native Debian package
+./scripts/build-linux.sh --rpm             # native RPM package
+./scripts/build-linux.sh --arch-pkg        # x86_64 Arch package
+./scripts/build-macos.sh --app             # self-contained app bundle
+./scripts/build-macos.sh --dmg             # app bundle and disk image
 ```
 
 ```powershell
@@ -303,10 +371,10 @@ The check, Clippy, and coverage modes include the desktop feature by default, an
 same installed-runtime probes CI uses on every platform, prints the installed decoder and audio-sink
 inventory for the codec contract, and cannot be combined with `--diagnostic`. The Linux helper's
 `--deb`, `--rpm`, and `--arch-pkg` build and reopen a native package with a preinstalled pinned
-packager and never install tools; `--flatpak` stays release-workflow-owned. The macOS helper's
-`--app` and `--dmg` and the Windows helper's `-Bundle`, `-Zip`, and `-InnoSetup` stage, probe,
-and archive the package as described under [Windows](#windows). The helpers keep Tributary's
-filenames and flags;
+packager; `--flatpak` stays release-workflow-owned. The macOS helper's `--app` and `--dmg` and the
+Windows helper's `-Bundle`, `-Zip`, and `-InnoSetup` use the selected profile to stage, probe, and
+archive the package as described under [Windows](#windows). None of the helpers installs its
+packagers or dependencies. The helpers keep Tributary's filenames and flags;
 [`docs/tributary-build-infrastructure.md`](docs/tributary-build-infrastructure.md) is the port
 ledger.
 
@@ -351,13 +419,15 @@ CI automatically runs on every push/PR:
 - **MSRV** — `cargo check --all-features` on the declared Rust 1.98 minimum
 - **Linux desktop** — builds, lints, and tests the desktop shell, runs `--probe-playback`, and
   drives the Wayland lifecycle smokes
-- **macOS and Windows compile smoke** — native toolkit SDKs, strict Clippy over the desktop and
-  diagnostic targets in both profiles, playback transport tests, helper desktop builds, and
-  `-ProbePlayback`
+- **macOS and Windows compile/package smoke** — native toolkit SDKs, strict Clippy over the desktop
+  and diagnostic targets in both profiles, playback transport tests, macOS app staging, Windows
+  x86_64 and ARM64 ZIP staging, and installed-runtime probes
 - **Release candidate** (manual) — verifies an annotated `v` tag against every version
-  declaration, builds the diagnostic on all three platforms and the Flatpak bundles, requires the
-  exact artifact inventory with SHA-256 sums, and creates a draft release from a job that checks
-  out no source; every action it runs is pinned to an immutable commit
+  declaration, builds internal diagnostics and 12 public binary artifacts, requires the exact
+  inventory with `SHA256SUMS.txt`, and creates a draft release from a job that checks out no
+  source. The public set is two Flatpaks; Debian amd64 and arm64, RPM x86_64 and aarch64, and Arch
+  x86_64 packages; an Apple Silicon DMG; and x86_64 and ARM64 Windows ZIPs and installers. Every
+  action it runs is pinned to an immutable commit
 
 ### Rust toolchain policy
 
@@ -373,9 +443,10 @@ python3 scripts/sync_rust_toolchain.py --from-toolchain
 
 ### Cutting a release
 
-Bump the version in `Cargo.toml` (and `Cargo.lock`), add the `## [version]` changelog section and
-its compare link, add the `<release>` to the AppStream metainfo, then confirm they agree before
-tagging:
+Bump the version in `Cargo.toml` (and `Cargo.lock`) and the `pkgver` in `build-aux/arch/PKGBUILD`
+(a prerelease such as `0.2.0-alpha.1` is spelled `0.2.0pre.1.alpha.0.1` there; the check prints
+the expected value), add the `## [version]` changelog section and its compare link, add the
+`<release>` to the AppStream metainfo, then confirm they agree before tagging:
 
 ```bash
 python3 scripts/release_check.py --tag v0.1.0
@@ -383,7 +454,8 @@ python3 scripts/release_check.py --tag v0.1.0
 
 Push a signed, annotated `v` tag and run the **Release candidate** workflow with it. The workflow
 repeats the check, builds every artifact from that one commit, verifies the exact inventory, and
-creates a draft GitHub release with `SHA256SUMS.txt`; publishing it is a manual step.
+creates a draft GitHub release with `SHA256SUMS.txt` and the changelog section as its notes. It
+refuses to touch a release that is already published; publishing the draft is a manual step.
 
 ### Release component policy
 
@@ -452,9 +524,9 @@ src/
     └── objects.rs          # GObject wrappers for the sidebar models
 
 scripts/
-├── build-linux.sh          # Linux build helper
-├── build-macos.sh          # macOS build helper (Mach-O policy gate)
-├── build-windows.ps1       # Windows build helper (MSYS2 CLANG64)
+├── build-linux.sh          # Linux build and native-package helper
+├── build-macos.sh          # macOS build, app, and DMG helper
+├── build-windows.ps1       # Windows build helper (MSYS2 CLANG64/CLANGARM64)
 ├── test-desktop-lifecycle.sh # Headless Wayland/Xvfb desktop and playback smokes
 ├── test-build-*            # Helper routing tests
 ├── macos-*-policy.sh       # macOS bundle and icon policy helpers
@@ -462,8 +534,10 @@ scripts/
 └── sync_rust_toolchain.py  # Rust floor synchronization
 
 build-aux/
+├── arch/                   # x86_64 Arch package recipe
 ├── flatpak/                # Flatpak manifest, pinned Cargo-source generator, permission/bundle validators
-├── linux/                  # Linux package payload and metadata validators
+├── inno/                   # x86_64/ARM64 Windows installer recipe
+├── linux/                  # Native Linux package payload and metadata validators
 ├── packaging/              # Shared forbidden-component policy and validator
 └── toolchain/              # Dependabot-tracked Rust floor proposal
 
@@ -497,6 +571,12 @@ cancels either kind and any remaining launch probes.
 
 On Windows, local discovery uses the limited broadcast from each interface. If a host firewall
 blocks the replies, use **Find device by address** with the tuner's IPv4 address.
+
+On Linux, **Search routes behind your tunnel** can derive a bounded private-address proposal from
+an active tunnel route. Balun shows the address count and packet budget before the first run and
+searches only after approval; **Forget routed approvals** revokes the remembered route-set
+approval. This opt-in route-table provider and change monitor are the Linux-only feature. They are
+separate from the cross-platform exact address and hostname path above.
 
 ### Watching a channel
 

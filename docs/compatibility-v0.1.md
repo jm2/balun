@@ -256,8 +256,18 @@ decoded the synthetic MPEG-2 fixture inside the tree with a fresh registry and
 only `System32` on `PATH`. Launched the same way by hand, the packaged
 application presented its window. `-InnoSetup -SkipBundle` then compiled a
 55 MB installer from the receipted tree with Inno Setup 6.7.3 and reopened
-its version resource. No tuner was contacted; tuning from the package is
-recorded under P4.1.
+its version resource. No tuner was contacted; the Windows live-TV trial above
+used a development build.
+
+## Packaged live-tuner acceptance boundary
+
+The recorded Linux and Windows live-TV trials used development builds. The
+Windows package smoke exercised its staged runtime and synthetic fixture but
+contacted no tuner. `scripts/validate-packaged-hardware.sh` provides a macOS
+package-validation path, but this document contains no complete cross-platform
+packaged live-tuner result. P4.1 therefore remains open for Linux, macOS, and
+Windows package candidates, including the documented launch, discovery, tune,
+switch, close, startup, idle, and switch-budget evidence.
 
 ## In-band guide spike
 
