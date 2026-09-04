@@ -368,8 +368,10 @@ fn print_providers() {
             "route provider: linux rtnetlink available; {}",
             provider_counts(&snapshot)
         ),
-        Err(_) => {
-            println!("route provider: linux rtnetlink unavailable (route table could not be read)");
+        Err(error) => {
+            // The reason names the rtnetlink step or unsupported route shape
+            // that failed closed; it carries no address, prefix, or interface.
+            println!("route provider: linux rtnetlink unavailable ({error})");
             return;
         }
     }

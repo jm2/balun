@@ -80,7 +80,14 @@ impl PreparedLinuxRouteObserver {
                 let monitor_sink: Arc<dyn RouteMonitorObserver> = sink;
                 LinuxRouteEventMonitor::subscribe(monitor_sink).map_err(Into::into)
             },
-            || LinuxRouteProvider::new().snapshot().map_err(|_| ()),
+            || {
+                LinuxRouteProvider::new().snapshot().map_err(|error| {
+                    // The message names the failing rtnetlink step or the
+                    // unsupported route shape; it never carries an address,
+                    // prefix, or interface name.
+                    tracing::warn!(reason = %error, "the Linux route snapshot could not be collected");
+                })
+            },
         )
         .await?;
 
