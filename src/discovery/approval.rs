@@ -4,16 +4,31 @@
 //! network itself. Its private store owns key generation, strict durable state,
 //! and globally serialized reservations; its packet-free gate consumes a
 //! committed [`RoutedScanPermit`] only after rebuilding the complete proposal
-//! from a caller-supplied fresh [`RouteSnapshot`]. No code in this module opens
-//! a discovery socket or sends network traffic.
+//! from a caller-supplied fresh [`RouteSnapshot`]. Those policy and gate layers
+//! open no discovery socket and send no network traffic; the Linux controller
+//! consumes their authority through its interface-pinned runner.
 
-// Automatic execution stays deliberately unwired until a future runner can
-// pin every socket to the fresh interface and register cancellation before it
-// consumes revalidated authority.
-#![cfg_attr(not(test), allow(dead_code))]
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(
+        dead_code,
+        reason = "route-derived execution is Linux-only while policy types remain compiled for cross-platform parity"
+    )
+)]
 
+// The production Linux runner consumes this policy through interface-pinned
+// sockets and combined route/store cancellation authority. The earlier
+// standalone admission model and inspection helpers remain compiled for
+// cross-platform parity and regression coverage.
 mod controller;
 mod gate;
+#[cfg_attr(
+    all(target_os = "linux", not(test)),
+    allow(
+        dead_code,
+        reason = "the earlier standalone admission boundary remains compiled for regression coverage"
+    )
+)]
 mod run;
 mod store;
 mod watch;
@@ -350,6 +365,10 @@ impl RoutedScanProposal {
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained as a policy inspection accessor")
+    )]
     pub const fn fingerprint(&self) -> RouteFingerprint {
         self.fingerprint
     }
@@ -688,6 +707,10 @@ pub enum RoutedProposalError {
 pub struct RoutedPolicyTime(u64);
 
 impl RoutedPolicyTime {
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained for deterministic policy construction")
+    )]
     pub const ZERO: Self = Self(0);
 
     #[must_use]
@@ -919,26 +942,46 @@ impl RoutedApprovalState {
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained as a policy inspection accessor")
+    )]
     pub const fn fingerprint(&self) -> RouteFingerprint {
         self.fingerprint
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained as a policy inspection accessor")
+    )]
     pub const fn empty_run_streak(&self) -> u8 {
         self.empty_run_streak
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained as a policy inspection accessor")
+    )]
     pub const fn automatic_not_before(&self) -> RoutedPolicyTime {
         self.automatic_not_before
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained as a policy inspection accessor")
+    )]
     pub const fn last_observed_time(&self) -> RoutedPolicyTime {
         self.last_observed_time
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained as a policy inspection accessor")
+    )]
     pub fn active_run_id(&self) -> Option<RoutedRunId> {
         self.active.map(|active| active.run_id)
     }
@@ -1072,16 +1115,28 @@ impl RoutedScanPermit {
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained as an admitted-scan inspection accessor")
+    )]
     pub fn candidate_count(&self) -> usize {
         self.targets.len()
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained as an admitted-scan inspection accessor")
+    )]
     pub const fn probe_config(&self) -> ProbeConfig {
         self.probe_config
     }
 
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "retained as an admitted-scan inspection accessor")
+    )]
     pub const fn scan_config(&self) -> RoutedScanConfig {
         self.scan_config
     }
