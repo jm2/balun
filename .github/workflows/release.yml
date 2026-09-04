@@ -684,10 +684,15 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          mapfile -t drafts < <(
+          # A failed lookup must not look like "no release exists".
+          if ! listing="$(
             gh api --paginate "repos/${REPOSITORY}/releases" \
               --jq ".[] | select(.tag_name == \"${TAG}\") | .draft"
-          )
+          )"; then
+            echo "Could not list the releases for ${TAG}; refusing to publish unchecked" >&2
+            exit 1
+          fi
+          mapfile -t drafts < <(grep -v '^$' <<< "${listing}" || true)
           case "${#drafts[@]}:${drafts[0]:-}" in
             0:) echo "No release exists for ${TAG}; a draft will be created" ;;
             1:true) echo "One unpublished draft exists for ${TAG}; its assets will be replaced" ;;
