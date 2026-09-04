@@ -161,6 +161,16 @@ impl DiscoveryService for DiscoveryClient {
     }
 }
 
+/// The routed lane's state before any routed operation: the service's
+/// availability with no proposal and no cooldown.
+fn initial_routed_state(service: &dyn RoutedDiscoveryService) -> RoutedDiscoveryState {
+    let availability = match service.availability() {
+        Ok(()) => RoutedAvailability::Available,
+        Err(reason) => RoutedAvailability::Unavailable(reason),
+    };
+    RoutedDiscoveryState::new(availability, RoutedProposalStatus::None, None)
+}
+
 /// The production routed service: the Linux supervisor over the private
 /// approval store beside the settings file, or a fixed reason it is
 /// unavailable. Starting it performs no I/O.
@@ -408,8 +418,13 @@ impl ControllerRuntime {
         let selection_service: Arc<dyn SelectedDeviceService> = Arc::new(selection_service);
         let (command_sender, command_receiver) = mpsc::channel(command_capacity);
         let shutdown = CancellationToken::new();
-        let (snapshot_sender, snapshot_receiver) =
-            watch::channel(Arc::new(ApplicationSnapshot::initial()));
+        // The actor publishes only on events, so the snapshot every consumer
+        // sees before the first command must already carry the routed lane's
+        // real availability; otherwise the tunnel-search control stays hidden
+        // until something else happens.
+        let (snapshot_sender, snapshot_receiver) = watch::channel(Arc::new(
+            ApplicationSnapshot::initial().with_routed(initial_routed_state(&*routed_service)),
+        ));
         let (ready_sender, ready_receiver) = std_mpsc::sync_channel(1);
         let actor_shutdown = shutdown.clone();
 
@@ -663,10 +678,7 @@ impl ControllerActor {
         shutdown: CancellationToken,
         snapshots: watch::Sender<Arc<ApplicationSnapshot>>,
     ) -> Self {
-        let availability = match routed_service.availability() {
-            Ok(()) => RoutedAvailability::Available,
-            Err(reason) => RoutedAvailability::Unavailable(reason),
-        };
+        let routed = initial_routed_state(&*routed_service);
         Self {
             discovery_service,
             selection_service,
@@ -690,7 +702,7 @@ impl ControllerActor {
             selected_snapshot: None,
             active_discovery: None,
             active_selection: None,
-            routed: RoutedDiscoveryState::new(availability, RoutedProposalStatus::None, None),
+            routed,
             active_routed_control: None,
             network_source,
             network_changes: None,
@@ -2770,7 +2782,21 @@ mod tests {
         let handle = controller.handle();
 
         assert_eq!(service.calls(), 0);
-        assert_eq!(*handle.snapshot(), ApplicationSnapshot::initial());
+        // Construction seeds only the routed lane's availability; every other
+        // field is still the pristine initial snapshot.
+        let snapshot = handle.snapshot();
+        assert_eq!(
+            snapshot.routed(),
+            RoutedDiscoveryState::new(
+                RoutedAvailability::Unavailable(RoutedUnavailableReason::NotConfigured),
+                RoutedProposalStatus::None,
+                None,
+            )
+        );
+        assert_eq!(
+            *snapshot,
+            ApplicationSnapshot::initial().with_routed(snapshot.routed())
+        );
         controller.shutdown().unwrap();
     }
 
@@ -3575,9 +3601,18 @@ mod tests {
         assert_send::<StreamHandoff>();
 
         let controller = ControllerRuntime::start_default().unwrap();
+        let snapshot = controller.handle().snapshot();
+        // The production routed lane answers immediately (offered on Linux,
+        // unsupported elsewhere, or a host-specific reason); nothing else
+        // moves before the first command.
+        assert_ne!(
+            snapshot.routed().availability(),
+            RoutedAvailability::Unknown
+        );
+        assert_eq!(snapshot.routed().proposal(), RoutedProposalStatus::None);
         assert_eq!(
-            *controller.handle().snapshot(),
-            ApplicationSnapshot::initial()
+            *snapshot,
+            ApplicationSnapshot::initial().with_routed(snapshot.routed())
         );
         controller.shutdown().unwrap();
     }
@@ -5800,6 +5835,30 @@ mod tests {
             selection,
             changes,
         )
+    }
+
+    #[test]
+    fn startup_snapshot_carries_the_routed_availability_before_any_command() {
+        // The sidebar shows the tunnel-search control from the snapshot it
+        // holds before the first command, and the actor publishes only on
+        // events, so that snapshot must already say whether routed discovery
+        // is offered.
+        for (service, expected) in [
+            (
+                UnavailableRoutedDiscovery::new(RoutedUnavailableReason::UnsupportedPlatform),
+                RoutedAvailability::Unavailable(RoutedUnavailableReason::UnsupportedPlatform),
+            ),
+            (
+                UnavailableRoutedDiscovery::new(RoutedUnavailableReason::NoPrivateDirectory),
+                RoutedAvailability::Unavailable(RoutedUnavailableReason::NoPrivateDirectory),
+            ),
+        ] {
+            let (controller, _, _, _, _) = start_with_changes([], [], service);
+            let snapshot = controller.handle().snapshot();
+            assert_eq!(snapshot.revision(), SnapshotRevision::INITIAL);
+            assert_eq!(snapshot.routed().availability(), expected);
+            assert_eq!(snapshot.routed().proposal(), RoutedProposalStatus::None);
+        }
     }
 
     #[test]
