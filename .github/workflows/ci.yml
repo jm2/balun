@@ -337,8 +337,8 @@ jobs:
       - name: Check desktop shell
         run: cargo check --locked --features desktop --bin balun
 
-      - name: Lint desktop shell
-        run: cargo clippy --locked --features desktop --bin balun -- -D warnings
+      - name: Lint all desktop targets
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
       - name: Test desktop bridge
         run: cargo test --locked --features desktop --all-targets
