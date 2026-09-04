@@ -37,13 +37,13 @@ address so you know which tuner failed.
 | Fixed, endpoint-free playback error messages | ✅ |
 | Windows local discovery | ✅ |
 | Network-change handling (Linux) | ✅ Stale addresses expire and routed scans stop when adapters or routes change; nothing rescans on its own |
-| Route-derived tunnel discovery (Linux) | ✅ Approve each route set once; live proof on a tunnel pending |
+| Route-derived tunnel discovery (Linux) | ✅ Approve each route set once; verified across an owned routed WireGuard tunnel |
 | Program guide (in-band PSIP/EIT, XMLTV) | ❌ v0.2 candidate |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, DMG, winget) | 🚧 A Flatpak bundle and a Windows ZIP and installer are built and validated in CI; nothing is published yet |
+| Packages (Flatpak, deb, rpm, DMG, winget) | 🚧 Flatpak, Windows ZIP/installer, and macOS DMG are built and validated in CI; nothing is published yet |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
@@ -376,7 +376,7 @@ its compare link, add the `<release>` to the AppStream metainfo, then confirm th
 tagging:
 
 ```bash
-python3 scripts/release_check.py --tag v0.1.0-alpha.1
+python3 scripts/release_check.py --tag v0.1.0
 ```
 
 Push a signed, annotated `v` tag and run the **Release candidate** workflow with it. The workflow

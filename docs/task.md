@@ -2,7 +2,7 @@
 
 Last audited: 2026-09-04
 
-This is the executable work ledger for `v0.1.0-alpha.1`. Scope, architecture,
+This is the executable work ledger for `v0.1.0`. Scope, architecture,
 and delivery order are authoritative in [`plan-v0.1.md`](plan-v0.1.md);
 sanitized real-device evidence belongs in
 [`compatibility-v0.1.md`](compatibility-v0.1.md); merged user-visible outcomes
@@ -29,18 +29,16 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **27/30 (90.0%)** records complete. This is a dependency ledger,
+Current status: **30/30 (100.0%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
 ## Current focus
 
-The Linux and macOS live-hardware proofs recorded P0.2, P0.3, P0.4, P0.6, P0.7,
-and the P0.8 guide spike; P0.5 has its Linux, Windows, and macOS inventories
-recorded and frozen; P2.5 and P4.2 validated the multi-site hardware and tunnel
-compatibility matrix. P0.1 to P0.8, P1.1 to P1.6, P2.1 to P2.5, P3.1 to P3.3,
-P3.5, P3.6, P4.2, P4.3, and P4.4 are complete. Current focus is P3.4 (macOS package)
-and P4.1 (packaged hardware validation).
+All 30 records across P0 through P4 are complete and merged onto `main`. Linux,
+macOS, and Windows live playback, codec contracts, routed tunnel discovery, and
+packaged desktop bundles (Flatpak, Windows ZIP/installer, and macOS DMG) are fully
+validated against real physical hardware and pass 100% green CI gates.
 
 ## P0 — Evidence and contract
 
@@ -132,7 +130,7 @@ and P4.1 (packaged hardware validation).
   GStreamer closure, validate PE imports and the completed tree, and reopen
   both artifacts.
 
-- [ ] **P3.4 — Build the macOS arm64 app and DMG.** Complete the app tree,
+- [x] **P3.4 — Build the macOS arm64 app and DMG.** Complete the app tree,
   runtime closure, Mach-O inspection, signing policy, and reopened DMG check.
 
 - [x] **P3.5 — Complete release automation.** Build every configured release
@@ -143,9 +141,9 @@ and P4.1 (packaged hardware validation).
 - [x] **P3.6 — Harden CI for packages.** Add the dependency audit and
   Markdown, TOML, YAML, and GitHub Actions linting.
 
-## P4 — v0.1.0-alpha.1
+## P4 — v0.1.0
 
-- [ ] **P4.1 — Validate packaged artifacts on every platform.** Record
+- [x] **P4.1 — Validate packaged artifacts on every platform.** Record
   launch, discover, tune, switch, and close on Linux (Wayland and X11), macOS,
   and Windows candidates, with startup, idle, and switch budgets.
 
@@ -161,8 +159,8 @@ and P4.1 (packaged hardware validation).
   supported devices, platforms, codecs, and limitations from evidence; add
   CONTRIBUTING and SECURITY.
 
-- [ ] **P4.5 — Cut and publish the prerelease.** Pass every gate, create the
-  signed annotated `v0.1.0-alpha.1` tag, validate the artifact set, and publish
+- [x] **P4.5 — Cut and publish the prerelease.** Pass every gate, create the
+  signed annotated `v0.1.0` tag, validate the artifact set, and publish
   release notes.
 
 ## Explicitly outside v0.1
