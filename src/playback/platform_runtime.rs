@@ -1,5 +1,5 @@
-//! Self-contained Windows package layout and the hidden packaged-runtime
-//! probe.
+//! Self-contained Windows and macOS package layouts and the hidden
+//! packaged-runtime probe.
 //!
 //! The Windows package keeps the MSYS2 prefix shape Balun was built and
 //! probed against: `bin\balun.exe` beside every DLL, `lib\gstreamer-1.0` for
@@ -10,9 +10,9 @@
 //! process environment is not possible in safe Rust, and the package must not
 //! depend on it.
 //!
-//! The packaging helper is the only caller of the probe and owns the probe's
+//! Each platform packaging helper is the only caller of the probe and owns its
 //! environment: a fresh registry through `GST_REGISTRY`, no other GStreamer,
-//! GIO, or proxy variable, and a `PATH` of `System32` alone. The probe rejects
+//! GIO, or proxy variable. The probe rejects
 //! anything else, proves the bundled scanner starts, runs the packaged
 //! playback probe, requires the fresh registry to exist outside the package,
 //! and only then writes its sentinel.
@@ -107,7 +107,7 @@ pub enum PlatformRuntimeError {
     #[error("the platform runtime probe registry was not created")]
     RegistryMissing,
     /// The registry resolved inside the package.
-    #[error("the platform runtime probe registry resolves inside the Windows package")]
+    #[error("the platform runtime probe registry resolves inside the application package")]
     RegistryInsideInstall,
     /// The sentinel could not be written atomically.
     #[error("the platform runtime probe could not write its sentinel")]
@@ -387,7 +387,7 @@ fn run_macos_runtime_probe(
     Ok(())
 }
 
-#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+#[cfg(target_os = "macos")]
 fn reject_inherited_macos_probe_environment(
     keys: impl IntoIterator<Item = OsString>,
     layout: &MacBundleLayout,

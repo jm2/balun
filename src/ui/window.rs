@@ -275,6 +275,10 @@ fn window_key_action(
     WindowKeyAction::Ignore
 }
 
+const fn shortcut_target_available(visible: bool, sensitive: bool) -> bool {
+    visible && sensitive
+}
+
 /// Build Balun's single application window.
 pub(crate) fn build(
     application: &adw::Application,
@@ -511,21 +515,31 @@ fn connect_window_shortcuts(
                 gtk::glib::Propagation::Stop
             }
             WindowKeyAction::FocusSearch => {
+                let Some(search_entry) = search_entry.as_ref() else {
+                    return gtk::glib::Propagation::Stop;
+                };
+                if !shortcut_target_available(
+                    search_entry.is_visible(),
+                    search_entry.is_sensitive(),
+                ) {
+                    return gtk::glib::Propagation::Stop;
+                }
                 if window.is_fullscreen() {
-                    if let Some(search_entry) = search_entry.as_ref() {
-                        previous_focus_for_keys
-                            .replace(Some(search_entry.upcast_ref::<gtk::Widget>().downgrade()));
-                    }
+                    previous_focus_for_keys
+                        .replace(Some(search_entry.upcast_ref::<gtk::Widget>().downgrade()));
                     window.unfullscreen();
                 }
                 layout_for_keys.show_channels();
-                if let Some(search_entry) = search_entry.as_ref() {
-                    let _ = search_entry.grab_focus();
-                }
+                let _ = search_entry.grab_focus();
                 gtk::glib::Propagation::Stop
             }
             WindowKeyAction::RefreshDevices => {
-                if let Some(refresh_button) = refresh_button.as_ref() {
+                if let Some(refresh_button) = refresh_button.as_ref()
+                    && shortcut_target_available(
+                        refresh_button.is_visible(),
+                        refresh_button.is_sensitive(),
+                    )
+                {
                     refresh_button.emit_clicked();
                 }
                 gtk::glib::Propagation::Stop
@@ -1330,6 +1344,14 @@ mod tests {
             window_key_action(Key::F10, ModifierType::empty(), true),
             WindowKeyAction::Ignore
         );
+    }
+
+    #[test]
+    fn shortcuts_only_activate_visible_sensitive_targets() {
+        assert!(shortcut_target_available(true, true));
+        assert!(!shortcut_target_available(false, true));
+        assert!(!shortcut_target_available(true, false));
+        assert!(!shortcut_target_available(false, false));
     }
 
     #[test]
