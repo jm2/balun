@@ -13,7 +13,7 @@
 ;                       resource, e.g. "0.1.0.0"
 ;   SourceDir         — path to the bundled dist folder (dist\balun-windows)
 ;   OutputDir         — where to write the installer exe
-;   TargetArch        — "x64"; ARM64 Windows is not supported yet
+;   TargetArch        — "x64" or "arm64"
 
 #ifndef AppVersion
   #define AppVersion "0.1.0"
@@ -71,9 +71,11 @@ SetupLogging=yes
 #if TargetArch == "arm64"
 ArchitecturesAllowed=arm64
 ArchitecturesInstallIn64BitMode=arm64
-#else
+#elif TargetArch == "x64"
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#else
+  #error Unsupported TargetArch; expected x64 or arm64
 #endif
 
 [Languages]
