@@ -89,8 +89,9 @@ jobs:
           fi
 
           build_ref="$(git rev-parse HEAD)"
-          # Every version declaration (Cargo.toml, Cargo.lock, CHANGELOG,
-          # AppStream) must agree with the tag before any package is built.
+          # Every version declaration (Cargo.toml, Cargo.lock, the Arch
+          # PKGBUILD pkgver, CHANGELOG, AppStream) must agree with the tag
+          # before any package is built.
           python3 scripts/release_check.py --tag "${TAG}"
           version="${TAG#v}"
 
