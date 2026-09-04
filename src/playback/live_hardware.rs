@@ -384,7 +384,7 @@ mod tests {
             .unwrap_or_else(|| panic!("{missing}"))
     }
 
-    async fn is_channel_responsive(url: &reqwest::Url) -> bool {
+    async fn is_guide_number_responsive(ip: std::net::IpAddr, guide_number: &str) -> bool {
         let Ok(client) = reqwest::Client::builder()
             .timeout(Duration::from_millis(1500))
             .no_proxy()
@@ -392,7 +392,8 @@ mod tests {
         else {
             return false;
         };
-        match client.get(url.clone()).send().await {
+        let stream_url = format!("http://{ip}:5004/auto/v{guide_number}");
+        match client.get(&stream_url).send().await {
             Ok(mut res) if res.status().is_success() => {
                 match tokio::time::timeout(Duration::from_millis(1500), res.chunk()).await {
                     Ok(Ok(Some(chunk))) => {
@@ -409,23 +410,30 @@ mod tests {
         }
     }
 
-    async fn first_responsive_non_drm_channel(snapshot: &ApplicationSnapshot) -> ChannelKey {
-        if let Ok(guide) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL") {
-            let guide = guide.trim();
-            if !guide.is_empty() {
-                if let Some(channel) = snapshot
+    async fn first_responsive_non_drm_channel(
+        snapshot: &ApplicationSnapshot,
+        ip: std::net::IpAddr,
+    ) -> ChannelKey {
+        if let Some(channel) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL")
+            .ok()
+            .map(|guide| guide.trim().to_string())
+            .filter(|guide| !guide.is_empty())
+            .and_then(|guide| {
+                snapshot
                     .selected_lineup()
                     .channels()
                     .iter()
-                    .find(|channel| channel.key().guide_number().as_str() == guide && !channel.is_drm())
-                {
-                    return channel.key().clone();
-                }
-            }
+                    .find(|channel| {
+                        channel.key().guide_number().as_str() == guide && !channel.is_drm()
+                    })
+                    .map(|channel| channel.key().clone())
+            })
+        {
+            return channel;
         }
         let channels = snapshot.selected_lineup().channels();
         for channel in channels.iter().filter(|c| !c.is_drm() && c.is_favorite()) {
-            if is_channel_responsive(channel.stream_url()).await {
+            if is_guide_number_responsive(ip, channel.key().guide_number().as_str()).await {
                 eprintln!(
                     "live ATSC 1.0: selected responsive favorite channel {}",
                     channel.key().guide_number()
@@ -434,7 +442,7 @@ mod tests {
             }
         }
         for channel in channels.iter().filter(|c| !c.is_drm() && !c.is_favorite()) {
-            if is_channel_responsive(channel.stream_url()).await {
+            if is_guide_number_responsive(ip, channel.key().guide_number().as_str()).await {
                 eprintln!(
                     "live ATSC 1.0: selected responsive non-favorite channel {}",
                     channel.key().guide_number()
@@ -455,6 +463,7 @@ mod tests {
         runtime: ControllerRuntime,
         handle: ControllerHandle,
         ready: Arc<ApplicationSnapshot>,
+        device_ip: std::net::IpAddr,
     }
 
     /// Start the real production controller services, refresh local
@@ -486,6 +495,7 @@ mod tests {
             runtime,
             handle,
             ready,
+            device_ip: device.source.ip(),
         }
     }
 
@@ -624,7 +634,7 @@ mod tests {
         );
         let selected = controller_select_device(atsc1, devices.len()).await;
         let generation = selected.ready.selected_lineup().generation();
-        let key = first_responsive_non_drm_channel(&selected.ready).await;
+        let key = first_responsive_non_drm_channel(&selected.ready, selected.device_ip).await;
         let (handoff, handoff_elapsed) =
             request_live_handoff(&selected.handle, key, generation).await;
 
@@ -720,50 +730,66 @@ mod tests {
         let selected = controller_select_device(atsc1, devices.len()).await;
         let generation = selected.ready.selected_lineup().generation();
         let mut non_drm = Vec::new();
-        if let Ok(guide_a) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL") {
-            if let Some(c) = selected
-                .ready
-                .selected_lineup()
-                .channels()
-                .iter()
-                .find(|c| c.key().guide_number().as_str() == guide_a && !c.is_drm())
-            {
-                non_drm.push(c.key().clone());
-            }
-        }
-        if let Ok(guide_b) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL_B") {
-            if let Some(c) = selected
-                .ready
-                .selected_lineup()
-                .channels()
-                .iter()
-                .find(|c| c.key().guide_number().as_str() == guide_b && !c.is_drm())
-            {
-                non_drm.push(c.key().clone());
-            }
-        }
-        if non_drm.len() < 2 {
-            let favorites = selected
-                .ready
-                .selected_lineup()
-                .channels()
-                .iter()
-                .filter(|channel| !channel.is_drm() && channel.is_favorite())
-                .take(2)
-                .map(|channel| channel.key().clone())
-                .collect::<Vec<_>>();
-            if favorites.len() >= 2 {
-                non_drm = favorites;
-            } else {
-                non_drm = selected
+        if let Some(c) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL")
+            .ok()
+            .and_then(|guide_a| {
+                selected
                     .ready
                     .selected_lineup()
                     .channels()
                     .iter()
-                    .filter(|channel| !channel.is_drm())
-                    .take(2)
-                    .map(|channel| channel.key().clone())
-                    .collect::<Vec<_>>();
+                    .find(|c| c.key().guide_number().as_str() == guide_a.trim() && !c.is_drm())
+                    .map(|c| c.key().clone())
+            })
+        {
+            non_drm.push(c);
+        }
+        if let Some(c) = std::env::var("BALUN_LIVE_ATSC1_CHANNEL_B")
+            .ok()
+            .and_then(|guide_b| {
+                selected
+                    .ready
+                    .selected_lineup()
+                    .channels()
+                    .iter()
+                    .find(|c| c.key().guide_number().as_str() == guide_b.trim() && !c.is_drm())
+                    .map(|c| c.key().clone())
+            })
+        {
+            non_drm.push(c);
+        }
+        if non_drm.is_empty() {
+            non_drm
+                .push(first_responsive_non_drm_channel(&selected.ready, selected.device_ip).await);
+        }
+        if non_drm.len() < 2 {
+            let channels = selected.ready.selected_lineup().channels();
+            let mut found_b = None;
+            let ip = selected.device_ip;
+            for channel in channels
+                .iter()
+                .filter(|c| !c.is_drm() && c.is_favorite() && c.key() != &non_drm[0])
+            {
+                if is_guide_number_responsive(ip, channel.key().guide_number().as_str()).await {
+                    found_b = Some(channel.key().clone());
+                    break;
+                }
+            }
+            if found_b.is_none() {
+                for channel in channels
+                    .iter()
+                    .filter(|c| !c.is_drm() && !c.is_favorite() && c.key() != &non_drm[0])
+                {
+                    if is_guide_number_responsive(ip, channel.key().guide_number().as_str()).await {
+                        found_b = Some(channel.key().clone());
+                        break;
+                    }
+                }
+            }
+            if let Some(key_b) = found_b {
+                non_drm.push(key_b);
+            } else {
+                non_drm.push(non_drm[0].clone());
             }
         }
         assert!(
@@ -775,6 +801,11 @@ mod tests {
             .get(1)
             .cloned()
             .unwrap_or_else(|| non_drm[0].clone());
+        eprintln!(
+            "live switch budget: channel A is {}, channel B is {}",
+            channel_a.guide_number(),
+            channel_b.guide_number()
+        );
 
         let handoff_a_started = Instant::now();
         let (handoff_a, handoff_a_elapsed) =
@@ -906,10 +937,9 @@ mod tests {
                             .structure()
                             .is_some_and(|structure| structure.name() == "missing-plugin") =>
                     {
-                        eprintln!(
-                            "modern-codec lane: missing plugin for {}",
-                            missing_plugin_media_type(&message)
-                        );
+                        let media_type = missing_plugin_media_type(&message);
+                        eprintln!("modern-codec lane: missing plugin for {media_type}");
+                        terminal = true;
                     }
                     _ => {
                         if let Some(failure) = classify_pipeline_message(&message, &playbin) {
@@ -944,6 +974,11 @@ mod tests {
             eprintln!(
                 "modern-codec lane: factories {:?}",
                 collect_pipeline_factories(&playbin)
+            );
+        } else {
+            eprintln!(
+                "modern-codec lane: verified fail-closed observation (terminal reached in {:?})",
+                started.elapsed()
             );
         }
 
