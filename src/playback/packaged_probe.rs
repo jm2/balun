@@ -1,9 +1,10 @@
-//! Packaged-Windows playback probe: prove the staged runtime closure decodes.
+//! Packaged playback probe: prove the staged Windows or macOS runtime closure
+//! decodes.
 //!
-//! The Windows packaging helper runs this hidden probe against the staged
+//! The platform packaging helper runs this hidden probe against the staged
 //! tree before archiving it. The probe initializes the bundled GStreamer
 //! through the production runtime owner, requires every structural factory,
-//! the frozen Windows decoder contract, and the Windows audio sink to resolve
+//! the frozen decoder contract, and the platform audio sink to resolve
 //! to plugin files inside the package, then plays the checked-in synthetic
 //! MPEG-2 fixture from a loopback HTTP server through the production `appsrc`
 //! source policy and stream transport to end of stream, and tears the
@@ -49,8 +50,9 @@ const SOCKET_TIMEOUT: Duration = Duration::from_millis(20);
 const MAX_REQUEST_BYTES: usize = 16 * 1_024;
 const MIN_DECODED_FRAMES: usize = 2;
 
-/// Broadcast stream types the Windows package must decode, with the caps a
-/// decoder has to accept. AC-4 has no open decoder and is deliberately absent.
+/// Broadcast stream types each self-contained package must decode, with the
+/// caps a decoder has to accept. AC-4 has no open decoder and is deliberately
+/// absent.
 const REQUIRED_DECODERS: [(&str, &str); 7] = [
     (
         "MPEG-2 video",
