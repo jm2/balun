@@ -568,7 +568,6 @@ cat > "${BIN_DEST}" << 'EOF'
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd -P )"
 CONTENTS_DIR="$(dirname "$DIR")"
 BUNDLE_ROOT="$CONTENTS_DIR"
-APP_ROOT="$(cd "$CONTENTS_DIR/.." && pwd -P)"
 
 # Blind the app to Homebrew by stripping it from PATH
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
@@ -602,21 +601,26 @@ for arg in "$@"; do
   PREV="$arg"
 done
 
-# Calculate 16-hex FNV-1a hash of canonical bundle root path
-INSTALL_KEY="$(/usr/bin/perl -e '
-  use Math::BigInt;
-  my $str = $ARGV[0];
-  my $h = Math::BigInt->new("0xcbf29ce484222325");
-  my $prime = Math::BigInt->new("0x100000001b3");
-  my $mask = (Math::BigInt->new(1) << 64) - 1;
-  for my $b (unpack("C*", $str)) {
-    $h ^= $b;
-    $h = ($h * $prime) & $mask;
-  }
-  my $hex = $h->as_hex();
-  $hex =~ s/^0x//;
-  print(("0" x (16 - length($hex))) . $hex . "\n");
-' "$APP_ROOT")"
+# Ask the signed binary to derive the canonical application root itself. A
+# slash suffix preserves any unexpected trailing output through Bash command
+# substitution, so both the helper status and its exact 16-byte protocol are
+# checked before its result can become part of a cache path.
+INSTALL_KEY_RESPONSE=""
+if ! INSTALL_KEY_RESPONSE="$(
+  "$DIR/Balun-bin" --balun-macos-install-key
+  HELPER_STATUS=$?
+  printf '/'
+  exit "$HELPER_STATUS"
+)"; then
+  printf 'Balun could not derive its install-keyed runtime cache path.\n' >&2
+  exit 1
+fi
+if [[ ! "$INSTALL_KEY_RESPONSE" =~ ^([0-9a-f]{16})/$ ]]; then
+  printf 'Balun received an invalid install-key response.\n' >&2
+  exit 1
+fi
+INSTALL_KEY="${BASH_REMATCH[1]}"
+unset INSTALL_KEY_RESPONSE
 ARCH="$(uname -m)"
 if [[ "$ARCH" == "arm64" ]]; then
   ARCH="aarch64"

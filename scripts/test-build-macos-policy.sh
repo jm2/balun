@@ -797,6 +797,10 @@ esac
 # checks meaningful.
 for required_package_contract in \
     'export GST_REGISTRY="$PROBE_CACHE/registry.bin"' \
+    '"$DIR/Balun-bin" --balun-macos-install-key' \
+    'HELPER_STATUS=$?' \
+    '[[ ! "$INSTALL_KEY_RESPONSE" =~ ^([0-9a-f]{16})/$ ]]' \
+    'INSTALL_KEY="${BASH_REMATCH[1]}"' \
     'LOADER_MODULES=("$LOADERS_DIR"/*.so "$LOADERS_DIR"/*.dylib)' \
     'macos_validate_icon_sources "data/balun.iconset"' \
     'macos_validate_app_icon_bundle "$APP_BUNDLE" "$BUNDLE_ID"' \
@@ -806,11 +810,87 @@ do
     grep -Fq -- "$required_package_contract" "$script_under_test" \
         || fail_test "helper is missing package contract: $required_package_contract"
 done
+launcher_source=$(sed -n "/^cat > \"\${BIN_DEST}\" << 'EOF'$/,/^EOF$/p" \
+    "$script_under_test")
+[ -n "$launcher_source" ] \
+    || fail_test 'helper does not contain the staged launcher source'
+if grep -Eiq '(^|[^[:alnum:]_])perl([^[:alnum:]_]|$)' \
+    <<< "$launcher_source"; then
+    fail_test 'staged launcher retains a Perl runtime dependency'
+fi
+if grep -Fq -- 'APP_ROOT=' <<< "$launcher_source"; then
+    fail_test 'staged launcher supplies an application path to the install-key helper'
+fi
 if grep -Fq -- 'printf("%016s' "$script_under_test"; then
     fail_test 'helper space-pads the install hash instead of zero-padding it'
 fi
 if grep -Fq -- '        local dep_base' "$script_under_test"; then
     fail_test 'helper declares a local variable outside a function'
 fi
+
+# Exercise the staged launcher independently of Apple's package tools. The
+# signed-binary stand-in implements only the one-shot install-key protocol and
+# the final desktop exec, allowing malformed output and failure statuses to be
+# checked on every CI host.
+launcher_fixture="$temp_dir/launcher fixture/Balun.app/Contents"
+launcher_macos="$launcher_fixture/MacOS"
+launcher_home="$temp_dir/launcher home"
+mkdir -p "$launcher_macos" "$launcher_fixture/Resources"
+printf '%s\n' "$launcher_source" | sed '1d;$d' > "$launcher_macos/Balun"
+cat > "$launcher_macos/Balun-bin" <<'EOF'
+#!/bin/bash
+if [[ "${1-}" == "--balun-macos-install-key" ]]; then
+    printf '%s' "$BALUN_FAKE_INSTALL_KEY_OUTPUT"
+    exit "$BALUN_FAKE_INSTALL_KEY_STATUS"
+fi
+printf 'desktop'
+for argument in "$@"; do
+    printf ' <%s>' "$argument"
+done
+printf '\n'
+EOF
+chmod +x "$launcher_macos/Balun" "$launcher_macos/Balun-bin"
+launcher_arch=$(uname -m)
+if [[ "$launcher_arch" == arm64 ]]; then
+    launcher_arch=aarch64
+fi
+launcher_cache="$launcher_home/Library/Caches/balun/runtime/macos-${launcher_arch}/0123456789abcdef/gdk-pixbuf"
+mkdir -p "$launcher_cache"
+printf 'synthetic loader cache\n' > "$launcher_cache/loaders.cache"
+
+run_launcher_fixture()
+{
+    set +e
+    launcher_output=$(
+        HOME="$launcher_home" \
+        BALUN_FAKE_INSTALL_KEY_OUTPUT="$1" \
+        BALUN_FAKE_INSTALL_KEY_STATUS="$2" \
+            "$launcher_macos/Balun" --synthetic 2>&1
+    )
+    launcher_status=$?
+    set -e
+}
+
+run_launcher_fixture '0123456789abcdef' 0
+[[ "$launcher_status" -eq 0 && "$launcher_output" == 'desktop <--synthetic>' ]] \
+    || fail_test 'staged launcher rejected the exact install-key response'
+
+for invalid_install_key in \
+    '0123456789abcde' \
+    '0123456789abcdef0' \
+    '0123456789ABCDEf' \
+    $'0123456789abcdef\n'; do
+    run_launcher_fixture "$invalid_install_key" 0
+    [[ "$launcher_status" -eq 1 ]] \
+        || fail_test 'staged launcher accepted malformed install-key output'
+    [[ "$launcher_output" == *'invalid install-key response'* ]] \
+        || fail_test 'staged launcher did not explain malformed install-key output'
+done
+
+run_launcher_fixture '0123456789abcdef' 9
+[[ "$launcher_status" -eq 1 ]] \
+    || fail_test 'staged launcher ignored the install-key helper failure status'
+[[ "$launcher_output" == *'could not derive its install-keyed runtime cache path'* ]] \
+    || fail_test 'staged launcher did not explain the install-key helper failure'
 
 printf 'build-macos command-routing tests passed\n'

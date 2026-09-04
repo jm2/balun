@@ -21,6 +21,10 @@
 
 use std::env;
 use std::ffi::{OsStr, OsString};
+#[cfg(target_os = "macos")]
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -28,6 +32,9 @@ use thiserror::Error;
 /// Hidden argument the Windows and macOS packaging helpers pass with a fresh, empty
 /// cache root. Nothing else is accepted on the command line.
 pub const PLATFORM_RUNTIME_PROBE_FLAG: &str = "--balun-platform-runtime-probe";
+/// Hidden, argument-free request used only by the packaged macOS launcher to
+/// derive its install-keyed cache directory from the signed executable.
+const MACOS_INSTALL_KEY_FLAG: &str = "--balun-macos-install-key";
 /// File the probe writes into its cache root after every check passed.
 pub const WINDOWS_PROBE_SENTINEL_NAME: &str = "balun-platform-runtime-probe.ok";
 /// Exact sentinel content; the packaging helper compares the bytes.
@@ -67,6 +74,18 @@ pub enum PlatformRuntimeError {
     /// The executable is not inside the documented macOS bundle layout.
     #[error("the platform runtime probe requires the self-contained macOS bundle layout")]
     MacBundleLayout,
+    /// The hidden macOS install-key request was combined with another argument.
+    #[error("the macOS install-key helper accepts no other arguments")]
+    MacInstallKeyArguments,
+    /// The running executable is not the packaged macOS Balun binary.
+    #[error("the macOS install-key helper requires the packaged Balun-bin layout")]
+    MacInstallKeyBundleLayout,
+    /// The hidden macOS install-key request was made outside macOS.
+    #[error("the macOS install-key helper is only available in the packaged macOS application")]
+    MacInstallKeyUnsupported,
+    /// The hidden macOS install-key helper could not write its exact response.
+    #[error("the macOS install-key helper could not write its response")]
+    MacInstallKeyOutput,
     /// The cache root was relative.
     #[error("the platform runtime probe cache root must be absolute")]
     CacheRootNotAbsolute,
@@ -128,6 +147,55 @@ pub enum PlatformRuntimeError {
 pub fn configure_before_toolkit() -> Result<ToolkitPreparation, PlatformRuntimeError> {
     let probe_root = parse_platform_runtime_probe_request(env::args_os())?;
     configure_for_platform(probe_root.as_deref())
+}
+
+/// Emit the packaged macOS launcher's install key before logging or a GUI
+/// toolkit starts. The request deliberately accepts no caller-supplied path:
+/// the signed executable derives and canonicalizes its own application root.
+///
+/// Returns `true` only after writing the exact 16-byte lowercase hexadecimal
+/// response. An ordinary application invocation returns `false` untouched.
+pub fn emit_macos_install_key_if_requested() -> Result<bool, PlatformRuntimeError> {
+    if !parse_macos_install_key_request(env::args_os())? {
+        return Ok(false);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let exe =
+            env::current_exe().map_err(|_| PlatformRuntimeError::MacInstallKeyBundleLayout)?;
+        let install_key = macos_install_key_for_executable(&exe)?;
+        let response = render_install_key(install_key);
+        debug_assert_eq!(response.len(), 16);
+        let mut stdout = std::io::stdout().lock();
+        stdout
+            .write_all(response.as_bytes())
+            .and_then(|()| stdout.flush())
+            .map_err(|_| PlatformRuntimeError::MacInstallKeyOutput)?;
+        return Ok(true);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    Err(PlatformRuntimeError::MacInstallKeyUnsupported)
+}
+
+/// Recognize only the launcher's exact one-flag helper invocation. Unrelated
+/// desktop arguments remain available to GTK, but the hidden flag fails closed
+/// when it appears beside any other argument.
+fn parse_macos_install_key_request(
+    args: impl IntoIterator<Item = OsString>,
+) -> Result<bool, PlatformRuntimeError> {
+    let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
+    let requested = arguments
+        .iter()
+        .any(|argument| argument == MACOS_INSTALL_KEY_FLAG);
+    if !requested {
+        return Ok(false);
+    }
+    if arguments.len() != 1 || arguments[0] != MACOS_INSTALL_KEY_FLAG {
+        return Err(PlatformRuntimeError::MacInstallKeyArguments);
+    }
+    Ok(true)
 }
 
 #[cfg(target_os = "windows")]
@@ -318,12 +386,40 @@ pub struct RuntimeCachePaths {
 /// 64-bit FNV-1a hash of the canonical install root path.
 #[allow(dead_code)]
 pub fn stable_path_fingerprint(path: &Path) -> u64 {
+    #[cfg(unix)]
+    let bytes = path.as_os_str().as_bytes();
+    #[cfg(not(unix))]
+    let rendered = path.to_string_lossy();
+    #[cfg(not(unix))]
+    let bytes = rendered.as_bytes();
+
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in path.to_string_lossy().as_bytes() {
+    for byte in bytes {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+/// Derive the install key only from a canonical executable in the documented
+/// macOS bundle shape.
+#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+fn macos_install_key_for_executable(exe: &Path) -> Result<u64, PlatformRuntimeError> {
+    let canonical_exe = exe
+        .canonicalize()
+        .map_err(|_| PlatformRuntimeError::MacInstallKeyBundleLayout)?;
+    if canonical_exe.file_name() != Some(OsStr::new("Balun-bin")) {
+        return Err(PlatformRuntimeError::MacInstallKeyBundleLayout);
+    }
+    let layout = detect_macos_bundle(&canonical_exe)
+        .ok_or(PlatformRuntimeError::MacInstallKeyBundleLayout)?;
+    Ok(stable_path_fingerprint(&layout.app_root))
+}
+
+/// Render the install-key helper's complete stdout protocol.
+#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+fn render_install_key(install_key: u64) -> String {
+    format!("{install_key:016x}")
 }
 
 /// Calculate dedicated, install-keyed user cache paths.
@@ -832,6 +928,39 @@ mod tests {
     }
 
     #[test]
+    fn macos_install_key_parser_accepts_only_the_exact_hidden_request() {
+        let flag = || OsString::from(MACOS_INSTALL_KEY_FLAG);
+        assert_eq!(
+            parse_macos_install_key_request([OsString::from("balun"), flag()]),
+            Ok(true)
+        );
+        assert_eq!(
+            parse_macos_install_key_request([OsString::from("balun")]),
+            Ok(false)
+        );
+        assert_eq!(
+            parse_macos_install_key_request([
+                OsString::from("balun"),
+                flag(),
+                OsString::from("/caller/supplied/Balun.app"),
+            ]),
+            Err(PlatformRuntimeError::MacInstallKeyArguments)
+        );
+        assert_eq!(
+            parse_macos_install_key_request([
+                OsString::from("balun"),
+                OsString::from("--unrelated"),
+                flag(),
+            ]),
+            Err(PlatformRuntimeError::MacInstallKeyArguments)
+        );
+        assert_eq!(
+            parse_macos_install_key_request([OsString::from("balun"), flag(), flag()]),
+            Err(PlatformRuntimeError::MacInstallKeyArguments)
+        );
+    }
+
+    #[test]
     fn package_detection_requires_bin_executable_and_plugin_directory() {
         let temp = tempfile::tempdir().unwrap();
         let flat = temp.path().join("flat").join("balun.exe");
@@ -1028,9 +1157,22 @@ mod tests {
     fn macos_sentinel_and_error_definitions() {
         assert_eq!(MACOS_PROBE_SENTINEL, b"balun-macos-runtime-probe-v1\n");
         assert_eq!(MACOS_PROBE_SENTINEL_NAME, "balun-platform-runtime-probe.ok");
+        assert_eq!(MACOS_INSTALL_KEY_FLAG, "--balun-macos-install-key");
         assert_eq!(
             PlatformRuntimeError::MacBundleLayout.to_string(),
             "the platform runtime probe requires the self-contained macOS bundle layout"
+        );
+        assert_eq!(
+            PlatformRuntimeError::MacInstallKeyBundleLayout.to_string(),
+            "the macOS install-key helper requires the packaged Balun-bin layout"
+        );
+        assert_eq!(
+            PlatformRuntimeError::MacInstallKeyArguments.to_string(),
+            "the macOS install-key helper accepts no other arguments"
+        );
+        assert_eq!(
+            PlatformRuntimeError::MacInstallKeyOutput.to_string(),
+            "the macOS install-key helper could not write its response"
         );
     }
 
@@ -1166,7 +1308,51 @@ mod tests {
     fn stable_path_fingerprint_matches_deterministic_vector() {
         let hash = stable_path_fingerprint(Path::new("/Applications/Balun.app"));
         assert_eq!(hash, 0x9692_5b5f_60eb_b3db);
-        assert_eq!(format!("{hash:016x}"), "96925b5f60ebb3db");
+        assert_eq!(render_install_key(hash), "96925b5f60ebb3db");
+        assert_eq!(render_install_key(0), "0000000000000000");
+        assert_eq!(render_install_key(u64::MAX), "ffffffffffffffff");
+        for character in render_install_key(hash).chars() {
+            assert!(character.is_ascii_digit() || ('a'..='f').contains(&character));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stable_path_fingerprint_preserves_non_utf8_path_bytes() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let first = PathBuf::from(OsString::from_vec(b"/Applications/Balun-\x80.app".to_vec()));
+        let second = PathBuf::from(OsString::from_vec(b"/Applications/Balun-\x81.app".to_vec()));
+        assert_eq!(first.to_string_lossy(), second.to_string_lossy());
+        assert_ne!(
+            stable_path_fingerprint(&first),
+            stable_path_fingerprint(&second)
+        );
+    }
+
+    #[test]
+    fn macos_install_key_uses_the_canonical_detected_app_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let exe = write_fake_mac_app(temp.path());
+        let canonical_app_root = temp.path().join("Balun.app").canonicalize().unwrap();
+        assert_eq!(
+            macos_install_key_for_executable(&exe).unwrap(),
+            stable_path_fingerprint(&canonical_app_root)
+        );
+
+        let outside = temp.path().join("Balun-bin");
+        fs::write(&outside, b"binary").unwrap();
+        assert_eq!(
+            macos_install_key_for_executable(&outside),
+            Err(PlatformRuntimeError::MacInstallKeyBundleLayout)
+        );
+
+        let wrong_name = exe.with_file_name("Other-bin");
+        fs::write(&wrong_name, b"binary").unwrap();
+        assert_eq!(
+            macos_install_key_for_executable(&wrong_name),
+            Err(PlatformRuntimeError::MacInstallKeyBundleLayout)
+        );
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]

@@ -33,7 +33,7 @@ pub use pipeline_failure::{MissingMedia, PlaybackPipelineFailure};
 pub use platform_runtime::{
     MACOS_PROBE_SENTINEL, MACOS_PROBE_SENTINEL_NAME, PLATFORM_RUNTIME_PROBE_FLAG,
     PlatformRuntimeError, REGISTRY_ENVIRONMENT_KEY, ToolkitPreparation, WINDOWS_PROBE_SENTINEL,
-    WINDOWS_PROBE_SENTINEL_NAME, configure_before_toolkit,
+    WINDOWS_PROBE_SENTINEL_NAME, configure_before_toolkit, emit_macos_install_key_if_requested,
 };
 pub use runtime::{
     FactoryCapability, GSTREAMER_API_FLOOR, PlaybackCapabilities, PlaybackFactory,
