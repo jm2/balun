@@ -142,10 +142,12 @@ case "$tool" in
 esac
 EOF
 done
-cat > "$fake_bin/bsdtar" <<'EOF'
+for inspector in bsdtar dpkg-deb rpm rpm2cpio cpio; do
+    cat > "$fake_bin/$inspector" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
+done
 
 cat > "$fake_bin/rustc" <<'EOF'
 #!/usr/bin/env bash
@@ -222,6 +224,10 @@ chmod +x \
     "$fake_bin/cargo-generate-rpm" \
     "$fake_bin/makepkg" \
     "$fake_bin/bsdtar" \
+    "$fake_bin/dpkg-deb" \
+    "$fake_bin/rpm" \
+    "$fake_bin/rpm2cpio" \
+    "$fake_bin/cpio" \
     "$fake_bin/rustc" \
     "$fake_bin/pkg-config" \
     "$fake_bin/readelf" \
@@ -468,7 +474,11 @@ mv "$fake_bin/readelf.saved" "$fake_bin/readelf"
 
 for tool_and_mode in \
     'cargo-deb --deb' \
+    'dpkg-deb --deb' \
     'cargo-generate-rpm --rpm' \
+    'rpm --rpm' \
+    'rpm2cpio --rpm' \
+    'cpio --rpm' \
     'makepkg --arch-pkg' \
     'bsdtar --arch-pkg'
 do

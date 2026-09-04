@@ -56,10 +56,13 @@ Build selection:
                     desktop application. This also makes check, Clippy, and
                     coverage GTK-free.
   --deb             Build a native Debian package with preinstalled cargo-deb
-                    3.7.0. Supports amd64 and arm64 GNU/Linux hosts.
+                    3.7.0 and reopen it with dpkg-deb. Supports amd64 and
+                    arm64 GNU/Linux hosts.
   --rpm             Build a native RPM package with preinstalled
-                    cargo-generate-rpm 0.21.0. Supports x86_64 and aarch64.
-  --arch-pkg        Build an x86_64 Arch package with preinstalled makepkg.
+                    cargo-generate-rpm 0.21.0 and reopen it with rpm, rpm2cpio,
+                    and cpio. Supports x86_64 and aarch64.
+  --arch-pkg        Build an x86_64 Arch package with preinstalled makepkg and
+                    reopen it with bsdtar.
 
 Unavailable through this helper:
   --flatpak          The release workflow owns the reviewed Flatpak route.
@@ -295,12 +298,16 @@ build|deb|rpm|arch-pkg)
     case "$mode" in
         deb)
             require_command cargo-deb 'install the reviewed cargo-deb version explicitly'
+            require_command dpkg-deb 'install dpkg explicitly; the completed package is reopened with it'
             installed_packager_version=$(cargo-deb --version 2>/dev/null || true)
             [ "$installed_packager_version" = "$cargo_deb_version" ] || \
                 fail "Native Debian packaging requires preinstalled $cargo_deb_version exactly; this helper will not install or replace tools."
             ;;
         rpm)
             require_command cargo-generate-rpm 'install the reviewed cargo-generate-rpm version explicitly'
+            require_command rpm 'install rpm explicitly; the completed package is reopened with it'
+            require_command rpm2cpio 'install rpm explicitly; the completed package is reopened with it'
+            require_command cpio 'install cpio explicitly; the completed package is reopened with it'
             installed_packager_version=$(cargo-generate-rpm --version 2>/dev/null || true)
             [ "$installed_packager_version" = "$cargo_generate_rpm_version" ] || \
                 fail "Native RPM packaging requires preinstalled $cargo_generate_rpm_version exactly; this helper will not install or replace tools."
