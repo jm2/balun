@@ -331,8 +331,10 @@ Re-verified in place:
   (`src/playback/transport.rs`); transport errors are rendered through
   `reqwest::Error::without_url`, which closes the URL-stripping follow-up.
 - `DeviceAuth` appears only in fixtures and the settings forbidden-string test;
-  no production path reads it. Loopback targets are refused in
-  `src/discovery/manual.rs` and `local.rs`, closing that follow-up.
+  no production path reads it. Loopback targets are refused by the desktop
+  parser (`src/discovery/manual.rs`) and skipped in interface enumeration
+  (`local.rs`); `DiscoveryClient::invalid_target` still accepts them, so the
+  diagnostic's `--target` follow-up stays open.
 - `settings.json` is created with mode `0o600` (`src/settings/mod.rs`).
 - The routed runner re-checks authority, the deadline, and the interface pin
   before every datagram (`src/discovery/approval/controller/runner.rs`).
@@ -358,6 +360,9 @@ Re-verified in place:
 Still open:
 
 - Routed pacing has no jitter (plan §5, ADR-0001).
+- `DiscoveryClient::invalid_target` does not refuse loopback (§1).
+- `DeviceHttpError::Json` and `LineupError::Json` still render serde's message
+  (§3); both wrap `serde_json::Error` directly.
 - The approval store has no unsupported-version quarantine reason.
 - The hostname resolver, network-change reconciliation, and Windows ARM64
   profile were reviewed for bounds and fail-closed defaults only.
@@ -365,13 +370,17 @@ Still open:
 ## Follow-ups
 
 - Add jitter to the routed pacing or amend plan §5 and ADR-0001 (P2).
+- Refuse loopback in `DiscoveryClient` `invalid_target` so `balun-discover
+  --target` cannot probe it.
+- Render `DeviceHttpError::Json` and `LineupError::Json` as serde positions
+  only, without the message that can echo a device-chosen value.
 - Approval store: document the key threat model and add an unsupported-version
   quarantine reason.
 - The CI Flatpak job's `gnome-50` builder image is still a moving tag; pin it
   by digest when the next runtime bump lands.
 - Re-audit new log sites against the `Debug` list at the next review.
 
-Closed by the 2026-09-04 delta check: loopback refusal in `DiscoveryClient`,
-the URL-stripped `DeviceHttpError::Transport`, the pinned flatpak-builder
-action (#59), and the repeat review owed once the routed sender (P2) and the
-macOS package (P3.4) landed.
+Closed by the 2026-09-04 delta check: the URL-stripped
+`DeviceHttpError::Transport`, the pinned flatpak-builder action (#59), and the
+repeat review owed once the routed sender (P2) and the macOS package (P3.4)
+landed.
