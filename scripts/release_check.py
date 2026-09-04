@@ -121,7 +121,7 @@ def check_release(root: Path, tag: str) -> list[str]:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--tag", required=True, help="proposed release tag, e.g. v0.1.0-alpha.1")
+    parser.add_argument("--tag", required=True, help="proposed release tag, e.g. v0.1.0")
     parser.add_argument(
         "--repository",
         type=Path,

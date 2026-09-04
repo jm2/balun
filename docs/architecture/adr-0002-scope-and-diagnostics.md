@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-02
-- Milestone: `v0.1.0-alpha.1`
+- Milestone: `v0.1.0`
 
 ## Context
 

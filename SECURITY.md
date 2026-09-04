@@ -2,8 +2,8 @@
 
 ## Supported versions
 
-Balun is pre-release. No version has been released yet, so only the `main` branch receives fixes.
-This table will name the supported releases once `v0.1.0-alpha.1` is published.
+Balun is pre-release. No version has been released yet, so only the `main` branch
+receives fixes. This table will name the supported releases once `v0.1.0` is published.
 
 | Version | Supported |
 | --- | --- |

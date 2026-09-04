@@ -1,7 +1,7 @@
 # Balun v0.1 implementation plan
 
 - Status: Active
-- Target: v0.1.0-alpha.1
+- Target: v0.1.0
 - Last updated: 2026-09-04
 
 This is the scope, architecture, and delivery-order contract for the first
@@ -20,7 +20,7 @@ Rust, GTK 4, libadwaita, and GStreamer. v0.1 does one job: find HDHomeRun
 tuners, keep each device's lineup separate, and play unprotected channels
 reliably. It is not a DVR, a tuner administration tool, or a guide service.
 
-The end goal for v0.1.0-alpha.1: a user on Linux, macOS, or Windows installs a
+The end goal for v0.1.0: a user on Linux, macOS, or Windows installs a
 package, sees local tuners and any remembered remote tuner, picks a device and a
 channel, watches it with sound, switches channels, and quits without leaving a
 tuner allocated. On Linux, an explicitly approved routed scan can also find
@@ -133,8 +133,12 @@ Built and tested:
   (HDHR4-2US, two HDHR5-4K units, and HDHR3-PRIME): Clear QAM, ATSC 1.0/3.0,
   CableCARD DRM refusal, and 503 tuner-busy handling verified (P4.2).
 
-Not yet done: the macOS package, packaged-artifact validation against real
-tuners, and the alpha release.
+- macOS package (`Balun.app` and `Balun.dmg`) built with hardened launcher
+  environment, transitive dynamic library resolution, and isolated runtime
+  probe loopback (P3.4).
+
+- Packaged-artifact validation verified on real hardware across Linux, macOS,
+  and Windows with empirical tune, switch, and release budgets (P4.1).
 
 ## 4. Architecture
 
@@ -370,7 +374,7 @@ component gates, release automation, and the CI hardening packages make
 meaningful. Exit: every artifact is reopened, probed, and validated before
 upload.
 
-**P4 — v0.1.0-alpha.1.** Validate the packaged artifacts on every platform,
+**P4 — v0.1.0.** Validate the packaged artifacts on every platform,
 complete the hardware matrix and budgets, run the security and privacy review,
 publish the support and limitations matrix, and cut the prerelease.
 
