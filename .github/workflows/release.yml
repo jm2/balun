@@ -67,6 +67,9 @@ jobs:
       - name: Test macOS package policy scaffolding
         run: scripts/test-macos-package-policy.sh
 
+      - name: Test packaged-hardware output privacy
+        run: scripts/test-hardware-validation-privacy.sh
+
       - name: Test Rust toolchain policy
         run: |
           python3 scripts/test_rust_toolchain_policy.py
