@@ -21,18 +21,24 @@ use super::state::{DiscoveryKind, DiscoveryState, DiscoveryStatus, OperationGene
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ExactTargetTracker {
     pending: Option<(ExactDiscoveryTarget, OperationGeneration)>,
+    /// Whether the admitted target's own exact operation was seen running.
+    started: bool,
 }
 
 impl ExactTargetTracker {
     #[must_use]
     pub const fn new() -> Self {
-        Self { pending: None }
+        Self {
+            pending: None,
+            started: false,
+        }
     }
 
     /// Record that `target` was admitted while the discovery lane showed
     /// `observed`. A later admission replaces an unsettled one.
     pub fn admit(&mut self, target: ExactDiscoveryTarget, observed: OperationGeneration) {
         self.pending = Some((target, observed));
+        self.started = false;
     }
 
     /// Whether an admitted target is still waiting for its outcome.
@@ -43,17 +49,36 @@ impl ExactTargetTracker {
 
     /// Feed the newest discovery state; returns the target that proved
     /// reachable, if this state settled it successfully.
-    pub fn observe(&mut self, discovery: DiscoveryState) -> Option<ExactDiscoveryTarget> {
+    ///
+    /// `network_changed` says the snapshot carries a new network-change
+    /// reconciliation. The controller handles those ahead of queued commands
+    /// and republishes the unrelated current state in a new generation, so
+    /// until the admitted probe has been seen running, such a state does not
+    /// settle it: the probe is still queued and runs next.
+    pub fn observe(
+        &mut self,
+        discovery: DiscoveryState,
+        network_changed: bool,
+    ) -> Option<ExactDiscoveryTarget> {
         let (target, admitted_at) = self.pending?;
         if discovery.generation() <= admitted_at {
             return None;
         }
         match (discovery.kind(), discovery.status()) {
+            (DiscoveryKind::Exact, DiscoveryStatus::Refreshing) => {
+                self.started = true;
+                None
+            }
             (_, DiscoveryStatus::Refreshing) => None,
             (DiscoveryKind::Exact, DiscoveryStatus::Ready) => {
                 self.pending = None;
                 Some(target)
             }
+            (DiscoveryKind::Exact, _) => {
+                self.pending = None;
+                None
+            }
+            _ if network_changed && !self.started => None,
             _ => {
                 self.pending = None;
                 None
@@ -178,12 +203,15 @@ mod tests {
         tracker.admit(target(1), generation(3));
         assert!(tracker.is_pending());
 
-        assert_eq!(tracker.observe(DiscoveryState::idle(generation(3))), None);
         assert_eq!(
-            tracker.observe(DiscoveryState::refreshing_for(
-                generation(4),
-                DiscoveryKind::Exact
-            )),
+            tracker.observe(DiscoveryState::idle(generation(3)), false),
+            None
+        );
+        assert_eq!(
+            tracker.observe(
+                DiscoveryState::refreshing_for(generation(4), DiscoveryKind::Exact),
+                false
+            ),
             None
         );
         assert!(
@@ -191,20 +219,18 @@ mod tests {
             "an in-flight probe keeps the target pending"
         );
         assert_eq!(
-            tracker.observe(DiscoveryState::ready_for(
-                generation(4),
-                DiscoveryKind::Exact,
-                0
-            )),
+            tracker.observe(
+                DiscoveryState::ready_for(generation(4), DiscoveryKind::Exact, 0),
+                false
+            ),
             Some(target(1))
         );
         assert!(!tracker.is_pending());
         assert_eq!(
-            tracker.observe(DiscoveryState::ready_for(
-                generation(5),
-                DiscoveryKind::Exact,
-                0
-            )),
+            tracker.observe(
+                DiscoveryState::ready_for(generation(5), DiscoveryKind::Exact, 0),
+                false
+            ),
             None,
             "a reported target is not reported twice"
         );
@@ -225,9 +251,68 @@ mod tests {
         for outcome in outcomes {
             let mut tracker = ExactTargetTracker::new();
             tracker.admit(target(1), generation(1));
-            assert_eq!(tracker.observe(outcome), None, "{outcome:?}");
+            assert_eq!(tracker.observe(outcome, false), None, "{outcome:?}");
             assert!(!tracker.is_pending(), "{outcome:?}");
         }
+    }
+
+    #[test]
+    fn tracker_outlives_a_network_change_reconciled_before_its_probe() {
+        let mut tracker = ExactTargetTracker::new();
+        tracker.admit(target(1), generation(3));
+
+        // The reconciliation outranks the queued probe and republishes the
+        // unrelated local state in a new generation; the probe still runs.
+        assert_eq!(
+            tracker.observe(
+                DiscoveryState::ready_for(generation(4), DiscoveryKind::Local, 0),
+                true
+            ),
+            None
+        );
+        assert!(tracker.is_pending(), "the queued probe is not settled");
+        assert_eq!(
+            tracker.observe(
+                DiscoveryState::refreshing_for(generation(5), DiscoveryKind::Exact),
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            tracker.observe(
+                DiscoveryState::ready_for(generation(5), DiscoveryKind::Exact, 0),
+                false
+            ),
+            Some(target(1))
+        );
+
+        // Once the probe was seen running, a reconciliation that cancels it
+        // settles the target like any other stop.
+        tracker.admit(target(2), generation(5));
+        tracker.observe(
+            DiscoveryState::refreshing_for(generation(6), DiscoveryKind::Exact),
+            false,
+        );
+        assert_eq!(
+            tracker.observe(
+                DiscoveryState::idle_for(generation(7), DiscoveryKind::Exact),
+                true
+            ),
+            None
+        );
+        assert!(!tracker.is_pending());
+
+        // Without a reconciliation, an unrelated newer state still replaces
+        // a probe that was never seen running.
+        tracker.admit(target(3), generation(7));
+        assert_eq!(
+            tracker.observe(
+                DiscoveryState::ready_for(generation(8), DiscoveryKind::Local, 0),
+                false
+            ),
+            None
+        );
+        assert!(!tracker.is_pending());
     }
 
     #[test]
@@ -237,11 +322,10 @@ mod tests {
         tracker.admit(target(2), generation(2));
 
         assert_eq!(
-            tracker.observe(DiscoveryState::ready_for(
-                generation(3),
-                DiscoveryKind::Exact,
-                0
-            )),
+            tracker.observe(
+                DiscoveryState::ready_for(generation(3), DiscoveryKind::Exact, 0),
+                false
+            ),
             Some(target(2))
         );
     }

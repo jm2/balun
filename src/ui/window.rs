@@ -1125,11 +1125,12 @@ fn spawn_snapshot_reducer(
     gtk::glib::MainContext::default().spawn_local(async move {
         while snapshots.changed().await.is_ok() {
             let candidate = Arc::clone(&snapshots.borrow_and_update());
-            let (can_replace, selection_changed) = {
+            let (can_replace, selection_changed, network_changed) = {
                 let current = accepted.borrow();
                 (
                     candidate.can_replace(&current),
                     candidate.selection_generation() > current.selection_generation(),
+                    candidate.network().sequence() != current.network().sequence(),
                 )
             };
             if !can_replace {
@@ -1155,7 +1156,7 @@ fn spawn_snapshot_reducer(
             let (reachable, settled) = {
                 let mut tracker = rediscovery.exact_tracker.borrow_mut();
                 let was_pending = tracker.is_pending();
-                let reachable = tracker.observe(discovery);
+                let reachable = tracker.observe(discovery, network_changed);
                 (reachable, was_pending && !tracker.is_pending())
             };
             if let Some(target) = reachable {
