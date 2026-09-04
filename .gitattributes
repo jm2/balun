@@ -5,3 +5,7 @@
 build-aux/flatpak/flatpak-cargo-generator.py text eol=lf
 build-aux/flatpak/*.sh text eol=lf
 build-aux/flatpak/*.sha256 text eol=lf
+
+# Binary image and icon assets
+*.png binary
+*.ico binary

@@ -139,8 +139,9 @@ jobs:
                   failures.append(f'{path}: not a PNG')
                   return
               width, height = struct.unpack('>II', header[16:24])
-              if (width, height) != (size, size):
-                  failures.append(f'{path}: {width}x{height}, expected {size}x{size}')
+              expected = size if isinstance(size, tuple) else (size, size)
+              if (width, height) != expected:
+                  failures.append(f'{path}: {width}x{height}, expected {expected[0]}x{expected[1]}')
 
           def require_svg(path):
               try:
@@ -175,6 +176,7 @@ jobs:
           for name, size in ICONSET:
               require_png(f'data/balun.iconset/{name}', size)
           require_png('data/balun.png', 1024)
+          require_png('data/screenshots/balun-main-window.png', (1280, 720))
           require_svg(f'{HICOLOR}/scalable/apps/{APP_ID}.svg')
           require_svg(f'{HICOLOR}/symbolic/apps/{APP_ID}-symbolic.svg')
           require_ico('data/balun.ico')
