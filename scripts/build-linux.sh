@@ -2,9 +2,8 @@
 # Balun — Linux desktop build helper
 #
 # The default route builds the reviewable GTK4/libadwaita/GStreamer desktop
-# application
-# without launching it. Native/Flatpak package modes remain unavailable until
-# their recipes, assets, runtime closure, and artifact gates land together.
+# application without launching it. Native package modes reuse the same locked
+# build and policy gates before producing distribution-owned payloads.
 
 set -euo pipefail
 
@@ -12,9 +11,14 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repository_root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
 target_directory="$repository_root/target"
 coverage_target_directory="$target_directory/llvm-cov-target"
+dist_directory="$repository_root/dist"
 metadata_validator="$repository_root/build-aux/linux/validate-package-metadata.sh"
 artifact_validator="$repository_root/build-aux/linux/validate-package-compliance.sh"
+arch_recipe_directory="$repository_root/build-aux/arch"
+arch_recipe="$arch_recipe_directory/PKGBUILD"
 coverage_version="cargo-llvm-cov 0.8.7"
+cargo_deb_version="cargo-deb 3.7.0"
+cargo_generate_rpm_version="cargo-generate-rpm 0.21.0"
 application_id='io.github.jm2.Balun'
 
 usage()
@@ -51,9 +55,14 @@ Build selection:
   --diagnostic      Select the GTK-free balun-discover route instead of the
                     desktop application. This also makes check, Clippy, and
                     coverage GTK-free.
+  --deb             Build a native Debian package with preinstalled cargo-deb
+                    3.7.0. Supports amd64 and arm64 GNU/Linux hosts.
+  --rpm             Build a native RPM package with preinstalled
+                    cargo-generate-rpm 0.21.0. Supports x86_64 and aarch64.
+  --arch-pkg        Build an x86_64 Arch package with preinstalled makepkg.
 
-Unavailable until their complete recipes and policy gates land:
-  --flatpak, --deb, --rpm, --arch-pkg
+Unavailable through this helper:
+  --flatpak          The release workflow owns the reviewed Flatpak route.
 
 This helper never invokes tool or package installers.
 Cargo may fetch locked dependencies unless cached. A rustup-managed Cargo
@@ -142,6 +151,78 @@ PLUGINS
     info 'GStreamer runtime plugin checks passed for the structural playback factories.'
 }
 
+validate_package_artifact()
+{
+    local package=$1 producer=$2
+    [ -f "$package" ] && [ ! -L "$package" ] && [ -s "$package" ] || \
+        fail "$producer did not produce the expected nonempty, regular, non-symlink package: $package"
+}
+
+build_debian_package()
+{
+    local package="$dist_directory/balun-$package_arch.deb"
+    mkdir -p "$dist_directory"
+    info "Building native Debian $package_arch package..."
+    CARGO_TARGET_DIR="$target_directory" \
+        cargo deb --locked --no-build --target "$native_target" \
+        --output "$package"
+    validate_package_artifact "$package" cargo-deb
+    info 'Validating completed Debian package policy...'
+    "$artifact_validator" --deb "$package"
+    info "Debian package: $package"
+}
+
+build_rpm_package()
+{
+    local package="$dist_directory/balun-$package_arch.rpm"
+    mkdir -p "$dist_directory"
+    info "Building native $package_arch RPM package..."
+    cargo generate-rpm \
+        --target-dir "$target_directory" --target "$native_target" \
+        --output "$package"
+    validate_package_artifact "$package" cargo-generate-rpm
+    info 'Validating completed RPM package policy...'
+    "$artifact_validator" --rpm "$package"
+    info "RPM package: $package"
+}
+
+build_arch_package()
+{
+    local build_directory built_package built_name package
+    build_directory="$target_directory/arch"
+    package="$dist_directory/balun-x86_64.pkg.tar.zst"
+    mkdir -p "$build_directory" "$dist_directory"
+
+    built_package=$(
+        LC_ALL=C PKGEXT='.pkg.tar.zst' PKGDEST="$build_directory" \
+            BUILDDIR="$build_directory/build" \
+            makepkg --dir "$arch_recipe_directory" --packagelist
+    )
+    case "$built_package" in
+        '' | *$'\n'*)
+            fail 'makepkg did not report exactly one Arch package output path.'
+            ;;
+    esac
+    [ "${built_package%/*}" = "$build_directory" ] || \
+        fail "makepkg reported an output outside the reviewed build directory: $built_package"
+    built_name=${built_package##*/}
+    case "$built_name" in
+        balun-*-x86_64.pkg.tar.zst) ;;
+        *) fail "makepkg reported an unexpected Arch package filename: $built_name" ;;
+    esac
+
+    info 'Building native x86_64 Arch package...'
+    LC_ALL=C PKGEXT='.pkg.tar.zst' PKGDEST="$build_directory" \
+        BUILDDIR="$build_directory/build" \
+        makepkg --dir "$arch_recipe_directory" --force --clean --noconfirm
+    validate_package_artifact "$built_package" makepkg
+    cp -- "$built_package" "$package"
+    validate_package_artifact "$package" makepkg
+    info 'Validating completed Arch package policy...'
+    "$artifact_validator" --arch "$package"
+    info "Arch package: $package"
+}
+
 mode=build
 mode_option=
 diagnostic=false
@@ -162,7 +243,14 @@ for argument in "$@"; do
             mode=${argument#--}
             mode_option=$argument
             ;;
-        --flatpak|--deb|--rpm|--arch-pkg)
+        --deb|--rpm|--arch-pkg)
+            if [ "$mode" != build ]; then
+                usage_error "Packaging modes cannot be combined ('$mode_option' and '$argument')."
+            fi
+            mode=${argument#--}
+            mode_option=$argument
+            ;;
+        --flatpak)
             usage_error "Packaging mode '$argument' is not available yet; no build, install, or network work was started."
             ;;
         *)
@@ -179,6 +267,13 @@ fi
 if $diagnostic && [ "$mode" = probe-playback ]; then
     usage_error '--probe-playback exercises the desktop playback runtime and cannot be combined with --diagnostic.'
 fi
+if $diagnostic; then
+    case "$mode" in
+        deb|rpm|arch-pkg)
+            usage_error 'Native package modes build the desktop application and cannot be combined with --diagnostic.'
+            ;;
+    esac
+fi
 
 cd "$repository_root"
 require_command cargo 'install Rust from https://rustup.rs'
@@ -190,13 +285,36 @@ if [ "$mode" = fmt ]; then
     exit 0
 fi
 
-if [ "$mode" = build ]; then
+case "$mode" in
+build|deb|rpm|arch-pkg)
     [ -x "$metadata_validator" ] || \
         fail "Required repository metadata validator is unavailable or not executable: $metadata_validator"
     [ -x "$artifact_validator" ] || \
         fail "Required Linux artifact validator is unavailable or not executable: $artifact_validator"
     require_command readelf 'install GNU binutils (Debian/Ubuntu, Fedora, and Arch: binutils); elfutils eu-readelf is not a substitute'
-fi
+    case "$mode" in
+        deb)
+            require_command cargo-deb 'install the reviewed cargo-deb version explicitly'
+            installed_packager_version=$(cargo-deb --version 2>/dev/null || true)
+            [ "$installed_packager_version" = "$cargo_deb_version" ] || \
+                fail "Native Debian packaging requires preinstalled $cargo_deb_version exactly; this helper will not install or replace tools."
+            ;;
+        rpm)
+            require_command cargo-generate-rpm 'install the reviewed cargo-generate-rpm version explicitly'
+            installed_packager_version=$(cargo-generate-rpm --version 2>/dev/null || true)
+            [ "$installed_packager_version" = "$cargo_generate_rpm_version" ] || \
+                fail "Native RPM packaging requires preinstalled $cargo_generate_rpm_version exactly; this helper will not install or replace tools."
+            ;;
+        arch-pkg)
+            require_command makepkg 'use an Arch Linux build host with base-devel installed'
+            require_command bsdtar 'install Arch libarchive explicitly'
+            require_command cp 'install GNU coreutils explicitly'
+            [ -f "$arch_recipe" ] && [ ! -L "$arch_recipe" ] || \
+                fail "Required Arch package recipe is unavailable or is not a regular file: $arch_recipe"
+            ;;
+    esac
+    ;;
+esac
 
 require_command rustc 'install Rust from https://rustup.rs'
 native_target_status=0
@@ -211,6 +329,20 @@ fi
 release_directory="$target_directory/$native_target/release"
 desktop_binary="$release_directory/balun"
 diagnostic_binary="$release_directory/balun-discover"
+package_arch=
+case "$mode:$native_target" in
+    deb:x86_64-unknown-linux-gnu) package_arch=amd64 ;;
+    deb:aarch64-unknown-linux-gnu) package_arch=arm64 ;;
+    rpm:x86_64-unknown-linux-gnu) package_arch=x86_64 ;;
+    rpm:aarch64-unknown-linux-gnu) package_arch=aarch64 ;;
+    arch-pkg:x86_64-unknown-linux-gnu) package_arch=x86_64 ;;
+    deb:*|rpm:*)
+        fail "Native package mode '$mode_option' supports only x86_64 and aarch64 GNU/Linux hosts; rustc reported $native_target."
+        ;;
+    arch-pkg:*)
+        fail "Native package mode '--arch-pkg' supports only an x86_64 GNU/Linux host; rustc reported $native_target."
+        ;;
+esac
 
 if ! $diagnostic; then
     require_desktop_dependencies
@@ -294,7 +426,7 @@ case "$mode" in
         info 'Playback runtime probes passed.'
         exit 0
         ;;
-    build)
+    build|deb|rpm|arch-pkg)
         ;;
     *)
         fail "Internal error: unhandled build mode '$mode'."
@@ -307,6 +439,11 @@ fi
 
 info 'Validating locked repository metadata...'
 "$metadata_validator"
+
+if [ "$mode" = arch-pkg ]; then
+    build_arch_package
+    exit 0
+fi
 
 if $diagnostic; then
     info 'Building balun-discover (locked release diagnostic)...'
@@ -331,5 +468,9 @@ info "Application ID: $application_id"
 if $diagnostic; then
     info "Diagnostic output: $binary"
 else
-    info "Desktop output: $binary"
+    case "$mode" in
+        build) info "Desktop output: $binary" ;;
+        deb) build_debian_package ;;
+        rpm) build_rpm_package ;;
+    esac
 fi
