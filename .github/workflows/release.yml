@@ -49,22 +49,22 @@ jobs:
       - name: Test pinned release component policy
         run: build-aux/packaging/test-release-component-policy.sh
 
-      - name: Test Linux package compliance scaffolding
+      - name: Test Linux package compliance policy
         run: build-aux/linux/test-package-compliance.sh
 
       - name: Test Linux build helper policy
         run: scripts/test-build-linux-policy.sh
 
-      - name: Test Flatpak permission policy scaffolding
+      - name: Test Flatpak permission policy
         run: build-aux/flatpak/test-permissions.sh
 
       - name: Test macOS build helper policy
         run: scripts/test-build-macos-policy.sh
 
-      - name: Test macOS icon policy scaffolding
+      - name: Test macOS icon policy
         run: scripts/test-macos-icon-bundle-policy.sh
 
-      - name: Test macOS package policy scaffolding
+      - name: Test macOS package policy
         run: scripts/test-macos-package-policy.sh
 
       - name: Test packaged-hardware output privacy
@@ -234,15 +234,84 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  windows:
-    name: Windows x86_64 package candidate
+  macos:
+    name: macOS aarch64 package candidate
     needs: prepare
-    runs-on: windows-2025
+    runs-on: macos-15
     permissions:
       contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.build_ref }}
+          persist-credentials: false
+
+      - name: Test macOS package policy with system Bash
+        run: /bin/bash scripts/test-macos-package-policy.sh
+
+      - name: Test macOS build helper with system Bash
+        run: /bin/bash scripts/test-build-macos-policy.sh
+
+      - name: Install macOS desktop and packaging dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: brew install create-dmg gstreamer gtk4 libadwaita pkgconf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Build, sign, probe, and reopen the macOS disk image
+        run: /bin/bash scripts/build-macos.sh --dmg
+
+      - name: Rename the disk image for release
+        run: mv dist/Balun.dmg dist/balun-macos-aarch64.dmg
+
+      - name: Upload internal candidate disk image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: balun-macos-aarch64-dmg-${{ needs.prepare.outputs.version }}
+          path: dist/balun-macos-aarch64.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows ${{ matrix.arch }} package candidate
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      RUST_TARGET: ${{ matrix.rust_target }}
+      MSYS_ENV: ${{ matrix.msys_env }}
+      MSYSTEM: ${{ matrix.msystem }}
+      MINGW_PACKAGE_PREFIX: ${{ matrix.mingw_package_prefix }}
+      INNO_ARCH: ${{ matrix.inno_arch }}
     # Cap the job so a hung MSYS2 mirror fails fast and re-runs instead of
     # stalling to the 6-hour ceiling.
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-2025
+            rust_target: x86_64-pc-windows-gnullvm
+            msys_env: clang64
+            msystem: CLANG64
+            mingw_package_prefix: mingw-w64-clang-x86_64
+            inno_arch: x64
+            msys_cache: true
+          - arch: aarch64
+            runner: windows-11-arm
+            rust_target: aarch64-pc-windows-gnullvm
+            msys_env: clangarm64
+            msystem: CLANGARM64
+            mingw_package_prefix: mingw-w64-clang-aarch64
+            inno_arch: arm64
+            msys_cache: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -259,27 +328,28 @@ jobs:
         env:
           __SETUP_MSYS2_USE_MAIN_MIRROR_ONLY: 'true'
         with:
-          msystem: CLANG64
+          msystem: ${{ matrix.msystem }}
           path-type: inherit
           update: true
-          cache: true
+          # setup-msys2's package-cache cleanup is flaky on native ARM64.
+          cache: ${{ matrix.msys_cache }}
           install: >-
-            mingw-w64-clang-x86_64-gtk4
-            mingw-w64-clang-x86_64-gstreamer
-            mingw-w64-clang-x86_64-gst-plugins-base
-            mingw-w64-clang-x86_64-gst-plugins-good
-            mingw-w64-clang-x86_64-gst-plugins-bad
-            mingw-w64-clang-x86_64-gst-plugins-rs
-            mingw-w64-clang-x86_64-gst-libav
-            mingw-w64-clang-x86_64-libadwaita
-            mingw-w64-clang-x86_64-pkg-config
-            mingw-w64-clang-x86_64-toolchain
+            ${{ matrix.mingw_package_prefix }}-gtk4
+            ${{ matrix.mingw_package_prefix }}-gstreamer
+            ${{ matrix.mingw_package_prefix }}-gst-plugins-base
+            ${{ matrix.mingw_package_prefix }}-gst-plugins-good
+            ${{ matrix.mingw_package_prefix }}-gst-plugins-bad
+            ${{ matrix.mingw_package_prefix }}-gst-plugins-rs
+            ${{ matrix.mingw_package_prefix }}-gst-libav
+            ${{ matrix.mingw_package_prefix }}-libadwaita
+            ${{ matrix.mingw_package_prefix }}-pkg-config
+            ${{ matrix.mingw_package_prefix }}-toolchain
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: stable
-          targets: x86_64-pc-windows-gnullvm
+          targets: ${{ matrix.rust_target }}
 
       - name: Build the Windows desktop through the helper
         shell: pwsh
@@ -314,22 +384,159 @@ jobs:
       - name: Rename the artifacts for release
         shell: pwsh
         run: |
-          Move-Item dist/balun-windows.zip dist/balun-windows-x86_64.zip
-          Move-Item dist/balun-setup.exe dist/balun-windows-x86_64-setup.exe
+          Move-Item dist/balun-windows.zip dist/balun-windows-${{ matrix.arch }}.zip
+          Move-Item dist/balun-setup.exe dist/balun-windows-${{ matrix.arch }}-setup.exe
 
       - name: Upload internal candidate artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: balun-windows-x86_64-${{ needs.prepare.outputs.version }}
+          name: balun-windows-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}
           path: |
-            dist/balun-windows-x86_64.zip
-            dist/balun-windows-x86_64-setup.exe
+            dist/balun-windows-${{ matrix.arch }}.zip
+            dist/balun-windows-${{ matrix.arch }}-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-deb:
+    name: Debian ${{ matrix.deb_arch }} package candidate
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    container:
+      image: debian:sid
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            deb_arch: amd64
+          - runner: ubuntu-24.04-arm
+            deb_arch: arm64
+    steps:
+      - name: Install Debian build and playback dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            binutils build-essential ca-certificates curl git libadwaita-1-dev \
+            libdbus-1-dev libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
+            libgtk-4-dev perl pkg-config gstreamer1.0-gtk4 gstreamer1.0-libav \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.build_ref }}
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+
+      - name: Install the reviewed Debian package builder
+        run: cargo install cargo-deb --version 3.7.0 --locked
+
+      - name: Build and reopen the Debian package through the helper
+        run: scripts/build-linux.sh --deb
+
+      - name: Upload internal candidate Debian package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: balun-${{ matrix.deb_arch }}-deb-${{ needs.prepare.outputs.version }}
+          path: dist/balun-${{ matrix.deb_arch }}.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-rpm:
+    name: RPM ${{ matrix.rpm_arch }} package candidate
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    container:
+      image: fedora:44
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            rpm_arch: x86_64
+          - runner: ubuntu-24.04-arm
+            rpm_arch: aarch64
+    steps:
+      - name: Install RPM build and playback dependencies
+        run: >-
+          dnf install -y binutils ca-certificates cpio curl dbus-devel gcc git
+          gstreamer1-devel gstreamer1-plugin-gtk4 gstreamer1-plugin-libav
+          gstreamer1-plugins-bad-free gstreamer1-plugins-base
+          gstreamer1-plugins-base-devel gstreamer1-plugins-good gtk4-devel
+          libadwaita-devel perl-core pkgconf-pkg-config rpm-build
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.build_ref }}
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+
+      - name: Install the reviewed RPM package builder
+        run: cargo install cargo-generate-rpm --version 0.21.0 --locked
+
+      - name: Build and reopen the RPM through the helper
+        run: scripts/build-linux.sh --rpm
+
+      - name: Upload internal candidate RPM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: balun-${{ matrix.rpm_arch }}-rpm-${{ needs.prepare.outputs.version }}
+          path: dist/balun-${{ matrix.rpm_arch }}.rpm
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-arch:
+    name: Arch Linux x86_64 package candidate
+    needs: prepare
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install Arch build and playback dependencies
+        run: >-
+          pacman -Syu --noconfirm binutils git gst-libav gst-plugin-gtk4
+          gst-plugins-bad-libs gst-plugins-base-libs gst-plugins-good gstreamer
+          gtk4 libadwaita libarchive perl pkgconf rust
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.build_ref }}
+          persist-credentials: false
+
+      - name: Build and reopen the Arch package through the helper
+        run: |
+          useradd --create-home builder
+          cp -R . /home/builder/balun
+          chown -R builder:builder /home/builder/balun
+          su builder -c '/home/builder/balun/scripts/build-linux.sh --arch-pkg'
+          mkdir -p dist
+          cp /home/builder/balun/dist/balun-x86_64.pkg.tar.zst dist/
+
+      - name: Upload internal candidate Arch package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: balun-x86_64-arch-${{ needs.prepare.outputs.version }}
+          path: dist/balun-x86_64.pkg.tar.zst
           if-no-files-found: error
           retention-days: 7
 
   checksums:
     name: Verify artifact inventory
-    needs: [prepare, build, flatpak, windows]
+    needs: [prepare, build, flatpak, macos, windows, linux-deb, linux-rpm, linux-arch]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -343,15 +550,25 @@ jobs:
         run: |
           cd artifacts
           expected_assets=(
+            'balun-aarch64.rpm'
+            'balun-amd64.deb'
+            'balun-arm64.deb'
             'balun-linux-aarch64.flatpak'
             'balun-linux-x86_64.flatpak'
+            'balun-macos-aarch64.dmg'
+            'balun-windows-aarch64-setup.exe'
+            'balun-windows-aarch64.zip'
             'balun-windows-x86_64-setup.exe'
             'balun-windows-x86_64.zip'
+            'balun-x86_64.pkg.tar.zst'
+            'balun-x86_64.rpm'
           )
           release_file_list="$(mktemp)"
           trap 'rm -f "$release_file_list"' EXIT
           find . -type f \
-            \( -name '*.flatpak' -o -name '*.zip' -o -name '*-setup.exe' \) \
+            \( -name '*.flatpak' -o -name '*.dmg' -o -name '*.zip' \
+            -o -name '*-setup.exe' -o -name '*.deb' -o -name '*.rpm' \
+            -o -name '*.pkg.tar.zst' \) \
             -print0 > "$release_file_list"
           mapfile -d '' release_files < "$release_file_list"
           if (( ${#release_files[@]} == 0 )); then
@@ -417,7 +634,7 @@ jobs:
           path: release-assets
 
       - name: Create or update the draft release for the validated tag
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: Balun ${{ needs.prepare.outputs.version }}
@@ -426,6 +643,10 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             release-assets/*.flatpak
+            release-assets/*.dmg
             release-assets/*.zip
             release-assets/*-setup.exe
+            release-assets/*.deb
+            release-assets/*.rpm
+            release-assets/*.pkg.tar.zst
             release-assets/SHA256SUMS.txt
