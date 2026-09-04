@@ -53,6 +53,12 @@ struct ResponsiveLayoutDecision {
     inner_content_can_pop: bool,
 }
 
+impl ResponsiveLayoutDecision {
+    const fn devices_presented(self) -> bool {
+        !self.outer_collapsed || !self.outer_show_content
+    }
+}
+
 impl ResponsiveLayoutState {
     const fn decision(self) -> ResponsiveLayoutDecision {
         ResponsiveLayoutDecision {
@@ -214,6 +220,10 @@ impl ResponsiveLayout {
         self.state.get().fullscreen
     }
 
+    fn devices_presented(&self) -> bool {
+        self.state.get().decision().devices_presented()
+    }
+
     fn apply(&self) {
         let decision = self.state.get().decision();
         self.outer.set_collapsed(decision.outer_collapsed);
@@ -277,6 +287,14 @@ fn window_key_action(
 
 const fn shortcut_target_available(visible: bool, sensitive: bool) -> bool {
     visible && sensitive
+}
+
+const fn refresh_shortcut_available(
+    visible: bool,
+    sensitive: bool,
+    devices_presented: bool,
+) -> bool {
+    shortcut_target_available(visible, sensitive) && devices_presented
 }
 
 /// Build Balun's single application window.
@@ -535,9 +553,10 @@ fn connect_window_shortcuts(
             }
             WindowKeyAction::RefreshDevices => {
                 if let Some(refresh_button) = refresh_button.as_ref()
-                    && shortcut_target_available(
+                    && refresh_shortcut_available(
                         refresh_button.is_visible(),
                         refresh_button.is_sensitive(),
+                        layout_for_keys.devices_presented(),
                     )
                 {
                     refresh_button.emit_clicked();
@@ -1352,6 +1371,31 @@ mod tests {
         assert!(!shortcut_target_available(false, true));
         assert!(!shortcut_target_available(true, false));
         assert!(!shortcut_target_available(false, false));
+
+        assert!(refresh_shortcut_available(true, true, true));
+        assert!(!refresh_shortcut_available(true, true, false));
+        assert!(!refresh_shortcut_available(false, true, true));
+        assert!(!refresh_shortcut_available(true, false, true));
+    }
+
+    #[test]
+    fn refresh_page_availability_follows_responsive_navigation() {
+        let mut state = ResponsiveLayoutState {
+            medium_width: false,
+            compact_width: false,
+            fullscreen: false,
+            outer_show_content: true,
+            inner_show_content: true,
+            outer_content_can_pop: true,
+            inner_content_can_pop: true,
+        };
+        assert!(state.decision().devices_presented());
+        state.medium_width = true;
+        assert!(!state.decision().devices_presented());
+        state.outer_show_content = false;
+        assert!(state.decision().devices_presented());
+        state.fullscreen = true;
+        assert!(!state.decision().devices_presented());
     }
 
     #[test]

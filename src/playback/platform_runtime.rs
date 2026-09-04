@@ -10,12 +10,14 @@
 //! process environment is not possible in safe Rust, and the package must not
 //! depend on it.
 //!
-//! Each platform packaging helper is the only caller of the probe and owns its
-//! environment: a fresh registry through `GST_REGISTRY`, no other GStreamer,
-//! GIO, or proxy variable. The probe rejects
-//! anything else, proves the bundled scanner starts, runs the packaged
-//! playback probe, requires the fresh registry to exist outside the package,
-//! and only then writes its sentinel.
+//! Each platform packaging path is the only caller of the probe and owns its
+//! environment. Windows supplies a fresh `GST_REGISTRY` and clears the other
+//! runtime variables. The macOS launcher additionally supplies only the
+//! package-matching plugin directory and scanner plus an empty system plugin
+//! path. Both paths clear GIO and proxy overrides. The probe rejects values
+//! that could redirect it outside the package, proves the bundled scanner
+//! starts, runs the packaged playback probe, requires the fresh registry to
+//! exist outside the package, and only then writes its sentinel.
 
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -34,7 +36,7 @@ pub const WINDOWS_PROBE_SENTINEL: &[u8] = b"balun-windows-runtime-probe-v1\n";
 pub const MACOS_PROBE_SENTINEL_NAME: &str = "balun-platform-runtime-probe.ok";
 /// Exact sentinel content for macOS; the packaging helper compares the bytes.
 pub const MACOS_PROBE_SENTINEL: &[u8] = b"balun-macos-runtime-probe-v1\n";
-/// The one GStreamer variable the probe accepts, naming the fresh registry.
+/// GStreamer variable naming the fresh registry on every packaged probe.
 pub const REGISTRY_ENVIRONMENT_KEY: &str = "GST_REGISTRY";
 
 /// Result of preparing the platform runtime before the toolkit starts.
