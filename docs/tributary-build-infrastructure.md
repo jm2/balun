@@ -62,7 +62,7 @@ final artifact reopening for that format.
 
 | Tributary file | Status and landing condition |
 | --- | --- |
-| `build-linux.sh` | Adapted to a no-option, build-only locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, GTK/libadwaita/GStreamer development-floor checks, a structural GStreamer runtime plugin-file gate with a libav warning, an exact native target and repository-local Cargo target path, and Linux ELF inspection; native/Flatpak package modes fail before build work until their complete gates land |
+| `build-linux.sh` | Adapted to a no-option locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, GTK/libadwaita/GStreamer floor checks, an exact native target, repository-local Cargo output, and ELF inspection. `--deb`, `--rpm`, and `--arch-pkg` require pinned preinstalled packagers, reuse the reviewed build or recipe, validate the locally produced package, and never install dependencies; Flatpak remains workflow-owned. |
 | `build-macos.sh` | Adapted to a no-option, build-only native locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, GTK/libadwaita/GStreamer development-floor checks, a structural GStreamer runtime plugin-file gate with a libav warning, exact native-target output binding, and pinned Mach-O inspection; app, DMG, signing, and notarization modes fail before external work until their complete gates land |
 | `build-windows.ps1` | Adapted to Tributary's desktop-default flag semantics with a build-only default: no flags auto-detect MSYS2 CLANG64, require the GTK/libadwaita/GStreamer development floors and the structural GStreamer runtime plugin DLLs, and build a locked release `balun.exe` without launching; `-Run` is the sole desktop launch route, `-Diagnostic` selects the GTK-free tool, and `-InspectLocal` runs its fixed local inspection. `-Bundle`, `-Zip`, and `-InnoSetup` (with `-SkipBundle` and `-NoCargoBuild`) port Tributary's bundle, PE-import closure, application-resource contract, packaged-runtime probe, receipt, ZIP, and Inno stages; see [Windows package](#windows-package) for the deliberate differences. `-Package` and `-Installer` were never Tributary flags and are gone; `-CargoUpdate` stays unavailable |
 | `macos-icon-bundle-policy.sh` | Adapted preparatory helper with Balun identity/temp names |
@@ -124,8 +124,10 @@ a fresh artifact away from the path being inspected. Windows owns the compiler,
 `pkg-config`, Rust-target, and output-path wiring, and its package modes add
 the PE import, resource, tree, and archive gates described below.
 The release-candidate workflow selects all three diagnostic routes
-explicitly. The Linux and macOS developer conveniences do not imply a bundle,
-installer, redistributable runtime closure, or package validation.
+explicitly. The Linux native-package modes invoke only pinned packagers already
+on the host and hand their locally produced outputs to the format-specific
+validator; the build-only default still implies no bundle, installer,
+redistributable runtime closure, or package validation.
 
 The Fedora desktop CI image installs `gstreamer1-plugin-libav` solely to decode
 the pinned synthetic MPEG-2 test fixture. That host development dependency is
