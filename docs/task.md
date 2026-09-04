@@ -29,7 +29,7 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **21/30 (70.0%)** records complete. This is a dependency ledger,
+Current status: **23/30 (76.7%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
@@ -37,8 +37,8 @@ most evidence records.
 
 The Linux live-hardware proofs recorded P0.2, P0.4, P0.6, P0.7, and the P0.8
 guide spike on 2026-09-03; P0.3 needs the macOS host, and P0.5 has its Linux
-and Windows inventories recorded and waits on the macOS one. P1.1 to P1.5,
-P2.1 to P2.4, P3.2, P3.3, P3.5, P4.3, and P4.4 are complete.
+and Windows inventories recorded and waits on the macOS one. P0.1, P1.1 to P1.6,
+P2.1 to P2.4, P3.1 to P3.3, P3.5, P3.6, P4.3, and P4.4 are complete.
 
 ## P0 — Evidence and contract
 
@@ -92,7 +92,7 @@ P2.1 to P2.4, P3.2, P3.3, P3.5, P4.3, and P4.4 are complete.
 - [x] **P1.5 — Add channel search and a favorites filter.** Filter the selected
   device's lineup without changing device or channel identity.
 
-- [ ] **P1.6 — Complete keyboard navigation and accessibility.** Review both
+- [x] **P1.6 — Complete keyboard navigation and accessibility.** Review both
   sidebars and the player for focus order, labels, and keyboard operation.
 
 ## P2 — Routed discovery (Linux)
@@ -119,7 +119,7 @@ P2.1 to P2.4, P3.2, P3.3, P3.5, P4.3, and P4.4 are complete.
 
 ## P3 — Packages
 
-- [ ] **P3.1 — Add desktop metadata and assets.** Land the icon, desktop entry,
+- [x] **P3.1 — Add desktop metadata and assets.** Land the icon, desktop entry,
   AppStream metadata, and a screenshot with exact Balun identity data.
 
 - [x] **P3.2 — Build Flatpak x86_64 and aarch64.** Generate locked sources,
