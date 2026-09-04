@@ -161,6 +161,21 @@ macos_validate_macho_copy_control()
     fi
     MACOS_PACKAGE_POLICY_RESULT=allowed
 }
+
+macos_validate_bundle_copy_control()
+{
+    printf 'bundle-inspect' >> "$BALUN_TEST_LOG"
+    for argument in "$@"; do
+        printf ' <%s>' "$argument" >> "$BALUN_TEST_LOG"
+    done
+    printf '\n' >> "$BALUN_TEST_LOG"
+    if [ "$BALUN_FAKE_MACHO_STATUS" -ne 0 ]; then
+        MACOS_PACKAGE_POLICY_REASON='synthetic bundle policy failure'
+        MACOS_PACKAGE_POLICY_RESULT=uninspectable
+        return "$BALUN_FAKE_MACHO_STATUS"
+    fi
+    MACOS_PACKAGE_POLICY_RESULT=allowed
+}
 EOF
 
 chmod +x \
@@ -294,13 +309,13 @@ expect_empty_log
 # with no PATH at all; it cannot accidentally probe Cargo, uname, or a packager.
 set +e
 early_output=$(PATH="$temp_dir/no-such-path" \
-    /bin/bash "$script_under_test" --dmg 2>&1)
+    /bin/bash "$script_under_test" --bundle 2>&1)
 early_status=$?
 set -e
 [ "$early_status" -eq 2 ] \
     || fail_test 'packaging rejection did not preserve usage-error status without PATH'
 case "$early_output" in
-    *"Packaging mode '--dmg' is not available yet"*) ;;
+    *"Packaging mode '--bundle' is not available yet"*) ;;
     *) fail_test 'packaging rejection without PATH lost its diagnostic' ;;
 esac
 
@@ -327,7 +342,7 @@ expect_output 'Unknown option: --unknown'
 expect_empty_log
 
 for package_mode in \
-    --dmg --app --bundle --package --pkg --installer --sign --notarize
+    --bundle --package --pkg --installer --sign --notarize
 do
     run_helper "$package_mode"
     expect_status 2
@@ -346,22 +361,51 @@ do
     expect_empty_log
 done
 
-for valued_package_mode in --dmg=output.dmg --app=Balun.app --package=pkg; do
+for valued_package_mode in --bundle=output --package=pkg; do
     run_helper "$valued_package_mode"
     expect_status 2
     expect_output "Packaging mode '$valued_package_mode' is not available yet"
     expect_empty_log
 done
 
+for valued_supported_mode in --app=Balun.app --dmg=Balun.dmg; do
+    run_helper "$valued_supported_mode"
+    expect_status 2
+    expect_output "does not accept a value"
+    expect_empty_log
+done
+
+for supported_package_mode in --app --dmg; do
+    run_helper --diagnostic "$supported_package_mode"
+    expect_status 2
+    expect_output "cannot be combined with --diagnostic"
+    expect_empty_log
+
+    run_helper "$supported_package_mode" --diagnostic
+    expect_status 2
+    expect_output "cannot be combined with --diagnostic"
+    expect_empty_log
+done
+
 for quick_mode in --fmt --check --clippy --coverage --probe-playback; do
+    run_helper "$quick_mode" --app
+    expect_status 2
+    expect_output "cannot be combined with packaging modes"
+    expect_empty_log
+
+    run_helper --app "$quick_mode"
+    expect_status 2
+    expect_output "cannot be combined with packaging modes"
+    expect_empty_log
+
     run_helper "$quick_mode" --dmg
     expect_status 2
-    expect_output "Packaging mode '--dmg' is not available yet"
+    expect_output "cannot be combined with packaging modes"
     expect_empty_log
 
     run_helper --dmg "$quick_mode"
     expect_status 2
-    expect_output "Packaging mode '--dmg' is not available yet"
+    expect_output "cannot be combined with packaging modes"
     expect_empty_log
 
     run_helper --help "$quick_mode"
@@ -560,6 +604,21 @@ expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <
 rm -f -- "$policy_helper"
 mv "$policy_helper.saved" "$policy_helper"
 
+mv "$policy_helper" "$policy_helper.saved"
+printf '%s\n' \
+    "MACOS_PACKAGE_POLICY_REASON=''" \
+    "MACOS_PACKAGE_POLICY_RESULT=''" \
+    'MACOS_FORBIDDEN_COMPONENT_TOKEN_COUNT=0' \
+    'macos_package_policy_load() { return 0; }' \
+    'macos_validate_macho_copy_control() { return 0; }' \
+    > "$policy_helper"
+run_helper
+expect_status 1
+expect_output 'does not provide macos_validate_bundle_copy_control'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>'
+rm -f -- "$policy_helper"
+mv "$policy_helper.saved" "$policy_helper"
+
 policy_file="$fixture/build-aux/packaging/forbidden-bundled-components.txt"
 mv "$policy_file" "$policy_file.saved"
 run_helper --fmt
@@ -714,14 +773,13 @@ expect_output 'synthetic Mach-O policy failure'
 expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\npolicy-load <'"$fixture"$'/build-aux/packaging/forbidden-bundled-components.txt> sha <balun_macos_sha256> perl </usr/bin/perl> otool </usr/bin/otool>\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target> <'"$fake_native_target"$'> <--target-dir> <'"$fixture"$'/target>\nmacho-inspect <'"$desktop_output"$'> <false>'
 fake_macho_status=0
 
-forbidden_command_pattern='^[[:space:]]*([^[:space:]]*/)?(sudo|curl|wget|git|rustup|brew|port|apt|apt-get|dnf|yum|pacman|zypper|apk|snap|flatpak|hdiutil|create-dmg|productbuild|pkgbuild|codesign|xcrun)([[:space:]]|$)'
+forbidden_command_pattern='^[[:space:]]*([^[:space:]]*/)?(sudo|curl|wget|git|rustup|brew|port|apt|apt-get|dnf|yum|pacman|zypper|apk|snap|flatpak|productbuild|pkgbuild|xcrun)([[:space:]]|$)'
 forbidden_cargo_install_pattern='^[[:space:]]*([^[:space:]]*/)?cargo[[:space:]]+(\+[^[:space:]]+[[:space:]]+)?install([[:space:]]|$)'
-forbidden_runtime_copy_pattern='^[[:space:]]*([^[:space:]]*/)?(cp|ditto|rsync)[[:space:]].*(Frameworks|PlugIns|Resources|\.app)([[:space:]/]|$)'
 
 if grep -Eq \
-    "$forbidden_command_pattern|$forbidden_cargo_install_pattern|$forbidden_runtime_copy_pattern" \
+    "$forbidden_command_pattern|$forbidden_cargo_install_pattern" \
     "$script_under_test"; then
-    fail_test 'helper contains a direct installer, downloader, package tool, or runtime-copy route'
+    fail_test 'helper contains a direct installer, downloader, or foreign package tool'
 fi
 
 case "$(cat "$script_under_test")" in

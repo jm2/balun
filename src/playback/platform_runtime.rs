@@ -509,7 +509,10 @@ fn probe_registry_path(
     Ok(registry)
 }
 
-#[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
+#[cfg_attr(
+    not(any(test, target_os = "windows", target_os = "macos")),
+    allow(dead_code)
+)]
 /// Require the fresh registry to be a non-empty file outside the package.
 fn verify_probe_registry(registry: &Path, install_root: &Path) -> Result<(), PlatformRuntimeError> {
     let metadata =
@@ -520,9 +523,16 @@ fn verify_probe_registry(registry: &Path, install_root: &Path) -> Result<(), Pla
     let resolved_registry = registry
         .canonicalize()
         .map_err(|_| PlatformRuntimeError::RegistryMissing)?;
-    let resolved_install = install_root
-        .canonicalize()
-        .map_err(|_| PlatformRuntimeError::PackageLayout)?;
+    let resolved_install = install_root.canonicalize().map_err(|_| {
+        #[cfg(target_os = "macos")]
+        {
+            PlatformRuntimeError::MacBundleLayout
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            PlatformRuntimeError::PackageLayout
+        }
+    })?;
     if resolved_registry.starts_with(resolved_install) {
         return Err(PlatformRuntimeError::RegistryInsideInstall);
     }
