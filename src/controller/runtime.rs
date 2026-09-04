@@ -625,6 +625,7 @@ struct ControllerActor {
     network_source: Arc<dyn NetworkChangeSource>,
     network_changes: Option<mpsc::Receiver<NetworkChange>>,
     network: NetworkChangeSummary,
+    exact_searches: u64,
 }
 
 impl ControllerActor {
@@ -669,6 +670,7 @@ impl ControllerActor {
             network_source,
             network_changes: None,
             network: NetworkChangeSummary::INITIAL,
+            exact_searches: 0,
         }
     }
 
@@ -1129,6 +1131,11 @@ impl ControllerActor {
             return Ok(());
         }
         let generation = self.next_discovery_generation()?;
+        if matches!(scope, DiscoveryScope::Exact(_)) {
+            // Counted before either publication below so a consumer can tell
+            // this search's states from a republished earlier one.
+            self.exact_searches = self.exact_searches.saturating_add(1);
+        }
         if exact_target_limit_reached {
             self.discovery = DiscoveryState::failed_for(
                 generation,
@@ -1855,7 +1862,8 @@ impl ControllerActor {
             self.selected_lineup.clone(),
         )?
         .with_routed(self.routed)
-        .with_network(self.network);
+        .with_network(self.network)
+        .with_exact_searches(self.exact_searches);
         self.revision = revision;
         self.snapshots.send_replace(Arc::new(snapshot));
         Ok(())

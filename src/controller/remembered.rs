@@ -18,27 +18,44 @@ use super::state::{DiscoveryKind, DiscoveryState, DiscoveryStatus, OperationGene
 /// `Ready`, which the controller publishes solely after a direct reply from
 /// that address. Any other settled outcome, including a superseding local
 /// refresh, discards the pending target without reporting it.
+///
+/// States are matched only once the snapshot's exact-search count has
+/// advanced past the count observed at admission: the controller processes
+/// network changes ahead of queued commands and republishes the current
+/// state, whatever its kind, in a new generation, so a state published before
+/// the admitted search was processed can never be its outcome.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ExactTargetTracker {
-    pending: Option<(ExactDiscoveryTarget, OperationGeneration)>,
-    /// Whether the admitted target's own exact operation was seen running.
-    started: bool,
+    pending: Option<PendingExactTarget>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingExactTarget {
+    target: ExactDiscoveryTarget,
+    generation: OperationGeneration,
+    exact_searches: u64,
 }
 
 impl ExactTargetTracker {
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            pending: None,
-            started: false,
-        }
+        Self { pending: None }
     }
 
     /// Record that `target` was admitted while the discovery lane showed
-    /// `observed`. A later admission replaces an unsettled one.
-    pub fn admit(&mut self, target: ExactDiscoveryTarget, observed: OperationGeneration) {
-        self.pending = Some((target, observed));
-        self.started = false;
+    /// generation `observed` and `exact_searches` processed searches. A later
+    /// admission replaces an unsettled one.
+    pub fn admit(
+        &mut self,
+        target: ExactDiscoveryTarget,
+        observed: OperationGeneration,
+        exact_searches: u64,
+    ) {
+        self.pending = Some(PendingExactTarget {
+            target,
+            generation: observed,
+            exact_searches,
+        });
     }
 
     /// Whether an admitted target is still waiting for its outcome.
@@ -47,34 +64,24 @@ impl ExactTargetTracker {
         self.pending.is_some()
     }
 
-    /// Feed the newest discovery state; returns the target that proved
-    /// reachable, if this state settled it successfully.
-    ///
-    /// `network_changed` says the snapshot carries a new network-change
-    /// reconciliation. The controller handles those ahead of queued commands
-    /// and republishes the current state, whatever its kind and status, in a
-    /// new generation. Until the admitted probe has been seen running, such a
-    /// state settles nothing: the probe is still queued and runs next, so
-    /// even a republished earlier exact result must not be taken as its own.
+    /// Feed the newest discovery state and the snapshot's exact-search
+    /// count; returns the target that proved reachable, if this state settled
+    /// it successfully.
     pub fn observe(
         &mut self,
         discovery: DiscoveryState,
-        network_changed: bool,
+        exact_searches: u64,
     ) -> Option<ExactDiscoveryTarget> {
-        let (target, admitted_at) = self.pending?;
-        if discovery.generation() <= admitted_at {
+        let pending = self.pending?;
+        if exact_searches <= pending.exact_searches || discovery.generation() <= pending.generation
+        {
             return None;
         }
         match (discovery.kind(), discovery.status()) {
-            (DiscoveryKind::Exact, DiscoveryStatus::Refreshing) => {
-                self.started = true;
-                None
-            }
             (_, DiscoveryStatus::Refreshing) => None,
-            _ if network_changed && !self.started => None,
             (DiscoveryKind::Exact, DiscoveryStatus::Ready) => {
                 self.pending = None;
-                Some(target)
+                Some(pending.target)
             }
             _ => {
                 self.pending = None;
@@ -197,17 +204,17 @@ mod tests {
     #[test]
     fn tracker_reports_a_target_only_after_a_newer_exact_ready_state() {
         let mut tracker = ExactTargetTracker::new();
-        tracker.admit(target(1), generation(3));
+        tracker.admit(target(1), generation(3), 0);
         assert!(tracker.is_pending());
 
         assert_eq!(
-            tracker.observe(DiscoveryState::idle(generation(3)), false),
+            tracker.observe(DiscoveryState::idle(generation(3)), 1),
             None
         );
         assert_eq!(
             tracker.observe(
                 DiscoveryState::refreshing_for(generation(4), DiscoveryKind::Exact),
-                false
+                1
             ),
             None
         );
@@ -218,7 +225,7 @@ mod tests {
         assert_eq!(
             tracker.observe(
                 DiscoveryState::ready_for(generation(4), DiscoveryKind::Exact, 0),
-                false
+                1
             ),
             Some(target(1))
         );
@@ -226,7 +233,7 @@ mod tests {
         assert_eq!(
             tracker.observe(
                 DiscoveryState::ready_for(generation(5), DiscoveryKind::Exact, 0),
-                false
+                2
             ),
             None,
             "a reported target is not reported twice"
@@ -247,85 +254,47 @@ mod tests {
         ];
         for outcome in outcomes {
             let mut tracker = ExactTargetTracker::new();
-            tracker.admit(target(1), generation(1));
-            assert_eq!(tracker.observe(outcome, false), None, "{outcome:?}");
+            tracker.admit(target(1), generation(1), 0);
+            assert_eq!(tracker.observe(outcome, 1), None, "{outcome:?}");
             assert!(!tracker.is_pending(), "{outcome:?}");
         }
     }
 
     #[test]
-    fn tracker_outlives_a_network_change_reconciled_before_its_probe() {
+    fn tracker_ignores_states_published_before_its_search_was_processed() {
         let mut tracker = ExactTargetTracker::new();
-        tracker.admit(target(1), generation(3));
+        tracker.admit(target(1), generation(3), 7);
 
-        // The reconciliation outranks the queued probe and republishes the
-        // unrelated local state in a new generation; the probe still runs.
+        // A network-change reconciliation outranks the queued search and
+        // republishes the current state, whatever it is, in a new generation.
+        for republished in [
+            DiscoveryState::ready_for(generation(4), DiscoveryKind::Local, 0),
+            DiscoveryState::ready_for(generation(4), DiscoveryKind::Exact, 0),
+            DiscoveryState::exact_no_response(generation(4), 1),
+            DiscoveryState::idle_for(generation(4), DiscoveryKind::Exact),
+        ] {
+            assert_eq!(tracker.observe(republished, 7), None, "{republished:?}");
+            assert!(tracker.is_pending(), "{republished:?}");
+        }
+
+        // The search's own result settles it even when its start, its result,
+        // and a later reconciliation were coalesced into one snapshot.
         assert_eq!(
             tracker.observe(
-                DiscoveryState::ready_for(generation(4), DiscoveryKind::Local, 0),
-                true
-            ),
-            None
-        );
-        assert!(tracker.is_pending(), "the queued probe is not settled");
-        assert_eq!(
-            tracker.observe(
-                DiscoveryState::refreshing_for(generation(5), DiscoveryKind::Exact),
-                false
-            ),
-            None
-        );
-        assert_eq!(
-            tracker.observe(
-                DiscoveryState::ready_for(generation(5), DiscoveryKind::Exact, 0),
-                false
+                DiscoveryState::ready_for(generation(6), DiscoveryKind::Exact, 0),
+                8
             ),
             Some(target(1))
         );
-
-        // A republished earlier exact result is not the queued probe's own
-        // outcome either, whether it succeeded or failed.
-        for earlier in [
-            DiscoveryState::ready_for(generation(6), DiscoveryKind::Exact, 0),
-            DiscoveryState::exact_no_response(generation(6), 1),
-        ] {
-            let mut tracker = ExactTargetTracker::new();
-            tracker.admit(target(4), generation(5));
-            assert_eq!(tracker.observe(earlier, true), None, "{earlier:?}");
-            assert!(tracker.is_pending(), "{earlier:?}");
-            assert_eq!(
-                tracker.observe(
-                    DiscoveryState::ready_for(generation(7), DiscoveryKind::Exact, 0),
-                    false
-                ),
-                Some(target(4)),
-                "{earlier:?}"
-            );
-        }
-
-        // Once the probe was seen running, a reconciliation that cancels it
-        // settles the target like any other stop.
-        tracker.admit(target(2), generation(5));
-        tracker.observe(
-            DiscoveryState::refreshing_for(generation(6), DiscoveryKind::Exact),
-            false,
-        );
-        assert_eq!(
-            tracker.observe(
-                DiscoveryState::idle_for(generation(7), DiscoveryKind::Exact),
-                true
-            ),
-            None
-        );
         assert!(!tracker.is_pending());
 
-        // Without a reconciliation, an unrelated newer state still replaces
-        // a probe that was never seen running.
-        tracker.admit(target(3), generation(7));
+        // A search that ran and was then superseded before its result was
+        // observed is still discarded without being reported.
+        tracker.admit(target(2), generation(6), 8);
         assert_eq!(
             tracker.observe(
                 DiscoveryState::ready_for(generation(8), DiscoveryKind::Local, 0),
-                false
+                9
             ),
             None
         );
@@ -335,13 +304,13 @@ mod tests {
     #[test]
     fn tracker_keeps_only_the_latest_admission() {
         let mut tracker = ExactTargetTracker::new();
-        tracker.admit(target(1), generation(1));
-        tracker.admit(target(2), generation(2));
+        tracker.admit(target(1), generation(1), 0);
+        tracker.admit(target(2), generation(2), 1);
 
         assert_eq!(
             tracker.observe(
                 DiscoveryState::ready_for(generation(3), DiscoveryKind::Exact, 0),
-                false
+                2
             ),
             Some(target(2))
         );

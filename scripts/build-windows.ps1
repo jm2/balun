@@ -2199,6 +2199,71 @@ function Add-PeImportDependencies {
     }
 }
 
+# Read the PE optional header's Subsystem field without loading the image.
+# Only the fixed DOS, PE signature, COFF, and optional-header prefix are read,
+# with every offset bounded, so a truncated or foreign file fails closed.
+function Get-PeSubsystem {
+    param([string]$Path)
+
+    $stream = [System.IO.File]::Open(
+        $Path,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::Read
+    )
+    try {
+        $dosHeader = New-Object byte[] 64
+        if ($stream.Read($dosHeader, 0, 64) -ne 64 -or
+            $dosHeader[0] -ne 0x4D -or $dosHeader[1] -ne 0x5A) {
+            throw "not a PE image: $Path"
+        }
+        $peOffset = [System.BitConverter]::ToInt32($dosHeader, 0x3C)
+        $prefixLength = 4 + 20 + 70
+        if ($peOffset -lt 64 -or $peOffset -gt 1MB -or
+            $peOffset + $prefixLength -gt $stream.Length) {
+            throw "PE header offset is out of range: $Path"
+        }
+        $null = $stream.Seek($peOffset, [System.IO.SeekOrigin]::Begin)
+        $prefix = New-Object byte[] $prefixLength
+        if ($stream.Read($prefix, 0, $prefixLength) -ne $prefixLength) {
+            throw "truncated PE header: $Path"
+        }
+        if ($prefix[0] -ne 0x50 -or $prefix[1] -ne 0x45 -or
+            $prefix[2] -ne 0 -or $prefix[3] -ne 0) {
+            throw "missing PE signature: $Path"
+        }
+        $optionalHeaderSize = [System.BitConverter]::ToUInt16($prefix, 20)
+        if ($optionalHeaderSize -lt 70) {
+            throw "PE optional header is too small: $Path"
+        }
+        $magic = [System.BitConverter]::ToUInt16($prefix, 24)
+        if ($magic -ne 0x10B -and $magic -ne 0x20B) {
+            throw ("unsupported PE optional header magic 0x{0:X4}: {1}" -f $magic, $Path)
+        }
+        return [System.BitConverter]::ToUInt16($prefix, 24 + 68)
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+# The -Run developer build carries the windows-console feature and writes the
+# same release output path the package modes reuse with -NoCargoBuild, so the
+# staged application must prove it is a GUI-subsystem image before it is
+# copied into any package.
+function Assert-GuiSubsystemApplication {
+    param([string]$Path)
+
+    $subsystem = Get-PeSubsystem $Path
+    if ($subsystem -ne 2) {
+        throw (
+            "Packaged $DesktopBinaryName must be a Windows GUI-subsystem application; " +
+            "found subsystem $subsystem in $Path. A -Run developer build cannot be " +
+            'packaged: rebuild without -Run (or without -NoCargoBuild) first.'
+        )
+    }
+}
+
 function Invoke-WindowsPackageStaging {
     param(
         [pscustomobject]$Layout,
@@ -2226,7 +2291,9 @@ function Invoke-WindowsPackageStaging {
     }
     Assert-WindowsBundleComponentPolicy $dist
 
-    # Always copy the executable (just built or explicitly reused).
+    # Always copy the executable (just built or explicitly reused), but never
+    # a console-subsystem developer build.
+    Assert-GuiSubsystemApplication $Application
     $applicationDestination = Join-Path $binDir $DesktopBinaryName
     Copy-WindowsBundleFileForced $Application $applicationDestination
 

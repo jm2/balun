@@ -685,9 +685,14 @@ fn connect_exact_discovery(
                         Ok(()) => {
                             // Remember the address only once a newer exact
                             // operation reports a valid reply from it.
-                            admitted_tracker
-                                .borrow_mut()
-                                .admit(target, admitted_accepted.borrow().discovery().generation());
+                            {
+                                let accepted = admitted_accepted.borrow();
+                                admitted_tracker.borrow_mut().admit(
+                                    target,
+                                    accepted.discovery().generation(),
+                                    accepted.exact_searches(),
+                                );
+                            }
                             admitted_cancel_button.set_visible(true);
                             admitted_cancel_button.set_sensitive(true);
                             admitted_wiring
@@ -1125,12 +1130,11 @@ fn spawn_snapshot_reducer(
     gtk::glib::MainContext::default().spawn_local(async move {
         while snapshots.changed().await.is_ok() {
             let candidate = Arc::clone(&snapshots.borrow_and_update());
-            let (can_replace, selection_changed, network_changed) = {
+            let (can_replace, selection_changed) = {
                 let current = accepted.borrow();
                 (
                     candidate.can_replace(&current),
                     candidate.selection_generation() > current.selection_generation(),
-                    candidate.network().sequence() != current.network().sequence(),
                 )
             };
             if !can_replace {
@@ -1151,12 +1155,13 @@ fn spawn_snapshot_reducer(
             channel_sidebar.apply_snapshot(&candidate);
             layout.set_device_selected(candidate.selected_device().is_some());
             let discovery = candidate.discovery();
+            let exact_searches = candidate.exact_searches();
             accepted.replace(candidate);
 
             let (reachable, settled) = {
                 let mut tracker = rediscovery.exact_tracker.borrow_mut();
                 let was_pending = tracker.is_pending();
-                let reachable = tracker.observe(discovery, network_changed);
+                let reachable = tracker.observe(discovery, exact_searches);
                 (reachable, was_pending && !tracker.is_pending())
             };
             if let Some(target) = reachable {
