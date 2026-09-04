@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **macOS runtime probe and packaging** — Deliver P3.4 runtime probe, cache isolation, and
+  packaging for macOS. `scripts/build-macos.sh` supports `--app` and `--dmg`, blinding the launcher
+  environment to Homebrew (`PATH`, `DYLD_LIBRARY_PATH`, and empty `GST_PLUGIN_SYSTEM_PATH`),
+  staging a 21-element frozen GStreamer plugin closure, resolving transitive dynamic libraries via
+  BFS into `Contents/Frameworks`, patching library rpaths with `install_name_tool`, verifying the
+  closure against pinned component policies, performing ad-hoc codesigning, running an isolated
+  read-only runtime probe loopback test from a relocated path with spaces, and generating a
+  drag-to-Applications disk image `dist/Balun.dmg` via `create-dmg`.
 - **Prerelease verification and checksums** — Add the immutable release verification check
   (`scripts/release_check.py`) ensuring Semantic Version agreement across Cargo manifests, the
   lockfile, AppStream metainfo, and changelog release links, and enforce exact release candidate

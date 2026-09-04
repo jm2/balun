@@ -129,8 +129,7 @@ pub(super) fn run(plugin_dir: &Path) -> Result<(), PackagedProbeError> {
         bundled_factory(factory.name(), &canonical_plugin_dir)?;
     }
     verify_decoder_contract(&canonical_plugin_dir)?;
-    #[cfg(target_os = "macos")]
-    let _ranks = prefer_software_mpeg2_decoders();
+    let _software_decoders = prefer_software_mpeg2_decoders();
     #[cfg(target_os = "windows")]
     let sink_name = "wasapi2sink";
     #[cfg(target_os = "macos")]
@@ -613,25 +612,39 @@ fn is_timeout(error: &std::io::Error) -> bool {
     matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
 }
 
-#[cfg(target_os = "macos")]
+/// Guard that restores modified plugin feature ranks upon drop.
 struct DecoderRankGuard {
     original: Vec<(gst::PluginFeature, gst::Rank)>,
 }
 
-#[cfg(target_os = "macos")]
 impl Drop for DecoderRankGuard {
     fn drop(&mut self) {
-        for (feature, rank) in self.original.drain(..) {
-            feature.set_rank(rank);
+        for (feature, rank) in &self.original {
+            feature.set_rank(*rank);
         }
     }
 }
 
-#[cfg(target_os = "macos")]
+/// Demote hardware MPEG-2 decoder factories (such as Apple VideoToolbox and
+/// Direct3D) that cannot decode synthetic fixtures without GPU context,
+/// letting decodebin3 autoplug the bundled software decoder (avdec_mpeg2video).
 fn prefer_software_mpeg2_decoders() -> DecoderRankGuard {
     let registry = gst::Registry::get();
     let mut original = Vec::new();
-    for name in ["vtdec_hw", "vtdec"] {
+    for name in [
+        "vtdec_hw",
+        "vtdec",
+        "d3d11mpeg2dec",
+        "d3d12mpeg2dec",
+        "nvmpeg2videodec",
+        "nvmpeg2dec",
+        "qsvmpeg2dec",
+        "msdkmpeg2dec",
+        "amfmpeg2dec",
+        "vampeg2dec",
+        "vaapimpeg2dec",
+        "v4l2slmpeg2dec",
+    ] {
         if let Some(feature) = registry.lookup_feature(name) {
             original.push((feature.clone(), feature.rank()));
             feature.set_rank(gst::Rank::NONE);
