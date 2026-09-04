@@ -22,10 +22,11 @@
 //! malformed event, unsupported event, or bounded-drain exhaustion invalidates
 //! immediately and permanently fails that observer closed.
 //!
-//! # Not an authority boundary yet
+//! # Boundary limits
 //!
-//! This module is an unwired Linux building block. It subscribes through the
-//! exact private-directory descriptor retained by [`ApprovalStore`](super::store::ApprovalStore),
+//! This Linux building block participates in production routed discovery, but
+//! is not sufficient authority on its own. It subscribes through the exact
+//! private-directory descriptor retained by [`ApprovalStore`](super::store::ApprovalStore),
 //! and all Unix store I/O is relative to that descriptor. Pathname replacement
 //! or a mount over the injected path therefore cannot split the watched and
 //! accessed authority topologies. Requiring one link before and after each
@@ -41,11 +42,6 @@
 //! post-publication reread through a fresh sandwich, and only then activates
 //! combined route-and-store health. Nothing outside that runner may treat a
 //! file notification as anything but a reason to rebaseline.
-
-#![allow(
-    dead_code,
-    reason = "the monitored routed runner has no production caller until the approval UX lands"
-)]
 
 use std::fmt;
 use std::sync::{Arc, Weak};
@@ -200,6 +196,7 @@ impl fmt::Debug for StoreDirectoryEvent {
 struct StoreEventFlags(u32);
 
 impl StoreEventFlags {
+    #[cfg(target_os = "linux")]
     const NONE: Self = Self(0);
     const ATTRIB: Self = Self(1 << 0);
     const CLOSE_WRITE: Self = Self(1 << 1);
@@ -462,8 +459,9 @@ where
     /// Test whether a proof still belongs to this locally observed generation.
     ///
     /// This does not poll the backend and therefore must not be used as a
-    /// pre-send authority check. Continuous polling drives the invalidation
-    /// hub; the future runner must also retain that hub registration.
+    /// pre-send authority check. Continuous polling drives invalidation; the
+    /// consuming runner must also retain the corresponding authority
+    /// registration.
     fn proof_is_current(&self, proof: &StoreBaselineProof) -> bool {
         !self.failed_closed
             && proof.source.ptr_eq(&Arc::downgrade(&self.identity))

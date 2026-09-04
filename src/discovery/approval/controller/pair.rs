@@ -352,6 +352,10 @@ mod tests {
     use super::*;
     use crate::discovery::approval::controller::{RouteObserverSink, StoreObserverSink};
 
+    #[allow(
+        dead_code,
+        reason = "the payloads own their observer sinks for the fake actor's lifetime"
+    )]
     enum FakeAuthority {
         Route(Arc<RouteObserverSink>),
         Store(StoreObserverSink),

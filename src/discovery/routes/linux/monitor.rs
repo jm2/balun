@@ -12,8 +12,6 @@
 //! discarded. Reconciliation after a live notification should replace this
 //! monitor with a fresh subscribed instance and repeat the same sequence.
 
-#![cfg_attr(not(test), allow(dead_code))]
-
 use std::fmt;
 use std::io::{self, IoSliceMut};
 use std::os::fd::AsRawFd;
@@ -163,22 +161,6 @@ impl LinuxRouteEventMonitor {
             },
             receiver,
         ))
-    }
-
-    /// Drain to `EAGAIN` after the caller's snapshot.
-    ///
-    /// Work is yielded in bounded turns. A continuing stream which prevents a
-    /// quiescent boundary from being established is terminal and poisons this
-    /// observer incarnation.
-    async fn post_snapshot_barrier(
-        &mut self,
-    ) -> Result<PostSnapshotBarrier, LinuxRouteMonitorError> {
-        self.barrier_complete = false;
-        let mut source = NeliDatagramSource::new(self.socket.get_ref());
-        let result =
-            drain_post_snapshot(&mut source, &mut self.core, &mut self.receive_buffer).await;
-        self.barrier_complete = matches!(result, Ok(PostSnapshotBarrier::Clean));
-        result
     }
 
     /// Close the handoff from a caller-owned snapshot into live observation.
@@ -1157,11 +1139,9 @@ mod tests {
     }
 
     #[test]
-    fn production_monitor_api_typechecks_while_deliberately_unwired() {
+    fn production_runner_monitor_api_typechecks() {
         let _subscribe = LinuxRouteEventMonitor::subscribe;
-        let _barrier = LinuxRouteEventMonitor::post_snapshot_barrier;
         let _continuous = LinuxRouteEventMonitor::run_continuously::<fn() -> Result<(), ()>>;
-        let _run = LinuxRouteEventMonitor::run;
     }
 
     #[test]
