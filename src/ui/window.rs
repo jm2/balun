@@ -178,6 +178,7 @@ impl ResponsiveLayout {
 
     fn show_channels(&self) {
         let mut state = self.state.get();
+        state.outer_show_content = true;
         state.inner_show_content = false;
         self.state.set(state);
         self.apply();
@@ -227,39 +228,51 @@ impl ResponsiveLayout {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FullscreenKeyAction {
-    Toggle,
-    Exit,
+enum WindowKeyAction {
+    ToggleFullscreen,
+    ExitFullscreen,
+    FocusSearch,
+    RefreshDevices,
     Ignore,
 }
 
-fn fullscreen_key_action(
+fn window_key_action(
     key: gtk::gdk::Key,
     modifiers: gtk::gdk::ModifierType,
     fullscreen: bool,
-) -> FullscreenKeyAction {
-    use gtk::gdk::ModifierType;
+) -> WindowKeyAction {
+    use gtk::gdk::{Key, ModifierType};
 
-    // Ignore ambient lock/legacy modifier bits and accept only exact
-    // unmodified bindings. This keeps application and child-widget shortcuts
-    // available instead of swallowing modified F11 or Escape.
-    let effective = modifiers
+    // Filter out ambient lock/legacy modifier bits (Caps Lock, Num Lock, etc.)
+    // and accept only exact unmodified or single-modifier bindings.
+    let significant = modifiers
         & (ModifierType::SHIFT_MASK
             | ModifierType::CONTROL_MASK
             | ModifierType::ALT_MASK
             | ModifierType::SUPER_MASK
             | ModifierType::HYPER_MASK
             | ModifierType::META_MASK);
-    if !effective.is_empty() {
-        return FullscreenKeyAction::Ignore;
+
+    if significant.is_empty() {
+        if key == Key::F11 {
+            return WindowKeyAction::ToggleFullscreen;
+        }
+        if key == Key::Escape && fullscreen {
+            return WindowKeyAction::ExitFullscreen;
+        }
+        if key == Key::F5 {
+            return WindowKeyAction::RefreshDevices;
+        }
+    } else if significant == ModifierType::CONTROL_MASK {
+        if key == Key::f || key == Key::F {
+            return WindowKeyAction::FocusSearch;
+        }
+        if key == Key::r || key == Key::R {
+            return WindowKeyAction::RefreshDevices;
+        }
     }
-    if key == gtk::gdk::Key::F11 {
-        FullscreenKeyAction::Toggle
-    } else if key == gtk::gdk::Key::Escape && fullscreen {
-        FullscreenKeyAction::Exit
-    } else {
-        FullscreenKeyAction::Ignore
-    }
+
+    WindowKeyAction::Ignore
 }
 
 /// Build Balun's single application window.
@@ -390,7 +403,7 @@ pub(crate) fn build(
     connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
     let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
     connect_routed_discovery(&window, &device_sidebar, &routed_ui);
-    connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
+    connect_device_selection(&device_sidebar, &handle, &accepted, &player_view, &layout);
     connect_channel_activation(
         &channel_sidebar,
         &handle,
@@ -398,7 +411,13 @@ pub(crate) fn build(
         layout.player_navigation(),
         &accepted,
     );
-    connect_fullscreen(&window, &player_view, &layout);
+    connect_window_shortcuts(
+        &window,
+        &player_view,
+        &layout,
+        Some(device_sidebar.refresh_button().clone()),
+        Some(channel_sidebar.search_entry().clone()),
+    );
     spawn_snapshot_reducer(
         snapshots,
         Rc::clone(&accepted),
@@ -447,10 +466,12 @@ fn connect_channel_activation(
     });
 }
 
-fn connect_fullscreen(
+fn connect_window_shortcuts(
     window: &adw::ApplicationWindow,
     player_view: &Rc<player_view::PlayerView>,
     layout: &ResponsiveLayout,
+    refresh_button: Option<gtk::Button>,
+    search_entry: Option<gtk::SearchEntry>,
 ) {
     let window_weak = window.downgrade();
     player_view.fullscreen_button().connect_clicked(move |_| {
@@ -464,15 +485,20 @@ fn connect_fullscreen(
         }
     });
 
+    let previous_focus: Rc<RefCell<Option<gtk::glib::WeakRef<gtk::Widget>>>> =
+        Rc::new(RefCell::new(None));
+    let previous_focus_for_keys = Rc::clone(&previous_focus);
+
     let key_controller = gtk::EventControllerKey::new();
     key_controller.set_propagation_phase(gtk::PropagationPhase::Bubble);
     let window_weak = window.downgrade();
+    let layout_for_keys = layout.clone();
     key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
         let Some(window) = window_weak.upgrade() else {
             return gtk::glib::Propagation::Proceed;
         };
-        match fullscreen_key_action(key, modifiers, window.is_fullscreen()) {
-            FullscreenKeyAction::Toggle => {
+        match window_key_action(key, modifiers, window.is_fullscreen()) {
+            WindowKeyAction::ToggleFullscreen => {
                 if window.is_fullscreen() {
                     window.unfullscreen();
                 } else {
@@ -480,17 +506,34 @@ fn connect_fullscreen(
                 }
                 gtk::glib::Propagation::Stop
             }
-            FullscreenKeyAction::Exit => {
+            WindowKeyAction::ExitFullscreen => {
                 window.unfullscreen();
                 gtk::glib::Propagation::Stop
             }
-            FullscreenKeyAction::Ignore => gtk::glib::Propagation::Proceed,
+            WindowKeyAction::FocusSearch => {
+                if window.is_fullscreen() {
+                    if let Some(search_entry) = search_entry.as_ref() {
+                        previous_focus_for_keys
+                            .replace(Some(search_entry.upcast_ref::<gtk::Widget>().downgrade()));
+                    }
+                    window.unfullscreen();
+                }
+                layout_for_keys.show_channels();
+                if let Some(search_entry) = search_entry.as_ref() {
+                    let _ = search_entry.grab_focus();
+                }
+                gtk::glib::Propagation::Stop
+            }
+            WindowKeyAction::RefreshDevices => {
+                if let Some(refresh_button) = refresh_button.as_ref() {
+                    refresh_button.emit_clicked();
+                }
+                gtk::glib::Propagation::Stop
+            }
+            WindowKeyAction::Ignore => gtk::glib::Propagation::Proceed,
         }
     });
     window.add_controller(key_controller);
-
-    let previous_focus: Rc<RefCell<Option<gtk::glib::WeakRef<gtk::Widget>>>> =
-        Rc::new(RefCell::new(None));
     let confirmed_layout = layout.clone();
     let player_view = Rc::downgrade(player_view);
     window.connect_fullscreened_notify(move |window| {
@@ -806,11 +849,34 @@ fn connect_device_selection(
     controller: &ControllerHandle,
     accepted: &Rc<RefCell<Arc<ApplicationSnapshot>>>,
     player_view: &Rc<player_view::PlayerView>,
+    layout: &ResponsiveLayout,
 ) {
     let applying_snapshot = sidebar.snapshot_application_flag();
     let accepted = Rc::clone(accepted);
     let controller = controller.clone();
+    let selection = sidebar.selection().clone();
+    let accepted_for_activated = Rc::clone(&accepted);
+    let layout_for_activated = layout.clone();
+    sidebar.connect_device_activated(move |position| {
+        let target_device = selection
+            .item(position)
+            .and_then(|item| item.downcast::<DeviceRowObject>().ok())
+            .and_then(|row| row.device_id());
+        let authoritative = accepted_for_activated.borrow().selected_device();
+        if target_device.is_some() && target_device == authoritative {
+            // The row activated is already the admitted, authoritative device.
+            // Selection change notification will not fire, so restore the
+            // channel lineup view directly.
+            layout_for_activated.set_device_selected(true);
+            layout_for_activated.show_channels();
+        } else {
+            // Selecting a different device triggers selection-notify, which
+            // gates channel navigation on controller admission.
+            selection.set_selected(position);
+        }
+    });
     let player_view = Rc::downgrade(player_view);
+    let layout_for_notify = layout.clone();
     sidebar
         .selection()
         .connect_selected_notify(move |selection| {
@@ -835,6 +901,10 @@ fn connect_device_selection(
                     // cancel and publish the next selection generation.
                     if let Some(player_view) = player_view.upgrade() {
                         let _ = player_view.stop();
+                    }
+                    if selected_device.is_some() {
+                        layout_for_notify.set_device_selected(true);
+                        layout_for_notify.show_channels();
                     }
                 }
                 Err(_) => {
@@ -1140,31 +1210,78 @@ mod tests {
     use balun::settings::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH};
 
     #[test]
-    fn fullscreen_keyboard_contract_filters_modifiers_and_ambient_locks() {
+    fn window_keyboard_contract_filters_modifiers_and_ambient_locks() {
         use gtk::gdk::{Key, ModifierType};
 
         assert_eq!(
-            fullscreen_key_action(Key::F11, ModifierType::empty(), false),
-            FullscreenKeyAction::Toggle
+            window_key_action(Key::F11, ModifierType::empty(), false),
+            WindowKeyAction::ToggleFullscreen
         );
         assert_eq!(
-            fullscreen_key_action(Key::F11, ModifierType::LOCK_MASK, true),
-            FullscreenKeyAction::Toggle
+            window_key_action(Key::F11, ModifierType::LOCK_MASK, true),
+            WindowKeyAction::ToggleFullscreen
         );
         let ambient_mod2 = ModifierType::from_bits_retain(1 << 4);
         assert_eq!(
-            fullscreen_key_action(Key::F11, ambient_mod2, false),
-            FullscreenKeyAction::Toggle
+            window_key_action(Key::F11, ambient_mod2, false),
+            WindowKeyAction::ToggleFullscreen
         );
         assert_eq!(
-            fullscreen_key_action(Key::Escape, ModifierType::empty(), true),
-            FullscreenKeyAction::Exit
+            window_key_action(Key::Escape, ModifierType::empty(), true),
+            WindowKeyAction::ExitFullscreen
         );
         assert_eq!(
-            fullscreen_key_action(Key::Escape, ModifierType::LOCK_MASK, true),
-            FullscreenKeyAction::Exit
+            window_key_action(Key::Escape, ModifierType::LOCK_MASK, true),
+            WindowKeyAction::ExitFullscreen
         );
 
+        // F5 refreshes devices
+        assert_eq!(
+            window_key_action(Key::F5, ModifierType::empty(), false),
+            WindowKeyAction::RefreshDevices
+        );
+        assert_eq!(
+            window_key_action(Key::F5, ModifierType::LOCK_MASK, false),
+            WindowKeyAction::RefreshDevices
+        );
+
+        // Ctrl+F focuses search
+        assert_eq!(
+            window_key_action(Key::f, ModifierType::CONTROL_MASK, false),
+            WindowKeyAction::FocusSearch
+        );
+        assert_eq!(
+            window_key_action(Key::F, ModifierType::CONTROL_MASK, false),
+            WindowKeyAction::FocusSearch
+        );
+        assert_eq!(
+            window_key_action(
+                Key::f,
+                ModifierType::CONTROL_MASK | ModifierType::LOCK_MASK,
+                true
+            ),
+            WindowKeyAction::FocusSearch
+        );
+
+        // Ctrl+R refreshes devices
+        assert_eq!(
+            window_key_action(Key::r, ModifierType::CONTROL_MASK, false),
+            WindowKeyAction::RefreshDevices
+        );
+        assert_eq!(
+            window_key_action(Key::R, ModifierType::CONTROL_MASK, false),
+            WindowKeyAction::RefreshDevices
+        );
+        assert_eq!(
+            window_key_action(
+                Key::r,
+                ModifierType::CONTROL_MASK | ModifierType::LOCK_MASK,
+                false
+            ),
+            WindowKeyAction::RefreshDevices
+        );
+
+        // Modified F11, Escape, F5 are ignored
         for modifiers in [
             ModifierType::SHIFT_MASK,
             ModifierType::CONTROL_MASK,
@@ -1174,21 +1291,44 @@ mod tests {
             ModifierType::META_MASK,
         ] {
             assert_eq!(
-                fullscreen_key_action(Key::F11, modifiers, false),
-                FullscreenKeyAction::Ignore
+                window_key_action(Key::F11, modifiers, false),
+                WindowKeyAction::Ignore
             );
             assert_eq!(
-                fullscreen_key_action(Key::Escape, modifiers, true),
-                FullscreenKeyAction::Ignore
+                window_key_action(Key::Escape, modifiers, true),
+                WindowKeyAction::Ignore
+            );
+            assert_eq!(
+                window_key_action(Key::F5, modifiers, false),
+                WindowKeyAction::Ignore
             );
         }
+
+        // Additional modifier combinations with Ctrl are ignored
         assert_eq!(
-            fullscreen_key_action(Key::Escape, ModifierType::empty(), false),
-            FullscreenKeyAction::Ignore
+            window_key_action(
+                Key::f,
+                ModifierType::CONTROL_MASK | ModifierType::SHIFT_MASK,
+                false
+            ),
+            WindowKeyAction::Ignore
         );
         assert_eq!(
-            fullscreen_key_action(Key::F10, ModifierType::empty(), true),
-            FullscreenKeyAction::Ignore
+            window_key_action(
+                Key::r,
+                ModifierType::CONTROL_MASK | ModifierType::ALT_MASK,
+                false
+            ),
+            WindowKeyAction::Ignore
+        );
+
+        assert_eq!(
+            window_key_action(Key::Escape, ModifierType::empty(), false),
+            WindowKeyAction::Ignore
+        );
+        assert_eq!(
+            window_key_action(Key::F10, ModifierType::empty(), true),
+            WindowKeyAction::Ignore
         );
     }
 
@@ -1331,7 +1471,7 @@ mod tests {
                     &player_view,
                 );
                 layout.set_compact_width(true);
-                connect_fullscreen(&window, &player_view, &layout);
+                connect_window_shortcuts(&window, &player_view, &layout, None, None);
 
                 let phase = Rc::new(Cell::new(0_u8));
                 let start = {
@@ -1972,7 +2112,13 @@ mod tests {
                 connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
                 let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
                 connect_routed_discovery(&window, &device_sidebar, &routed_ui);
-                connect_device_selection(&device_sidebar, &handle, &accepted, &player_view);
+                connect_device_selection(
+                    &device_sidebar,
+                    &handle,
+                    &accepted,
+                    &player_view,
+                    &layout,
+                );
                 connect_channel_activation(
                     &channel_sidebar,
                     &handle,
@@ -1980,7 +2126,13 @@ mod tests {
                     layout.player_navigation(),
                     &accepted,
                 );
-                connect_fullscreen(&window, &player_view, &layout);
+                connect_window_shortcuts(
+                    &window,
+                    &player_view,
+                    &layout,
+                    Some(device_sidebar.refresh_button().clone()),
+                    Some(channel_sidebar.search_entry().clone()),
+                );
                 spawn_snapshot_reducer(
                     reducer_snapshots,
                     Rc::clone(&accepted),

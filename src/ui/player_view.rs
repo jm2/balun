@@ -486,6 +486,7 @@ impl PlayerView {
     fn apply_paintable(&self, paintable: Option<&gtk::gdk::Paintable>) -> bool {
         self.picture.set_paintable(paintable);
         let has_video = paintable.is_some();
+        self.picture.set_visible(has_video);
         self.status.set_visible(!has_video);
         has_video
     }
@@ -708,9 +709,12 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
     let picture = gtk::Picture::builder()
         .can_shrink(true)
         .content_fit(gtk::ContentFit::Contain)
+        .accessible_role(gtk::AccessibleRole::Img)
+        .visible(false)
         .hexpand(true)
         .vexpand(true)
         .build();
+    picture.update_property(&[gtk::accessible::Property::Label("Live TV video")]);
 
     let (title, description, session) = match runtime {
         Ok(runtime) => {
@@ -727,6 +731,7 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         .icon_name("video-display-symbolic")
         .title(title)
         .description(description.as_str())
+        .accessible_role(gtk::AccessibleRole::Status)
         .vexpand(true)
         .build();
 
@@ -833,7 +838,7 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
 }
 
 fn update_mute_presentation(button: &gtk::ToggleButton, volume: f64, muted: bool) {
-    let (icon, label) = if muted {
+    let (icon, tooltip) = if muted {
         (
             "audio-volume-muted-symbolic",
             PLAYER_ACCESSIBILITY.unmute_label,
@@ -849,8 +854,10 @@ fn update_mute_presentation(button: &gtk::ToggleButton, volume: f64, muted: bool
         (icon, PLAYER_ACCESSIBILITY.mute_label)
     };
     button.set_icon_name(icon);
-    button.set_tooltip_text(Some(label));
-    button.update_property(&[gtk::accessible::Property::Label(label)]);
+    button.set_tooltip_text(Some(tooltip));
+    button.update_property(&[gtk::accessible::Property::Label(
+        PLAYER_ACCESSIBILITY.mute_label,
+    )]);
 }
 
 fn empty_state_copy(capabilities: &PlaybackCapabilities) -> (&'static str, String) {
@@ -946,9 +953,15 @@ mod tests {
         view.connect_audio_controls();
 
         assert_eq!(view.picture.content_fit(), gtk::ContentFit::Contain);
+        assert_eq!(view.picture.accessible_role(), gtk::AccessibleRole::Img);
+        assert!(!view.picture.is_visible());
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
         assert_eq!(view.status.title(), "Playback initialization unavailable");
+        assert_eq!(
+            view.status.upcast_ref::<gtk::Widget>().accessible_role(),
+            gtk::AccessibleRole::Status
+        );
         assert_eq!(view.playback_status.label(), "Unavailable");
         assert_eq!(
             view.playback_status.accessible_role(),
@@ -1115,14 +1128,18 @@ mod tests {
         view.stop_button.set_sensitive(true);
         view.stop_button.emit_clicked();
         assert!(view.picture.paintable().is_none());
+        assert!(!view.picture.is_visible());
         assert!(view.status.is_visible());
         assert_eq!(view.status.title(), "Playback initialization unavailable");
         assert!(!view.stop_button.is_sensitive());
         assert!(task_dropped.get());
 
         assert!(view.apply_paintable(Some(&paintable)));
+        assert!(view.picture.is_visible());
+        assert!(!view.status.is_visible());
         view.stop_button.set_sensitive(true);
         view.shut_down().unwrap();
+        assert!(!view.picture.is_visible());
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
         assert!(!view.stop_button.is_sensitive());
