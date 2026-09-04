@@ -17,10 +17,11 @@ fail()
 . "$helper"
 
 input='DeviceAuth=synthetic-secret token=test-token auth_token=another-token
-callsign=TEST-DT channel_name=Synthetic News
-IPv4 192.0.2.44 IPv6 2001:db8::8 full-v6 2001:0db8:0000:0000:0000:0000:0000:0008
+callsign=TEST-DT signal=92 strength=81 channel_name="Synthetic News"
+IPv4 192.0.2.44 IPv6 2001:db8::8 link-v6 fe80::1234:5678:9abc:def0 full-v6 2001:0db8:0000:0000:0000:0000:0000:0008
 tuner 105A1232 DeviceId(274338354) device_id=105A1232
 587000000 Hz freq=593000000 frequency=599000000
+test playback::live_hardware::tests firmware=20260313 build=89ABCDEF
 2026-09-04T15:42:05.075786Z INFO GStreamer 1.28.6 model=HDHR5-4K tuners=4 channels=72
 live ATSC 1.0: selected responsive favorite channel 5.1
 live ATSC 1.0 evidence: handoff 450us, first video frame 900ms, stable decode 910ms after PLAYING
@@ -29,7 +30,9 @@ live ATSC 1.0 evidence: factories appsrc,typefind,tsdemux,avdec_mpeg2video,osxau
 output=$(printf '%s\n' "$input" | balun_sanitize_hardware_validation_stream)
 
 for private_value in synthetic-secret test-token another-token TEST-DT \
-    192.0.2.44 2001:db8::8 2001:0db8:0000:0000:0000:0000:0000:0008 \
+    'Synthetic News' 192.0.2.44 2001:db8::8 \
+    fe80::1234:5678:9abc:def0 1234:5678:9abc:def0 \
+    2001:0db8:0000:0000:0000:0000:0000:0008 \
     105A1232 274338354 587000000 593000000 599000000; do
     case "$output" in
         *"$private_value"*)
@@ -37,9 +40,6 @@ for private_value in synthetic-secret test-token another-token TEST-DT \
             ;;
     esac
 done
-case "$output" in
-    *'Synthetic News'*) fail 'sanitized output retained a synthetic channel name' ;;
-esac
 
 for placeholder in '[AUTH_TOKEN]' '[CHANNEL_NAME]' '[IP_ADDRESS]' '[TUNER_ID]' \
     '[RF_FREQUENCY]'; do
@@ -50,6 +50,9 @@ for placeholder in '[AUTH_TOKEN]' '[CHANNEL_NAME]' '[IP_ADDRESS]' '[TUNER_ID]' \
 done
 
 for useful_line in \
+    'callsign=[CHANNEL_NAME] signal=92 strength=81 channel_name="[CHANNEL_NAME]"' \
+    'IPv4 [IP_ADDRESS] IPv6 [IP_ADDRESS] link-v6 [IP_ADDRESS] full-v6 [IP_ADDRESS]' \
+    'test playback::live_hardware::tests firmware=20260313 build=89ABCDEF' \
     '2026-09-04T15:42:05.075786Z INFO GStreamer 1.28.6 model=HDHR5-4K tuners=4 channels=72' \
     'live ATSC 1.0: selected responsive favorite channel 5.1' \
     'live ATSC 1.0 evidence: handoff 450us, first video frame 900ms, stable decode 910ms after PLAYING' \
