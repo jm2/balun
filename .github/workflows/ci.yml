@@ -484,9 +484,13 @@ jobs:
         if: runner.os == 'macOS'
         run: /bin/bash scripts/build-macos.sh --diagnostic
 
+      # The GTK-free diagnostic builds for the native MSVC host target outside
+      # MSYS2, so the job-level GNU-LLVM desktop profile must not reach it.
       - name: Build Windows diagnostic through helper
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          RUST_TARGET: ''
         run: ./scripts/build-windows.ps1 -Diagnostic
 
       - name: Stage, sign, and probe the macOS app through helper
