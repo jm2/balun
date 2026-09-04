@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closure against pinned component policies, performing ad-hoc codesigning, running an isolated
   read-only runtime probe loopback test from a relocated path with spaces, and generating a
   drag-to-Applications disk image `dist/Balun.dmg` via `create-dmg`.
-- **Prerelease verification and checksums** — Add the immutable release verification check
+- **Release verification and checksums** — Add the immutable release verification check
   (`scripts/release_check.py`) ensuring Semantic Version agreement across Cargo manifests, the
   lockfile, AppStream metainfo, and changelog release links, and enforce exact release candidate
   inventories and SHA-256 digests (`SHA256SUMS.txt`).
@@ -97,6 +97,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime supplies every structural playback factory, and app-payload validation. CI builds
   and reopens an x86_64 bundle; the release-candidate workflow builds x86_64 and aarch64
   bundles as artifacts.
+- **Native Linux packages** — Add Debian metadata for amd64 and arm64, RPM metadata for x86_64
+  and aarch64, and an x86_64 Arch recipe. `scripts/build-linux.sh --deb`, `--rpm`, and
+  `--arch-pkg` reuse the locked desktop build, require an explicitly preinstalled pinned
+  packager, validate the completed payload, and reopen the final package without installing tools
+  or dependencies.
 - **Windows ZIP and installer** — `scripts\build-windows.ps1 -Zip` stages a self-contained
   `dist\balun-windows` tree in the MSYS2 prefix shape (`bin\balun.exe` beside its DLLs,
   `lib\gstreamer-1.0`, `libexec\gstreamer-1.0`, `share`) from a reviewed, capability-derived
@@ -106,14 +111,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MPEG-2 fixture decoded through the production stream transport), reopens the ZIP against the
   staged tree, and `-InnoSetup` compiles `balun-setup.exe` from a new Inno Setup recipe with a
   deterministic application GUID. The release component policy is applied at every copy, during
-  import traversal, over the completed tree, and inside the reopened archive. CI builds and
-  reopens the ZIP on every change; the release-candidate workflow adds the ZIP and installer to
-  the exact artifact inventory.
+  import traversal, over the completed tree, and inside the reopened archive. Strict x86_64
+  CLANG64 and ARM64 CLANGARM64 profiles bind the Rust target, MSYS2 prefix, every PE machine type,
+  the probe receipt, and the Inno Setup architecture as one tuple. CI builds and reopens both ZIPs;
+  the release-candidate workflow adds both ZIPs and both installers to the exact inventory.
 - **Release automation** — The release-candidate workflow now checks that the tag agrees with
-  `Cargo.toml`, `Cargo.lock`, the changelog section and compare link, and the AppStream release
-  (`scripts/release_check.py`), requires the exact artifact inventory with SHA-256 sums, and
-  creates a draft GitHub release from a job that checks out no source. Every action the workflow
-  runs is pinned to an immutable commit. Publishing stays manual.
+  `Cargo.toml`, `Cargo.lock`, the Arch recipe, the changelog section and compare link, and the
+  AppStream release (`scripts/release_check.py`). It requires exactly 12 binary artifacts—two
+  Flatpaks, five native Linux packages, one Apple Silicon DMG, and four Windows packages—plus
+  `SHA256SUMS.txt`, then creates a draft GitHub release from a job that checks out no source.
+  Every action the workflow runs is pinned to an immutable commit. Publishing stays manual.
 - **Channel search and favorites filter** — A search field above the channel list matches a
   channel number prefix or part of a name, and a star toggle shows favorites only. Filtering
   hides rows without changing device or channel identity, keeps the highlighted channel when it
@@ -155,14 +162,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed decoders for each broadcast stream type and the audio sinks, so each platform's codec
   contract can be recorded from the same command; every native CI lane runs it.
 - **Routed discovery foundation** — Native Linux route inspection, a keyed and topology-redacted
-  approval policy, a durable private approval store, and fail-closed route and store observers.
-  None of it is connected to the user interface yet, so no automatic route-derived scan runs.
+  approval policy, a durable private approval store, and fail-closed route and store observers
+  provide the authority boundary used by the monitored runner and tunnel-search interface.
 - **Build helpers and CI** — Tributary-derived Linux, macOS, and Windows helpers with the same
   filenames and flags, locked formatting, strict Clippy, debug and release tests, an exact-MSRV
-  job, native macOS and Windows checks, and an immutable-tag release-candidate workflow.
-- **Packaging scaffolding** — The pinned Flatpak Cargo-source generator, a reviewed Flatpak
-  permission contract, and Linux, Flatpak, and macOS artifact validators with synthetic fixtures,
-  ready for the first real packages.
+  job, native macOS, Windows x86_64, and Windows ARM64 checks, and an immutable-tag
+  release-candidate workflow.
+- **Package policy gates** — The pinned Flatpak Cargo-source generator, reviewed Flatpak
+  permission contract, and Linux, Flatpak, macOS, and Windows artifact validators now gate the
+  corresponding completed and reopened packages as well as their adversarial fixtures.
 - **Rust floor synchronization** — One helper keeps `Cargo.toml`, the Dependabot proposal
   manifest, the MSRV job, and the README compiler declarations aligned.
 - **v0.1 plan and task ledger** — The product plan, architecture, safety constraints, and a
@@ -210,8 +218,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   placeholder switches; the default run is still build-only, and `-Package` and `-Installer`
   are gone.
 - **Helper parity with Tributary** — Restore the release-profile Clippy pass, a read-only check
-  that the Windows `x86_64-pc-windows-gnullvm` target is installed, install hints for missing
-  tools and development packages, and the formatting pre-commit hook.
+  that the selected Windows GNU-LLVM target is installed, install hints for missing tools and
+  development packages, and the formatting pre-commit hook.
 - **Windows local discovery** — Derive each network from the OS-reported prefix length and send
   the vendor-compatible limited broadcast from each interface-bound socket. Link-local IPv6 probes
   are omitted until lineup HTTP can preserve their scope.
@@ -239,33 +247,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bounded routed discovery** — Range enumeration requires an explicit RFC 1918 range no wider
   than `/24`, caps candidates, rate, and concurrency, and keeps point-to-point interfaces out of
   ordinary local discovery. Automatic route-derived authority fails closed on ambiguous topology,
-  changed policy, clock rollback, or uncertain durability, and stays disconnected until a
-  production runner exists.
+  changed policy, clock rollback, or uncertain durability; the Linux production runner rechecks
+  that authority and its pinned interface before every datagram.
 - **Playback component boundary** — The required GStreamer factories are a startup capability
-  check, not a bundling allowlist; future packages must derive and review their real plugin
-  closure.
+  check, not a bundling allowlist; each self-contained package derives and reviews its real plugin
+  closure separately.
 - **Release component policy** — A shared, fail-closed policy rejects dedicated optical-disc
   decryption and proprietary DRM components across repository inputs, build helpers, and the
-  preparatory Linux, Flatpak, and macOS artifact validators, while leaving ordinary codecs, TLS,
-  and general-purpose cryptography untouched.
+  completed Linux, Flatpak, macOS, and Windows artifact validators, while leaving ordinary codecs,
+  TLS, and general-purpose cryptography untouched.
 
 ### Privacy
 
 - **Local and explicit discovery only** — Balun contacts tuners on attached networks or at
-  addresses and ranges you supply; it never calls a cloud discovery service, analytics endpoint,
-  or guide scraper.
+  addresses and ranges you supply or explicitly approve; it never calls a cloud discovery service,
+  analytics endpoint, or guide scraper.
 - **Credential-safe diagnostics** — Advertised URLs are hidden, `DeviceAuth` is never read,
   stored, or printed, and metadata buffers are wiped after parsing.
 - **Topology-redacted approvals** — Remembered routed-discovery consent stores only keyed
   fingerprints and bounded policy state, never raw routes, interface names, or prefixes.
+- **Sanitized packaged-hardware evidence** — The opt-in hardware validation wrapper sanitizes the
+  displayed and saved validator stream, including complete IPv4 and IPv6 addresses and contextual
+  device identifiers, while retaining unrelated module paths, firmware values, and measurements.
+  The sanitizer exists only on that test path; production live logging is unchanged.
 
 ### Known limitations
 
-- **No live-tuner acceptance of a package yet** — The Windows package proves that its staged
-  runtime decodes the synthetic fixture and launches; tuning real channels from a package is
-  P4.1, and the packaged app shares GStreamer's default per-user registry cache.
-- **No published packages** — The Flatpak bundle and the Windows ZIP and installer are built
-  and validated but not published; deb, rpm, DMG, and winget packaging are planned.
+- **Binary publication is manual** — The complete package inventory can remain a draft after every
+  build, payload, runtime, checksum, and inventory gate passes. It is official only when the
+  `v0.1.0` release is visible on GitHub Releases.
+- **Architecture evidence differs** — ARM64 Linux and Windows candidates run native CI build and
+  package gates, but the recorded physical-tuner trials are platform-level evidence and do not
+  separately cover every CPU architecture and package format.
+- **Windows plugin cache** — The Windows package uses GStreamer's default per-user registry cache;
+  the macOS launcher instead confines its cache to Balun's private user cache directory.
 - **No program guide** — Guide data is a v0.2 candidate. The tested HDHomeRun CONNECT's
   per-channel streams carry no PSIP tables, so an in-band guide needs a full-multiplex crawl or
   XMLTV.

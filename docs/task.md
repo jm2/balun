@@ -29,16 +29,17 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **30/30 (100.0%)** records complete. This is a dependency ledger,
+Current status: **29/30 (96.7%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
 ## Current focus
 
-All 30 records across P0 through P4 are complete and merged onto `main`. Linux,
-macOS, and Windows live playback, codec contracts, routed tunnel discovery, and
-packaged desktop bundles (Flatpak, Windows ZIP/installer, and macOS DMG) are fully
-validated against real physical hardware and pass 100% green CI gates.
+Implementation and documentation records through P4.4 are complete. The
+remaining record is P4.5: create the final signed annotated tag from the
+release commit, run the release-candidate workflow, review its exact
+12-artifact inventory and checksums, and publish the draft. An unpublished
+draft does not count as a release.
 
 ## P0 — Evidence and contract
 
@@ -122,21 +123,23 @@ validated against real physical hardware and pass 100% green CI gates.
 - [x] **P3.1 — Add desktop metadata and assets.** Land the icon, desktop entry,
   AppStream metadata, and a screenshot with exact Balun identity data.
 
-- [x] **P3.2 — Build Flatpak x86_64 and aarch64.** Generate locked sources,
-  stage the capability-derived runtime, keep the reviewed permission policy,
-  and validate the reopened bundle.
+- [x] **P3.2 — Build the Linux package set.** Generate and validate Flatpak
+  x86_64 and aarch64, Debian amd64 and arm64, RPM x86_64 and aarch64, and Arch
+  x86_64 packages from locked inputs; reopen every artifact through its
+  format-specific gates.
 
-- [x] **P3.3 — Build the Windows x86_64 ZIP and installer.** Stage the GTK and
-  GStreamer closure, validate PE imports and the completed tree, and reopen
-  both artifacts.
+- [x] **P3.3 — Build the Windows ZIPs and installers.** Stage the GTK and
+  GStreamer closure for strict x86_64 and ARM64 profiles, validate PE
+  architecture, imports, and the completed tree, and reopen all four
+  artifacts.
 
 - [x] **P3.4 — Build the macOS arm64 app and DMG.** Complete the app tree,
   runtime closure, Mach-O inspection, signing policy, and reopened DMG check.
 
 - [x] **P3.5 — Complete release automation.** Build every configured release
-  artifact from one signed annotated tag, require an exact artifact inventory
-  and checksums, create a draft release, and confine release-write authority to
-  the final no-source job.
+  artifact from one signed annotated tag, require exactly 12 public binary
+  artifacts and `SHA256SUMS.txt`, create a draft release, and confine
+  release-write authority to the final no-source job.
 
 - [x] **P3.6 — Harden CI for packages.** Add the dependency audit and
   Markdown, TOML, YAML, and GitHub Actions linting.
@@ -159,7 +162,7 @@ validated against real physical hardware and pass 100% green CI gates.
   supported devices, platforms, codecs, and limitations from evidence; add
   CONTRIBUTING and SECURITY.
 
-- [x] **P4.5 — Cut and publish the prerelease.** Pass every gate, create the
+- [ ] **P4.5 — Cut and publish v0.1.0.** Pass every gate, create the
   signed annotated `v0.1.0` tag, validate the artifact set, and publish
   release notes.
 

@@ -1,6 +1,6 @@
 # Balun v0.1 implementation plan
 
-- Status: Active
+- Status: Release candidate
 - Target: v0.1.0
 - Last updated: 2026-09-04
 
@@ -59,8 +59,9 @@ Included:
 - Stop, volume, mute, fullscreen, connecting and failure states.
 - Channel search, a favorites filter, and keyboard navigation.
 - Versioned settings for remembered devices and window state.
-- Linux, macOS, and Windows CI plus Flatpak, Windows x86_64, and macOS arm64
-  packages.
+- Linux, macOS, and Windows CI plus Flatpak x86_64/aarch64, Debian
+  amd64/arm64, RPM x86_64/aarch64, Arch x86_64, macOS arm64, and Windows
+  x86_64/ARM64 packages.
 
 Explicitly deferred:
 
@@ -74,11 +75,9 @@ Explicitly deferred:
 - A merged "all devices" channel list.
 - Transcoding, relaying, or general remote-internet streaming.
 - Background EPG harvesting that consumes an otherwise unused tuner.
-- Windows arm64 and native Linux distribution packages until they are
-  exercised regularly.
 - SBOM, build provenance, fuzzing, and a coverage ratchet: beta.
 
-## 3. Current baseline (2026-09-03)
+## 3. Current release candidate (2026-09-04)
 
 Built and tested:
 
@@ -100,9 +99,9 @@ Built and tested:
 - A loopback fake HDHomeRun device driving the real controller, transport, and
   session end to end, plus a synthetic MPEG-2 acceptance test under headless
   Wayland.
-- Tributary-derived build helpers with a runtime plugin gate, installed-runtime
-  playback probes, five CI lanes, a release-candidate workflow, and preparatory
-  packaging validators.
+- Tributary-derived build helpers with runtime plugin gates, installed-runtime
+  playback probes, native CI lanes, a release-candidate workflow, and
+  completed-artifact validators.
 - Linux route inspection, a keyed approval policy, a durable approval store,
   and route/store observers, connected end to end: the sidebar's tunnel
   search proposes, asks for approval once per exact route set, and shows
@@ -118,11 +117,16 @@ Built and tested:
 - Hostname entry resolved on the controller to a bounded set of unicast
   addresses, probed one at a time and remembered by name.
 
-- A self-contained Windows x86_64 package: a reviewed, capability-derived
-  GStreamer closure staged in the MSYS2 prefix shape, PE-import and
-  completed-tree inspection, a packaged-runtime probe that decodes the
-  synthetic fixture inside the staged tree, and a reopened ZIP and Inno Setup
-  installer, built by CI and the release-candidate workflow.
+- Self-contained Windows x86_64 and ARM64 packages: a reviewed,
+  capability-derived GStreamer closure staged from the matching MSYS2 CLANG64
+  or CLANGARM64 profile, architecture and PE-import inspection, completed-tree
+  checks, a packaged-runtime probe that decodes the synthetic fixture, and
+  reopened ZIPs and Inno Setup installers.
+
+- Native Linux packages: Debian amd64 and arm64, RPM x86_64 and aarch64, and
+  Arch x86_64 packages built from locked inputs with pinned, preinstalled
+  packagers and format-specific reopened-artifact validation, alongside the
+  two Flatpak architectures.
 
 - Live routed tunnel discovery and multi-site validation verified across a real
   tunnel (UniFi Site Magic / WireGuard): broadcast isolation preserved, traffic
@@ -286,8 +290,9 @@ tuners or a tuning failure and must not trigger aggressive retries.
 Codec policy:
 
 - MPEG-2, H.264, AC-3, and AAC over MPEG-TS are the v0.1 contract; Windows has
-  demonstrated it against real ATSC 1.0 channels, and P0 records the exact
-  per-platform plugin set for packaging.
+  demonstrated it against real ATSC 1.0 channels, Linux and macOS have each
+  played ATSC 1.0 with audio, and P0 records the exact per-platform plugin set
+  for packaging.
 - HEVC decodes where gst-libav or a platform decoder is installed and is
   reported as a capability, not promised.
 - AC-4 has no open decoder; those channels fail closed with a message that names
@@ -326,9 +331,11 @@ change is not complete until macOS and Windows pass.
 
 CI on every push and pull request: Linux quality (policy tests, fmt, strict
 Clippy, debug and release tests), MSRV, Linux desktop (build, installed-runtime
-probes, Wayland lifecycle smokes), and macOS and Windows compile smoke lanes
-that build the desktop through the same helpers developers use. A manual
-release-candidate workflow builds an immutable tag on all three platforms.
+probes, Wayland lifecycle smokes), macOS app smoke, and Windows x86_64 and ARM64
+compile/package smoke lanes that build through the same helpers developers use.
+A manual release-candidate workflow builds an immutable tag on all three
+platforms and requires exactly 12 public binary artifacts plus
+`SHA256SUMS.txt`.
 
 Release contract:
 
@@ -368,15 +375,15 @@ network changes, expose diagnostics, and prove one routed case plus two-site
 multi-device validation. Exit: local and remote tuners coexist within the
 documented traffic budget with deterministic cancellation and revocation.
 
-**P3 — Packages.** Desktop metadata and assets, then Flatpak, Windows ZIP and
-installer, and macOS DMG with the capability-derived closure and all four
-component gates, release automation, and the CI hardening packages make
-meaningful. Exit: every artifact is reopened, probed, and validated before
-upload.
+**P3 — Packages.** Desktop metadata and assets; Flatpak, Debian, RPM, and Arch
+packages; Windows x86_64 and ARM64 ZIPs and installers; and the Apple Silicon
+DMG, with the applicable runtime closure and component gates. Release
+automation and CI hardening complete the phase. Exit: every artifact is
+reopened, probed where it carries a runtime, and validated before upload.
 
 **P4 — v0.1.0.** Validate the packaged artifacts on every platform,
 complete the hardware matrix and budgets, run the security and privacy review,
-publish the support and limitations matrix, and cut the prerelease.
+publish the support and limitations matrix, and cut the release.
 
 v0.2 candidates: an in-band guide crawled from full-multiplex streams, since
 per-channel streams carry no PSIP (P0.8); XMLTV file or URL with explicit
