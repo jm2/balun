@@ -42,7 +42,7 @@ address so you know which tuner failed.
 | Route-table-derived tunnel discovery | 🚧 Linux: approve each route set once, verified across an owned routed WireGuard tunnel; macOS and Windows in a future release |
 | Program guide (in-band PSIP/EIT, XMLTV) | 🚧 Future release |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
-| Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; codec contract frozen, see the support matrix |
+| Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; live timing accounts for delayed media arrival; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Direct downloads from the Releases page; no COPR, AUR, or winget yet |

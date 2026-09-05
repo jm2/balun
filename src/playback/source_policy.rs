@@ -19,11 +19,14 @@ use super::PlaybackFactory;
 use super::transport::{StreamTransport, TransportConfig};
 use crate::controller::StreamHandoff;
 
+#[cfg(test)]
+mod timing_tests;
+
 const SOURCE_SETUP_SIGNAL: &str = "source-setup";
 const REJECTION_MESSAGE: &str = "balun-source-policy-rejected";
 const STREAM_CAPS_NAME: &str = "video/mpegts";
 const STREAM_CAPS_SYSTEMSTREAM: &str = "systemstream";
-const FORMAT_NICK: &str = "bytes";
+const FORMAT_NICK: &str = "time";
 const STREAM_TYPE_NICK: &str = "stream";
 /// Bounded bytes `appsrc` may hold before the feeder blocks.
 const MAX_QUEUED_BYTES: u64 = 4 * 1_024 * 1_024;
@@ -320,14 +323,18 @@ fn enum_nick_is(source: &gst::Element, name: &str, nick: &str) -> bool {
         .is_some_and(|(_, value)| value.nick() == nick)
 }
 
-/// Configure an `appsrc` as Balun's bounded live MPEG-TS byte feed and read
-/// every setting back. This performs no network work and never sees a URL.
+/// Configure Balun's bounded live MPEG-TS feed with arrival timestamps.
+/// A TIME segment lets tsdemux map broadcast PCR/PTS onto the running clock;
+/// BYTES instead anchors media to stream offsets and disables clock skew
+/// correction, leaving late-starting media permanently behind the sink.
+/// This performs no network work and never sees a URL.
 pub(super) fn configure_and_verify(source: &gst::Element) -> bool {
     if !readable_writable_property::<gst::Caps>(source, "caps")
         || !readable_writable_property::<bool>(source, "is-live")
         || !readable_writable_property::<bool>(source, "block")
         || !readable_writable_property::<bool>(source, "emit-signals")
         || !readable_writable_property::<bool>(source, "do-timestamp")
+        || !readable_writable_property::<i64>(source, "min-latency")
         || !readable_writable_property::<u64>(source, "max-bytes")
     {
         return false;
@@ -348,7 +355,9 @@ pub(super) fn configure_and_verify(source: &gst::Element) -> bool {
     source.set_property("is-live", true);
     source.set_property("block", true);
     source.set_property("emit-signals", false);
-    source.set_property("do-timestamp", false);
+    source.set_property("do-timestamp", true);
+    // The timestamp describes arrival at appsrc, not an earlier capture.
+    source.set_property("min-latency", 0_i64);
     source.set_property("max-bytes", MAX_QUEUED_BYTES);
 
     source
@@ -359,7 +368,8 @@ pub(super) fn configure_and_verify(source: &gst::Element) -> bool {
         && source.property::<bool>("is-live")
         && source.property::<bool>("block")
         && !source.property::<bool>("emit-signals")
-        && !source.property::<bool>("do-timestamp")
+        && source.property::<bool>("do-timestamp")
+        && source.property::<i64>("min-latency") == 0
         && source.property::<u64>("max-bytes") == MAX_QUEUED_BYTES
 }
 
@@ -504,9 +514,10 @@ mod tests {
         assert!(source.property::<bool>("is-live"));
         assert!(source.property::<bool>("block"));
         assert!(!source.property::<bool>("emit-signals"));
-        assert!(!source.property::<bool>("do-timestamp"));
+        assert!(source.property::<bool>("do-timestamp"));
+        assert_eq!(source.property::<i64>("min-latency"), 0);
         assert_eq!(source.property::<u64>("max-bytes"), 4 * 1_024 * 1_024);
-        assert!(enum_nick_is(&source, "format", "bytes"));
+        assert!(enum_nick_is(&source, "format", "time"));
         assert!(enum_nick_is(&source, "stream-type", "stream"));
         let caps = source.property::<Option<gst::Caps>>("caps").unwrap();
         assert_eq!(caps.to_string(), "video/mpegts, systemstream=(boolean)true");

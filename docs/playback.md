@@ -259,9 +259,10 @@ consulted because no GStreamer element ever performs the request.
 The source policy validates `playbin3`'s `source-setup` signal schema before
 playback starts. Its worker-thread-safe handler accepts only the exact
 `appsrc` factory, validates native property types and mutability, and applies
-and reads back `video/mpegts, systemstream=true` caps, byte format, stream
-type, live and blocking behavior, disabled signal emission and timestamping,
-and a 4 MiB queued-byte limit. It then consumes the one authorized handoff and
+and reads back `video/mpegts, systemstream=true` caps, time format, stream
+type, live and blocking behavior, disabled signal emission, arrival
+timestamping with zero source minimum latency, and a 4 MiB queued-byte limit.
+It then consumes the one authorized handoff and
 starts the transport. Any other, repeated, retired, or unconfigurable source is
 locked and requested to `NULL`; a single field-free application marker feeds
 the generation-owned error and bounded teardown path without native or
@@ -314,7 +315,22 @@ the bus. The running clock's base time therefore starts with stream bytes
 rather than with the tuner request, so the demuxer's live latency budget
 covers decoding instead of tuner lock; without the hold, a slow lock left
 every later buffer late and the audio sink clipped it into stutter until the
-next tune.
+next tune. The source also supplies a time segment and running-time arrival
+timestamps so `tsdemux` can map broadcast PCR/PTS onto the receiver's clock
+and correct clock skew. A byte segment disables that correction: media
+arriving well after the initial transport bytes stays late even with the
+first-byte hold. Audio ringbuffers can discard those samples while the
+base-sink statistics still report rendered buffers with zero drops; those
+counters alone do not establish audible output.
+
+A deterministic regression advances a private test clock five seconds
+between initial TS null packets and the checked-in MPEG-2 fixture, then
+checks the demuxed media's running time. It needs neither a decoder nor an
+audio device and fails with the former byte-segment configuration. An
+additional development probe using synthetic AC-3 audio and a simulated
+audio device reproduced normal, fragmented, and silent output as startup
+delay increased; the time segment and arrival timestamps restored output
+in the delayed case. This is synthetic evidence, not a new hardware trial.
 
 Network-free loopback tests cover accepted configuration, repeated, foreign,
 and retired source rejection, handoff zeroization, worker-thread
