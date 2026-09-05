@@ -71,8 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the tag against every version declaration, requires exactly 12 binary artifacts plus
   `SHA256SUMS.txt`, and creates a draft release from a job that checks out no source.
 - **Build helpers and CI** — Tributary-derived Linux, macOS, and Windows helpers with the same
-  filenames and flags, runtime plugin gates, installed-runtime playback probes, strict Clippy on
-  every native lane, an exact-MSRV job (Rust 1.98), a dependency audit, and repository linting.
+  filenames and flags, a `--run` (`-Run`) build-and-launch route, runtime plugin gates,
+  installed-runtime playback probes, strict Clippy on every native lane, an exact-MSRV job
+  (Rust 1.98), a dependency audit, and repository linting.
 - **Verified on real hardware** — Live TV with audio on Linux, macOS, and Windows against CONNECT,
   CONNECT 4K, and PRIME tuners across two sites, including Clear QAM, DRM refusal, tuner-busy
   handling, and routed tunnel discovery within a 64 packet/s budget with no idle traffic.
