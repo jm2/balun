@@ -1407,7 +1407,7 @@ mod tests {
             Some("HDHR5-4K".to_owned()),
             Some(4),
             "192.0.2.44:65001".parse().unwrap(),
-            1,
+            vec!["192.0.2.44:65001".parse().unwrap()],
         )
         .unwrap();
         let snapshot = ApplicationSnapshot::new(

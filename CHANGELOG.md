@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Routed discovery survives route-event bursts** — On Linux a kernel or NetworkManager change
+  arrives as several datagrams microseconds apart; the observer pair replaced after the first one
+  lost its baseline to the rest and stayed down, failing the next routed request. The pair now
+  waits for the burst to settle, retries a rejected baseline a bounded number of times, and is
+  re-established by the next routed request; the log names the source that changed.
+
 ## [0.1.0] — 2026-09-04
 
 ### Added
@@ -16,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a tuner behind WireGuard or another routed link, and enumerate one approved private range no
   wider than `/24` from the diagnostic.
 - **Remembered devices** — A tuner found by address or hostname is remembered once it answers and
-  probed again at the next launch, up to 32 entries, once the launch discovery settles.
+  probed again at the next launch, up to 32 entries, once the launch discovery settles;
+  right-click a listed device to forget its entry.
 - **Stable device and channel identity** — One validated DeviceID per tuner even when it answers
   at several addresses, stale addresses that expire independently, and lineups that are never
   merged across devices.
@@ -72,8 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the tag against every version declaration, requires exactly 12 binary artifacts plus
   `SHA256SUMS.txt`, and creates a draft release from a job that checks out no source.
 - **Build helpers and CI** — Tributary-derived Linux, macOS, and Windows helpers with the same
-  filenames and flags, runtime plugin gates, installed-runtime playback probes, strict Clippy on
-  every native lane, an exact-MSRV job (Rust 1.98), a dependency audit, and repository linting.
+  filenames and flags, a `--run` (`-Run`) build-and-launch route, runtime plugin gates,
+  installed-runtime playback probes, strict Clippy on every native lane, an exact-MSRV job
+  (Rust 1.98), a dependency audit, and repository linting.
 - **Verified on real hardware** — Live TV with audio on Linux, macOS, and Windows against CONNECT,
   CONNECT 4K, and PRIME tuners across two sites, including Clear QAM, DRM refusal, tuner-busy
   handling, and routed tunnel discovery within a 64 packet/s budget with no idle traffic.

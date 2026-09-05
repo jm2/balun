@@ -200,6 +200,58 @@ pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
                 "GStreamer reported a missing plugin"
             );
         }
+        gst::MessageView::Warning(warning) => {
+            let native = warning.error();
+            tracing::warn!(
+                target: "balun::playback",
+                source = %source,
+                domain = %native.domain().as_str(),
+                code = native.code(),
+                message = %native.message(),
+                debug = %warning.debug().map(|text| text.to_string()).unwrap_or_default(),
+                "GStreamer reported a warning"
+            );
+        }
+        gst::MessageView::StreamCollection(collection) => {
+            let collection = collection.stream_collection();
+            tracing::info!(
+                target: "balun::playback",
+                source = %source,
+                streams = collection.len(),
+                collection = %describe_stream_collection(&collection),
+                "stream collection"
+            );
+        }
+        gst::MessageView::StreamsSelected(selected) => {
+            let streams = selected
+                .streams()
+                .map(|stream| describe_stream(&stream))
+                .collect::<Vec<_>>()
+                .join("; ");
+            tracing::info!(
+                target: "balun::playback",
+                source = %source,
+                selected = %streams,
+                "streams selected"
+            );
+        }
+        gst::MessageView::ClockLost(_) => {
+            tracing::warn!(target: "balun::playback", source = %source, "pipeline clock lost");
+        }
+        gst::MessageView::Latency(_) => {
+            tracing::debug!(target: "balun::playback", source = %source, "latency changed");
+        }
+        gst::MessageView::Qos(qos) => {
+            let (processed, dropped) = qos.stats();
+            tracing::debug!(
+                target: "balun::playback",
+                source = %source,
+                live = qos.get().0,
+                processed = ?processed,
+                dropped = ?dropped,
+                "sink quality of service"
+            );
+        }
         gst::MessageView::Application(application) => {
             let name = application.structure().map_or_else(
                 || String::from("<none>"),
@@ -209,6 +261,174 @@ pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
         }
         _ => {}
     }
+}
+
+/// Log what the running pipeline actually renders audio with: every audio
+/// sink element, its negotiated raw caps, and the pipeline's live latency.
+/// Caps carry codec and format fields only, never an address or URL.
+pub(super) fn log_playing_diagnostics(pipeline: &gst::Element) {
+    let mut query = gst::query::Latency::new();
+    let latency = if pipeline.query(&mut query) {
+        let (live, minimum, maximum) = query.result();
+        format!(
+            "live={live} min={minimum} max={}",
+            maximum.map_or_else(|| String::from("none"), |value| value.to_string())
+        )
+    } else {
+        String::from("unknown")
+    };
+    let audio_sinks = sink_elements(pipeline, "Audio")
+        .into_iter()
+        .map(|element| {
+            let caps = element
+                .static_pad("sink")
+                .and_then(|pad| pad.current_caps())
+                .map_or_else(
+                    || String::from("not negotiated"),
+                    |caps| describe_caps(&caps),
+                );
+            format!("{} [{caps}]", factory_name(&element))
+        })
+        .collect::<Vec<_>>();
+    tracing::info!(
+        target: "balun::playback",
+        latency = %latency,
+        audio_sinks = %join_or_none(audio_sinks),
+        "pipeline playing"
+    );
+}
+
+/// Log how many buffers every audio and video sink rendered and dropped as
+/// late before the pipeline is torn down; a silent tune shows up here as a
+/// sink that dropped what it received.
+pub(super) fn log_teardown_diagnostics(pipeline: &gst::Element) {
+    let sinks = sink_elements(pipeline, "Audio")
+        .into_iter()
+        .chain(sink_elements(pipeline, "Video"))
+        .map(|element| {
+            let stats = element
+                .has_property("stats")
+                .then(|| element.property::<gst::Structure>("stats"))
+                .map_or_else(
+                    || String::from("no stats"),
+                    |stats| {
+                        let field = |name: &str| {
+                            stats
+                                .get::<u64>(name)
+                                .map_or_else(|_| String::from("?"), |value| value.to_string())
+                        };
+                        format!(
+                            "rendered={} dropped={}",
+                            field("rendered"),
+                            field("dropped")
+                        )
+                    },
+                );
+            format!("{} [{stats}]", factory_name(&element))
+        })
+        .collect::<Vec<_>>();
+    tracing::info!(
+        target: "balun::playback",
+        sinks = %join_or_none(sinks),
+        "pipeline sink statistics at teardown"
+    );
+}
+
+fn sink_elements(pipeline: &gst::Element, klass_word: &str) -> Vec<gst::Element> {
+    pipeline
+        .downcast_ref::<gst::Bin>()
+        .map_or_else(Vec::new, |bin| {
+            bin.iterate_recurse()
+                .into_iter()
+                .flatten()
+                .filter(|element| {
+                    element.factory().is_some_and(|factory| {
+                        factory.has_type(gst::ElementFactoryType::SINK)
+                            && factory
+                                .metadata(gst::ELEMENT_METADATA_KLASS)
+                                .is_some_and(|klass| klass.contains(klass_word))
+                    })
+                })
+                .collect()
+        })
+}
+
+fn factory_name(element: &gst::Element) -> String {
+    element.factory().map_or_else(
+        || String::from("<none>"),
+        |factory| factory.name().to_string(),
+    )
+}
+
+fn join_or_none(parts: Vec<String>) -> String {
+    if parts.is_empty() {
+        String::from("none")
+    } else {
+        parts.join("; ")
+    }
+}
+
+fn describe_stream_collection(collection: &gst::StreamCollection) -> String {
+    let streams = collection
+        .iter()
+        .map(|stream| describe_stream(&stream))
+        .collect::<Vec<_>>();
+    if streams.is_empty() {
+        String::from("none")
+    } else {
+        streams.join("; ")
+    }
+}
+
+fn describe_stream(stream: &gst::Stream) -> String {
+    let kind = stream.stream_type();
+    let kind = if kind.contains(gst::StreamType::AUDIO) {
+        "audio"
+    } else if kind.contains(gst::StreamType::VIDEO) {
+        "video"
+    } else if kind.contains(gst::StreamType::TEXT) {
+        "text"
+    } else {
+        "other"
+    };
+    let flags = stream.stream_flags();
+    let caps = stream
+        .caps()
+        .map_or_else(|| String::from("no caps"), |caps| describe_caps(&caps));
+    let mut text = format!("{kind} {caps}");
+    if flags.contains(gst::StreamFlags::SPARSE) {
+        text.push_str(" sparse");
+    }
+    if flags.contains(gst::StreamFlags::SELECT) {
+        text.push_str(" default");
+    }
+    text
+}
+
+/// The first structure's name plus the few fields that identify a stream's
+/// format; other fields (and every other structure) are omitted.
+fn describe_caps(caps: &gst::CapsRef) -> String {
+    let Some(structure) = caps.structure(0) else {
+        return String::from("empty caps");
+    };
+    let mut text = structure.name().to_string();
+    for field in [
+        "mpegversion",
+        "profile",
+        "channels",
+        "rate",
+        "width",
+        "height",
+        "interlace-mode",
+        "format",
+    ] {
+        if let Ok(value) = structure.value(field)
+            && let Ok(rendered) = value.serialize()
+        {
+            text.push_str(&format!(" {field}={rendered}"));
+        }
+    }
+    text
 }
 
 /// Native error and debug text, source names, details, and every structure
@@ -270,6 +490,47 @@ fn decode_transport_failure(structure: &gst::StructureRef) -> PlaybackPipelineFa
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn caps_and_stream_descriptions_name_the_format_only() {
+        gst::init().unwrap();
+        let caps = gst::Caps::builder("audio/x-ac3")
+            .field("channels", 6i32)
+            .field("rate", 48_000i32)
+            .field("alignment", "frame")
+            .build();
+        assert_eq!(
+            super::describe_caps(&caps),
+            "audio/x-ac3 channels=6 rate=48000"
+        );
+        let video = gst::Caps::builder("video/mpeg")
+            .field("mpegversion", 2i32)
+            .field("width", 1920i32)
+            .field("height", 1080i32)
+            .field("interlace-mode", "interleaved")
+            .build();
+        assert_eq!(
+            super::describe_caps(&video),
+            "video/mpeg mpegversion=2 width=1920 height=1080 interlace-mode=interleaved"
+        );
+        assert_eq!(super::describe_caps(&gst::Caps::new_empty()), "empty caps");
+
+        let stream = gst::Stream::new(
+            None,
+            Some(&caps),
+            gst::StreamType::AUDIO,
+            gst::StreamFlags::SELECT,
+        );
+        assert_eq!(
+            super::describe_stream(&stream),
+            "audio audio/x-ac3 channels=6 rate=48000 default"
+        );
+        let collection = gst::StreamCollection::builder(None).stream(stream).build();
+        assert_eq!(
+            super::describe_stream_collection(&collection),
+            "audio audio/x-ac3 channels=6 rate=48000 default"
+        );
+    }
+
     use super::*;
 
     const SECRET_TOKEN: &str = "secret-user-password-192-0-2-77";

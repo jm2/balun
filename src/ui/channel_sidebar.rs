@@ -800,7 +800,7 @@ mod tests {
             Some("HDHomeRun".to_owned()),
             Some(2),
             "192.0.2.10:65001".parse().unwrap(),
-            1,
+            vec!["192.0.2.10:65001".parse().unwrap()],
         )
         .unwrap();
         let snapshot = ApplicationSnapshot::new(

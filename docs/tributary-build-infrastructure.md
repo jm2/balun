@@ -115,9 +115,10 @@ Homebrew's pkg-config resolves its own prefix so the macOS helper never queries
 Homebrew, and `cargo update` is run directly instead of through a helper mode.
 
 Linux and macOS retain the GTK- and GStreamer-free tool behind `--diagnostic`;
-Windows uses `-Diagnostic`. Tributary defines an explicit launch flag only for
-its Windows PowerShell helper, so Balun preserves `-Run` there and does not
-invent a shell `--run`. Linux and macOS derive, validate, and pass the native
+Windows uses `-Diagnostic`. Tributary defines a launch flag only for its
+Windows PowerShell helper; Balun keeps `-Run` there and offers the same
+convenience as `--run` on Linux and macOS, which replaces the helper with the
+built desktop once its gates pass. Linux and macOS derive, validate, and pass the native
 Rust host target explicitly before applying their ELF or Mach-O gates. Windows
 binds either the x86_64 or ARM64 GNU-LLVM target to the matching MSYS2 profile
 and checks every staged PE machine type. This prevents inherited Cargo

@@ -190,6 +190,16 @@ impl RediscoveryQueue {
         self.in_flight = None;
     }
 
+    /// Drop a forgotten target: it leaves the queue, and a probe of it still
+    /// in flight settles without being reported reachable, so the entry
+    /// cannot be remembered again.
+    pub fn forget(&mut self, target: ExactDiscoveryTarget) {
+        self.queue.retain(|queued| *queued != target);
+        if self.in_flight == Some(target) {
+            self.in_flight = None;
+        }
+    }
+
     /// Put a target back at the front after its command could not be queued.
     pub fn send_failed(&mut self, target: ExactDiscoveryTarget) {
         self.awaiting = None;
@@ -500,5 +510,42 @@ mod tests {
             queue.advance(DiscoveryState::idle(generation(1))),
             RediscoveryStep::default()
         );
+    }
+
+    #[test]
+    fn forgotten_targets_leave_the_queue_and_are_never_reported_reachable() {
+        let mut queue = RediscoveryQueue::new([target(1), target(2), target(3)]);
+        assert_eq!(
+            queue.advance(DiscoveryState::idle(generation(0))).send,
+            Some(target(1))
+        );
+
+        queue.forget(target(1));
+        queue.forget(target(2));
+        assert_eq!(queue.remaining(), 1);
+        let step = queue.advance(DiscoveryState::ready_for(
+            generation(1),
+            DiscoveryKind::Exact,
+            0,
+        ));
+        assert_eq!(
+            step,
+            RediscoveryStep {
+                reachable: None,
+                send: Some(target(3)),
+            },
+            "the in-flight reply is not reported and the queue moves on"
+        );
+
+        queue.forget(target(3));
+        assert_eq!(
+            queue.advance(DiscoveryState::ready_for(
+                generation(2),
+                DiscoveryKind::Exact,
+                0
+            )),
+            RediscoveryStep::default()
+        );
+        assert!(queue.is_settled());
     }
 }

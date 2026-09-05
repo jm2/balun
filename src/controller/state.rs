@@ -83,7 +83,8 @@ pub struct DeviceSummary {
     model_number: Option<String>,
     tuner_count: Option<u8>,
     preferred_locator: SocketAddr,
-    locator_count: usize,
+    /// Every address the tuner has been reached at, including the preferred one.
+    locators: Vec<SocketAddr>,
 }
 
 impl DeviceSummary {
@@ -93,21 +94,24 @@ impl DeviceSummary {
         model_number: Option<String>,
         tuner_count: Option<u8>,
         preferred_locator: SocketAddr,
-        locator_count: usize,
+        locators: Vec<SocketAddr>,
     ) -> Result<Self, StateError> {
         let friendly_name = validate_optional_text("friendly name", friendly_name)?;
         let model_number = validate_optional_text("model number", model_number)?;
         if tuner_count.is_some_and(|count| !(1..=32).contains(&count)) {
             return Err(StateError::InvalidTunerCount);
         }
-        if !(1..=MAX_DEVICE_LOCATORS).contains(&locator_count) {
+        if !(1..=MAX_DEVICE_LOCATORS).contains(&locators.len()) {
             return Err(StateError::InvalidLocatorCount {
-                value: locator_count,
+                value: locators.len(),
                 maximum: MAX_DEVICE_LOCATORS,
             });
         }
         if invalid_locator(preferred_locator) {
             return Err(StateError::InvalidPreferredLocator);
+        }
+        if locators.iter().any(|locator| invalid_locator(*locator)) {
+            return Err(StateError::InvalidLocator);
         }
 
         Ok(Self {
@@ -116,7 +120,7 @@ impl DeviceSummary {
             model_number,
             tuner_count,
             preferred_locator,
-            locator_count,
+            locators,
         })
     }
 
@@ -147,7 +151,13 @@ impl DeviceSummary {
 
     #[must_use]
     pub const fn locator_count(&self) -> usize {
-        self.locator_count
+        self.locators.len()
+    }
+
+    /// Every address the tuner has been reached at.
+    #[must_use]
+    pub fn locators(&self) -> &[SocketAddr] {
+        &self.locators
     }
 }
 
@@ -972,7 +982,7 @@ impl ApplicationSnapshot {
                 .all(|(current, prior)| {
                     current.device_id == prior.device_id
                         && current.preferred_locator == prior.preferred_locator
-                        && current.locator_count == prior.locator_count
+                        && current.locators == prior.locators
                         && (current.has_same_metadata(prior)
                             || self.selection_completion_may_enrich(current.device_id, previous))
                 })
@@ -1029,6 +1039,9 @@ pub enum StateError {
 
     #[error("preferred device locator is not a usable unicast socket address")]
     InvalidPreferredLocator,
+
+    #[error("a device locator is not a usable unicast socket address")]
+    InvalidLocator,
 
     #[error("application snapshot exceeds the {maximum}-device limit")]
     TooManyDevices { maximum: usize },
@@ -1124,7 +1137,7 @@ mod tests {
             Some("Synthetic".to_owned()),
             Some(4),
             address.parse().unwrap(),
-            1,
+            vec![address.parse().unwrap()],
         )
         .unwrap()
     }
@@ -1505,7 +1518,7 @@ mod tests {
             discovery_generation,
             selection_generation,
             DiscoveryState::ready(discovery_generation, 0),
-            [DeviceSummary::new(id, None, None, None, address, 1).unwrap()],
+            [DeviceSummary::new(id, None, None, None, address, vec![address]).unwrap()],
             Some(id),
             SelectedLineupState::loading(id, selection_generation),
         )
@@ -1521,7 +1534,7 @@ mod tests {
                 Some("Synthetic model".to_owned()),
                 Some(4),
                 address,
-                1,
+                vec![address],
             )
             .unwrap()],
             Some(id),
@@ -1551,7 +1564,7 @@ mod tests {
                 Some("Known model".to_owned()),
                 Some(4),
                 address,
-                1,
+                vec![address],
             )
             .unwrap()],
             Some(id),
@@ -1563,7 +1576,7 @@ mod tests {
             discovery_generation,
             selection_generation,
             DiscoveryState::ready(discovery_generation, 0),
-            [DeviceSummary::new(id, None, None, None, address, 1).unwrap()],
+            [DeviceSummary::new(id, None, None, None, address, vec![address]).unwrap()],
             Some(id),
             lineup,
         )
@@ -1612,13 +1625,35 @@ mod tests {
                 None,
                 Some(4),
                 "192.0.2.10:65001".parse().unwrap(),
-                1,
+                vec!["192.0.2.10:65001".parse().unwrap()]
             ),
             Err(StateError::SurroundingWhitespace { .. })
         ));
         assert_eq!(
-            DeviceSummary::new(id, None, None, Some(4), "0.0.0.0:65001".parse().unwrap(), 1,),
+            DeviceSummary::new(
+                id,
+                None,
+                None,
+                Some(4),
+                "0.0.0.0:65001".parse().unwrap(),
+                vec!["0.0.0.0:65001".parse().unwrap()]
+            ),
             Err(StateError::InvalidPreferredLocator)
+        );
+        assert_eq!(
+            DeviceSummary::new(
+                id,
+                None,
+                None,
+                Some(4),
+                "192.0.2.10:65001".parse().unwrap(),
+                vec![
+                    "192.0.2.10:65001".parse().unwrap(),
+                    "0.0.0.0:65001".parse().unwrap()
+                ]
+            ),
+            Err(StateError::InvalidLocator),
+            "every locator is validated, not only the preferred one"
         );
         assert!(matches!(
             ChannelSummary::new(
