@@ -1059,19 +1059,19 @@ fn connect_forget_device(sidebar: &device_sidebar::DeviceSidebar, wiring: &Rc<Re
         let Some(device_id) = model_row.device_id() else {
             return;
         };
-        let address = wiring
+        let addresses = wiring
             .accepted
             .borrow()
             .devices()
             .iter()
             .find(|device| device.device_id() == device_id)
-            .map(|device| device.preferred_locator().ip());
-        let Some(address) = address else {
+            .map(device_addresses);
+        let Some(addresses) = addresses else {
             return;
         };
         let targets = forgettable_targets(
             &wiring.settings.remembered_targets(),
-            address,
+            &addresses,
             &wiring.hostnames.borrow().resolved,
         );
         if targets.is_empty() {
@@ -1082,20 +1082,32 @@ fn connect_forget_device(sidebar: &device_sidebar::DeviceSidebar, wiring: &Rc<Re
     });
 }
 
-/// The remembered entries a device at `address` stands for: that address
-/// and every name that resolved to it this session.
+/// Every address a listed device has been reached at, preferred first.
+fn device_addresses(device: &balun::controller::DeviceSummary) -> Vec<IpAddr> {
+    let mut addresses = vec![device.preferred_locator().ip()];
+    for locator in device.locators() {
+        if !addresses.contains(&locator.ip()) {
+            addresses.push(locator.ip());
+        }
+    }
+    addresses
+}
+
+/// The remembered entries a device reached at `addresses` stands for: each
+/// of those addresses and every name that resolved to one of them this
+/// session.
 fn forgettable_targets(
     remembered: &[RememberedTarget],
-    address: IpAddr,
+    addresses: &[IpAddr],
     resolved: &HashSet<(ExactDiscoveryTarget, HostnameTarget)>,
 ) -> Vec<RememberedTarget> {
     remembered
         .iter()
         .filter(|target| match target {
-            RememberedTarget::Address(target) => target.ip_addr() == address,
+            RememberedTarget::Address(target) => addresses.contains(&target.ip_addr()),
             RememberedTarget::Hostname(host) => resolved
                 .iter()
-                .any(|(resolved, name)| resolved.ip_addr() == address && name == host),
+                .any(|(resolved, name)| addresses.contains(&resolved.ip_addr()) && name == host),
         })
         .cloned()
         .collect()
@@ -1442,6 +1454,8 @@ mod tests {
 
     use super::*;
 
+    use balun::settings::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH};
+
     #[test]
     fn forgettable_targets_match_the_address_and_the_names_resolved_to_it() {
         let address = ExactDiscoveryTarget::parse("192.0.2.20").expect("address");
@@ -1457,18 +1471,26 @@ mod tests {
         let resolved = HashSet::from([(address, name.clone()), (other, stale)]);
 
         assert_eq!(
-            forgettable_targets(&remembered, address.ip_addr(), &resolved),
+            forgettable_targets(&remembered, &[address.ip_addr()], &resolved),
             vec![
                 RememberedTarget::Address(address),
                 RememberedTarget::Hostname(name),
             ]
         );
+        assert_eq!(
+            forgettable_targets(
+                &remembered,
+                &[other.ip_addr(), address.ip_addr()],
+                &resolved
+            ),
+            remembered,
+            "every address the device was reached at counts"
+        );
         assert!(
-            forgettable_targets(&remembered, "192.0.2.99".parse().expect("ip"), &resolved)
+            forgettable_targets(&remembered, &["192.0.2.99".parse().expect("ip")], &resolved)
                 .is_empty()
         );
     }
-    use balun::settings::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH};
 
     #[test]
     fn exact_address_settlement_has_bounded_failure_feedback() {

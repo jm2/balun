@@ -569,9 +569,9 @@ ask. **Refresh devices** runs one bounded local discovery over every attached in
 tuner behind WireGuard or another routed link. It accepts no port or range; a name resolves to at
 most four unicast addresses that are probed one at a time, each probe sends at most two requests,
 and up to 32 distinct addresses are admitted per session. A tuner that answers is remembered, by
-name when you entered a name, and probed again at the next launch; right-click a listed device
-and choose **Forget device** to drop that entry. **Stop device discovery** cancels either kind
-and any remaining launch probes.
+name when you entered a name, and probed again at the next launch; right-click a listed device,
+or press Menu or Shift+F10 on it, and choose **Forget device** to drop that entry. **Stop device
+discovery** cancels either kind and any remaining launch probes.
 
 On Windows, local discovery uses the limited broadcast from each interface. If a host firewall
 blocks the replies, use **Find device by address** with the tuner's IPv4 address.

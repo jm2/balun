@@ -215,7 +215,10 @@ mod tests {
             Some("HDHR5-4K".to_owned()),
             Some(4),
             "192.0.2.10:65001".parse().unwrap(),
-            2,
+            vec![
+                "192.0.2.10:65001".parse().unwrap(),
+                "[2001:db8::10]:65001".parse().unwrap(),
+            ],
         )
         .unwrap();
 
@@ -254,7 +257,7 @@ mod tests {
             Some("HDHR5-4K".to_owned()),
             Some(4),
             "192.0.2.10:65001".parse().unwrap(),
-            1,
+            vec!["192.0.2.10:65001".parse().unwrap()],
         )
         .unwrap();
         let device_row = DeviceRowObject::from_summary(&device);

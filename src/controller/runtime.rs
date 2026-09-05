@@ -1768,7 +1768,7 @@ impl ControllerActor {
             info.model_number().map(str::to_owned),
             info.tuner_count(),
             current.preferred_locator(),
-            current.locator_count(),
+            current.locators().to_vec(),
         )?;
         let channels = resolved
             .snapshot()
@@ -2090,7 +2090,7 @@ fn project_devices(registry: &DeviceRegistry) -> Result<Vec<DeviceSummary>, ()> 
                 None,
                 preferred.tuner_count(),
                 preferred.source(),
-                device.locators().len(),
+                device.locators().map(|claim| claim.source()).collect(),
             )
             .map_err(|_| ())
         })

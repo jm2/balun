@@ -17,6 +17,16 @@ const STATUS_PAGE_NAME: &str = "status";
 /// list position, the row widget, and the click point in row coordinates.
 type DeviceContextHandler = dyn Fn(u32, &gtk::Widget, f64, f64);
 type SharedDeviceContextHandler = Rc<RefCell<Option<Box<DeviceContextHandler>>>>;
+/// Row widgets built by the factory and their list items, so the keyboard
+/// shortcut can find the focused row's position.
+type BoundRows = Rc<
+    RefCell<
+        Vec<(
+            gtk::glib::WeakRef<gtk::Widget>,
+            gtk::glib::WeakRef<gtk::ListItem>,
+        )>,
+    >,
+>;
 const DEVICE_LIST_PAGE_NAME: &str = "devices";
 
 /// GTK parts for the device pane.
@@ -199,7 +209,8 @@ pub(crate) fn build() -> DeviceSidebar {
     selection.set_can_unselect(true);
 
     let device_context: SharedDeviceContextHandler = Rc::default();
-    let factory = device_factory(&device_context);
+    let bound_rows: BoundRows = Rc::default();
+    let factory = device_factory(&device_context, &bound_rows);
     let list = gtk::ListView::builder()
         .model(&selection)
         .factory(&factory)
@@ -209,6 +220,7 @@ pub(crate) fn build() -> DeviceSidebar {
         .vexpand(true)
         .build();
     list.update_property(&[gtk::accessible::Property::Label("HDHomeRun devices")]);
+    list.add_controller(context_shortcut(&list, &bound_rows, &device_context));
     let scrolled = gtk::ScrolledWindow::builder()
         .child(&list)
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -326,6 +338,54 @@ pub(crate) fn build() -> DeviceSidebar {
 }
 
 /// Synthesize the list view's activation signal from a single primary click.
+/// The keyboard path to the same action: Menu or Shift+F10 while a device
+/// row has focus reports that row with its centre as the anchor point.
+fn context_shortcut(
+    list: &gtk::ListView,
+    bound_rows: &BoundRows,
+    handler: &SharedDeviceContextHandler,
+) -> gtk::ShortcutController {
+    let controller = gtk::ShortcutController::new();
+    controller.set_scope(gtk::ShortcutScope::Local);
+    let list = list.downgrade();
+    let bound_rows = Rc::clone(bound_rows);
+    let handler = Rc::clone(handler);
+    let action = gtk::CallbackAction::new(move |_, _| {
+        let Some(row) = list
+            .upgrade()
+            .and_then(|list| list.focus_child())
+            .and_then(|item| item.first_child())
+        else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        let position = {
+            let mut rows = bound_rows.borrow_mut();
+            rows.retain(|(bound, _)| bound.upgrade().is_some());
+            rows.iter().find_map(|(bound, item)| {
+                (bound.upgrade()? == row).then(|| item.upgrade().map(|item| item.position()))?
+            })
+        };
+        let Some(position) = position.filter(|position| *position != gtk::INVALID_LIST_POSITION)
+        else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        if let Some(handler) = handler.borrow().as_ref() {
+            handler(
+                position,
+                &row,
+                f64::from(row.width()) / 2.0,
+                f64::from(row.height()) / 2.0,
+            );
+        }
+        gtk::glib::Propagation::Stop
+    });
+    controller.add_shortcut(gtk::Shortcut::new(
+        gtk::ShortcutTrigger::parse_string("Menu|<Shift>F10"),
+        Some(action),
+    ));
+    controller
+}
+
 /// Report a secondary click on a bound row so the bridge can offer to forget
 /// the device it shows. Nothing is reported for an unbound placeholder.
 fn secondary_click(
@@ -385,9 +445,13 @@ fn single_click_activation(list_item: &gtk::ListItem) -> gtk::GestureClick {
     gesture
 }
 
-fn device_factory(device_context: &SharedDeviceContextHandler) -> gtk::SignalListItemFactory {
+fn device_factory(
+    device_context: &SharedDeviceContextHandler,
+    bound_rows: &BoundRows,
+) -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
     let device_context = Rc::clone(device_context);
+    let bound_rows = Rc::clone(bound_rows);
     factory.connect_setup(move |_, object| {
         let Some(list_item) = object.downcast_ref::<gtk::ListItem>() else {
             return;
@@ -425,6 +489,10 @@ fn device_factory(device_context: &SharedDeviceContextHandler) -> gtk::SignalLis
         row.append(&labels);
         row.add_controller(single_click_activation(list_item));
         row.add_controller(secondary_click(list_item, &device_context));
+        bound_rows.borrow_mut().push((
+            row.upcast_ref::<gtk::Widget>().downgrade(),
+            list_item.downgrade(),
+        ));
         list_item.set_child(Some(&row));
         reset_device_list_item(list_item);
     });
