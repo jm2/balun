@@ -793,7 +793,8 @@ mod tests {
             Ok(())
         );
         assert!(
-            deinterlacing.contains("deinterlace method=yadif output-framerate="),
+            deinterlacing.contains("deinterlace method=yadif output-framerate=")
+                && !deinterlacing.contains("output-framerate=not negotiated"),
             "the actual playsink filter must retain the selected software method: {deinterlacing}"
         );
     }

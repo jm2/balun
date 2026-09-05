@@ -137,8 +137,8 @@ is still pending. An unpublished draft does not count as a release.
 - [x] **P3.4 — Build the macOS arm64 app and DMG.** Complete the app tree,
   runtime closure, Mach-O inspection, signing policy, and reopened DMG check.
 
-- [x] **P3.5 — Complete release automation.** Build from one maintainer-approved,
-  annotated tag, require 12 public binaries and `SHA256SUMS.txt`, create a draft,
+- [x] **P3.5 — Complete release automation.** Build from one annotated tag
+  (signed after v0.1.0), require 12 public binaries and `SHA256SUMS.txt`, create a draft,
   and confine release-write authority to the final no-source job.
 
 - [x] **P3.6 — Harden CI for packages.** Add the dependency audit and
