@@ -5,25 +5,7 @@ All notable changes to Balun are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- **Reply banner** — The "HDHomeRun device reply received." banner clears itself after three
-  seconds instead of staying until the next search.
-- **Channel list position** — The channel list keeps its scroll position and selection across
-  snapshots that leave the lineup unchanged, such as tuning; only a changed lineup rebuilds the
-  rows.
-- **Audio after tuning** — Correct live-stream timing when usable media arrives after the first
-  transport bytes, preventing late audio from becoming choppy or silent despite healthy-looking
-  playback counters.
-- **Routed discovery survives route-event bursts** — On Linux a kernel or NetworkManager change
-  arrives as several datagrams microseconds apart; the observer pair replaced after the first one
-  lost its baseline to the rest and stayed down, failing the next routed request. The pair now
-  waits for the burst to settle, retries a rejected baseline a bounded number of times, and is
-  re-established by the next routed request; the log names the source that changed.
-
-## [0.1.0] — 2026-09-04
+## [0.1.0] — 2026-09-05
 
 ### Added
 
@@ -102,6 +84,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   icon, and a sanitized 1280×720 screenshot.
 - **Documentation** — The v0.1 plan and ledger, sanitized compatibility notes, an evidence-backed
   support matrix, `CONTRIBUTING.md`, and `SECURITY.md`.
+- **Live audio timing** — The MPEG-TS feed carries arrival timestamps, so audio stays in sync
+  when usable media arrives after the first transport bytes instead of turning choppy or silent.
+- **Routed discovery through route-event bursts** — On Linux a kernel or NetworkManager change
+  arrives as several datagrams; the route observers wait for the burst to settle, retry a
+  rejected baseline a bounded number of times, and are re-established by the next request.
+- **Reply banner** — A successful exact reply is announced in the sidebar for three seconds;
+  failures stay until the next search.
+- **Channel list position** — The channel list keeps its scroll position and selection across
+  snapshots that leave the lineup unchanged, such as tuning.
 
 ### Security
 
@@ -151,5 +142,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
   decoder, so those channels fail closed and cannot be transcoded.
 
-[Unreleased]: https://github.com/jm2/balun/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/jm2/balun/releases/tag/v0.1.0
