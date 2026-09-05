@@ -878,7 +878,12 @@ fn connect_cancel_discovery(
             // Stop also drains any launch probes still waiting for the lane,
             // including remembered names not yet handed to the controller.
             wiring.rediscovery.borrow_mut().cancel();
-            wiring.hostnames.borrow_mut().unresolved.clear();
+            {
+                let mut hostnames = wiring.hostnames.borrow_mut();
+                hostnames.unresolved.clear();
+                // Lookups already admitted are invalidated too.
+                hostnames.epoch += 1;
+            }
             if controller
                 .try_send(ControllerCommand::CancelDiscovery)
                 .is_err()
@@ -1006,6 +1011,9 @@ struct HostnameProbes {
     /// The command queue is bounded, so they are submitted a few at a time
     /// and the remainder waits for the next accepted snapshot.
     unresolved: VecDeque<HostnameTarget>,
+    /// Bumped by Stop. A lookup admitted under an older epoch discards
+    /// its result, so no probe follows a cancellation.
+    epoch: u64,
 }
 
 impl RediscoveryWiring {
@@ -1093,8 +1101,14 @@ fn await_resolution(
     entered: bool,
     receiver: HostnameResolutionReceiver,
 ) {
+    let epoch = wiring.hostnames.borrow().epoch;
     gtk::glib::MainContext::default().spawn_local(async move {
-        match receiver.receive().await {
+        let outcome = receiver.receive().await;
+        if wiring.hostnames.borrow().epoch != epoch {
+            // Stop invalidated this lookup; its addresses are not probed.
+            return;
+        }
+        match outcome {
             Ok(addresses) => {
                 if entered {
                     let mut hostnames = wiring.hostnames.borrow_mut();
@@ -1109,8 +1123,11 @@ fn await_resolution(
             Err(error) => {
                 wiring.toast(resolution_failure_copy(error));
                 // A finished resolution is the other moment queue capacity
-                // becomes available, so retry deferred names here too.
-                submit_unresolved_hostnames(&wiring);
+                // becomes available, so take the same step as a success:
+                // submit deferred names and resend a target whose send
+                // failed once the lane is idle.
+                let discovery = wiring.accepted.borrow().discovery();
+                advance_rediscovery(&wiring, discovery);
             }
         }
     });
