@@ -48,7 +48,7 @@ address so you know which tuner failed.
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; live timing accounts for delayed media arrival; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, and the AUR; no winget yet |
+| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, the AUR, and winget |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
@@ -96,9 +96,8 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 
 Pre-built packages for Linux (Flatpak, `.deb`, `.rpm`, Arch), macOS (`.dmg`), and Windows
 (`.exe` installer, `.zip`) are available on the [Releases](https://github.com/jm2/balun/releases)
-page; Fedora and Arch users can install from COPR and the AUR instead. Balun does not yet publish
-through winget. Download `SHA256SUMS.txt` with a Releases package and verify its SHA-256 entry
-before installing.
+page; Fedora, Arch, and Windows users can install from COPR, the AUR, and winget instead. Download
+`SHA256SUMS.txt` with a Releases package and verify its SHA-256 entry before installing.
 
 ### Fedora (COPR)
 
@@ -124,6 +123,14 @@ Install with your preferred AUR helper, for example:
 
 ```bash
 yay -S balun-bin
+```
+
+### Windows (winget)
+
+Balun is available via [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/):
+
+```powershell
+winget install jm2.Balun
 ```
 
 ### Linux
