@@ -416,7 +416,7 @@ pub(crate) fn build(
 
     connect_refresh(&device_sidebar, &handle);
     connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
-    connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
+    connect_cancel_discovery(&device_sidebar, &handle, &wiring);
     let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
     connect_routed_discovery(&window, &device_sidebar, &routed_ui);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view, &layout);
@@ -867,16 +867,18 @@ fn react_to_routed(ui: &Rc<RoutedUi>, snapshot: &ApplicationSnapshot) {
 fn connect_cancel_discovery(
     sidebar: &device_sidebar::DeviceSidebar,
     controller: &ControllerHandle,
-    rediscovery: &Rc<RefCell<RediscoveryQueue>>,
+    wiring: &Rc<RediscoveryWiring>,
 ) {
     let controller = controller.clone();
-    let rediscovery = Rc::clone(rediscovery);
+    let wiring = Rc::clone(wiring);
     sidebar
         .cancel_discovery_button()
         .connect_clicked(move |button| {
             button.set_sensitive(false);
-            // Stop also drains any launch probes still waiting for the lane.
-            rediscovery.borrow_mut().cancel();
+            // Stop also drains any launch probes still waiting for the lane,
+            // including remembered names not yet handed to the controller.
+            wiring.rediscovery.borrow_mut().cancel();
+            wiring.hostnames.borrow_mut().unresolved.clear();
             if controller
                 .try_send(ControllerCommand::CancelDiscovery)
                 .is_err()
@@ -1104,7 +1106,12 @@ fn await_resolution(
                 let discovery = wiring.accepted.borrow().discovery();
                 advance_rediscovery(&wiring, discovery);
             }
-            Err(error) => wiring.toast(resolution_failure_copy(error)),
+            Err(error) => {
+                wiring.toast(resolution_failure_copy(error));
+                // A finished resolution is the other moment queue capacity
+                // becomes available, so retry deferred names here too.
+                submit_unresolved_hostnames(&wiring);
+            }
         }
     });
 }
@@ -2295,7 +2302,7 @@ mod tests {
 
                 connect_refresh(&device_sidebar, &handle);
                 connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
-                connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
+                connect_cancel_discovery(&device_sidebar, &handle, &wiring);
                 let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
                 connect_routed_discovery(&window, &device_sidebar, &routed_ui);
                 connect_device_selection(
