@@ -96,23 +96,34 @@ def rpm_spec_upstream_version(spec: str) -> str | None:
     return match.group(1) if match else None
 
 
+RPM_PRERELEASE = re.compile(r"^(alpha|beta|rc|pre|preview)(\.\d+)?$")
+
+
 def rpm_version_for_semver(version: str) -> str:
     """Encode a Semantic Version as an RPM ``Version``.
 
     RPM forbids hyphens in ``Version`` and sorts a tilde suffix before the
-    bare version, so a prerelease becomes ``1.2.3~alpha.1``. A hyphen inside
-    a prerelease identifier and build metadata have no faithful RPM spelling
-    and are refused.
+    bare version, so a prerelease becomes ``1.2.3~alpha.1``. That is also
+    what Packit writes when it rewrites ``Version`` from the tag, so the
+    accepted prereleases are exactly the ones it recognises: a word from
+    ``alpha``, ``beta``, ``rc``, ``pre``, or ``preview`` with at most one
+    numeric identifier. Within that set ``rpmvercmp`` keeps SemVer's order;
+    a bare numeric identifier such as ``1.2.3-1`` would sort after ``~alpha``
+    in RPM but before it in SemVer, so it and every other spelling, like
+    build metadata, are refused.
     """
     release, plus, _build = version.partition("+")
     if plus:
         raise ValueError("build metadata has no RPM Version encoding")
     core, hyphen, prerelease = release.partition("-")
-    if "-" in prerelease:
+    if not hyphen:
+        return core
+    if not RPM_PRERELEASE.match(prerelease):
         raise ValueError(
-            f"prerelease {prerelease!r} contains a hyphen, which an RPM Version cannot"
+            f"prerelease {prerelease!r} is not alpha/beta/rc/pre/preview with at most "
+            "one number, the only spellings whose SemVer order an RPM Version keeps"
         )
-    return f"{core}~{prerelease}" if hyphen else core
+    return f"{core}~{prerelease}"
 
 
 def arch_pkgver_for_semver(version: str) -> str:

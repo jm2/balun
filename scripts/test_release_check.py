@@ -166,7 +166,18 @@ class ReleaseCheckTests(unittest.TestCase):
     def test_rpm_version_encodes_prereleases_with_a_tilde(self) -> None:
         self.assertEqual(release_check.rpm_version_for_semver("1.2.3"), "1.2.3")
         self.assertEqual(release_check.rpm_version_for_semver("1.2.3-alpha.1"), "1.2.3~alpha.1")
-        for version in ("1.2.3+build", "1.2.3-alpha-a"):
+        self.assertEqual(release_check.rpm_version_for_semver("1.2.3-rc"), "1.2.3~rc")
+        # Only spellings Packit rewrites the same way and rpmvercmp keeps in
+        # SemVer order are accepted; a numeric identifier would sort after a
+        # word in RPM but before it in SemVer.
+        for version in (
+            "1.2.3+build",
+            "1.2.3-alpha-a",
+            "1.2.3-1",
+            "1.2.3-alpha.beta",
+            "1.2.3-alpha.1.2",
+            "1.2.3-dev.1",
+        ):
             with self.assertRaises(ValueError, msg=version):
                 release_check.rpm_version_for_semver(version)
 
