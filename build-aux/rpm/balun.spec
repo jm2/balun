@@ -1,5 +1,5 @@
 Name:           balun
-Version:        v0.1.0
+Version:        0.1.0
 Release:        1%{?dist}
 Summary:        A lightweight cross-platform HDHomeRun live TV viewer
 
@@ -13,6 +13,9 @@ BuildRequires:  bash
 BuildRequires:  binutils
 BuildRequires:  gcc
 BuildRequires:  pkgconf-pkg-config
+# The compliance validator run in %install and %check needs perl with Encode.
+BuildRequires:  perl-interpreter
+BuildRequires:  perl(Encode)
 BuildRequires:  libadwaita-devel
 BuildRequires:  gtk4-devel
 BuildRequires:  gstreamer1-devel
@@ -83,5 +86,5 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/*.metainfo.xml
 %{_datadir}/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg
 
 %changelog
-* Sat Sep 05 2026 John-Michael Mulesa <jmulesa@gmail.com> - v0.1.0-1
+* Sat Sep 05 2026 John-Michael Mulesa <jmulesa@gmail.com> - 0.1.0-1
 - Initial Fedora package.

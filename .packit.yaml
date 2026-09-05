@@ -11,6 +11,8 @@ files_to_sync:
 upstream_package_name: balun
 downstream_package_name: balun
 upstream_project_url: https://github.com/jm2/balun
+# Tags are v<version>; the spec carries the bare version.
+upstream_tag_template: "v{version}"
 enable_net: true
 
 jobs:
