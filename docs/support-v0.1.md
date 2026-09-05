@@ -1,6 +1,6 @@
 # Balun v0.1 support matrix
 
-- Status: v0.1.0 Alpha draft
+- Status: v0.1.0 Alpha published 2026-09-05
 - Last updated: 2026-09-05
 
 This matrix is derived from the sanitized evidence in
@@ -17,8 +17,8 @@ it is unsupported. Every ✅ is traceable to a section of the compatibility note
 | macOS | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | Built: Apple Silicon DMG |
 
 The table names the `0.1.0` inventory built, inspected, reopened, and checksummed by the release
-workflow for the Alpha draft. Publication on the
-[Releases](https://github.com/jm2/balun/releases) page remains a maintainer action. The
+workflow and published as "Balun v0.1.0 Alpha" on the
+[Releases](https://github.com/jm2/balun/releases) page on 2026-09-05. The
 Live TV column records development-build evidence, not packaged live-tuner acceptance. A macOS
 packaged-hardware validation path exists, but cross-platform packaged acceptance remains P4.1.
 Architecture-specific entries do not extend the physical-tuner evidence to every CPU and format.

@@ -1,8 +1,8 @@
 # Balun v0.1 implementation plan
 
-- Status: Release candidate
+- Status: v0.1.0 Alpha published 2026-09-05
 - Target: v0.1.0
-- Last updated: 2026-09-04
+- Last updated: 2026-09-05
 
 This is the scope, architecture, and delivery-order contract for the first
 alpha. The countable ledger is [`task.md`](task.md); sanitized hardware
@@ -77,7 +77,7 @@ Explicitly deferred:
 - Background EPG harvesting that consumes an otherwise unused tuner.
 - SBOM, build provenance, fuzzing, and a coverage ratchet: beta.
 
-## 3. Current release candidate (2026-09-04)
+## 3. Released v0.1.0 Alpha (2026-09-05)
 
 Built and tested:
 

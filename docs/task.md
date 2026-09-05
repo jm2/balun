@@ -29,20 +29,20 @@ and the decisions behind this restart are in
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
 
-Current status: **28/30 (93.3%)** records complete. This is a dependency ledger,
+Current status: **29/30 (96.7%)** records complete. This is a dependency ledger,
 not an effort estimate; packaging and routed-discovery records are larger than
 most evidence records.
 
 ## Current focus
 
-The remaining records are P4.1 and P4.5. P4.1 still needs packaged live-tuner
-acceptance across Linux, macOS, and Windows; the recorded Linux and Windows
-trials used development builds, and the macOS validation path does not supply
-the missing cross-platform evidence. P4.5 has an Alpha draft with the exact
-12-artifact inventory and checksums from the release-candidate workflow.
-The maintainer approved an unsigned annotated `v0.1.0` tag for this release;
-signed annotated tags remain the procedure for subsequent releases. Publication
-is still pending. An unpublished draft does not count as a release.
+The remaining record is P4.1: packaged live-tuner acceptance across Linux,
+macOS, and Windows. The recorded Linux and Windows trials used development
+builds, and the macOS validation path does not supply the missing
+cross-platform evidence. P4.5 closed on 2026-09-05 when "Balun v0.1.0 Alpha"
+was published with the 12-artifact inventory and `SHA256SUMS.txt` from the
+release-candidate workflow, from an unsigned annotated `v0.1.0` tag approved
+by the maintainer; signed annotated tags remain the procedure for subsequent
+releases.
 
 ## P0 — Evidence and contract
 
@@ -162,7 +162,7 @@ is still pending. An unpublished draft does not count as a release.
   supported devices, platforms, codecs, and limitations from evidence; add
   CONTRIBUTING and SECURITY.
 
-- [ ] **P4.5 — Cut and publish v0.1.0.** Pass every gate, have the maintainer
+- [x] **P4.5 — Cut and publish v0.1.0.** Pass every gate, have the maintainer
   create an annotated `v0.1.0` tag (unsigned by explicit approval), validate the artifact set, and publish
   release notes.
 
