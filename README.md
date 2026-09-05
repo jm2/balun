@@ -48,7 +48,7 @@ address so you know which tuner failed.
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; live timing accounts for delayed media arrival; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Direct downloads from the Releases page; Fedora COPR; no AUR or winget yet |
+| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, and the AUR; no winget yet |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
@@ -96,18 +96,34 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 
 Pre-built packages for Linux (Flatpak, `.deb`, `.rpm`, Arch), macOS (`.dmg`), and Windows
 (`.exe` installer, `.zip`) are available on the [Releases](https://github.com/jm2/balun/releases)
-page. Fedora users can install from COPR instead. Balun does not yet publish through the AUR or
-winget. Download `SHA256SUMS.txt` with the package and verify its SHA-256 entry before installing.
+page; Fedora and Arch users can install from COPR and the AUR instead. Balun does not yet publish
+through winget. Download `SHA256SUMS.txt` with a Releases package and verify its SHA-256 entry
+before installing.
 
 ### Fedora (COPR)
 
-Balun's Fedora packages are built in the
-[jmsqrd/balun](https://copr.fedorainfracloud.org/coprs/jmsqrd/balun/) COPR repository for Fedora 44
-and 45 (x86_64, aarch64) from each release, beginning with v0.1.0's first COPR build:
+Balun is available from the [jmsqrd/balun](https://copr.fedorainfracloud.org/coprs/jmsqrd/balun/)
+COPR repository:
 
 ```bash
 sudo dnf copr enable jmsqrd/balun
 sudo dnf install balun
+```
+
+### Arch Linux (AUR)
+
+Balun is available on the [AUR](https://aur.archlinux.org/) in three variants:
+
+| Package | Description |
+| --- | --- |
+| [`balun`](https://aur.archlinux.org/packages/balun) | Build from the latest release source |
+| [`balun-bin`](https://aur.archlinux.org/packages/balun-bin) | Pre-built binary from the latest release |
+| [`balun-git`](https://aur.archlinux.org/packages/balun-git) | Build from the latest `main` branch commit |
+
+Install with your preferred AUR helper, for example:
+
+```bash
+yay -S balun-bin
 ```
 
 ### Linux
