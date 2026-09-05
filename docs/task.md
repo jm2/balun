@@ -164,8 +164,7 @@ releases.
 
 - [x] **P4.5 — Cut and publish v0.1.0.** Pass every gate, have the maintainer
   create an annotated `v0.1.0` tag (unsigned by explicit approval), validate the artifact set, and publish
-  release notes. Published 2026-09-05 as "Balun v0.1.0 Alpha" with 12 binaries and
-  `SHA256SUMS.txt`.
+  release notes.
 
 ## Explicitly outside v0.1
 
