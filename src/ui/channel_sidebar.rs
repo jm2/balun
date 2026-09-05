@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use balun::controller::{
-    ApplicationSnapshot, LineupFailure, OperationGeneration, SelectedLineupState,
+    ApplicationSnapshot, ChannelSummary, LineupFailure, OperationGeneration, SelectedLineupState,
     SelectedLineupStatus, StreamSelection,
 };
 use balun::domain::{ChannelKey, DeviceId};
@@ -250,10 +250,6 @@ impl ChannelSidebar {
         } else {
             &[]
         };
-        let rows = channels
-            .iter()
-            .map(ChannelRowObject::from_summary)
-            .collect::<Vec<_>>();
         let activation_generation =
             (lineup.status() == SelectedLineupStatus::Ready).then_some(lineup.generation());
 
@@ -268,8 +264,17 @@ impl ChannelSidebar {
         // nested GTK callback attempts activation during replacement, both
         // the application guard and the absent generation fail closed.
         self.activation_generation.set(None);
-        self.store.splice(0, self.store.n_items(), &rows);
-        self.restore_selection(prior_selection.as_ref());
+        // Replacing every row resets the list's scroll position, so a
+        // snapshot that leaves the lineup as it is (a tune, a playback state
+        // change) keeps the rows and the selection untouched.
+        if !rows_match(&self.store, channels) {
+            let rows = channels
+                .iter()
+                .map(ChannelRowObject::from_summary)
+                .collect::<Vec<_>>();
+            self.store.splice(0, self.store.n_items(), &rows);
+            self.restore_selection(prior_selection.as_ref());
+        }
         self.activation_generation.set(activation_generation);
 
         self.presentation
@@ -309,6 +314,18 @@ impl ChannelSidebar {
     fn update_presentation(&self) {
         self.sync_state.update_presentation();
     }
+}
+
+/// Whether `store` already holds `channels`, row for row.
+fn rows_match(store: &gtk::gio::ListStore, channels: &[ChannelSummary]) -> bool {
+    u32::try_from(channels.len()) == Ok(store.n_items())
+        && channels.iter().enumerate().all(|(position, summary)| {
+            u32::try_from(position)
+                .ok()
+                .and_then(|position| store.item(position))
+                .and_downcast::<ChannelRowObject>()
+                .is_some_and(|row| row.matches(summary))
+        })
 }
 
 /// Build the channel pane without inventing lineup or guide data.
@@ -832,6 +849,39 @@ mod tests {
         assert!(activation_selection(&channel_row(false), None).is_none());
         let protected = channel_row(true);
         assert!(activation_selection(&protected, Some(OperationGeneration::new(17))).is_none());
+    }
+
+    #[test]
+    fn unchanged_lineups_keep_their_rows_and_changed_ones_do_not() {
+        let (snapshot, _unprotected_key, _protected_key, _generation) = ready_snapshot();
+        let channels = snapshot.selected_lineup().channels();
+        let store = gtk::gio::ListStore::new::<ChannelRowObject>();
+        assert!(
+            !rows_match(&store, channels),
+            "an empty model matches nothing"
+        );
+
+        let rows = channels
+            .iter()
+            .map(ChannelRowObject::from_summary)
+            .collect::<Vec<_>>();
+        store.splice(0, 0, &rows);
+        assert!(rows_match(&store, channels));
+        assert!(
+            !rows_match(&store, &channels[..1]),
+            "a shorter lineup differs"
+        );
+
+        let mut renamed = channels.to_vec();
+        renamed[0] = ChannelSummary::new(
+            renamed[0].key().clone(),
+            "Renamed".to_owned(),
+            renamed[0].is_favorite(),
+            renamed[0].is_drm(),
+            renamed[0].is_hd(),
+        )
+        .unwrap();
+        assert!(!rows_match(&store, &renamed), "a changed row differs");
     }
 
     /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs
