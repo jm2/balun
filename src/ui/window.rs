@@ -1,7 +1,7 @@
 //! Top-level adaptive three-pane window and controller/GLib bridge.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::net::IpAddr;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -352,6 +352,7 @@ pub(crate) fn build(
     if window_state.maximized() {
         window.maximize();
     }
+    player_view.connect_idle_inhibition(&window);
     let layout = ResponsiveLayout::new(
         &device_and_content,
         &channel_and_player_page,
@@ -421,6 +422,7 @@ pub(crate) fn build(
     let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
     connect_routed_discovery(&window, &device_sidebar, &routed_ui);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view, &layout);
+    connect_lineup_reload(&channel_sidebar, &handle, &accepted, &player_view);
     connect_forget_device(&device_sidebar, &wiring);
     connect_channel_activation(
         &channel_sidebar,
@@ -679,7 +681,7 @@ fn connect_exact_discovery(
                         DiscoveryEntry::Hostname(host) => {
                             // A name is resolved on the controller runtime and
                             // its addresses join the paced probe queue.
-                            resolve_hostname_into_queue(Rc::clone(&admitted_wiring), host, true);
+                            resolve_hostname_into_queue(Rc::clone(&admitted_wiring), host);
                             return;
                         }
                     };
@@ -965,6 +967,36 @@ fn connect_device_selection(
         });
 }
 
+/// Reload the selected tuner directly, including an exact-address-only tuner
+/// that local broadcast discovery cannot reach. Admission releases playback
+/// before the replacement lineup is fetched.
+fn connect_lineup_reload(
+    sidebar: &channel_sidebar::ChannelSidebar,
+    controller: &ControllerHandle,
+    accepted: &Rc<RefCell<Arc<ApplicationSnapshot>>>,
+    player_view: &Rc<player_view::PlayerView>,
+) {
+    let controller = controller.clone();
+    let accepted = Rc::clone(accepted);
+    let player_view = Rc::downgrade(player_view);
+    sidebar.reload_button().connect_clicked(move |button| {
+        let Some(device) = accepted.borrow().selected_device() else {
+            return;
+        };
+        button.set_sensitive(false);
+        if controller
+            .try_send(ControllerCommand::SelectDevice(device))
+            .is_ok()
+        {
+            if let Some(player_view) = player_view.upgrade() {
+                let _ = player_view.stop();
+            }
+        } else {
+            button.set_sensitive(true);
+        }
+    });
+}
+
 fn selection_command(selected_device: Option<balun::domain::DeviceId>) -> ControllerCommand {
     selected_device.map_or(
         ControllerCommand::ClearSelection,
@@ -1010,7 +1042,9 @@ struct RediscoveryWiring {
 /// the device it reached can forget the name.
 #[derive(Default)]
 struct HostnameProbes {
-    pending: HashMap<ExactDiscoveryTarget, HostnameTarget>,
+    /// Names admitted for resolution, including names remembered at launch.
+    /// Forget revokes this authority even while a lookup is still in flight.
+    rememberable: HashSet<HostnameTarget>,
     /// Remembered names not yet handed to the controller for resolution.
     /// The command queue is bounded, so they are submitted a few at a time
     /// and the remainder waits for the next accepted snapshot.
@@ -1037,12 +1071,14 @@ impl RediscoveryWiring {
     /// Remember, so the notice claims nothing about the file.
     fn forget(&self, targets: &[RememberedTarget]) {
         {
-            let hostnames = self.hostnames.borrow();
+            let mut hostnames = self.hostnames.borrow_mut();
             let mut rediscovery = self.rediscovery.borrow_mut();
             for target in targets {
                 match target {
                     RememberedTarget::Address(address) => rediscovery.forget(*address),
                     RememberedTarget::Hostname(host) => {
+                        hostnames.rememberable.remove(host);
+                        hostnames.unresolved.retain(|queued| queued != host);
                         for (address, _) in hostnames
                             .resolved
                             .iter()
@@ -1212,25 +1248,29 @@ fn present_forget_dialog(
     dialog.present(Some(parent));
 }
 
-/// Feed one discovery state to the probe queue: remember a queued address
-/// (or the name it came from) once its probe answered, then send the next
-/// queued target if the lane is idle.
+/// Feed one discovery state to the probe queue: remember every admitted name
+/// behind a successful address, then send the next target if the lane is idle.
+/// Numeric launch targets are already remembered; resolved addresses must
+/// never become new permanent targets.
 fn advance_rediscovery(wiring: &Rc<RediscoveryWiring>, discovery: DiscoveryState) {
     submit_unresolved_hostnames(wiring);
     let step = wiring.rediscovery.borrow_mut().advance(discovery);
     if let Some(target) = step.reachable {
-        let host = {
-            let mut hostnames = wiring.hostnames.borrow_mut();
-            let host = hostnames.pending.remove(&target);
-            if let Some(host) = &host {
-                hostnames.pending.retain(|_, pending| pending != host);
-            }
-            host
+        let mut hosts = {
+            let hostnames = wiring.hostnames.borrow();
+            hostnames
+                .resolved
+                .iter()
+                .filter(|(address, host)| {
+                    *address == target && hostnames.rememberable.contains(host)
+                })
+                .map(|(_, host)| host.clone())
+                .collect::<Vec<_>>()
         };
-        wiring.remember(match host {
-            Some(host) => RememberedTarget::Hostname(host),
-            None => RememberedTarget::Address(target),
-        });
+        hosts.sort();
+        for host in hosts {
+            wiring.remember(RememberedTarget::Hostname(host));
+        }
     }
     if let Some(target) = step.send
         && wiring
@@ -1245,7 +1285,7 @@ fn advance_rediscovery(wiring: &Rc<RediscoveryWiring>, discovery: DiscoveryState
 /// Resolve `host` on the controller runtime and queue its addresses. A
 /// user-entered name is remembered only after one of them answers; a
 /// remembered name is already known, so a failure only shows a notice.
-fn resolve_hostname_into_queue(wiring: Rc<RediscoveryWiring>, host: HostnameTarget, entered: bool) {
+fn resolve_hostname_into_queue(wiring: Rc<RediscoveryWiring>, host: HostnameTarget) {
     let receiver = match wiring.controller.try_resolve_hostname(host.clone()) {
         Ok(receiver) => receiver,
         Err(_) => {
@@ -1253,7 +1293,7 @@ fn resolve_hostname_into_queue(wiring: Rc<RediscoveryWiring>, host: HostnameTarg
             return;
         }
     };
-    await_resolution(wiring, host, entered, receiver);
+    await_resolution(wiring, host, receiver);
 }
 
 /// Hand remembered names to the controller until its command queue is full;
@@ -1265,7 +1305,7 @@ fn submit_unresolved_hostnames(wiring: &Rc<RediscoveryWiring>) {
             return;
         };
         match wiring.controller.try_resolve_hostname(host.clone()) {
-            Ok(receiver) => await_resolution(Rc::clone(wiring), host, false, receiver),
+            Ok(receiver) => await_resolution(Rc::clone(wiring), host, receiver),
             Err(_) => {
                 wiring.hostnames.borrow_mut().unresolved.push_front(host);
                 return;
@@ -1277,14 +1317,20 @@ fn submit_unresolved_hostnames(wiring: &Rc<RediscoveryWiring>) {
 fn await_resolution(
     wiring: Rc<RediscoveryWiring>,
     host: HostnameTarget,
-    entered: bool,
     receiver: HostnameResolutionReceiver,
 ) {
+    wiring
+        .hostnames
+        .borrow_mut()
+        .rememberable
+        .insert(host.clone());
     let epoch = wiring.hostnames.borrow().epoch;
     gtk::glib::MainContext::default().spawn_local(async move {
         let outcome = receiver.receive().await;
-        if wiring.hostnames.borrow().epoch != epoch {
-            // Stop invalidated this lookup; its addresses are not probed.
+        if wiring.hostnames.borrow().epoch != epoch
+            || !wiring.hostnames.borrow().rememberable.contains(&host)
+        {
+            // Stop or Forget invalidated this lookup; its addresses are not probed.
             return;
         }
         match outcome {
@@ -1293,9 +1339,6 @@ fn await_resolution(
                     let mut hostnames = wiring.hostnames.borrow_mut();
                     for address in &addresses {
                         hostnames.resolved.insert((*address, host.clone()));
-                        if entered {
-                            hostnames.pending.insert(*address, host.clone());
-                        }
                     }
                 }
                 wiring.rediscovery.borrow_mut().enqueue(addresses);
@@ -1527,6 +1570,144 @@ mod tests {
     use super::*;
 
     use balun::settings::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH};
+
+    struct PacketFreeDiscovery;
+
+    impl DiscoveryService for PacketFreeDiscovery {
+        fn discover_local(&self, _: CancellationToken) -> DiscoveryFuture {
+            Box::pin(async { Ok(DiscoveryReport::default()) })
+        }
+
+        fn discover_exact(
+            &self,
+            _: ExactDiscoveryTarget,
+            _: Option<DeviceId>,
+            _: CancellationToken,
+        ) -> DiscoveryFuture {
+            Box::pin(async { Ok(DiscoveryReport::default()) })
+        }
+    }
+
+    fn hostname_wiring(
+        settings: Rc<SettingsSession>,
+        names: &[HostnameTarget],
+        addresses: &[ExactDiscoveryTarget],
+    ) -> (ControllerRuntime, Rc<RediscoveryWiring>) {
+        let controller = ControllerRuntime::start(PacketFreeDiscovery).unwrap();
+        let handle = controller.handle();
+        let initial = Arc::clone(&handle.subscribe().borrow());
+        let mut hostnames = HostnameProbes::default();
+        for name in names {
+            hostnames.rememberable.insert(name.clone());
+            for address in addresses {
+                hostnames.resolved.insert((*address, name.clone()));
+            }
+        }
+        let wiring = Rc::new(RediscoveryWiring {
+            settings,
+            exact_tracker: Rc::new(RefCell::new(ExactTargetTracker::new())),
+            rediscovery: Rc::new(RefCell::new(RediscoveryQueue::new(
+                addresses.iter().copied(),
+            ))),
+            hostnames: Rc::new(RefCell::new(hostnames)),
+            controller: handle,
+            accepted: Rc::new(RefCell::new(initial)),
+            toasts: gtk::glib::WeakRef::new(),
+        });
+        (controller, wiring)
+    }
+
+    fn settle_hostname_probes(wiring: &Rc<RediscoveryWiring>, count: u64) {
+        use balun::controller::OperationGeneration;
+        advance_rediscovery(wiring, DiscoveryState::idle(OperationGeneration::new(0)));
+        for generation in 1..=count {
+            advance_rediscovery(
+                wiring,
+                DiscoveryState::ready_for(
+                    OperationGeneration::new(generation),
+                    DiscoveryKind::Exact,
+                    1,
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn hostname_rediscovery_and_multiple_replies_persist_only_names() {
+        use balun::settings::{Settings, SettingsStore};
+        for startup in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let store = SettingsStore::new(directory.path().join("settings"));
+            let name = HostnameTarget::parse("tuner.example").unwrap();
+            let addresses = [
+                ExactDiscoveryTarget::parse("192.0.2.1").unwrap(),
+                ExactDiscoveryTarget::parse("192.0.2.2").unwrap(),
+            ];
+            let mut initial = Settings::default();
+            if startup {
+                initial.remember_target(RememberedTarget::Hostname(name.clone()));
+            }
+            store.save(&initial).unwrap();
+            gtk::glib::MainContext::new().block_on(async {
+                let settings = Rc::new(SettingsSession::open(Some(store.clone())));
+                let (_controller, wiring) =
+                    hostname_wiring(settings.clone(), std::slice::from_ref(&name), &addresses);
+                settle_hostname_probes(&wiring, 2);
+                settings.drain().await;
+                assert_eq!(
+                    store.load().unwrap().unwrap().remembered_targets(),
+                    &[RememberedTarget::Hostname(name.clone())]
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn aliases_sharing_an_address_are_both_remembered_and_forget_revokes_pending_names() {
+        let settings = Rc::new(SettingsSession::open(None));
+        let names = [
+            HostnameTarget::parse("one.example").unwrap(),
+            HostnameTarget::parse("two.example").unwrap(),
+        ];
+        let address = ExactDiscoveryTarget::parse("192.0.2.1").unwrap();
+        let (_controller, wiring) = hostname_wiring(settings.clone(), &names, &[address]);
+        settle_hostname_probes(&wiring, 1);
+        assert_eq!(
+            settings.remembered_targets(),
+            names
+                .iter()
+                .cloned()
+                .map(RememberedTarget::Hostname)
+                .collect::<Vec<_>>()
+        );
+        wiring.forget(&[RememberedTarget::Hostname(names[0].clone())]);
+        assert!(!wiring.hostnames.borrow().rememberable.contains(&names[0]));
+        assert_eq!(
+            settings.remembered_targets(),
+            vec![RememberedTarget::Hostname(names[1].clone())]
+        );
+    }
+
+    #[test]
+    fn startup_resolution_does_not_evict_names_from_a_full_settings_document() {
+        let settings = Rc::new(SettingsSession::open(None));
+        let names = (0..balun::settings::MAX_REMEMBERED_TARGETS)
+            .map(|i| HostnameTarget::parse(&format!("tuner-{i}.example")).unwrap())
+            .collect::<Vec<_>>();
+        for name in &names {
+            let _ = settings.remember_target(RememberedTarget::Hostname(name.clone()));
+        }
+        let address = ExactDiscoveryTarget::parse("192.0.2.1").unwrap();
+        let (_controller, wiring) = hostname_wiring(settings.clone(), &names[..1], &[address]);
+        settle_hostname_probes(&wiring, 1);
+        let remembered = settings.remembered_targets();
+        assert_eq!(remembered.len(), names.len());
+        assert!(
+            names
+                .iter()
+                .all(|name| remembered.contains(&RememberedTarget::Hostname(name.clone())))
+        );
+    }
 
     #[test]
     fn forgettable_targets_match_the_address_and_the_names_resolved_to_it() {
@@ -2555,6 +2736,8 @@ mod tests {
                     layout.player_navigation(),
                     &accepted,
                 );
+                connect_lineup_reload(&channel_sidebar, &handle, &accepted, &player_view);
+                let reload_button = channel_sidebar.reload_button().clone();
                 connect_window_shortcuts(
                     &window,
                     &player_view,
@@ -2602,6 +2785,7 @@ mod tests {
                 let window_weak = window.downgrade();
                 let accepted_generation = Rc::clone(&accepted);
                 let stop_baseline = Rc::new(Cell::new(0_u32));
+                let reload_generation = Cell::new(None);
                 let deadline = Instant::now() + WINDOW_SMOKE_PHASE_BOUND;
                 gtk::glib::timeout_add_local(Duration::from_millis(50), move || {
                     if driver_completed.get() || driver_failure.borrow().is_some() {
@@ -2659,6 +2843,48 @@ mod tests {
                             )
                             && reducer_generation == snapshot.selection_generation() =>
                         {
+                            if !reload_button.is_sensitive() {
+                                fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "a failed lineup must allow Reload channels".into(),
+                                );
+                                return gtk::glib::ControlFlow::Continue;
+                            }
+                            stop_baseline.set(stop_calls);
+                            reload_generation.set(Some(snapshot.selection_generation()));
+                            reload_button.emit_clicked();
+                            if reload_button.is_sensitive()
+                                || player_status.stop_call_count() <= stop_calls
+                            {
+                                fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "reload admission must disable the action and stop playback"
+                                        .into(),
+                                );
+                                return gtk::glib::ControlFlow::Continue;
+                            }
+                            phase.set(6);
+                        }
+                        6 if snapshot.selected_device() == Some(window_smoke_device_id())
+                            && matches!(
+                                snapshot.selected_lineup().status(),
+                                SelectedLineupStatus::Failed(_)
+                            )
+                            && Some(snapshot.selection_generation()) != reload_generation.get()
+                            && reducer_generation == snapshot.selection_generation()
+                            && reload_button.is_sensitive() =>
+                        {
+                            if refresh_state.load(Ordering::SeqCst) != 1 {
+                                fail_window_smoke(
+                                    &driver_failure,
+                                    &driver_application,
+                                    "reloading a lineup must not require broadcast discovery"
+                                        .into(),
+                                );
+                                return gtk::glib::ControlFlow::Continue;
+                            }
                             if player_status.playback_status().label() != "Stopped" {
                                 fail_window_smoke(
                                     &driver_failure,

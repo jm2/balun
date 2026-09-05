@@ -29,10 +29,13 @@ address so you know which tuner failed.
 | Approved private-range enumeration (`balun-discover` only, `/24` or narrower) | ✅ |
 | Multiple devices, each with its own channel lineup | ✅ |
 | Device metadata and lineup inspection without allocating a tuner | ✅ |
+| Reload the selected device's channels after a failure or lineup change | ✅ **Reload channels** in the channel header |
 | Adaptive three-pane GTK 4 / libadwaita window | ✅ |
 | Window size and maximized state remembered across launches | ✅ |
 | Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Linux, macOS, and Windows against real tuners |
 | Stop, volume, mute, and fullscreen controls | ✅ |
+| Software deinterlacing | ✅ Adaptive YADIF, automatic field order, full field rate; progressive video passes through |
+| Keep the display and computer awake during playback | ✅ While playing or buffering, where the desktop permits inhibition |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
 | Playback errors that name the device and channel | ✅ |
 | Channel search and favorites-only filter | ✅ |
@@ -455,7 +458,8 @@ the expected value), add the `## [version]` changelog section and its compare li
 python3 scripts/release_check.py --tag v0.1.0
 ```
 
-Push a signed, annotated `v` tag and run the **Release candidate** workflow with it. The workflow
+Push a signed, annotated `v` tag and run the **Release candidate** workflow with it. For the initial
+`v0.1.0` Alpha, the maintainer has approved an unsigned annotated tag. The workflow
 repeats the check, builds every artifact from that one commit, verifies the exact inventory, and
 creates a draft GitHub release with `SHA256SUMS.txt` and the changelog section as its notes. It
 refuses to touch a release that is already published; publishing the draft is a manual step.
@@ -590,6 +594,11 @@ channel number or name, or press the star to show favorites only. Click a channe
 to play it; moving the keyboard highlight alone never tunes. Protected channels are listed but
 cannot be activated. The player header has **Stop**, a volume slider, a mute toggle, and a
 fullscreen button; volume and mute carry across channel changes for the running session.
+Balun requests that the display and computer stay awake while playing or buffering, and releases
+that request on Stop, failure, device change, or close. The desktop's power policy may override it.
+
+Use **Reload channels** in the channel header to retry a failed lineup or fetch changes directly
+from the selected device. Reloading stops the current channel; select a channel again to resume.
 
 ### Keyboard Shortcuts
 
@@ -597,8 +606,11 @@ fullscreen button; volume and mute carry across channel changes for the running 
 |----------|--------|
 | `F11` | Toggle fullscreen |
 | `Escape` | Exit fullscreen |
+| `Ctrl+F` | Focus channel search |
+| `Ctrl+R` | Refresh devices |
+| `F5` | Refresh devices |
 
-Shortcuts are recognized only without modifier keys.
+`F11`, `F5`, and `Escape` are recognized only without modifier keys.
 
 ---
 

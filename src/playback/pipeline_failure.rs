@@ -294,6 +294,7 @@ pub(super) fn log_playing_diagnostics(pipeline: &gst::Element) {
         target: "balun::playback",
         latency = %latency,
         audio_sinks = %join_or_none(audio_sinks),
+        deinterlacing = %super::deinterlace::describe(pipeline),
         "pipeline playing"
     );
 }

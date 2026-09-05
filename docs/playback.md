@@ -108,7 +108,7 @@ The startup snapshot checks these seven exact registry names in stable order:
 | `decodebin3` | Stream parser/decoder orchestration |
 | `appsrc` | Application-fed source filled by Balun's private HTTP transport |
 | `tsdemux` | MPEG transport-stream demultiplexing |
-| `deinterlace` | Interlaced-video conversion for ordinary 1080i content |
+| `deinterlace` | Software conversion for interlaced SD and HD content |
 | `gtk4paintablesink` | GTK 4 paintable video output |
 
 These are structural readiness checks, not a promise that a channel is
@@ -364,6 +364,35 @@ picture, clears presentation, and proves bounded terminal `NULL` shutdown.
 Together with the decoded-frame/EOS and production-`PlayerView` smokes, this
 completes the presentation contract without exposing a desktop test API capable of forging stream
 handoffs.
+
+## Software deinterlacing and idle inhibition
+
+Balun configures playsink's inserted software `deinterlace` element with `method=yadif`,
+`mode=auto`, `fields=all`, and `tff=auto`. YADIF uses temporal and spatial information instead of
+the default linear interpolation. Both fields are retained: 480i/1080i at 30000/1001 frames/s
+produce 60000/1001 progressive frames/s, while progressive caps bypass deinterlacing. Automatic
+mode also honors the per-buffer interlace flags in mixed streams. The existing format conversion
+and decoder selection remain playbin-owned. See the upstream
+[deinterlace properties](https://gstreamer.freedesktop.org/documentation/deinterlace/index.html).
+
+The required enum values are checked before opening a stream and applied through `element-setup`
+to every inserted deinterlacer. Playback debug diagnostics report its method and negotiated output
+frame rate. Synthetic tests compare static two-line detail with linear interpolation at SD and HD
+resolutions, check full field rate, and verify unchanged progressive frames. These do not substitute
+for motion-quality and CPU measurements on real broadcasts across platforms. GPU deinterlacing,
+hardware-specific tuning, and inverse telecine remain deferred under
+[#78](https://github.com/jm2/balun/issues/78); pattern locking remains disabled.
+
+The player owns one idle-inhibition request while Playing or Buffering. Stop, channel replacement,
+device change, terminal failure, EOS, and close release it. Linux and Windows use GTK's application
+IDLE/SUSPEND request; unsupported desktop backends return no cookie and playback continues.
+macOS uses the system `caffeinate` helper because GTK's Quartz backend does not create the needed
+power assertion. Its lifetime is bounded by playback ownership and Balun's process ID. These
+requests are subject to operating-system policy and never prevent an explicit user shutdown.
+
+**Reload channels** retries the selected device directly using its accepted responder, without
+requiring another broadcast discovery. It stops playback on command admission and creates a new
+lineup generation. The action is available after success or failure and disabled while loading.
 
 ## Synthetic display-backed acceptance
 

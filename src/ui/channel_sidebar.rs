@@ -26,6 +26,7 @@ pub(crate) struct ChannelSidebar {
     list: gtk::ListView,
     search: gtk::SearchEntry,
     favorites_toggle: gtk::ToggleButton,
+    reload_button: gtk::Button,
     presentation: Rc<Cell<LineupPresentation>>,
     selected_device: Rc<Cell<Option<DeviceId>>>,
     applying_snapshot: Rc<Cell<bool>>,
@@ -186,6 +187,10 @@ impl LineupPresentation {
 }
 
 impl ChannelSidebar {
+    pub(crate) fn reload_button(&self) -> &gtk::Button {
+        &self.reload_button
+    }
+
     #[must_use]
     pub(crate) fn root(&self) -> &adw::ToolbarView {
         &self.root
@@ -279,6 +284,10 @@ impl ChannelSidebar {
 
         self.presentation
             .set(LineupPresentation::from_lineup(lineup));
+        self.reload_button.set_sensitive(matches!(
+            lineup.status(),
+            SelectedLineupStatus::Ready | SelectedLineupStatus::Failed(_)
+        ));
         self.update_presentation();
     }
 
@@ -412,6 +421,13 @@ pub(crate) fn build() -> ChannelSidebar {
     )]);
 
     let header = adw::HeaderBar::new();
+    let reload_button = gtk::Button::builder()
+        .icon_name("view-refresh-symbolic")
+        .tooltip_text("Reload channels")
+        .sensitive(false)
+        .build();
+    reload_button.update_property(&[gtk::accessible::Property::Label("Reload channels")]);
+    header.pack_start(&reload_button);
     header.pack_end(&favorites_toggle);
     let root = adw::ToolbarView::new();
     root.add_top_bar(&header);
@@ -439,6 +455,7 @@ pub(crate) fn build() -> ChannelSidebar {
         list,
         search,
         favorites_toggle,
+        reload_button,
         presentation,
         selected_device: Rc::new(Cell::new(None)),
         applying_snapshot: Rc::new(Cell::new(false)),

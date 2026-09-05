@@ -17,12 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wider than `/24` from the diagnostic.
 - **Remembered devices** — A tuner found by address or hostname is remembered once it answers and
   probed again at the next launch, up to 32 entries, once the launch discovery settles;
-  right-click a listed device to forget its entry.
+  right-click a listed device to forget its entry. Hostnames stay remembered by name when multiple
+  addresses answer and across startup rediscovery, without persisting their resolved addresses.
 - **Stable device and channel identity** — One validated DeviceID per tuner even when it answers
   at several addresses, stale addresses that expire independently, and lineups that are never
   merged across devices.
 - **Device inspection and lineups** — Identity-checked `discover.json` and `lineup.json` from the
-  responder that answered, with strict size, time, redirect, and credential limits.
+  responder that answered, with strict size, time, redirect, and credential limits. **Reload
+  channels** retries failures or fetches lineup changes directly from the selected device.
 - **GTK 4 / libadwaita desktop** — An adaptive window with a device sidebar, a per-device channel
   sidebar with favorite, HD, and protected badges, channel search, a favorites-only filter, and a
   live-TV pane; one local discovery runs at launch, and window size and maximized state are
@@ -36,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MPEG-TS stream (ADR-0001).
 - **Playback controls** — Stop, a volume slider, an independent mute toggle, and fullscreen with
   `F11` and `Escape`; volume and mute carry across channel changes.
+- **Software deinterlacing** — Adaptive YADIF at full field rate for interlaced SD and HD video,
+  with automatic field order and progressive passthrough; diagnostics report the method and
+  negotiated output frame rate. GPU deinterlacing and inverse telecine remain deferred.
+- **Playback idle inhibition** — Request that the display and computer stay awake while playing
+  or buffering, and release the request on Stop, failure, replacement, or close.
 - **Playback errors that name the device and channel** — Failures reduce to fixed messages (no
   tuner available, channel unavailable, stream rejected, device unavailable, missing codec,
   protected channel, internal error) that name the tuner and channel but never a stream URL or
@@ -98,6 +105,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Private vulnerability reporting** — Enabled GitHub's private report form linked by the security
+  policy, which now covers v0.1 alpha versions.
 - **Security and privacy review** — Network admission, persisted state, logs and diagnostics,
   package contents and CI, and every tuner-allocation path are audited in
   `docs/security-review-v0.1.md`; `settings.json` is owner-only on Unix.

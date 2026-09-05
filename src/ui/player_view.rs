@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use super::idle_inhibitor::PlaybackInhibitor;
 use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, ControllerCommandError, ControllerHandle, StreamHandoff,
@@ -36,6 +37,7 @@ pub(crate) struct PlayerView {
     tune_context: RefCell<Option<TuneContext>>,
     updating_audio_controls: Cell<bool>,
     pending_response: RefCell<Option<gtk::glib::JoinHandle<()>>>,
+    idle_inhibitor: RefCell<Option<PlaybackInhibitor>>,
     /// Test-only observation of `stop` invocations for release-wiring smokes.
     #[cfg(test)]
     stop_calls: Cell<u32>,
@@ -65,6 +67,12 @@ impl From<&PlaybackSessionState> for PlaybackPresentation {
             PlaybackSessionState::ShutDown => Self::ShutDown,
             _ => Self::Unknown,
         }
+    }
+}
+
+impl PlaybackPresentation {
+    const fn keeps_awake(self) -> bool {
+        matches!(self, Self::Playing | Self::Buffering(_))
     }
 }
 
@@ -173,7 +181,7 @@ fn pipeline_failure_copy(
         PlaybackPipelineFailure::ChannelMissing => (
             "Channel unavailable",
             format!(
-                "{device} no longer offers {channel}. Select the device again to reload its lineup."
+                "{device} no longer offers {channel}. Use Reload channels to read its lineup again."
             ),
         ),
         PlaybackPipelineFailure::HttpRejected => (
@@ -254,6 +262,17 @@ fn session_failure_copy(
 }
 
 impl PlayerView {
+    pub(crate) fn connect_idle_inhibition(&self, window: &impl IsA<gtk::Window>) {
+        self.idle_inhibitor
+            .replace(Some(PlaybackInhibitor::new(window)));
+    }
+
+    fn inhibit_idle(&self, active: bool) {
+        if let Some(inhibitor) = self.idle_inhibitor.borrow_mut().as_mut() {
+            inhibitor.set_active(active);
+        }
+    }
+
     /// Return the widget rooted in the live-TV navigation page.
     pub(crate) const fn root(&self) -> &adw::ToolbarView {
         &self.root
@@ -393,6 +412,7 @@ impl PlayerView {
         selection: StreamSelection,
         context: TuneContext,
     ) {
+        self.inhibit_idle(false);
         self.abort_pending_response();
         self.tune_context.replace(Some(context));
 
@@ -450,6 +470,7 @@ impl PlayerView {
     /// Cancel pending resolution, hide any retained frame, and settle the
     /// current generation without making the session terminal.
     pub(crate) fn stop(&self) -> Result<(), PlaybackSessionFailure> {
+        self.inhibit_idle(false);
         #[cfg(test)]
         self.stop_calls.set(self.stop_calls.get() + 1);
         self.stop_button.set_sensitive(false);
@@ -473,6 +494,7 @@ impl PlayerView {
 
     /// Clear presentation and terminally settle the playback owner.
     pub(crate) fn shut_down(&self) -> Result<(), PlaybackSessionFailure> {
+        self.inhibit_idle(false);
         self.stop_button.set_sensitive(false);
         self.set_audio_controls_sensitive(false);
         self.abort_pending_response();
@@ -492,6 +514,7 @@ impl PlayerView {
     }
 
     fn apply_session_state(&self, state: &PlaybackSessionState) {
+        self.inhibit_idle(PlaybackPresentation::from(state).keeps_awake());
         match PlaybackPresentation::from(state) {
             PlaybackPresentation::Stopped => {
                 self.playback_status.set_label("Stopped");
@@ -828,6 +851,7 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         tune_context: RefCell::new(None),
         updating_audio_controls: Cell::new(false),
         pending_response: RefCell::new(None),
+        idle_inhibitor: RefCell::new(None),
         #[cfg(test)]
         stop_calls: Cell::new(0),
     };
@@ -890,6 +914,21 @@ mod tests {
     use balun::playback::TuneGeneration;
 
     use super::*;
+
+    #[test]
+    fn only_playing_and_buffering_hold_idle_inhibition() {
+        assert!(PlaybackPresentation::Playing.keeps_awake());
+        assert!(PlaybackPresentation::Buffering(0).keeps_awake());
+        for presentation in [
+            PlaybackPresentation::Stopped,
+            PlaybackPresentation::Connecting,
+            PlaybackPresentation::Failed(PlaybackSessionFailure::ComponentsUnavailable),
+            PlaybackPresentation::ShutDown,
+            PlaybackPresentation::Unknown,
+        ] {
+            assert!(!presentation.keeps_awake());
+        }
+    }
 
     struct DropProbe(Rc<Cell<bool>>);
 

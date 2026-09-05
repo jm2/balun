@@ -1,7 +1,7 @@
 # Balun v0.1 support matrix
 
-- Status: Release candidate
-- Last updated: 2026-09-04
+- Status: v0.1.0 Alpha draft
+- Last updated: 2026-09-05
 
 This matrix is derived from the sanitized evidence in
 [`compatibility-v0.1.md`](compatibility-v0.1.md) and the ledger in [`task.md`](task.md). A cell
@@ -12,13 +12,13 @@ it is unsupported. Every ✅ is traceable to a section of the compatibility note
 
 | Platform | Build | Local discovery | Live TV with audio | Packages |
 | --- | --- | --- | --- | --- |
-| Linux | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | 🚧 Configured: Flatpak x86_64/aarch64; deb amd64/arm64; rpm x86_64/aarch64; Arch x86_64 |
-| Windows | CI and development hosts | ✅ One host; second host awaits retest | ✅ Development build, one host | 🚧 Configured: ZIP and installer for x86_64 and ARM64 |
-| macOS | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | 🚧 Configured: Apple Silicon DMG |
+| Linux | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | Built: Flatpak x86_64/aarch64; deb amd64/arm64; rpm x86_64/aarch64; Arch x86_64 |
+| Windows | CI and development hosts | ✅ One host; second host awaits retest | ✅ Development build, one host | Built: ZIP and installer for x86_64 and ARM64 |
+| macOS | CI and development host | ✅ Both primary-site devices | ✅ Development build, one host | Built: Apple Silicon DMG |
 
-The table names the configured `0.1.0` inventory. The release workflow is configured to build,
-inspect, reopen, and checksum every package from the final tag, but the final tagged set has not
-yet been produced or published on the [Releases](https://github.com/jm2/balun/releases) page. The
+The table names the `0.1.0` inventory built, inspected, reopened, and checksummed by the release
+workflow for the Alpha draft. Publication on the
+[Releases](https://github.com/jm2/balun/releases) page remains a maintainer action. The
 Live TV column records development-build evidence, not packaged live-tuner acceptance. A macOS
 packaged-hardware validation path exists, but cross-platform packaged acceptance remains P4.1.
 Architecture-specific entries do not extend the physical-tuner evidence to every CPU and format.
