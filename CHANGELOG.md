@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Routed discovery survives route-event bursts** — On Linux a kernel or NetworkManager change
+  arrives as several datagrams microseconds apart; the observer pair replaced after the first one
+  lost its baseline to the rest and stayed down, failing the next routed request. The pair now
+  waits for the burst to settle, retries a rejected baseline a bounded number of times, and is
+  re-established by the next routed request; the log names the source that changed.
+
 ## [0.1.0] — 2026-09-04
 
 ### Added
