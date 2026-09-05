@@ -19,7 +19,8 @@ With no options, builds the native Balun desktop executable with Cargo's locked
 release dependency graph and the desktop feature, then applies Balun's pinned
 Mach-O component policy. It does not create Balun.app, a DMG, a native package,
 or a staged runtime closure. This produces only
-target/<native-target>/release/balun; --run launches it afterwards.
+target/<native-target>/release/balun; --run launches it afterwards using a
+private plugin directory of links to the installed playback plugins.
 
 Launch:
   --run             After the desktop build and its Mach-O policy gate pass,
@@ -56,8 +57,8 @@ Desktop compilation requires preinstalled, pkg-config-visible GTK 4.16,
 libadwaita 1.6, and GStreamer 1.20 development libraries. The diagnostic and
 format routes do not. Homebrew's pkg-config resolves its own prefix, so the
 helper never queries Homebrew for it. The desktop build additionally requires the GStreamer
-runtime plugin files that provide playbin3, appsrc, tsdemux, deinterlace, and
-gtk4paintablesink, and warns when the libav broadcast decoders are absent.
+runtime plugin files that provide playbin3, appsrc, tsdemux, deinterlace,
+gtk4paintablesink, and the libav broadcast decoders, plus adwaita-icon-theme.
 Every compilation route requires a preinstalled rustc reporting one native
 Apple Darwin host tuple. The format route does not.
 
@@ -117,7 +118,7 @@ require_desktop_dependencies()
     info 'GTK 4.16, libadwaita 1.6, and GStreamer 1.20 development-library checks passed.'
 }
 
-# 21-element macOS GStreamer plugin closure defined and enforced by Balun
+# 22-element macOS GStreamer plugin closure defined and enforced by Balun
 readonly GSTREAMER_MACOS_PLUGIN_CLOSURE=(
     libgstcoreelements
     libgstplayback
@@ -140,6 +141,7 @@ readonly GSTREAMER_MACOS_PLUGIN_CLOSURE=(
     libgstopengl
     libgstautodetect
     libgstosxaudio
+    libgstvolume
 )
 
 require_playback_runtime()
@@ -163,14 +165,37 @@ libgsttypefindfunctions|stream type detection
 libgstdeinterlace|deinterlace
 libgstmpegtsdemux|tsdemux
 libgstgtk4|gtk4paintablesink
+libgstlibav|software MPEG-2 and broadcast audio decoders
 PLUGINS
     if [ -n "$missing" ]; then
         fail "Required GStreamer playback runtime is incomplete in $plugin_directory:$missing"$'\n'"Install or update the Homebrew gstreamer formula, which supplies the base, good, bad, and gst-plugins-rs (gtk4) plugins, then retry."
     fi
-    if [ ! -f "$plugin_directory/libgstlibav.dylib" ]; then
-        warn "libgstlibav.dylib is missing from $plugin_directory; MPEG-2, H.264, AC-3, and AAC broadcast decoding commonly needs the libav plugin that the Homebrew gstreamer formula includes. The build continues, but live channels may report a missing codec."
-    fi
     info 'GStreamer runtime plugin checks passed for the structural playback factories.'
+    local theme_pc
+    theme_pc=$(pkg-config --path adwaita-icon-theme 2>/dev/null) || theme_pc=
+    adwaita_icon_directory="${theme_pc%/*}/../icons/Adwaita"
+    [ -n "$theme_pc" ] && [ -s "$adwaita_icon_directory/index.theme" ] || \
+        fail 'Adwaita icons were not found; install the Homebrew adwaita-icon-theme formula explicitly and retry.'
+}
+
+prepare_development_runtime()
+{
+    local plugin_directory plugin runtime_root
+    plugin_directory=$(pkg-config --variable=pluginsdir gstreamer-1.0)
+    runtime_root="$target_directory/$native_target/macos-runtime"
+    rm -rf "$runtime_root/plugins"
+    mkdir -p "$runtime_root/plugins"
+    # Scan only Balun's playback closure. Homebrew also ships Python and GTK 3
+    # plugins whose initializers otherwise run inside our GTK 4 scanner.
+    for plugin in "${GSTREAMER_MACOS_PLUGIN_CLOSURE[@]}"; do
+        [ -f "$plugin_directory/$plugin.dylib" ] || \
+            fail "Required GStreamer playback plugin is missing: $plugin.dylib"
+        ln -sf "$plugin_directory/$plugin.dylib" "$runtime_root/plugins/$plugin.dylib"
+    done
+    unset GST_PLUGIN_SYSTEM_PATH_1_0 GST_PLUGIN_PATH_1_0 GST_REGISTRY_1_0
+    export GST_PLUGIN_SYSTEM_PATH=""
+    export GST_PLUGIN_PATH="$runtime_root/plugins"
+    export GST_REGISTRY="$runtime_root/registry.bin"
 }
 
 require_packaging_runtime()
@@ -201,7 +226,7 @@ require_packaging_runtime()
         fi
     done
     if [ -n "$missing" ]; then
-        fail "Required 21-element GStreamer plugin closure is incomplete in $plugin_directory:$missing"$'\n'"Install missing GStreamer plugin formulas via Homebrew and retry."
+        fail "Required 22-element GStreamer plugin closure is incomplete in $plugin_directory:$missing"$'\n'"Install missing GStreamer plugin formulas via Homebrew and retry."
     fi
 }
 
@@ -459,6 +484,7 @@ case "$mode" in
     probe-playback)
         require_desktop_dependencies
         require_playback_runtime
+        prepare_development_runtime
         info 'Probing the installed GStreamer playback runtime (release profile)...'
         for probe in \
             playback::runtime::tests::installed_runtime_has_the_exact_playback_foundation \
@@ -551,6 +577,7 @@ info "Application ID: $application_id"
 info "Mach-O component policy passed for expected $artifact_label path: $binary"
 
 if $run; then
+    prepare_development_runtime
     info 'Launching Balun desktop...'
     exec "$binary"
 fi
@@ -707,7 +734,9 @@ if ! macos_validate_icon_sources "data/balun.iconset" \
 fi
 mkdir -p "${RESOURCES_DIR}/share/icons"
 cp -RL "${BREW_PREFIX}/share/icons/hicolor" "${RESOURCES_DIR}/share/icons/" 2>/dev/null || true
-cp -RL "${BREW_PREFIX}/share/icons/Adwaita" "${RESOURCES_DIR}/share/icons/" 2>/dev/null || true
+cp -RL "$adwaita_icon_directory" "${RESOURCES_DIR}/share/icons/"
+[ -s "${RESOURCES_DIR}/share/icons/Adwaita/index.theme" ] || \
+    fail 'The bundled Adwaita icon theme is missing.'
 mkdir -p "${RESOURCES_DIR}/share/icons/hicolor"
 cp -R "data/icons/hicolor/." "${RESOURCES_DIR}/share/icons/hicolor/"
 if command -v gtk4-update-icon-cache &>/dev/null; then
@@ -731,9 +760,9 @@ fi
 cp "$pixbuf_query_src" "$PIXBUF_QUERY_DEST"
 chmod u+w "$PIXBUF_QUERY_DEST"
 
-# ── 21-element GStreamer Plugin Closure ───────────────────────────────────────
+# ── 22-element GStreamer Plugin Closure ───────────────────────────────────────
 plugin_directory=$(pkg-config --variable=pluginsdir gstreamer-1.0 2>/dev/null)
-info "Staging 21 GStreamer plugins into ${GST_PLUGIN_DEST}..."
+info "Staging 22 GStreamer plugins into ${GST_PLUGIN_DEST}..."
 for plugin in "${GSTREAMER_MACOS_PLUGIN_CLOSURE[@]}"; do
     src_plugin="${plugin_directory}/${plugin}.dylib"
     [ -f "$src_plugin" ] || fail "Required GStreamer plugin is missing: $src_plugin"
@@ -741,7 +770,7 @@ for plugin in "${GSTREAMER_MACOS_PLUGIN_CLOSURE[@]}"; do
     chmod u+w "${GST_PLUGIN_DEST}/${plugin}.dylib"
 done
 bundled_plugin_count=$(ls -1 "${GST_PLUGIN_DEST}"/*.dylib 2>/dev/null | wc -l | tr -d ' ')
-[ "$bundled_plugin_count" -eq 21 ] || fail "Expected 21 bundled GStreamer plugins, found $bundled_plugin_count"
+[ "$bundled_plugin_count" -eq 22 ] || fail "Expected 22 bundled GStreamer plugins, found $bundled_plugin_count"
 info "Bundled $bundled_plugin_count GStreamer plugins."
 
 cp "$gst_scanner_src" "$GST_SCANNER_DEST"

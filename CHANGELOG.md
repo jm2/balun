@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
 
+## [0.1.1] — 2026-09-05
+
+### Fixed
+
+- Missing icons in macOS development builds and application bundles.
+- MPEG-2 playback failing with a VideoToolbox internal error on macOS.
+- Missing volume and mute support in the macOS playback plugin bundle.
+- GTK 3 and Python plugin warnings during macOS development launches.
+- The Quit menu and Command-Q failing to close the application cleanly.
+- The missing About dialog, now matching Tributary across all platforms.
+- Lowercase application names in the native macOS About and Quit menus.
+- The Devices header being cut off beside macOS window controls.
+
 ## [0.1.0] — 2026-09-05
 
 ### Added
@@ -160,5 +173,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
   decoder, so those channels fail closed and cannot be transcoded.
 
-[Unreleased]: https://github.com/jm2/balun/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jm2/balun/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/jm2/balun/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/jm2/balun/releases/tag/v0.1.0

@@ -369,6 +369,24 @@ pub(crate) fn build() -> DeviceSidebar {
     discovery_actions.append(&cancel_discovery_button);
     discovery_actions.append(&routed_menu_button);
     let header = adw::HeaderBar::new();
+    // The automatic NavigationPage title ellipsizes to fit beside macOS's
+    // window controls. Keep this short title's full minimum width so the
+    // split view allocates enough space for "Devices" and the buttons.
+    let title = gtk::Label::builder()
+        .label("Devices")
+        .css_classes(["title"])
+        .build();
+    header.set_title_widget(Some(&title));
+    let app_menu = gtk::gio::Menu::new();
+    app_menu.append(Some("_About Balun"), Some("app.about"));
+    app_menu.append(Some("_Quit"), Some("app.quit"));
+    let app_menu_button = gtk::MenuButton::builder()
+        .icon_name("open-menu-symbolic")
+        .tooltip_text("Main menu")
+        .menu_model(&app_menu)
+        .build();
+    app_menu_button.update_property(&[gtk::accessible::Property::Label("Main menu")]);
+    header.pack_start(&app_menu_button);
     header.pack_end(&discovery_actions);
 
     let terminal_banner = adw::Banner::builder().revealed(false).build();

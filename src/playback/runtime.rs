@@ -193,6 +193,8 @@ impl PlaybackRuntime {
         let main_context = gst::glib::MainContext::default();
         require_main_context_owner(main_context.is_owner())?;
         gst::init().map_err(|_| PlaybackInitializationError::InitializationFailed)?;
+        #[cfg(target_os = "macos")]
+        prefer_software_mpeg2_decoder();
         let (major, minor, micro, _) = gst::version();
         let runtime_version = RuntimeVersion::new(major, minor, micro);
         if runtime_version < GSTREAMER_API_FLOOR {
@@ -213,6 +215,21 @@ impl PlaybackRuntime {
     /// Return the immutable startup capability snapshot.
     pub const fn capabilities(&self) -> &PlaybackCapabilities {
         &self.capabilities
+    }
+}
+
+/// VideoToolbox advertises MPEG-2 even on Macs without an MPEG-2 decoder;
+/// decodebin3 does not retry libav after VTDecompressionSessionCreate fails.
+/// Raise only the MPEG-2 software factory above VideoToolbox's default rank.
+/// H.264/HEVC keep their existing hardware decoder selection.
+#[cfg(target_os = "macos")]
+fn prefer_software_mpeg2_decoder() {
+    use gst::prelude::*;
+
+    if let Some(factory) = gst::ElementFactory::find("avdec_mpeg2video")
+        && factory.rank() < gst::Rank::PRIMARY + 2
+    {
+        factory.set_rank(gst::Rank::PRIMARY + 2);
     }
 }
 

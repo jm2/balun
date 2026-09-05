@@ -50,16 +50,35 @@ where
     let application = adw::Application::builder()
         .application_id(APPLICATION_ID)
         .build();
+    application.add_action_entries([
+        gtk::gio::ActionEntry::builder("quit")
+            .activate(|application: &adw::Application, _, _| {
+                // Closing the window joins playback/controller teardown and
+                // drains settings writes before the application exits.
+                if let Some(window) = existing_window(application) {
+                    window.close();
+                } else {
+                    application.quit();
+                }
+            })
+            .build(),
+        gtk::gio::ActionEntry::builder("about")
+            .activate(|application: &adw::Application, _, _| {
+                if let Some(window) = existing_window(application) {
+                    about_dialog().present(Some(&window));
+                }
+            })
+            .build(),
+    ]);
+    application.set_accels_for_action("app.quit", &["<primary>q"]);
+    application.connect_startup(|_| ui::icons::initialize());
 
     let controller = Rc::new(RefCell::new(Some(controller)));
     let shutdown_failed = Rc::new(Cell::new(false));
     let window_shutdown_failed = Rc::clone(&shutdown_failed);
 
     application.connect_activate(move |application| {
-        if let Some(window) = application
-            .active_window()
-            .or_else(|| application.windows().into_iter().next())
-        {
+        if let Some(window) = existing_window(application) {
             window.present();
             return;
         }
@@ -86,6 +105,26 @@ where
     });
 
     (application, shutdown_failed)
+}
+
+fn existing_window(application: &adw::Application) -> Option<gtk::Window> {
+    application
+        .active_window()
+        .or_else(|| application.windows().into_iter().next())
+}
+
+/// Keep the About implementation shared across platforms, as in Tributary.
+fn about_dialog() -> adw::AboutDialog {
+    adw::AboutDialog::builder()
+        .application_name("Balun")
+        .application_icon(APPLICATION_ID)
+        .developer_name("John-Michael Mulesa")
+        .version(env!("CARGO_PKG_VERSION"))
+        .website(env!("CARGO_PKG_REPOSITORY"))
+        .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues"))
+        .copyright("© 2026 John-Michael Mulesa")
+        .license_type(gtk::License::Gpl30)
+        .build()
 }
 
 fn finish_run(exit_code: gtk::glib::ExitCode, shutdown_failed: &Cell<bool>) -> gtk::glib::ExitCode {
@@ -142,6 +181,16 @@ mod tests {
     #[test]
     #[ignore = "requires the isolated display and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
     fn headless_window_close_joins_controller_after_launch_discovery() {
+        run_lifecycle_smoke(false);
+    }
+
+    #[test]
+    #[ignore = "requires the isolated display and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
+    fn headless_about_and_quit_join_controller_after_launch_discovery() {
+        run_lifecycle_smoke(true);
+    }
+
+    fn run_lifecycle_smoke(quit_action: bool) {
         let local = Arc::new(AtomicUsize::new(0));
         let exact = Arc::new(AtomicUsize::new(0));
         let controller = ControllerRuntime::start(CountingDiscovery {
@@ -167,12 +216,43 @@ mod tests {
                             break;
                         }
                     }
-                    window
-                        .upgrade()
-                        .expect(
-                            "smoke window should remain alive until the launch discovery settles",
-                        )
-                        .close();
+                    let window = window.upgrade().expect(
+                        "smoke window should remain alive until the launch discovery settles",
+                    );
+                    if quit_action {
+                        let application = window.application().expect("window application");
+                        gtk::gio::prelude::ActionGroupExt::activate_action(
+                            &application,
+                            "about",
+                            None,
+                        );
+                        let dialog = window
+                            .visible_dialog()
+                            .expect("About dialog presented")
+                            .downcast::<adw::AboutDialog>()
+                            .expect("Tributary-style About dialog");
+                        assert_eq!(dialog.application_name(), "Balun");
+                        assert_eq!(dialog.application_icon(), APPLICATION_ID);
+                        assert_eq!(dialog.version(), env!("CARGO_PKG_VERSION"));
+                        assert_eq!(dialog.developer_name(), "John-Michael Mulesa");
+                        assert_eq!(dialog.website(), env!("CARGO_PKG_REPOSITORY"));
+                        assert_eq!(dialog.issue_url(), "https://github.com/jm2/balun/issues");
+                        assert_eq!(dialog.license_type(), gtk::License::Gpl30);
+                        // Quit while About is still open, then request it again
+                        // while the asynchronous joined shutdown is in flight.
+                        gtk::gio::prelude::ActionGroupExt::activate_action(
+                            &application,
+                            "quit",
+                            None,
+                        );
+                        gtk::gio::prelude::ActionGroupExt::activate_action(
+                            &application,
+                            "quit",
+                            None,
+                        );
+                    } else {
+                        window.close();
+                    }
                 });
             });
 

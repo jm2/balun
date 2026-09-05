@@ -1,10 +1,10 @@
 # The upstream tag version in SemVer spelling; Version is its RPM spelling
 # (a prerelease such as 0.2.0-alpha.1 becomes 0.2.0~alpha.1). The release
 # check binds both to the tag, and Packit rewrites Version the same way.
-%global upstream_version 0.1.0
+%global upstream_version 0.1.1
 
 Name:           balun
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        A lightweight cross-platform HDHomeRun live TV viewer
 
