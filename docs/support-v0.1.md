@@ -48,7 +48,7 @@ The deferred HDHR5-4DT is an Australian unit; no regional or DVB-T support is cl
 | Hostname | Covered by tests and exact unicast target proofs | One name, resolved to at most four unicast addresses |
 | Remembered targets | ✅ Re-probed across launches; secondary tuners rediscovered | Nothing after the first successful probe |
 | Approved private range (`balun-discover` only) | ✅ Diagnostic only | One RFC 1918 range no wider than `/24` that you own or administer |
-| Opt-in route-table-derived tunnel search (Linux) | ✅ Verified over routed tunnel; candidate preview, approval, and traffic budget measured | Explicit approval of the previewed candidates and packet budget |
+| Opt-in route-table-derived tunnel search (Linux) | ✅ Verified over routed tunnel; candidate preview, approval, and traffic budget measured | Explicit approval of the previewed candidates and packet budget; the host's policy rules must be the default `local`/`main`/`default` chain |
 | Route-table-derived tunnel search (macOS, Windows) | ❌ Not in v0.1 | Use an exact address or hostname instead |
 
 Local discovery sends nothing at launch beyond the remembered targets. Local broadcast and
@@ -88,6 +88,9 @@ nothing.
 - No recording, timeshift, transcoding, or tuner configuration.
 - Lineups are never merged across devices.
 - ATSC 3.0 AC-4 playback is not guaranteed on any platform.
+- The route-table-derived search fails closed on a host whose policy-routing rules are not the
+  default `local`/`main`/`default` chain, which wg-quick, Tailscale, and most VPN clients change;
+  the log names the cause, and an exact address or hostname still works there.
 - The opt-in route-table-derived tunnel search is Linux-only; macOS and Windows still support
   local, exact-address, hostname, and remembered-target discovery.
 
