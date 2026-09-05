@@ -2,8 +2,9 @@
 # Balun — Linux desktop build helper
 #
 # The default route builds the reviewable GTK4/libadwaita/GStreamer desktop
-# application without launching it. Native package modes reuse the same locked
-# build and policy gates before producing distribution-owned payloads.
+# application without launching it; --run launches the built application once
+# its gates pass. Native package modes reuse the same locked build and policy
+# gates before producing distribution-owned payloads.
 
 set -euo pipefail
 
@@ -29,12 +30,12 @@ A lightweight cross-platform HDHomeRun live TV viewer
 Application ID: io.github.jm2.Balun
 
 Usage:
-  ./scripts/build-linux.sh [MODE] [--diagnostic]
+  ./scripts/build-linux.sh [MODE] [--diagnostic] [--run]
 
 With no options, builds the Balun GTK4/libadwaita/GStreamer desktop application
 with Cargo's locked release dependency graph, then applies Balun's repository-
-metadata and Linux ELF policy gates. The helper builds only and never launches
-the application. Before building, it requires the GStreamer runtime plugin
+metadata and Linux ELF policy gates. The helper builds only unless --run is
+given. Before building, it requires the GStreamer runtime plugin
 files that provide playbin3, appsrc, tsdemux, deinterlace, and
 gtk4paintablesink, and it warns when the libav broadcast decoders are absent.
 
@@ -63,6 +64,12 @@ Build selection:
                     and cpio. Supports x86_64 and aarch64.
   --arch-pkg        Build an x86_64 Arch package with preinstalled makepkg and
                     reopen it with bsdtar.
+
+Launch:
+  --run             After the desktop build and its gates pass, replace this
+                    helper with the built application so its log stays in this
+                    terminal. Cannot be combined with quick-exit, --diagnostic,
+                    or packaging modes.
 
 Unavailable through this helper:
   --flatpak          The release workflow owns the reviewed Flatpak route.
@@ -228,6 +235,7 @@ build_arch_package()
 
 mode=build
 mode_option=
+run=false
 diagnostic=false
 show_help=false
 
@@ -253,6 +261,9 @@ for argument in "$@"; do
             mode=${argument#--}
             mode_option=$argument
             ;;
+        --run)
+            run=true
+            ;;
         --flatpak)
             usage_error "Packaging mode '$argument' is not available yet; no build, install, or network work was started."
             ;;
@@ -276,6 +287,12 @@ if $diagnostic; then
             usage_error 'Native package modes build the desktop application and cannot be combined with --diagnostic.'
             ;;
     esac
+fi
+if $run && $diagnostic; then
+    usage_error '--run launches only the desktop application and cannot be combined with --diagnostic.'
+fi
+if $run && [ "$mode" != build ]; then
+    usage_error "--run cannot be combined with '$mode_option'; it launches only the plain desktop build."
 fi
 
 cd "$repository_root"
@@ -476,7 +493,13 @@ if $diagnostic; then
     info "Diagnostic output: $binary"
 else
     case "$mode" in
-        build) info "Desktop output: $binary" ;;
+        build)
+            info "Desktop output: $binary"
+            if $run; then
+                info 'Launching Balun desktop...'
+                exec "$binary"
+            fi
+            ;;
         deb) build_debian_package ;;
         rpm) build_rpm_package ;;
     esac

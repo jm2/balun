@@ -283,7 +283,9 @@ GST_DEBUG=2 RUST_LOG=balun=debug cargo run --locked --features desktop --bin bal
 
 Balun logs discovery, lineup, tune, and playback outcomes to standard error at `info` by default;
 `RUST_LOG` selects the level, as in Tributary. A playback failure logs the native GStreamer error
-behind its fixed category. On Windows, `.\scripts\build-windows.ps1 -Run` uses a console-attached
+behind its fixed category. `./scripts/build-linux.sh --run` and `./scripts/build-macos.sh --run`
+build the desktop and launch it in the same terminal. On Windows,
+`.\scripts\build-windows.ps1 -Run` uses a console-attached
 release-profile developer build, so those logs remain visible in the invoking PowerShell session.
 The distributed ZIP and installer remain GUI-subsystem applications and do not attach a console.
 
@@ -342,6 +344,7 @@ coverage, and the installed-runtime playback probes:
 ./scripts/build-linux.sh --clippy          # or build-macos.sh --clippy
 ./scripts/build-linux.sh --coverage        # or build-macos.sh --coverage
 ./scripts/build-linux.sh --probe-playback  # or build-macos.sh --probe-playback
+./scripts/build-linux.sh --run             # build, then launch (or build-macos.sh --run)
 ./scripts/build-linux.sh --diagnostic      # GTK-free balun-discover build
 ./scripts/build-linux.sh --deb             # native Debian package
 ./scripts/build-linux.sh --rpm             # native RPM package

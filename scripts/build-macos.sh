@@ -19,7 +19,13 @@ With no options, builds the native Balun desktop executable with Cargo's locked
 release dependency graph and the desktop feature, then applies Balun's pinned
 Mach-O component policy. It does not create Balun.app, a DMG, a native package,
 or a staged runtime closure. This produces only
-target/<native-target>/release/balun and does not launch Balun.
+target/<native-target>/release/balun; --run launches it afterwards.
+
+Launch:
+  --run             After the desktop build and its Mach-O policy gate pass,
+                    replace this helper with the built application so its log
+                    stays in this terminal. Cannot be combined with quick-exit,
+                    --diagnostic, or packaging modes.
 
 Packaging options:
   --app             Perform release build and assemble the self-contained
@@ -268,6 +274,7 @@ mode=build
 mode_option=
 show_help=false
 diagnostic=false
+run=false
 
 for argument in "$@"; do
     case "$argument" in
@@ -290,6 +297,9 @@ for argument in "$@"; do
         --dmg)
             make_dmg=true
             make_app=true
+            ;;
+        --run)
+            run=true
             ;;
         --bundle|--bundle=*|\
         --package|--package=*|--pkg|--pkg=*|--installer|--installer=*|\
@@ -320,6 +330,16 @@ fi
 
 if [ "$mode" != build ] && ( $make_app || $make_dmg ); then
     usage_error "Quick-exit mode '$mode_option' cannot be combined with packaging modes."
+fi
+
+if $run && $diagnostic; then
+    usage_error '--run launches only the desktop application and cannot be combined with --diagnostic.'
+fi
+if $run && [ "$mode" != build ]; then
+    usage_error "--run cannot be combined with '$mode_option'; it launches only the plain desktop build."
+fi
+if $run && ( $make_app || $make_dmg ); then
+    usage_error '--run launches the plain desktop build and cannot be combined with --app or --dmg.'
 fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -529,6 +549,11 @@ fi
 
 info "Application ID: $application_id"
 info "Mach-O component policy passed for expected $artifact_label path: $binary"
+
+if $run; then
+    info 'Launching Balun desktop...'
+    exec "$binary"
+fi
 
 if ! $make_app && ! $make_dmg; then
     exit 0
