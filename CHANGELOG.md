@@ -24,8 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a tuner behind WireGuard or another routed link, and enumerate one approved private range no
   wider than `/24` from the diagnostic.
 - **Remembered devices** — A tuner found by address or hostname is remembered once it answers and
-  probed again at the next launch, up to 32 entries; right-click a listed device to forget its
-  entry. Local discovery still waits for Refresh.
+  probed again at the next launch, up to 32 entries, once the launch discovery settles;
+  right-click a listed device to forget its entry.
 - **Stable device and channel identity** — One validated DeviceID per tuner even when it answers
   at several addresses, stale addresses that expire independently, and lineups that are never
   merged across devices.
@@ -33,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   responder that answered, with strict size, time, redirect, and credential limits.
 - **GTK 4 / libadwaita desktop** — An adaptive window with a device sidebar, a per-device channel
   sidebar with favorite, HD, and protected badges, channel search, a favorites-only filter, and a
-  live-TV pane; window size and maximized state are remembered.
+  live-TV pane; one local discovery runs at launch, and window size and maximized state are
+  remembered.
 - **Live channel playback** — Click or press Enter on an unprotected channel. A generation-owned
   `playbin3` session renders through `gtk4paintablesink`, starts its live clock only once the
   first stream bytes arrive, settles the previous tune before the next, and tears down in bounded

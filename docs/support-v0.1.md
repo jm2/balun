@@ -43,7 +43,7 @@ The deferred HDHR5-4DT is an Australian unit; no regional or DVB-T support is cl
 
 | Method | Evidence | What you provide |
 | --- | --- | --- |
-| Local broadcast and multicast | ✅ Linux, macOS, and Windows | Nothing; press **Refresh devices** |
+| Local broadcast and multicast | ✅ Linux, macOS, and Windows | Nothing; runs once at launch, and **Refresh devices** repeats it |
 | Exact address | ✅ Probed primary and secondary devices at exact addresses over LAN and tunnel | One IPv4 or unscoped IPv6 address, no port or range |
 | Hostname | Covered by tests and exact unicast target proofs | One name, resolved to at most four unicast addresses |
 | Remembered targets | ✅ Re-probed across launches; secondary tuners rediscovered | Nothing after the first successful probe |
@@ -51,7 +51,8 @@ The deferred HDHR5-4DT is an Australian unit; no regional or DVB-T support is cl
 | Opt-in route-table-derived tunnel search (Linux) | ✅ Verified over routed tunnel; candidate preview, approval, and traffic budget measured | Explicit approval of the previewed candidates and packet budget; the host's policy rules must be the default `local`/`main`/`default` chain |
 | Route-table-derived tunnel search (macOS, Windows) | ❌ Not in v0.1 | Use an exact address or hostname instead |
 
-Local discovery sends nothing at launch beyond the remembered targets. Local broadcast and
+Local discovery runs once at launch and then only on request; remembered targets are probed after
+it settles. Local broadcast and
 multicast, exact IP and hostname targets, and remembered targets work on every supported platform;
 only the opt-in route-table provider and route-change monitor are Linux-only. The approved-range
 scan is a diagnostic for a network you administer, not a desktop feature.

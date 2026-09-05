@@ -1,7 +1,7 @@
 //! Top-level adaptive three-pane window and controller/GLib bridge.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryFailure,
     DiscoveryKind, DiscoveryState, DiscoveryStatus, ExactSearchOutcome, ExactTargetTracker,
-    RediscoveryQueue,
+    HostnameResolutionReceiver, RediscoveryQueue,
 };
 use balun::discovery::{
     DiscoveryEntry, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget,
@@ -417,7 +417,7 @@ pub(crate) fn build(
 
     connect_refresh(&device_sidebar, &handle);
     connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
-    connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
+    connect_cancel_discovery(&device_sidebar, &handle, &wiring);
     let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
     connect_routed_discovery(&window, &device_sidebar, &routed_ui);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view, &layout);
@@ -448,15 +448,31 @@ pub(crate) fn build(
             routed_ui,
         },
     );
-    // Remembered addresses and names are the only probes Balun sends unasked;
-    // each one waits for the lane to settle so it never supersedes a user
-    // action, and a remembered name is resolved again before it is probed.
-    advance_rediscovery(&wiring, accepted.borrow().discovery());
-    for target in remembered {
-        if let RememberedTarget::Hostname(host) = target {
-            resolve_hostname_into_queue(Rc::clone(&wiring), host, false);
-        }
+    // One bounded local discovery runs at launch so the sidebar fills without
+    // a click; nothing rescans on its own afterwards. The remembered queue is
+    // told to await that operation before any name is resolved, so a name
+    // that resolves before the Refreshing snapshot lands cannot supersede it;
+    // remembered addresses and names are probed once the lane settles, and a
+    // remembered name is resolved again before it is probed. If the launch
+    // refresh cannot be queued, the remembered probes start immediately.
+    let launch_generation = accepted.borrow().discovery().generation();
+    if handle
+        .try_send(ControllerCommand::RefreshLocalDiscovery)
+        .is_ok()
+    {
+        rediscovery.borrow_mut().await_operation(launch_generation);
+    } else {
+        advance_rediscovery(&wiring, accepted.borrow().discovery());
     }
+    wiring
+        .hostnames
+        .borrow_mut()
+        .unresolved
+        .extend(remembered.into_iter().filter_map(|target| match target {
+            RememberedTarget::Hostname(host) => Some(host),
+            RememberedTarget::Address(_) => None,
+        }));
+    submit_unresolved_hostnames(&wiring);
     connect_joined_shutdown(&window, controller, player_view, settings, shutdown_failed);
 
     window
@@ -853,16 +869,23 @@ fn react_to_routed(ui: &Rc<RoutedUi>, snapshot: &ApplicationSnapshot) {
 fn connect_cancel_discovery(
     sidebar: &device_sidebar::DeviceSidebar,
     controller: &ControllerHandle,
-    rediscovery: &Rc<RefCell<RediscoveryQueue>>,
+    wiring: &Rc<RediscoveryWiring>,
 ) {
     let controller = controller.clone();
-    let rediscovery = Rc::clone(rediscovery);
+    let wiring = Rc::clone(wiring);
     sidebar
         .cancel_discovery_button()
         .connect_clicked(move |button| {
             button.set_sensitive(false);
-            // Stop also drains any launch probes still waiting for the lane.
-            rediscovery.borrow_mut().cancel();
+            // Stop also drains any launch probes still waiting for the lane,
+            // including remembered names not yet handed to the controller.
+            wiring.rediscovery.borrow_mut().cancel();
+            {
+                let mut hostnames = wiring.hostnames.borrow_mut();
+                hostnames.unresolved.clear();
+                // Lookups already admitted are invalidated too.
+                hostnames.epoch += 1;
+            }
             if controller
                 .try_send(ControllerCommand::CancelDiscovery)
                 .is_err()
@@ -988,6 +1011,13 @@ struct RediscoveryWiring {
 #[derive(Default)]
 struct HostnameProbes {
     pending: HashMap<ExactDiscoveryTarget, HostnameTarget>,
+    /// Remembered names not yet handed to the controller for resolution.
+    /// The command queue is bounded, so they are submitted a few at a time
+    /// and the remainder waits for the next accepted snapshot.
+    unresolved: VecDeque<HostnameTarget>,
+    /// Bumped by Stop. A lookup admitted under an older epoch discards
+    /// its result, so no probe follows a cancellation.
+    epoch: u64,
     resolved: HashSet<(ExactDiscoveryTarget, HostnameTarget)>,
 }
 
@@ -1186,6 +1216,7 @@ fn present_forget_dialog(
 /// (or the name it came from) once its probe answered, then send the next
 /// queued target if the lane is idle.
 fn advance_rediscovery(wiring: &Rc<RediscoveryWiring>, discovery: DiscoveryState) {
+    submit_unresolved_hostnames(wiring);
     let step = wiring.rediscovery.borrow_mut().advance(discovery);
     if let Some(target) = step.reachable {
         let host = {
@@ -1222,8 +1253,41 @@ fn resolve_hostname_into_queue(wiring: Rc<RediscoveryWiring>, host: HostnameTarg
             return;
         }
     };
+    await_resolution(wiring, host, entered, receiver);
+}
+
+/// Hand remembered names to the controller until its command queue is full;
+/// whatever remains is retried from the next accepted snapshot, so a long
+/// remembered list never drops a name at launch.
+fn submit_unresolved_hostnames(wiring: &Rc<RediscoveryWiring>) {
+    loop {
+        let Some(host) = wiring.hostnames.borrow_mut().unresolved.pop_front() else {
+            return;
+        };
+        match wiring.controller.try_resolve_hostname(host.clone()) {
+            Ok(receiver) => await_resolution(Rc::clone(wiring), host, false, receiver),
+            Err(_) => {
+                wiring.hostnames.borrow_mut().unresolved.push_front(host);
+                return;
+            }
+        }
+    }
+}
+
+fn await_resolution(
+    wiring: Rc<RediscoveryWiring>,
+    host: HostnameTarget,
+    entered: bool,
+    receiver: HostnameResolutionReceiver,
+) {
+    let epoch = wiring.hostnames.borrow().epoch;
     gtk::glib::MainContext::default().spawn_local(async move {
-        match receiver.receive().await {
+        let outcome = receiver.receive().await;
+        if wiring.hostnames.borrow().epoch != epoch {
+            // Stop invalidated this lookup; its addresses are not probed.
+            return;
+        }
+        match outcome {
             Ok(addresses) => {
                 {
                     let mut hostnames = wiring.hostnames.borrow_mut();
@@ -1238,7 +1302,15 @@ fn resolve_hostname_into_queue(wiring: Rc<RediscoveryWiring>, host: HostnameTarg
                 let discovery = wiring.accepted.borrow().discovery();
                 advance_rediscovery(&wiring, discovery);
             }
-            Err(error) => wiring.toast(resolution_failure_copy(error)),
+            Err(error) => {
+                wiring.toast(resolution_failure_copy(error));
+                // A finished resolution is the other moment queue capacity
+                // becomes available, so take the same step as a success:
+                // submit deferred names and resend a target whose send
+                // failed once the lane is idle.
+                let discovery = wiring.accepted.borrow().discovery();
+                advance_rediscovery(&wiring, discovery);
+            }
         }
     });
 }
@@ -2466,7 +2538,7 @@ mod tests {
 
                 connect_refresh(&device_sidebar, &handle);
                 connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
-                connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
+                connect_cancel_discovery(&device_sidebar, &handle, &wiring);
                 let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
                 connect_routed_discovery(&window, &device_sidebar, &routed_ui);
                 connect_device_selection(

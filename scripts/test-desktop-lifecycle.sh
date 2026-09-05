@@ -274,7 +274,7 @@ unset \
 dbus-run-session -- \
     timeout --signal=TERM --kill-after=5s 30s \
     cargo test --locked --features desktop --bin balun \
-        app::tests::headless_window_close_joins_controller_without_discovery -- \
+        app::tests::headless_window_close_joins_controller_after_launch_discovery -- \
         --exact --ignored --nocapture
 
 dbus-run-session -- \
