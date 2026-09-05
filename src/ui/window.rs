@@ -447,15 +447,19 @@ pub(crate) fn build(
         },
     );
     // One bounded local discovery runs at launch so the sidebar fills without
-    // a click; nothing rescans on its own afterwards. Remembered addresses
-    // and names are probed once that lane settles, so they never supersede
-    // it or a user action, and a remembered name is resolved again before it
-    // is probed. If the launch refresh cannot be queued, the remembered
-    // probes start immediately as before.
+    // a click; nothing rescans on its own afterwards. The remembered queue is
+    // told to await that operation before any name is resolved, so a name
+    // that resolves before the Refreshing snapshot lands cannot supersede it;
+    // remembered addresses and names are probed once the lane settles, and a
+    // remembered name is resolved again before it is probed. If the launch
+    // refresh cannot be queued, the remembered probes start immediately.
+    let launch_generation = accepted.borrow().discovery().generation();
     if handle
         .try_send(ControllerCommand::RefreshLocalDiscovery)
-        .is_err()
+        .is_ok()
     {
+        rediscovery.borrow_mut().await_operation(launch_generation);
+    } else {
         advance_rediscovery(&wiring, accepted.borrow().discovery());
     }
     for target in remembered {

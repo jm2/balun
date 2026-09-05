@@ -182,6 +182,14 @@ impl RediscoveryQueue {
         step
     }
 
+    /// Hold every queued target until an operation the caller has already
+    /// admitted in generation `observed` settles, exactly as an in-flight
+    /// probe would; nothing is reported reachable when it does.
+    pub fn await_operation(&mut self, observed: OperationGeneration) {
+        self.awaiting = Some(observed);
+        self.in_flight = None;
+    }
+
     /// Put a target back at the front after its command could not be queued.
     pub fn send_failed(&mut self, target: ExactDiscoveryTarget) {
         self.awaiting = None;
@@ -337,6 +345,39 @@ mod tests {
                 2
             ),
             ExactSearchOutcome::Reachable(target(2))
+        );
+    }
+
+    #[test]
+    fn queue_holds_its_targets_behind_an_awaited_operation() {
+        let mut queue = RediscoveryQueue::new([target(1), target(2)]);
+        queue.await_operation(generation(0));
+
+        // Neither the stale accepted state nor the operation's own Refreshing
+        // publication releases a target, so a hostname that resolves early
+        // cannot supersede the awaited operation.
+        assert_eq!(
+            queue.advance(DiscoveryState::idle(generation(0))),
+            RediscoveryStep::default()
+        );
+        assert_eq!(
+            queue.advance(DiscoveryState::refreshing_for(
+                generation(1),
+                DiscoveryKind::Local
+            )),
+            RediscoveryStep::default()
+        );
+        assert_eq!(
+            queue.advance(DiscoveryState::ready_for(
+                generation(1),
+                DiscoveryKind::Local,
+                0
+            )),
+            RediscoveryStep {
+                reachable: None,
+                send: Some(target(1)),
+            },
+            "the awaited operation reports nothing reachable and then sends"
         );
     }
 
