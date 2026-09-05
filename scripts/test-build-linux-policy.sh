@@ -94,7 +94,7 @@ if [ "${1-}" = build ] && [ "$BALUN_FAKE_SKIP_BINARY" -eq 0 ]; then
         previous_argument=$argument
     done
     mkdir -p "$cargo_target_dir/$cargo_build_target/release"
-    printf 'synthetic ELF\n' > \
+    printf '%s\n' '#!/usr/bin/env bash' 'printf "%s launched\n" "${0##*/}"' > \
         "$cargo_target_dir/$cargo_build_target/release/$binary_name"
     chmod +x "$cargo_target_dir/$cargo_build_target/release/$binary_name"
 fi
@@ -357,7 +357,7 @@ expect_status 0
 expect_output 'A lightweight cross-platform HDHomeRun live TV viewer'
 expect_output 'Application ID: io.github.jm2.Balun'
 expect_output 'Linux desktop build helper'
-expect_output 'builds only and never launches'
+expect_output 'builds only unless --run is'
 expect_output '--diagnostic'
 expect_output 'cargo-deb'
 expect_output '3.7.0'
@@ -372,11 +372,21 @@ expect_status 2
 expect_output 'Unknown option: --not-a-mode'
 expect_empty_log
 
-# Tributary has no Linux --run flag. Keep the helper build-only and reject a
-# launch spelling before resolving build or desktop dependencies.
-run_helper --run
+# --run launches only the plain desktop build; every other selection conflicts
+# before any build or desktop dependency is resolved.
+run_helper --run --check
 expect_status 2
-expect_output 'Unknown option: --run'
+expect_output "--run cannot be combined with '--check'"
+expect_empty_log
+
+run_helper --run --diagnostic
+expect_status 2
+expect_output '--run launches only the desktop application and cannot be combined with --diagnostic'
+expect_empty_log
+
+run_helper --deb --run
+expect_status 2
+expect_output "--run cannot be combined with '--deb'"
 expect_empty_log
 
 run_helper --flatpak
@@ -617,6 +627,14 @@ expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <
     fail_test 'hostile CARGO_TARGET_DIR received the desktop output'
 [ ! -e "$fixture/target/$hostile_build_target/release/balun" ] || \
     fail_test 'hostile CARGO_BUILD_TARGET received the desktop output'
+
+# --run replaces the helper with the built desktop after the same gates.
+run_helper --run
+expect_status 0
+expect_output 'Desktop output:'
+expect_output 'Launching Balun desktop'
+expect_output 'balun launched'
+expect_log $'rustc <--print> <host-tuple>\npkg-config <--atleast-version=4.16> <gtk4>\npkg-config <--atleast-version=1.6> <libadwaita-1>\npkg-config <--atleast-version=1.20> <gstreamer-1.0>\npkg-config <--variable=pluginsdir> <gstreamer-1.0>\nmetadata\ncargo <build> <--release> <--locked> <--features> <desktop> <--bin> <balun> <--target-dir> <'"$fixture"$'/target> <--target> <'"$valid_native_target"$'>\ncompliance <--elf> <'"$native_release_directory"$'/balun>'
 
 # Every native package route is architecture-bounded, reuses the reviewed
 # desktop build, and hands the completed archive to the existing validator.

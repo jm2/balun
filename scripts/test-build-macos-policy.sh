@@ -74,7 +74,7 @@ if [ "${1-}" = build ] && [ "$BALUN_FAKE_SKIP_BINARY" -eq 0 ]; then
     if [ "$BALUN_FAKE_EMPTY_BINARY" -eq 1 ]; then
         : > "$cargo_target_dir/$cargo_build_target/release/$output_name"
     else
-        printf 'synthetic Mach-O\n' \
+        printf '%s\n' '#!/usr/bin/env bash' 'printf "%s launched\n" "${0##*/}"' \
             > "$cargo_target_dir/$cargo_build_target/release/$output_name"
     fi
     chmod +x "$cargo_target_dir/$cargo_build_target/release/$output_name"
@@ -289,7 +289,7 @@ expect_output 'pkg-config-visible GTK 4.16'
 expect_output 'preinstalled rustc reporting one native'
 expect_output 'does not create Balun.app'
 expect_output 'does not'
-expect_output 'launch Balun'
+expect_output '--run launches it afterwards'
 expect_output 'never invokes Homebrew'
 expect_output 'Cargo may fetch locked dependencies unless cached.'
 expect_output 'may also fetch the selected Rust toolchain.'
@@ -324,11 +324,21 @@ expect_status 2
 expect_output 'Unknown option: --unknown'
 expect_empty_log
 
-# Tributary's macOS helper has no run selector. Keep this preparatory helper
-# build-only and reject a launch spelling before any dependency probe.
-run_helper --run
+# --run launches only the plain desktop build; every other selection conflicts
+# before any dependency probe.
+run_helper --run --check
 expect_status 2
-expect_output 'Unknown option: --run'
+expect_output "--run cannot be combined with '--check'"
+expect_empty_log
+
+run_helper --run --diagnostic
+expect_status 2
+expect_output '--run launches only the desktop application and cannot be combined with --diagnostic'
+expect_empty_log
+
+run_helper --app --run
+expect_status 2
+expect_output '--run launches the plain desktop build and cannot be combined with --app or --dmg'
 expect_empty_log
 
 run_helper --help --unknown
