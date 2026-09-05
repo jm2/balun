@@ -166,6 +166,22 @@ impl ChannelRowObject {
         object
     }
 
+    /// Whether this row already shows exactly `summary`, so a model that
+    /// matches its lineup row for row can be left alone.
+    #[must_use]
+    pub(crate) fn matches(&self, summary: &ChannelSummary) -> bool {
+        self.key()
+            .map(|key| ChannelRowProjection {
+                key,
+                number: self.number(),
+                name: self.name(),
+                favorite: self.is_favorite(),
+                drm: self.is_drm(),
+                hd: self.is_hd(),
+            })
+            .is_some_and(|projection| projection == ChannelRowProjection::from_summary(summary))
+    }
+
     #[must_use]
     pub(crate) fn key(&self) -> Option<ChannelKey> {
         self.imp().key.borrow().clone()
@@ -205,6 +221,17 @@ mod tests {
 
     fn device_id() -> DeviceId {
         DeviceId::new(0x105A_1232).unwrap()
+    }
+
+    #[test]
+    fn channel_row_matches_only_an_identical_summary() {
+        let key = ChannelKey::new(device_id(), GuideNumber::new("5.1").unwrap());
+        let summary =
+            ChannelSummary::new(key.clone(), "News".to_owned(), true, false, true).unwrap();
+        let row = ChannelRowObject::from_summary(&summary);
+        assert!(row.matches(&summary));
+        let unfavorited = ChannelSummary::new(key, "News".to_owned(), false, false, true).unwrap();
+        assert!(!row.matches(&unfavorited));
     }
 
     #[test]

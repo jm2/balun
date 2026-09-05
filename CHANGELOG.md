@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Channel list position** — The channel list keeps its scroll position and selection across
+  snapshots that leave the lineup unchanged, such as tuning; only a changed lineup rebuilds the
+  rows.
 - **Audio after tuning** — Correct live-stream timing when usable media arrives after the first
   transport bytes, preventing late audio from becoming choppy or silent despite healthy-looking
   playback counters.
