@@ -446,10 +446,18 @@ pub(crate) fn build(
             routed_ui,
         },
     );
-    // Remembered addresses and names are the only probes Balun sends unasked;
-    // each one waits for the lane to settle so it never supersedes a user
-    // action, and a remembered name is resolved again before it is probed.
-    advance_rediscovery(&wiring, accepted.borrow().discovery());
+    // One bounded local discovery runs at launch so the sidebar fills without
+    // a click; nothing rescans on its own afterwards. Remembered addresses
+    // and names are probed once that lane settles, so they never supersede
+    // it or a user action, and a remembered name is resolved again before it
+    // is probed. If the launch refresh cannot be queued, the remembered
+    // probes start immediately as before.
+    if handle
+        .try_send(ControllerCommand::RefreshLocalDiscovery)
+        .is_err()
+    {
+        advance_rediscovery(&wiring, accepted.borrow().discovery());
+    }
     for target in remembered {
         if let RememberedTarget::Hostname(host) = target {
             resolve_hostname_into_queue(Rc::clone(&wiring), host, false);

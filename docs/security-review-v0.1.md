@@ -29,10 +29,11 @@ review's pull request.
 
 ### Verified
 
-- Startup sends nothing on its own: `ControllerActor::new` opens no socket and
+- The controller sends nothing on its own: `ControllerActor::new` opens no socket and
   only `RefreshLocalDiscovery` and `DiscoverExact` reach `start_discovery`
-  (`src/controller/runtime.rs`); the window seeds `RediscoveryQueue` from
-  remembered targets alone, one per settled lane (`src/ui/window.rs`
+  (`src/controller/runtime.rs`); the window queues one local discovery at
+  launch and seeds `RediscoveryQueue` from remembered targets alone, one per
+  settled lane (`src/ui/window.rs`
   `advance_rediscovery`, `src/controller/remembered.rs`). Remembered hostnames
   are resolved once before their probe. Test `construction_is_inert`.
 - Local discovery is bounded per interface: `ProbeConfig::default` is 2 requests

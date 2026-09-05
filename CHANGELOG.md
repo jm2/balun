@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   responder that answered, with strict size, time, redirect, and credential limits.
 - **GTK 4 / libadwaita desktop** — An adaptive window with a device sidebar, a per-device channel
   sidebar with favorite, HD, and protected badges, channel search, a favorites-only filter, and a
-  live-TV pane; window size and maximized state are remembered.
+  live-TV pane; one local discovery runs at launch, and window size and maximized state are
+  remembered.
 - **Live channel playback** — Click or press Enter on an unprotected channel. A generation-owned
   `playbin3` session renders through `gtk4paintablesink`, starts its live clock only once the
   first stream bytes arrive, settles the previous tune before the next, and tears down in bounded

@@ -560,8 +560,9 @@ docs/                        # Plan, task ledger, playback contract, compatibili
 
 ### Discovering devices
 
-At launch Balun probes only the addresses you previously added; everything else waits until you
-ask. **Refresh devices** runs one bounded local discovery over every attached interface.
+At launch Balun runs one bounded local discovery over every attached interface and then probes
+the addresses you previously added; nothing rescans on its own after that. **Refresh devices**
+runs the same local discovery again.
 **Find device by address** probes one numeric IPv4 or unscoped IPv6 address, or a hostname, for a
 tuner behind WireGuard or another routed link. It accepts no port or range; a name resolves to at
 most four unicast addresses that are probed one at a time, each probe sends at most two requests,

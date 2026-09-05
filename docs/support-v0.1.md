@@ -51,7 +51,8 @@ The deferred HDHR5-4DT is an Australian unit; no regional or DVB-T support is cl
 | Opt-in route-table-derived tunnel search (Linux) | ✅ Verified over routed tunnel; candidate preview, approval, and traffic budget measured | Explicit approval of the previewed candidates and packet budget; the host's policy rules must be the default `local`/`main`/`default` chain |
 | Route-table-derived tunnel search (macOS, Windows) | ❌ Not in v0.1 | Use an exact address or hostname instead |
 
-Local discovery sends nothing at launch beyond the remembered targets. Local broadcast and
+Local discovery runs once at launch and then only on request; remembered targets are probed after
+it settles. Local broadcast and
 multicast, exact IP and hostname targets, and remembered targets work on every supported platform;
 only the opt-in route-table provider and route-change monitor are Linux-only. The approved-range
 scan is a diagnostic for a network you administer, not a desktop feature.
