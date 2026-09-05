@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Audio after tuning** — Correct live-stream timing when usable media arrives after the first
+  transport bytes, preventing late audio from becoming choppy or silent despite healthy-looking
+  playback counters.
 - **Routed discovery survives route-event bursts** — On Linux a kernel or NetworkManager change
   arrives as several datagrams microseconds apart; the observer pair replaced after the first one
   lost its baseline to the rest and stayed down, failing the next routed request. The pair now

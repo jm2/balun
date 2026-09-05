@@ -298,9 +298,9 @@ pub(super) fn log_playing_diagnostics(pipeline: &gst::Element) {
     );
 }
 
-/// Log how many buffers every audio and video sink rendered and dropped as
-/// late before the pipeline is torn down; a silent tune shows up here as a
-/// sink that dropped what it received.
+/// Log the base-sink buffer counters before teardown. An audio sink can still
+/// discard late samples inside its ringbuffer while reporting a rendered
+/// buffer, so zero drops do not establish that audible samples reached the device.
 pub(super) fn log_teardown_diagnostics(pipeline: &gst::Element) {
     let sinks = sink_elements(pipeline, "Audio")
         .into_iter()
