@@ -43,7 +43,7 @@ The deferred HDHR5-4DT is an Australian unit; no regional or DVB-T support is cl
 
 | Method | Evidence | What you provide |
 | --- | --- | --- |
-| Local broadcast and multicast | ✅ Linux, macOS, and Windows | Nothing; press **Refresh devices** |
+| Local broadcast and multicast | ✅ Linux, macOS, and Windows | Nothing; runs once at launch, and **Refresh devices** repeats it |
 | Exact address | ✅ Probed primary and secondary devices at exact addresses over LAN and tunnel | One IPv4 or unscoped IPv6 address, no port or range |
 | Hostname | Covered by tests and exact unicast target proofs | One name, resolved to at most four unicast addresses |
 | Remembered targets | ✅ Re-probed across launches; secondary tuners rediscovered | Nothing after the first successful probe |

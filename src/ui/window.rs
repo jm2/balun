@@ -1,7 +1,7 @@
 //! Top-level adaptive three-pane window and controller/GLib bridge.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryFailure,
     DiscoveryKind, DiscoveryState, DiscoveryStatus, ExactSearchOutcome, ExactTargetTracker,
-    RediscoveryQueue,
+    HostnameResolutionReceiver, RediscoveryQueue,
 };
 use balun::discovery::{
     DiscoveryEntry, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget,
@@ -462,11 +462,15 @@ pub(crate) fn build(
     } else {
         advance_rediscovery(&wiring, accepted.borrow().discovery());
     }
-    for target in remembered {
-        if let RememberedTarget::Hostname(host) = target {
-            resolve_hostname_into_queue(Rc::clone(&wiring), host, false);
-        }
-    }
+    wiring
+        .hostnames
+        .borrow_mut()
+        .unresolved
+        .extend(remembered.into_iter().filter_map(|target| match target {
+            RememberedTarget::Hostname(host) => Some(host),
+            RememberedTarget::Address(_) => None,
+        }));
+    submit_unresolved_hostnames(&wiring);
     connect_joined_shutdown(&window, controller, player_view, settings, shutdown_failed);
 
     window
@@ -996,6 +1000,10 @@ struct RediscoveryWiring {
 #[derive(Default)]
 struct HostnameProbes {
     pending: HashMap<ExactDiscoveryTarget, HostnameTarget>,
+    /// Remembered names not yet handed to the controller for resolution.
+    /// The command queue is bounded, so they are submitted a few at a time
+    /// and the remainder waits for the next accepted snapshot.
+    unresolved: VecDeque<HostnameTarget>,
 }
 
 impl RediscoveryWiring {
@@ -1019,6 +1027,7 @@ impl RediscoveryWiring {
 /// (or the name it came from) once its probe answered, then send the next
 /// queued target if the lane is idle.
 fn advance_rediscovery(wiring: &Rc<RediscoveryWiring>, discovery: DiscoveryState) {
+    submit_unresolved_hostnames(wiring);
     let step = wiring.rediscovery.borrow_mut().advance(discovery);
     if let Some(target) = step.reachable {
         let host = {
@@ -1055,6 +1064,33 @@ fn resolve_hostname_into_queue(wiring: Rc<RediscoveryWiring>, host: HostnameTarg
             return;
         }
     };
+    await_resolution(wiring, host, entered, receiver);
+}
+
+/// Hand remembered names to the controller until its command queue is full;
+/// whatever remains is retried from the next accepted snapshot, so a long
+/// remembered list never drops a name at launch.
+fn submit_unresolved_hostnames(wiring: &Rc<RediscoveryWiring>) {
+    loop {
+        let Some(host) = wiring.hostnames.borrow_mut().unresolved.pop_front() else {
+            return;
+        };
+        match wiring.controller.try_resolve_hostname(host.clone()) {
+            Ok(receiver) => await_resolution(Rc::clone(wiring), host, false, receiver),
+            Err(_) => {
+                wiring.hostnames.borrow_mut().unresolved.push_front(host);
+                return;
+            }
+        }
+    }
+}
+
+fn await_resolution(
+    wiring: Rc<RediscoveryWiring>,
+    host: HostnameTarget,
+    entered: bool,
+    receiver: HostnameResolutionReceiver,
+) {
     gtk::glib::MainContext::default().spawn_local(async move {
         match receiver.receive().await {
             Ok(addresses) => {
