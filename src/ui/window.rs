@@ -988,7 +988,7 @@ struct RediscoveryWiring {
 #[derive(Default)]
 struct HostnameProbes {
     pending: HashMap<ExactDiscoveryTarget, HostnameTarget>,
-    resolved: HashSet<(IpAddr, HostnameTarget)>,
+    resolved: HashSet<(ExactDiscoveryTarget, HostnameTarget)>,
 }
 
 impl RediscoveryWiring {
@@ -1001,9 +1001,29 @@ impl RediscoveryWiring {
         }
     }
 
-    /// Drop remembered entries; the notice says whether the change was
-    /// saved or only applies to this session because the store is read-only.
+    /// Drop remembered entries from the settings document and from the
+    /// launch probe queue, so a probe still queued or in flight cannot
+    /// remember them again. The writer logs a failed save, as it does for
+    /// Remember, so the notice claims nothing about the file.
     fn forget(&self, targets: &[RememberedTarget]) {
+        {
+            let hostnames = self.hostnames.borrow();
+            let mut rediscovery = self.rediscovery.borrow_mut();
+            for target in targets {
+                match target {
+                    RememberedTarget::Address(address) => rediscovery.forget(*address),
+                    RememberedTarget::Hostname(host) => {
+                        for (address, _) in hostnames
+                            .resolved
+                            .iter()
+                            .filter(|(_, resolved)| resolved == host)
+                        {
+                            rediscovery.forget(*address);
+                        }
+                    }
+                }
+            }
+        }
         // Every entry is dropped; only the last staged document needs saving.
         let mut pending_save = None;
         for target in targets {
@@ -1014,9 +1034,9 @@ impl RediscoveryWiring {
         match pending_save {
             Some(pending_save) => {
                 self.settings.save(pending_save);
-                self.toast("Forgotten; it will not be probed at the next launch.");
+                self.toast("Device forgotten.");
             }
-            None => self.toast("Forgotten for this session only; settings are read-only."),
+            None => self.toast("Device forgotten for this session only; settings are read-only."),
         }
     }
 
@@ -1067,13 +1087,15 @@ fn connect_forget_device(sidebar: &device_sidebar::DeviceSidebar, wiring: &Rc<Re
 fn forgettable_targets(
     remembered: &[RememberedTarget],
     address: IpAddr,
-    resolved: &HashSet<(IpAddr, HostnameTarget)>,
+    resolved: &HashSet<(ExactDiscoveryTarget, HostnameTarget)>,
 ) -> Vec<RememberedTarget> {
     remembered
         .iter()
         .filter(|target| match target {
             RememberedTarget::Address(target) => target.ip_addr() == address,
-            RememberedTarget::Hostname(host) => resolved.contains(&(address, host.clone())),
+            RememberedTarget::Hostname(host) => resolved
+                .iter()
+                .any(|(resolved, name)| resolved.ip_addr() == address && name == host),
         })
         .cloned()
         .collect()
@@ -1194,7 +1216,7 @@ fn resolve_hostname_into_queue(wiring: Rc<RediscoveryWiring>, host: HostnameTarg
                 {
                     let mut hostnames = wiring.hostnames.borrow_mut();
                     for address in &addresses {
-                        hostnames.resolved.insert((address.ip_addr(), host.clone()));
+                        hostnames.resolved.insert((*address, host.clone()));
                         if entered {
                             hostnames.pending.insert(*address, host.clone());
                         }
@@ -1432,7 +1454,7 @@ mod tests {
             RememberedTarget::Hostname(name.clone()),
             RememberedTarget::Hostname(stale.clone()),
         ];
-        let resolved = HashSet::from([(address.ip_addr(), name.clone()), (other.ip_addr(), stale)]);
+        let resolved = HashSet::from([(address, name.clone()), (other, stale)]);
 
         assert_eq!(
             forgettable_targets(&remembered, address.ip_addr(), &resolved),
