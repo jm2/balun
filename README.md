@@ -459,9 +459,10 @@ python3 scripts/sync_rust_toolchain.py --from-toolchain
 
 ### Cutting a release
 
-Bump the version in `Cargo.toml` (and `Cargo.lock`) and the `pkgver` in `build-aux/arch/PKGBUILD`
+Bump the version in `Cargo.toml` (and `Cargo.lock`), the `pkgver` in `build-aux/arch/PKGBUILD`
 (a prerelease such as `0.2.0-alpha.1` is spelled `0.2.0pre.1.alpha.0.1` there; the check prints
-the expected value), add the `## [version]` changelog section and its compare link, add the
+the expected value), and the `Version` in `build-aux/rpm/balun.spec` (`0.2.0~alpha.1`), add the
+`## [version]` changelog section and its compare link, add the
 `<release>` to the AppStream metainfo, then confirm they agree before tagging:
 
 ```bash

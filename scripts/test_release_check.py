@@ -15,6 +15,7 @@ import release_check  # noqa: E402
 
 VERSION = "0.1.0-alpha.1"
 ARCH_VERSION = "0.1.0pre.1.alpha.0.1"
+RPM_VERSION = "0.1.0~alpha.1"
 
 
 def write_fixture(
@@ -23,6 +24,7 @@ def write_fixture(
     manifest_version: str = VERSION,
     lock_version: str = VERSION,
     pkgbuild_version: str = ARCH_VERSION,
+    spec_version: str = RPM_VERSION,
     changelog_version: str | None = VERSION,
     changelog_link: bool = True,
     metainfo_version: str | None = VERSION,
@@ -41,6 +43,11 @@ def write_fixture(
     (root / "build-aux" / "arch").mkdir(parents=True)
     (root / "build-aux" / "arch" / "PKGBUILD").write_text(
         f"pkgname=balun\npkgver={pkgbuild_version}\npkgrel=1\n",
+        encoding="utf-8",
+    )
+    (root / "build-aux" / "rpm").mkdir(parents=True)
+    (root / "build-aux" / "rpm" / "balun.spec").write_text(
+        f"Name:           balun\nVersion:        {spec_version}\nRelease:        1%{{?dist}}\n",
         encoding="utf-8",
     )
     changelog = "# Changelog\n\n## [Unreleased]\n\n"
@@ -87,14 +94,16 @@ class ReleaseCheckTests(unittest.TestCase):
                 manifest_version="0.1.0-alpha.2",
                 lock_version="0.1.0",
                 pkgbuild_version="0.1.0_alpha.3",
+                spec_version="0.1.0",
                 changelog_version="0.1.0-alpha.2",
                 metainfo_version="0.1.0",
             )
             problems = release_check.check_release(root, f"v{VERSION}")
-            self.assertEqual(len(problems), 6, problems)
+            self.assertEqual(len(problems), 7, problems)
             self.assertTrue(any("Cargo.toml version 0.1.0-alpha.2" in p for p in problems))
             self.assertTrue(any("Cargo.lock records balun 0.1.0" in p for p in problems))
             self.assertTrue(any("PKGBUILD pkgver is 0.1.0_alpha.3" in p for p in problems))
+            self.assertTrue(any("balun.spec Version is 0.1.0, not 0.1.0~alpha.1" in p for p in problems))
             self.assertTrue(any("no '## [0.1.0-alpha.1]' section" in p for p in problems))
             self.assertTrue(any("no '[0.1.0-alpha.1]:' compare link" in p for p in problems))
             self.assertTrue(any("newest release is 0.1.0" in p for p in problems))
@@ -139,6 +148,17 @@ class ReleaseCheckTests(unittest.TestCase):
         )
         self.assertIsNone(release_check.arch_pkgbuild_version("_pkgver=1.2.3\n"))
         self.assertIsNone(release_check.arch_pkgbuild_version('pkgver="1.2.3" # generated\n'))
+
+    def test_rpm_spec_version_must_be_a_literal_declaration(self) -> None:
+        self.assertEqual(release_check.rpm_spec_version("Name: balun\nVersion:        1.2.3\n"), "1.2.3")
+        self.assertIsNone(release_check.rpm_spec_version("Version: %{upstream_version} # macro\n"))
+        self.assertIsNone(release_check.rpm_spec_version("# Version: 1.2.3\n"))
+
+    def test_rpm_version_encodes_prereleases_with_a_tilde(self) -> None:
+        self.assertEqual(release_check.rpm_version_for_semver("1.2.3"), "1.2.3")
+        self.assertEqual(release_check.rpm_version_for_semver("1.2.3-alpha.1"), "1.2.3~alpha.1")
+        with self.assertRaises(ValueError):
+            release_check.rpm_version_for_semver("1.2.3+build")
 
     def test_arch_pkgver_uses_a_stable_upgrade_safe_prerelease_marker(self) -> None:
         self.assertEqual(release_check.arch_pkgver_for_semver("1.2.3"), "1.2.3")

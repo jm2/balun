@@ -7,7 +7,8 @@ once so a maintainer fixes them in one commit:
 
 - the tag is a v-prefixed Semantic Version;
 - ``Cargo.toml`` and ``Cargo.lock`` carry that version, while the Arch PKGBUILD
-  carries its stable-upgrade-safe, hyphen-free ``pkgver`` encoding;
+  carries its stable-upgrade-safe, hyphen-free ``pkgver`` encoding and the
+  Fedora spec carries its tilde-prerelease RPM ``Version``;
 - ``CHANGELOG.md`` has a ``## [<version>]`` section and its compare link; and
 - the AppStream metainfo lists that version as its newest ``<release>``.
 """
@@ -28,6 +29,7 @@ CARGO_LOCKFILE = Path("Cargo.lock")
 CHANGELOG = Path("CHANGELOG.md")
 METAINFO = Path("data/io.github.jm2.Balun.metainfo.xml")
 ARCH_PKGBUILD = Path("build-aux/arch/PKGBUILD")
+RPM_SPEC = Path("build-aux/rpm/balun.spec")
 PACKAGE_NAME = "balun"
 
 
@@ -79,6 +81,26 @@ def arch_pkgbuild_version(pkgbuild: str) -> str | None:
     """Return the literal top-level ``pkgver`` from an Arch PKGBUILD."""
     match = re.search(r"^pkgver=([^\s#]+)\s*$", pkgbuild, re.M)
     return match.group(1) if match else None
+
+
+def rpm_spec_version(spec: str) -> str | None:
+    """Return the literal ``Version:`` declaration from an RPM spec."""
+    match = re.search(r"^Version:[ \t]*([^\s#]+)[ \t]*$", spec, re.M)
+    return match.group(1) if match else None
+
+
+def rpm_version_for_semver(version: str) -> str:
+    """Encode a Semantic Version as an RPM ``Version``.
+
+    RPM forbids hyphens in ``Version`` and sorts a tilde suffix before the
+    bare version, so a prerelease becomes ``1.2.3~alpha.1``. Build metadata
+    has no ordering-neutral spelling in RPM and is refused.
+    """
+    release, plus, _build = version.partition("+")
+    if plus:
+        raise ValueError("build metadata has no RPM Version encoding")
+    core, hyphen, prerelease = release.partition("-")
+    return f"{core}~{prerelease}" if hyphen else core
 
 
 def arch_pkgver_for_semver(version: str) -> str:
@@ -158,6 +180,20 @@ def check_release(root: Path, tag: str) -> list[str]:
             problems.append(
                 f"{ARCH_PKGBUILD} pkgver is {pkgbuild_version}, "
                 f"not {expected_pkgbuild_version} for {version}"
+            )
+
+    spec_version = rpm_spec_version(read_text(root, RPM_SPEC))
+    try:
+        expected_spec_version = rpm_version_for_semver(version)
+    except ValueError as error:
+        problems.append(f"tag {tag} has no RPM Version encoding: {error}")
+    else:
+        if spec_version is None:
+            problems.append(f"{RPM_SPEC} has no literal Version")
+        elif spec_version != expected_spec_version:
+            problems.append(
+                f"{RPM_SPEC} Version is {spec_version}, "
+                f"not {expected_spec_version} for {version}"
             )
 
     section, link = changelog_has_release(read_text(root, CHANGELOG), version)
