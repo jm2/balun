@@ -2,16 +2,19 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Duration;
 
 use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, DiscoveryFailure, DiscoveryKind, DiscoveryStatus, NetworkChangeSummary,
-    RoutedAvailability, RoutedUnavailableReason,
+    OperationGeneration, RoutedAvailability, RoutedUnavailableReason,
 };
 
 use super::objects::DeviceRowObject;
 
 const STATUS_PAGE_NAME: &str = "status";
+/// How long a successful reply stays in the top banner.
+const ANNOUNCEMENT_DURATION: Duration = Duration::from_secs(3);
 
 /// Main-context reaction to a secondary click on a device row: the row's
 /// list position, the row widget, and the click point in row coordinates.
@@ -54,6 +57,12 @@ pub(crate) struct DeviceSidebar {
     /// The last network-change sequence shown, so the notice appears once
     /// per reconciliation and yields to the next publication.
     network_sequence: Rc<Cell<u64>>,
+    /// Bumped whenever the banner changes, so an announcement's timer only
+    /// clears the banner it was started for.
+    banner_epoch: Rc<Cell<u64>>,
+    /// The exact operation whose successful reply was announced, so later
+    /// snapshots of the same outcome do not show it again.
+    announced_generation: Rc<Cell<Option<OperationGeneration>>>,
 }
 
 /// Window action that forgets every remembered routed approval.
@@ -98,6 +107,37 @@ impl DeviceSidebar {
     {
         self.list.connect_activate(move |_, position| {
             callback(position);
+        });
+    }
+
+    fn reveal_banner(&self, title: &str) -> u64 {
+        let epoch = self.banner_epoch.get().wrapping_add(1);
+        self.banner_epoch.set(epoch);
+        self.terminal_banner.set_title(title);
+        self.terminal_banner.set_revealed(true);
+        epoch
+    }
+
+    fn hide_banner(&self) {
+        self.banner_epoch
+            .set(self.banner_epoch.get().wrapping_add(1));
+        self.terminal_banner.set_revealed(false);
+        self.terminal_banner.set_title("");
+    }
+
+    /// Show good news briefly. The timer clears the banner only while it
+    /// still shows this announcement; anything shown since keeps its place.
+    fn announce_banner(&self, title: &str) {
+        let epoch = self.reveal_banner(title);
+        let banner = self.terminal_banner.downgrade();
+        let banner_epoch = Rc::clone(&self.banner_epoch);
+        gtk::glib::timeout_add_local_once(ANNOUNCEMENT_DURATION, move || {
+            if banner_epoch.get() == epoch
+                && let Some(banner) = banner.upgrade()
+            {
+                banner.set_revealed(false);
+                banner.set_title("");
+            }
         });
     }
 
@@ -161,19 +201,39 @@ impl DeviceSidebar {
 
         let show_status = rows.is_empty();
         let refreshing = discovery.status() == DiscoveryStatus::Refreshing;
-        apply_terminal_banner(
-            &self.terminal_banner,
+        let title = terminal_banner_title_for_availability(
             discovery.kind(),
             discovery.status(),
             !show_status,
             routed_availability,
         );
+        match plan_terminal_banner(
+            discovery.kind(),
+            discovery.status(),
+            title,
+            discovery.generation(),
+            self.announced_generation.get(),
+            self.terminal_banner.title().as_str(),
+        ) {
+            BannerChange::Hide => {
+                self.announced_generation.set(None);
+                self.hide_banner();
+            }
+            BannerChange::Reveal(title) => {
+                self.announced_generation.set(None);
+                self.reveal_banner(title);
+            }
+            BannerChange::Announce(title) => {
+                self.announced_generation.set(Some(discovery.generation()));
+                self.announce_banner(title);
+            }
+            BannerChange::Keep => {}
+        }
         let network = snapshot.network();
         if self.network_sequence.replace(network.sequence()) != network.sequence()
             && let Some(title) = network_change_banner_title(network)
         {
-            self.terminal_banner.set_title(title);
-            self.terminal_banner.set_revealed(true);
+            self.reveal_banner(title);
         }
         self.spinner.set_visible(show_status && refreshing);
         self.spinner.set_spinning(show_status && refreshing);
@@ -334,6 +394,8 @@ pub(crate) fn build() -> DeviceSidebar {
         device_context,
         applying_snapshot: Rc::new(Cell::new(false)),
         network_sequence: Rc::new(Cell::new(0)),
+        banner_epoch: Rc::new(Cell::new(0)),
+        announced_generation: Rc::new(Cell::new(None)),
     }
 }
 
@@ -589,24 +651,44 @@ fn apply_empty_presentation(
     status.set_description(Some(presentation.description));
 }
 
-fn apply_terminal_banner(
-    banner: &adw::Banner,
-    discovery_kind: DiscoveryKind,
-    discovery_status: DiscoveryStatus,
-    has_device_rows: bool,
-    routed_availability: RoutedAvailability,
-) {
-    if let Some(title) = terminal_banner_title_for_availability(
-        discovery_kind,
-        discovery_status,
-        has_device_rows,
-        routed_availability,
-    ) {
-        banner.set_title(title);
-        banner.set_revealed(true);
+/// How the top banner reacts to a discovery outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BannerChange {
+    /// Nothing to show; clear whatever is there.
+    Hide,
+    /// A condition worth keeping until the discovery state changes.
+    Reveal(&'static str),
+    /// Good news: show it, then let a timer clear it.
+    Announce(&'static str),
+    /// The announced outcome is unchanged; leave the timer to it.
+    Keep,
+}
+
+/// A successful exact reply is announced once per operation and then
+/// clears itself; every other title stays until the discovery state changes.
+/// A notice that borrowed the banner after the announcement is cleared on
+/// the next snapshot, as before.
+fn plan_terminal_banner(
+    kind: DiscoveryKind,
+    status: DiscoveryStatus,
+    title: Option<&'static str>,
+    generation: OperationGeneration,
+    announced: Option<OperationGeneration>,
+    shown_title: &str,
+) -> BannerChange {
+    let Some(title) = title else {
+        return BannerChange::Hide;
+    };
+    if (kind, status) != (DiscoveryKind::Exact, DiscoveryStatus::Ready) {
+        return BannerChange::Reveal(title);
+    }
+    if announced != Some(generation) {
+        return BannerChange::Announce(title);
+    }
+    if shown_title == title {
+        BannerChange::Keep
     } else {
-        banner.set_revealed(false);
-        banner.set_title("");
+        BannerChange::Hide
     }
 }
 
@@ -924,6 +1006,62 @@ impl Drop for SnapshotApplicationGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn successful_replies_are_announced_once_and_other_outcomes_persist() {
+        const REPLY: &str = "HDHomeRun device reply received.";
+        let reply = Some(REPLY);
+        let first = OperationGeneration::new(3);
+        let second = OperationGeneration::new(4);
+        let exact_ready = |announced, shown| {
+            plan_terminal_banner(
+                DiscoveryKind::Exact,
+                DiscoveryStatus::Ready,
+                reply,
+                first,
+                announced,
+                shown,
+            )
+        };
+        assert_eq!(exact_ready(None, ""), BannerChange::Announce(REPLY));
+        assert_eq!(exact_ready(Some(second), ""), BannerChange::Announce(REPLY));
+        assert_eq!(
+            exact_ready(Some(first), REPLY),
+            BannerChange::Keep,
+            "the same outcome is left to its timer"
+        );
+        assert_eq!(
+            exact_ready(
+                Some(first),
+                "Network changed; stale device addresses were dropped."
+            ),
+            BannerChange::Hide,
+            "a notice that borrowed the banner is cleared on the next snapshot"
+        );
+        assert_eq!(exact_ready(Some(first), ""), BannerChange::Hide);
+        assert_eq!(
+            plan_terminal_banner(
+                DiscoveryKind::Exact,
+                DiscoveryStatus::NoResponse,
+                Some("No valid HDHomeRun reply was received."),
+                first,
+                Some(first),
+                "",
+            ),
+            BannerChange::Reveal("No valid HDHomeRun reply was received.")
+        );
+        assert_eq!(
+            plan_terminal_banner(
+                DiscoveryKind::Local,
+                DiscoveryStatus::Ready,
+                None,
+                first,
+                Some(first),
+                REPLY,
+            ),
+            BannerChange::Hide
+        );
+    }
 
     #[test]
     fn network_change_notice_appears_only_when_evidence_was_retired() {

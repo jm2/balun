@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Reply banner** — The "HDHomeRun device reply received." banner clears itself after three
+  seconds instead of staying until the next search.
 - **Audio after tuning** — Correct live-stream timing when usable media arrives after the first
   transport bytes, preventing late audio from becoming choppy or silent despite healthy-looking
   playback counters.
