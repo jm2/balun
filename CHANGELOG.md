@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Reply banner** — The "HDHomeRun device reply received." banner clears itself after three
+  seconds instead of staying until the next search.
 - **Channel list position** — The channel list keeps its scroll position and selection across
   snapshots that leave the lineup unchanged, such as tuning; only a changed lineup rebuilds the
   rows.
