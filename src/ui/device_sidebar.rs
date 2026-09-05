@@ -32,7 +32,13 @@ pub(crate) struct DeviceSidebar {
     cancel_discovery_button: gtk::Button,
     exact_discovery_button: gtk::Button,
     routed_discovery_button: gtk::Button,
+    /// Always visible; its model is rebuilt in place, so only the
+    /// accessibility test reads the button itself.
+    #[cfg_attr(not(test), allow(dead_code))]
     routed_menu_button: gtk::MenuButton,
+    discovery_menu: gtk::gio::Menu,
+    /// Whether the discovery menu currently offers the routed-approval item.
+    discovery_menu_offers_routed: Rc<Cell<bool>>,
     refresh_button: gtk::Button,
     applying_snapshot: Rc<Cell<bool>>,
     /// The last network-change sequence shown, so the notice appears once
@@ -42,6 +48,8 @@ pub(crate) struct DeviceSidebar {
 
 /// Window action that forgets every remembered routed approval.
 pub(crate) const FORGET_ROUTED_APPROVALS_ACTION: &str = "forget-routed-approvals";
+/// Window action that presents the remembered addresses and names.
+pub(crate) const REMEMBERED_DEVICES_ACTION: &str = "remembered-devices";
 
 impl DeviceSidebar {
     #[must_use]
@@ -127,7 +135,9 @@ impl DeviceSidebar {
             .set_visible(routed_search_visible(routed_availability));
         self.routed_discovery_button
             .set_sensitive(actions.start_sensitive);
-        self.routed_menu_button.set_visible(routed_available);
+        if self.discovery_menu_offers_routed.replace(routed_available) != routed_available {
+            populate_discovery_menu(&self.discovery_menu, routed_available);
+        }
         self.cancel_discovery_button
             .set_sensitive(actions.cancel_sensitive);
         self.cancel_discovery_button
@@ -258,17 +268,13 @@ pub(crate) fn build() -> DeviceSidebar {
     routed_discovery_button.update_property(&[gtk::accessible::Property::Label(
         "Search routes behind your tunnel",
     )]);
-    let routed_menu = gtk::gio::Menu::new();
-    routed_menu.append(
-        Some("Forget routed approvals"),
-        Some(&format!("win.{FORGET_ROUTED_APPROVALS_ACTION}")),
-    );
+    let discovery_menu = gtk::gio::Menu::new();
+    populate_discovery_menu(&discovery_menu, false);
     let routed_menu_button = gtk::MenuButton::builder()
         .icon_name("view-more-symbolic")
         .tooltip_text("More discovery options")
         .css_classes(["flat"])
-        .menu_model(&routed_menu)
-        .visible(false)
+        .menu_model(&discovery_menu)
         .build();
     routed_menu_button
         .update_property(&[gtk::accessible::Property::Label("More discovery options")]);
@@ -301,9 +307,27 @@ pub(crate) fn build() -> DeviceSidebar {
         exact_discovery_button,
         routed_discovery_button,
         routed_menu_button,
+        discovery_menu,
+        discovery_menu_offers_routed: Rc::new(Cell::new(false)),
         refresh_button,
         applying_snapshot: Rc::new(Cell::new(false)),
         network_sequence: Rc::new(Cell::new(0)),
+    }
+}
+
+/// The discovery menu always offers the remembered-device list; the routed
+/// approval item appears only while routed discovery is offered.
+fn populate_discovery_menu(menu: &gtk::gio::Menu, offer_routed_approvals: bool) {
+    menu.remove_all();
+    menu.append(
+        Some("Remembered devices\u{2026}"),
+        Some(&format!("win.{REMEMBERED_DEVICES_ACTION}")),
+    );
+    if offer_routed_approvals {
+        menu.append(
+            Some("Forget routed approvals"),
+            Some(&format!("win.{FORGET_ROUTED_APPROVALS_ACTION}")),
+        );
     }
 }
 

@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a tuner behind WireGuard or another routed link, and enumerate one approved private range no
   wider than `/24` from the diagnostic.
 - **Remembered devices** — A tuner found by address or hostname is remembered once it answers and
-  probed again at the next launch, up to 32 entries; local discovery still waits for Refresh.
+  probed again at the next launch, up to 32 entries; **Remembered devices** in the discovery menu
+  lists them and forgets one.
 - **Stable device and channel identity** — One validated DeviceID per tuner even when it answers
   at several addresses, stale addresses that expire independently, and lineups that are never
   merged across devices.

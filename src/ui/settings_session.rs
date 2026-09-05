@@ -128,6 +128,12 @@ impl SettingsSession {
         self.stage(|settings| settings.remember_target(target))
     }
 
+    /// Forget a remembered target and stage the save; `None` when it was not
+    /// remembered or the store is read-only.
+    pub(crate) fn forget_target(&self, target: &RememberedTarget) -> Option<PendingSave> {
+        self.stage(|settings| settings.forget_target(target))
+    }
+
     /// Window geometry to apply before the window is shown.
     pub(crate) fn window(&self) -> WindowState {
         self.settings.borrow().window()
