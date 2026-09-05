@@ -1,3 +1,8 @@
+# The upstream tag version in SemVer spelling; Version is its RPM spelling
+# (a prerelease such as 0.2.0-alpha.1 becomes 0.2.0~alpha.1). The release
+# check binds both to the tag, and Packit rewrites Version the same way.
+%global upstream_version 0.1.0
+
 Name:           balun
 Version:        0.1.0
 Release:        1%{?dist}
@@ -5,7 +10,7 @@ Summary:        A lightweight cross-platform HDHomeRun live TV viewer
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/jm2/balun
-Source0:        https://github.com/jm2/balun/archive/refs/tags/v%{version}.tar.gz
+Source0:        https://github.com/jm2/balun/archive/refs/tags/v%{upstream_version}.tar.gz
 
 # Cargo.toml declares rust-version 1.98; fail before compiling on an older chroot.
 BuildRequires:  rust >= 1.98
@@ -42,7 +47,7 @@ or behind a routed tunnel, lists their channel lineups, and plays live
 television.
 
 %prep
-%autosetup -p1 -n %{name}-%{version}
+%autosetup -p1 -n %{name}-%{upstream_version}
 
 %build
 cargo build --release --locked --features desktop --bin balun

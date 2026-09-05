@@ -8,7 +8,8 @@ once so a maintainer fixes them in one commit:
 - the tag is a v-prefixed Semantic Version;
 - ``Cargo.toml`` and ``Cargo.lock`` carry that version, while the Arch PKGBUILD
   carries its stable-upgrade-safe, hyphen-free ``pkgver`` encoding and the
-  Fedora spec carries its tilde-prerelease RPM ``Version``;
+  Fedora spec carries it as ``upstream_version`` beside its tilde-prerelease
+  RPM ``Version``;
 - ``CHANGELOG.md`` has a ``## [<version>]`` section and its compare link; and
 - the AppStream metainfo lists that version as its newest ``<release>``.
 """
@@ -86,6 +87,12 @@ def arch_pkgbuild_version(pkgbuild: str) -> str | None:
 def rpm_spec_version(spec: str) -> str | None:
     """Return the literal ``Version:`` declaration from an RPM spec."""
     match = re.search(r"^Version:[ \t]*([^\s#]+)[ \t]*$", spec, re.M)
+    return match.group(1) if match else None
+
+
+def rpm_spec_upstream_version(spec: str) -> str | None:
+    """Return the literal ``%global upstream_version`` from an RPM spec."""
+    match = re.search(r"^%global[ \t]+upstream_version[ \t]+([^\s#]+)[ \t]*$", spec, re.M)
     return match.group(1) if match else None
 
 
@@ -187,7 +194,14 @@ def check_release(root: Path, tag: str) -> list[str]:
                 f"not {expected_pkgbuild_version} for {version}"
             )
 
-    spec_version = rpm_spec_version(read_text(root, RPM_SPEC))
+    spec_text = read_text(root, RPM_SPEC)
+    upstream_version = rpm_spec_upstream_version(spec_text)
+    if upstream_version is None:
+        problems.append(f"{RPM_SPEC} has no literal %global upstream_version")
+    elif upstream_version != version:
+        problems.append(f"{RPM_SPEC} upstream_version is {upstream_version}, not {version}")
+
+    spec_version = rpm_spec_version(spec_text)
     try:
         expected_spec_version = rpm_version_for_semver(version)
     except ValueError as error:
