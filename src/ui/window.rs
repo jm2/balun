@@ -18,9 +18,8 @@ use balun::discovery::{
 use balun::playback::{PlaybackInitializationError, PlaybackRuntime};
 use balun::settings::RememberedTarget;
 
-use super::device_sidebar::{FORGET_ROUTED_APPROVALS_ACTION, REMEMBERED_DEVICES_ACTION};
+use super::device_sidebar::FORGET_ROUTED_APPROVALS_ACTION;
 use super::objects::DeviceRowObject;
-use super::remembered_devices_dialog;
 use super::routed_flow::{RoutedApprovalFlow, RoutedFlowAction};
 use super::settings_session::SettingsSession;
 use super::{
@@ -420,7 +419,6 @@ pub(crate) fn build(
     connect_cancel_discovery(&device_sidebar, &handle, &rediscovery);
     let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
     connect_routed_discovery(&window, &device_sidebar, &routed_ui);
-    connect_remembered_devices(&window, &settings, &wiring);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view, &layout);
     connect_channel_activation(
         &channel_sidebar,
@@ -771,28 +769,6 @@ fn connect_routed_discovery(
         }
     });
     window.add_action(&forget);
-}
-
-/// The discovery menu's remembered-device list and its Forget actions.
-fn connect_remembered_devices(
-    window: &adw::ApplicationWindow,
-    settings: &Rc<SettingsSession>,
-    wiring: &Rc<RediscoveryWiring>,
-) {
-    let action = gtk::gio::SimpleAction::new(REMEMBERED_DEVICES_ACTION, None);
-    let settings = Rc::clone(settings);
-    let wiring = Rc::clone(wiring);
-    let parent = window.downgrade();
-    action.connect_activate(move |_, _| {
-        let Some(window) = parent.upgrade() else {
-            return;
-        };
-        let toasts = Rc::clone(&wiring);
-        remembered_devices_dialog::present(&window, Rc::clone(&settings), move || {
-            toasts.toast("Forgotten; it will not be probed at the next launch.");
-        });
-    });
-    window.add_action(&action);
 }
 
 /// Advance the approval flow with one accepted snapshot.

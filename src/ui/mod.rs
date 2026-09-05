@@ -5,7 +5,6 @@ pub(crate) mod device_sidebar;
 pub(crate) mod exact_discovery_dialog;
 pub(crate) mod objects;
 pub(crate) mod player_view;
-pub(crate) mod remembered_devices_dialog;
 pub(crate) mod routed_approval_dialog;
 pub(crate) mod routed_flow;
 pub(crate) mod settings_session;
