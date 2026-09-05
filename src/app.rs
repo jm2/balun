@@ -101,7 +101,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use balun::controller::{DiscoveryFailure, DiscoveryFuture, DiscoveryService};
+    use balun::controller::{DiscoveryFailure, DiscoveryFuture, DiscoveryService, DiscoveryStatus};
     use balun::discovery::{DiscoveryReport, ExactDiscoveryTarget};
     use balun::domain::DeviceId;
     use tokio_util::sync::CancellationToken;
@@ -110,12 +110,13 @@ mod tests {
 
     #[derive(Clone)]
     struct CountingDiscovery {
-        calls: Arc<AtomicUsize>,
+        local: Arc<AtomicUsize>,
+        exact: Arc<AtomicUsize>,
     }
 
     impl DiscoveryService for CountingDiscovery {
         fn discover_local(&self, _cancellation: CancellationToken) -> DiscoveryFuture {
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.local.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok::<_, DiscoveryFailure>(DiscoveryReport::default()) })
         }
 
@@ -125,30 +126,55 @@ mod tests {
             _expected_device: Option<DeviceId>,
             _cancellation: CancellationToken,
         ) -> DiscoveryFuture {
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.exact.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok::<_, DiscoveryFailure>(DiscoveryReport::default()) })
         }
     }
 
     /// Run through `scripts/test-desktop-lifecycle.sh`; the ordinary unit-test
     /// jobs deliberately compile but skip this display-dependent smoke.
+    ///
+    /// The window queues one local discovery as it is built, so the close
+    /// waits for that lane to settle: closing from an idle callback would
+    /// race the controller for the queued command and make the count depend
+    /// on timing. The script's isolated settings root holds no remembered
+    /// target, so nothing may follow the launch discovery.
     #[test]
     #[ignore = "requires the isolated display and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
-    fn headless_window_close_joins_controller_without_discovery() {
-        let calls = Arc::new(AtomicUsize::new(0));
+    fn headless_window_close_joins_controller_after_launch_discovery() {
+        let local = Arc::new(AtomicUsize::new(0));
+        let exact = Arc::new(AtomicUsize::new(0));
         let controller = ControllerRuntime::start(CountingDiscovery {
-            calls: Arc::clone(&calls),
+            local: Arc::clone(&local),
+            exact: Arc::clone(&exact),
         })
         .expect("start packet-free smoke controller");
-        let (application, shutdown_failed) = application_with_controller(controller, |window| {
-            let window = window.downgrade();
-            gtk::glib::idle_add_local_once(move || {
-                window
-                    .upgrade()
-                    .expect("smoke window should remain alive until its idle close")
-                    .close();
+        let mut snapshots = controller.handle().subscribe();
+        let before_launch = snapshots.borrow_and_update().discovery().generation();
+        let (application, shutdown_failed) =
+            application_with_controller(controller, move |window| {
+                let window = window.downgrade();
+                let mut snapshots = snapshots.clone();
+                gtk::glib::MainContext::default().spawn_local(async move {
+                    loop {
+                        let discovery = snapshots.borrow_and_update().discovery();
+                        if discovery.generation() > before_launch
+                            && discovery.status() != DiscoveryStatus::Refreshing
+                        {
+                            break;
+                        }
+                        if snapshots.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                    window
+                        .upgrade()
+                        .expect(
+                            "smoke window should remain alive until the launch discovery settles",
+                        )
+                        .close();
+                });
             });
-        });
 
         let exit_code = application.run_with_args(&["balun-desktop-lifecycle-smoke"]);
         let exit_code = finish_run(exit_code, &shutdown_failed);
@@ -156,9 +182,14 @@ mod tests {
         assert_eq!(exit_code, gtk::glib::ExitCode::SUCCESS);
         assert!(!shutdown_failed.get(), "controller join must succeed");
         assert_eq!(
-            calls.load(Ordering::SeqCst),
+            local.load(Ordering::SeqCst),
+            1,
+            "window activation must run exactly one launch discovery"
+        );
+        assert_eq!(
+            exact.load(Ordering::SeqCst),
             0,
-            "window activation and close must not start discovery"
+            "no remembered target may be probed without settings"
         );
     }
 }
