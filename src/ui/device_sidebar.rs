@@ -219,6 +219,7 @@ impl DeviceSidebar {
                 self.announced_generation.set(None);
                 self.hide_banner();
             }
+            BannerChange::Clear => self.hide_banner(),
             BannerChange::Reveal(title) => {
                 self.announced_generation.set(None);
                 self.reveal_banner(title);
@@ -660,14 +661,18 @@ enum BannerChange {
     Reveal(&'static str),
     /// Good news: show it, then let a timer clear it.
     Announce(&'static str),
+    /// A notice borrowed the banner after the announcement; clear it but
+    /// keep the announcement on record so it is not repeated.
+    Clear,
     /// The announced outcome is unchanged; leave the timer to it.
     Keep,
 }
 
 /// A successful exact reply is announced once per operation and then
-/// clears itself; every other title stays until the discovery state changes.
-/// A notice that borrowed the banner after the announcement is cleared on
-/// the next snapshot, as before.
+/// clears itself; later snapshots of the same operation leave it alone,
+/// whether the timer has run or not. Every other title stays until the
+/// discovery state changes, and a notice that borrowed the banner after the
+/// announcement is cleared on the next snapshot, as before.
 fn plan_terminal_banner(
     kind: DiscoveryKind,
     status: DiscoveryStatus,
@@ -685,10 +690,10 @@ fn plan_terminal_banner(
     if announced != Some(generation) {
         return BannerChange::Announce(title);
     }
-    if shown_title == title {
+    if shown_title == title || shown_title.is_empty() {
         BannerChange::Keep
     } else {
-        BannerChange::Hide
+        BannerChange::Clear
     }
 }
 
@@ -1035,10 +1040,14 @@ mod tests {
                 Some(first),
                 "Network changed; stale device addresses were dropped."
             ),
-            BannerChange::Hide,
+            BannerChange::Clear,
             "a notice that borrowed the banner is cleared on the next snapshot"
         );
-        assert_eq!(exact_ready(Some(first), ""), BannerChange::Hide);
+        assert_eq!(
+            exact_ready(Some(first), ""),
+            BannerChange::Keep,
+            "once the timer has run, the same operation is not announced again"
+        );
         assert_eq!(
             plan_terminal_banner(
                 DiscoveryKind::Exact,
