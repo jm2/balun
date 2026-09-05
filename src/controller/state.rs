@@ -110,6 +110,9 @@ impl DeviceSummary {
         if invalid_locator(preferred_locator) {
             return Err(StateError::InvalidPreferredLocator);
         }
+        if locators.iter().any(|locator| invalid_locator(*locator)) {
+            return Err(StateError::InvalidLocator);
+        }
 
         Ok(Self {
             device_id,
@@ -1037,6 +1040,9 @@ pub enum StateError {
     #[error("preferred device locator is not a usable unicast socket address")]
     InvalidPreferredLocator,
 
+    #[error("a device locator is not a usable unicast socket address")]
+    InvalidLocator,
+
     #[error("application snapshot exceeds the {maximum}-device limit")]
     TooManyDevices { maximum: usize },
 
@@ -1633,6 +1639,21 @@ mod tests {
                 vec!["0.0.0.0:65001".parse().unwrap()]
             ),
             Err(StateError::InvalidPreferredLocator)
+        );
+        assert_eq!(
+            DeviceSummary::new(
+                id,
+                None,
+                None,
+                Some(4),
+                "192.0.2.10:65001".parse().unwrap(),
+                vec![
+                    "192.0.2.10:65001".parse().unwrap(),
+                    "0.0.0.0:65001".parse().unwrap()
+                ]
+            ),
+            Err(StateError::InvalidLocator),
+            "every locator is validated, not only the preferred one"
         );
         assert!(matches!(
             ChannelSummary::new(
