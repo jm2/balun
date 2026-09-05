@@ -5,6 +5,8 @@ All notable changes to Balun are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
 ## [0.1.0] — 2026-09-05
 
 ### Added
@@ -142,4 +144,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
   decoder, so those channels fail closed and cannot be transcoded.
 
+[Unreleased]: https://github.com/jm2/balun/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/jm2/balun/releases/tag/v0.1.0
