@@ -1,7 +1,8 @@
 //! Top-level adaptive three-pane window and controller/GLib bridge.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -420,6 +421,7 @@ pub(crate) fn build(
     let routed_ui = Rc::new(RoutedUi::new(&window, Rc::clone(&wiring)));
     connect_routed_discovery(&window, &device_sidebar, &routed_ui);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view, &layout);
+    connect_forget_device(&device_sidebar, &wiring);
     connect_channel_activation(
         &channel_sidebar,
         &handle,
@@ -980,10 +982,13 @@ struct RediscoveryWiring {
 }
 
 /// Which queued addresses came from which user-entered hostname, so the
-/// name (not its transient address) is remembered once one of them answers.
+/// name (not its transient address) is remembered once one of them answers,
+/// and every address a name resolved to this session, so a right-click on
+/// the device it reached can forget the name.
 #[derive(Default)]
 struct HostnameProbes {
     pending: HashMap<ExactDiscoveryTarget, HostnameTarget>,
+    resolved: HashSet<(IpAddr, HostnameTarget)>,
 }
 
 impl RediscoveryWiring {
@@ -996,11 +1001,151 @@ impl RediscoveryWiring {
         }
     }
 
+    /// Drop remembered entries; the notice says whether the change was
+    /// saved or only applies to this session because the store is read-only.
+    fn forget(&self, targets: &[RememberedTarget]) {
+        // Every entry is dropped; only the last staged document needs saving.
+        let mut pending_save = None;
+        for target in targets {
+            if let Some(save) = self.settings.forget_target(target) {
+                pending_save = Some(save);
+            }
+        }
+        match pending_save {
+            Some(pending_save) => {
+                self.settings.save(pending_save);
+                self.toast("Forgotten; it will not be probed at the next launch.");
+            }
+            None => self.toast("Forgotten for this session only; settings are read-only."),
+        }
+    }
+
     fn toast(&self, text: &str) {
         if let Some(toasts) = self.toasts.upgrade() {
             toasts.add_toast(adw::Toast::new(text));
         }
     }
+}
+
+/// Offer to forget the remembered address or name behind a right-clicked
+/// device row. The row is unchanged and the choice is confirmed first.
+fn connect_forget_device(sidebar: &device_sidebar::DeviceSidebar, wiring: &Rc<RediscoveryWiring>) {
+    let selection = sidebar.selection().clone();
+    let wiring = Rc::clone(wiring);
+    sidebar.connect_device_context(move |position, row, x, y| {
+        let Some(model_row) = selection.item(position).and_downcast::<DeviceRowObject>() else {
+            return;
+        };
+        let Some(device_id) = model_row.device_id() else {
+            return;
+        };
+        let address = wiring
+            .accepted
+            .borrow()
+            .devices()
+            .iter()
+            .find(|device| device.device_id() == device_id)
+            .map(|device| device.preferred_locator().ip());
+        let Some(address) = address else {
+            return;
+        };
+        let targets = forgettable_targets(
+            &wiring.settings.remembered_targets(),
+            address,
+            &wiring.hostnames.borrow().resolved,
+        );
+        if targets.is_empty() {
+            wiring.toast("This device has no remembered address or name to forget.");
+            return;
+        }
+        present_forget_menu(row, x, y, model_row.title(), targets, Rc::clone(&wiring));
+    });
+}
+
+/// The remembered entries a device at `address` stands for: that address
+/// and every name that resolved to it this session.
+fn forgettable_targets(
+    remembered: &[RememberedTarget],
+    address: IpAddr,
+    resolved: &HashSet<(IpAddr, HostnameTarget)>,
+) -> Vec<RememberedTarget> {
+    remembered
+        .iter()
+        .filter(|target| match target {
+            RememberedTarget::Address(target) => target.ip_addr() == address,
+            RememberedTarget::Hostname(host) => resolved.contains(&(address, host.clone())),
+        })
+        .cloned()
+        .collect()
+}
+
+const FORGET_CANCEL_RESPONSE: &str = "cancel";
+const FORGET_RESPONSE: &str = "forget";
+
+/// Pop a one-item context menu at the click point; it unparents itself once
+/// closed so a recycled row keeps nothing behind.
+#[allow(clippy::cast_possible_truncation)]
+fn present_forget_menu(
+    row: &gtk::Widget,
+    x: f64,
+    y: f64,
+    title: String,
+    targets: Vec<RememberedTarget>,
+    wiring: Rc<RediscoveryWiring>,
+) {
+    let forget = gtk::Button::builder()
+        .label("Forget device…")
+        .css_classes(["flat"])
+        .build();
+    let popover = gtk::Popover::builder()
+        .child(&forget)
+        .has_arrow(false)
+        .position(gtk::PositionType::Bottom)
+        .build();
+    popover.set_parent(row);
+    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+        x.round() as i32,
+        y.round() as i32,
+        1,
+        1,
+    )));
+    popover.connect_closed(|popover| {
+        let popover = popover.clone();
+        gtk::glib::idle_add_local_once(move || popover.unparent());
+    });
+    let row = row.clone();
+    forget.connect_clicked(move |button| {
+        if let Some(popover) = button
+            .ancestor(gtk::Popover::static_type())
+            .and_downcast::<gtk::Popover>()
+        {
+            popover.popdown();
+        }
+        present_forget_dialog(&row, &title, targets.clone(), Rc::clone(&wiring));
+    });
+    popover.popup();
+}
+
+/// Confirm before forgetting; Cancel is the default and closing declines.
+fn present_forget_dialog(
+    parent: &gtk::Widget,
+    title: &str,
+    targets: Vec<RememberedTarget>,
+    wiring: Rc<RediscoveryWiring>,
+) {
+    let dialog = adw::AlertDialog::builder()
+        .heading("Forget this device?")
+        .body(format!(
+            "Balun will stop probing the remembered address or name for “{title}” at launch. The device stays listed until the next launch."
+        ))
+        .close_response(FORGET_CANCEL_RESPONSE)
+        .default_response(FORGET_CANCEL_RESPONSE)
+        .build();
+    dialog.add_response(FORGET_CANCEL_RESPONSE, "Cancel");
+    dialog.add_response(FORGET_RESPONSE, "Forget");
+    dialog.set_response_appearance(FORGET_RESPONSE, adw::ResponseAppearance::Destructive);
+    dialog.connect_response(Some(FORGET_RESPONSE), move |_, _| wiring.forget(&targets));
+    dialog.present(Some(parent));
 }
 
 /// Feed one discovery state to the probe queue: remember a queued address
@@ -1046,10 +1191,13 @@ fn resolve_hostname_into_queue(wiring: Rc<RediscoveryWiring>, host: HostnameTarg
     gtk::glib::MainContext::default().spawn_local(async move {
         match receiver.receive().await {
             Ok(addresses) => {
-                if entered {
+                {
                     let mut hostnames = wiring.hostnames.borrow_mut();
                     for address in &addresses {
-                        hostnames.pending.insert(*address, host.clone());
+                        hostnames.resolved.insert((address.ip_addr(), host.clone()));
+                        if entered {
+                            hostnames.pending.insert(*address, host.clone());
+                        }
                     }
                 }
                 wiring.rediscovery.borrow_mut().enqueue(addresses);
@@ -1271,6 +1419,33 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
+
+    #[test]
+    fn forgettable_targets_match_the_address_and_the_names_resolved_to_it() {
+        let address = ExactDiscoveryTarget::parse("192.0.2.20").expect("address");
+        let other = ExactDiscoveryTarget::parse("192.0.2.21").expect("address");
+        let name = HostnameTarget::parse("tuner.example").expect("name");
+        let stale = HostnameTarget::parse("old.example").expect("name");
+        let remembered = vec![
+            RememberedTarget::Address(other),
+            RememberedTarget::Address(address),
+            RememberedTarget::Hostname(name.clone()),
+            RememberedTarget::Hostname(stale.clone()),
+        ];
+        let resolved = HashSet::from([(address.ip_addr(), name.clone()), (other.ip_addr(), stale)]);
+
+        assert_eq!(
+            forgettable_targets(&remembered, address.ip_addr(), &resolved),
+            vec![
+                RememberedTarget::Address(address),
+                RememberedTarget::Hostname(name),
+            ]
+        );
+        assert!(
+            forgettable_targets(&remembered, "192.0.2.99".parse().expect("ip"), &resolved)
+                .is_empty()
+        );
+    }
     use balun::settings::{DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH};
 
     #[test]

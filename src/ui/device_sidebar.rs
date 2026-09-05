@@ -1,6 +1,6 @@
 //! Virtualized HDHomeRun device sidebar.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -12,6 +12,11 @@ use balun::controller::{
 use super::objects::DeviceRowObject;
 
 const STATUS_PAGE_NAME: &str = "status";
+
+/// Main-context reaction to a secondary click on a device row: the row's
+/// list position, the row widget, and the click point in row coordinates.
+type DeviceContextHandler = dyn Fn(u32, &gtk::Widget, f64, f64);
+type SharedDeviceContextHandler = Rc<RefCell<Option<Box<DeviceContextHandler>>>>;
 const DEVICE_LIST_PAGE_NAME: &str = "devices";
 
 /// GTK parts for the device pane.
@@ -34,6 +39,7 @@ pub(crate) struct DeviceSidebar {
     routed_discovery_button: gtk::Button,
     routed_menu_button: gtk::MenuButton,
     refresh_button: gtk::Button,
+    device_context: SharedDeviceContextHandler,
     applying_snapshot: Rc<Cell<bool>>,
     /// The last network-change sequence shown, so the notice appears once
     /// per reconciliation and yields to the next publication.
@@ -83,6 +89,16 @@ impl DeviceSidebar {
         self.list.connect_activate(move |_, position| {
             callback(position);
         });
+    }
+
+    /// Run `callback` when a device row is secondary-clicked (right-click).
+    /// The bridge decides whether that device has anything to forget; the
+    /// row itself never changes.
+    pub(crate) fn connect_device_context<F>(&self, callback: F)
+    where
+        F: Fn(u32, &gtk::Widget, f64, f64) + 'static,
+    {
+        *self.device_context.borrow_mut() = Some(Box::new(callback));
     }
 
     /// Share the non-GObject reentrancy flag with the window bridge without
@@ -182,7 +198,8 @@ pub(crate) fn build() -> DeviceSidebar {
     selection.set_autoselect(false);
     selection.set_can_unselect(true);
 
-    let factory = device_factory();
+    let device_context: SharedDeviceContextHandler = Rc::default();
+    let factory = device_factory(&device_context);
     let list = gtk::ListView::builder()
         .model(&selection)
         .factory(&factory)
@@ -302,12 +319,43 @@ pub(crate) fn build() -> DeviceSidebar {
         routed_discovery_button,
         routed_menu_button,
         refresh_button,
+        device_context,
         applying_snapshot: Rc::new(Cell::new(false)),
         network_sequence: Rc::new(Cell::new(0)),
     }
 }
 
 /// Synthesize the list view's activation signal from a single primary click.
+/// Report a secondary click on a bound row so the bridge can offer to forget
+/// the device it shows. Nothing is reported for an unbound placeholder.
+fn secondary_click(
+    list_item: &gtk::ListItem,
+    handler: &SharedDeviceContextHandler,
+) -> gtk::GestureClick {
+    let gesture = gtk::GestureClick::builder()
+        .button(gtk::gdk::BUTTON_SECONDARY)
+        .propagation_phase(gtk::PropagationPhase::Bubble)
+        .build();
+    let list_item = list_item.downgrade();
+    let handler = Rc::clone(handler);
+    gesture.connect_pressed(move |gesture, _, x, y| {
+        let Some(list_item) = list_item.upgrade() else {
+            return;
+        };
+        let position = list_item.position();
+        if position == gtk::INVALID_LIST_POSITION || list_item.item().is_none() {
+            return;
+        }
+        let Some(row) = gesture.widget() else {
+            return;
+        };
+        if let Some(handler) = handler.borrow().as_ref() {
+            handler(position, &row, x, y);
+        }
+    });
+    gesture
+}
+
 fn single_click_activation(list_item: &gtk::ListItem) -> gtk::GestureClick {
     let gesture = gtk::GestureClick::builder()
         .button(gtk::gdk::BUTTON_PRIMARY)
@@ -337,9 +385,10 @@ fn single_click_activation(list_item: &gtk::ListItem) -> gtk::GestureClick {
     gesture
 }
 
-fn device_factory() -> gtk::SignalListItemFactory {
+fn device_factory(device_context: &SharedDeviceContextHandler) -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, object| {
+    let device_context = Rc::clone(device_context);
+    factory.connect_setup(move |_, object| {
         let Some(list_item) = object.downcast_ref::<gtk::ListItem>() else {
             return;
         };
@@ -375,6 +424,7 @@ fn device_factory() -> gtk::SignalListItemFactory {
         row.append(&icon);
         row.append(&labels);
         row.add_controller(single_click_activation(list_item));
+        row.add_controller(secondary_click(list_item, &device_context));
         list_item.set_child(Some(&row));
         reset_device_list_item(list_item);
     });
