@@ -271,11 +271,15 @@ unset \
     GST_TRACE \
     GST_TRACERS
 
-dbus-run-session -- \
-    timeout --signal=TERM --kill-after=5s 30s \
-    cargo test --locked --features desktop --bin balun \
-        app::tests::headless_window_close_joins_controller_after_launch_discovery -- \
-        --exact --ignored --nocapture
+for smoke in \
+    headless_window_close_joins_controller_after_launch_discovery \
+    headless_about_and_quit_join_controller_after_launch_discovery
+do
+    dbus-run-session -- \
+        timeout --signal=TERM --kill-after=5s 30s \
+        cargo test --locked --features desktop --bin balun \
+            "app::tests::$smoke" -- --exact --ignored --nocapture
+done
 
 dbus-run-session -- \
     timeout --signal=TERM --kill-after=5s 30s \

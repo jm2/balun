@@ -50,6 +50,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.1.1" date="2026-09-05">
+      <description>
+        <p>Fix macOS icons, MPEG-2 playback, audio controls, native menus, and the Devices header; add the shared About dialog and clean application quit.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-09-05">
       <description>
         <p>First release: local, exact-address, and hostname tuner discovery with remembered devices, one channel lineup per device, live playback of unprotected channels with audio on Linux, macOS, and Windows, and an approved route-table-derived tunnel search on Linux.</p>

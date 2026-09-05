@@ -108,6 +108,9 @@ pub enum PackagedProbeError {
     StreamRequest,
     #[error("the packaged probe identity could not be constructed")]
     Identity,
+    #[cfg(target_os = "macos")]
+    #[error("a bundled interface icon is missing or cannot be decoded: {0}")]
+    Icon(&'static str),
 }
 
 /// Run the complete packaged playback probe against `plugin_dir`.
@@ -124,6 +127,8 @@ pub(super) fn run(plugin_dir: &Path) -> Result<(), PackagedProbeError> {
         .acquire()
         .map_err(|_| PackagedProbeError::Initialize)?;
     let runtime = PlaybackRuntime::initialize().map_err(|_| PackagedProbeError::Initialize)?;
+    #[cfg(target_os = "macos")]
+    verify_bundled_icons(&canonical_plugin_dir)?;
     if let Some(missing) = runtime.capabilities().missing_required().next() {
         return Err(PackagedProbeError::FactoryMissing(missing.name()));
     }
@@ -131,6 +136,14 @@ pub(super) fn run(plugin_dir: &Path) -> Result<(), PackagedProbeError> {
         bundled_factory(factory.name(), &canonical_plugin_dir)?;
     }
     verify_decoder_contract(&canonical_plugin_dir)?;
+    #[cfg(target_os = "macos")]
+    bundled_factory("volume", &canonical_plugin_dir)?
+        .create()
+        .build()
+        .map_err(|_| PackagedProbeError::ElementConstruction("volume"))?;
+    // macOS must prove the production decoder selection. A test-only
+    // VideoToolbox demotion previously hid failures in normal MPEG-2 playback.
+    #[cfg(target_os = "windows")]
     let _software_decoders = prefer_software_mpeg2_decoders();
     #[cfg(target_os = "windows")]
     let sink_name = "wasapi2sink";
@@ -614,11 +627,53 @@ fn is_timeout(error: &std::io::Error) -> bool {
     matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
 }
 
+/// Check actual SVG/PNG decoding using only the relocated bundle's theme.
+/// Merely copying a theme directory never proved that GTK could draw its icons.
+#[cfg(target_os = "macos")]
+fn verify_bundled_icons(plugin_dir: &Path) -> Result<(), PackagedProbeError> {
+    gtk::init().map_err(|_| PackagedProbeError::Initialize)?;
+    let resources = plugin_dir
+        .parent()
+        .and_then(Path::parent)
+        .ok_or(PackagedProbeError::Icon("theme path"))?;
+    let theme = gtk::IconTheme::new();
+    theme.set_search_path(&[&resources.join("share/icons")]);
+    theme.set_theme_name(Some("Adwaita"));
+    for name in [
+        "io.github.jm2.Balun",
+        "network-wired-symbolic",
+        "network-server-symbolic",
+        "video-display-symbolic",
+        "view-refresh-symbolic",
+        "media-playback-stop-symbolic",
+        "audio-volume-high-symbolic",
+        "view-fullscreen-symbolic",
+        "open-menu-symbolic",
+    ] {
+        if !theme.has_icon(name) {
+            return Err(PackagedProbeError::Icon(name));
+        }
+        let icon = theme.lookup_icon(
+            name,
+            &[],
+            32,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::empty(),
+        );
+        let file = icon.file().ok_or(PackagedProbeError::Icon(name))?;
+        gtk::gdk::Texture::from_file(&file).map_err(|_| PackagedProbeError::Icon(name))?;
+    }
+    Ok(())
+}
+
 /// Guard that restores modified plugin feature ranks upon drop.
+#[cfg(target_os = "windows")]
 struct DecoderRankGuard {
     original: Vec<(gst::PluginFeature, gst::Rank)>,
 }
 
+#[cfg(target_os = "windows")]
 impl Drop for DecoderRankGuard {
     fn drop(&mut self) {
         for (feature, rank) in &self.original {
@@ -630,6 +685,7 @@ impl Drop for DecoderRankGuard {
 /// Demote hardware MPEG-2 decoder factories (such as Apple VideoToolbox and
 /// Direct3D) that cannot decode synthetic fixtures without GPU context,
 /// letting decodebin3 autoplug the bundled software decoder (avdec_mpeg2video).
+#[cfg(target_os = "windows")]
 fn prefer_software_mpeg2_decoders() -> DecoderRankGuard {
     let registry = gst::Registry::get();
     let mut original = Vec::new();
@@ -662,15 +718,34 @@ mod tests {
     #[test]
     fn request_policy_requires_exact_path_host_and_agent_without_referer() {
         let address: SocketAddr = "127.0.0.1:5004".parse().unwrap();
-        let accepted =
-            "GET /auto/v5.1 HTTP/1.1\r\nhost: 127.0.0.1:5004\r\nuser-agent: Balun/0.1.0\r\n\r\n";
+        let accepted = concat!(
+            "GET /auto/v5.1 HTTP/1.1\r\nhost: 127.0.0.1:5004\r\nuser-agent: Balun/",
+            env!("CARGO_PKG_VERSION"),
+            "\r\n\r\n"
+        );
         assert!(request_is_acceptable(accepted.as_bytes(), address));
         for rejected in [
-            "GET /auto/v5.2 HTTP/1.1\r\nHost: 127.0.0.1:5004\r\nUser-Agent: Balun/0.1.0\r\n\r\n",
-            "GET /auto/v5.1 HTTP/1.1\r\nHost: 127.0.0.1:5005\r\nUser-Agent: Balun/0.1.0\r\n\r\n",
+            concat!(
+                "GET /auto/v5.2 HTTP/1.1\r\nHost: 127.0.0.1:5004\r\nUser-Agent: Balun/",
+                env!("CARGO_PKG_VERSION"),
+                "\r\n\r\n"
+            ),
+            concat!(
+                "GET /auto/v5.1 HTTP/1.1\r\nHost: 127.0.0.1:5005\r\nUser-Agent: Balun/",
+                env!("CARGO_PKG_VERSION"),
+                "\r\n\r\n"
+            ),
             "GET /auto/v5.1 HTTP/1.1\r\nHost: 127.0.0.1:5004\r\n\r\n",
-            "GET /auto/v5.1 HTTP/1.1\r\nHost: 127.0.0.1:5004\r\nUser-Agent: Balun/0.1.0\r\nReferer: x\r\n\r\n",
-            "GET /auto/v5.1 HTTP/1.1\r\nHost: 127.0.0.1:5004\r\nUser-Agent: Balun/0.1.0\r\nProxy-Authorization: x\r\n\r\n",
+            concat!(
+                "GET /auto/v5.1 HTTP/1.1\r\nHost: 127.0.0.1:5004\r\nUser-Agent: Balun/",
+                env!("CARGO_PKG_VERSION"),
+                "\r\nReferer: x\r\n\r\n"
+            ),
+            concat!(
+                "GET /auto/v5.1 HTTP/1.1\r\nHost: 127.0.0.1:5004\r\nUser-Agent: Balun/",
+                env!("CARGO_PKG_VERSION"),
+                "\r\nProxy-Authorization: x\r\n\r\n"
+            ),
             "",
         ] {
             assert!(

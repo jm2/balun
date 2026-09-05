@@ -421,7 +421,7 @@ jobs:
         if: runner.os == 'macOS'
         env:
           HOMEBREW_NO_AUTO_UPDATE: '1'
-        run: brew install gstreamer gtk4 libadwaita pkgconf
+        run: brew install gstreamer gtk4 libadwaita adwaita-icon-theme pkgconf
 
       - name: Set up Windows desktop build environment
         if: runner.os == 'Windows'

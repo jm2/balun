@@ -234,7 +234,7 @@ install tools or dependencies themselves.
 Requires [Homebrew](https://brew.sh):
 
 ```bash
-brew install gtk4 libadwaita pkgconf gstreamer
+brew install gtk4 libadwaita adwaita-icon-theme pkgconf gstreamer
 ./scripts/build-macos.sh
 ```
 
@@ -242,6 +242,9 @@ The `gstreamer` formula supplies the base, good, bad, and gst-plugins-rs plugins
 validates the resulting Mach-O against the release component policy and writes
 `target/<native-target>/release/balun`. Use `--app` to assemble, ad-hoc sign, relocate, and probe
 `dist/Balun.app`, or `--dmg` to add a reopened drag-to-Applications `dist/Balun.dmg`.
+Use `--run` to launch from the build tree with only Balun's playback plugins enabled.
+macOS prefers libav for MPEG-2 broadcasts because VideoToolbox advertises MPEG-2 even on
+Macs that cannot decode it; H.264 and HEVC retain their usual hardware decoder selection.
 
 ### Windows
 

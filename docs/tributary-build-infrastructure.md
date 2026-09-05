@@ -64,7 +64,7 @@ hostile-bundle resource budgets remain future hardening.
 | Tributary file | Status and landing condition |
 | --- | --- |
 | `build-linux.sh` | Adapted to a no-option locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, GTK/libadwaita/GStreamer floor checks, an exact native target, repository-local Cargo output, and ELF inspection. `--deb`, `--rpm`, and `--arch-pkg` require pinned preinstalled packagers, reuse the reviewed build or recipe, validate the locally produced package, and never install dependencies; Flatpak remains workflow-owned. |
-| `build-macos.sh` | Adapted to a no-option native locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, dependency and plugin gates, exact target binding, and pinned Mach-O inspection. `--app` assembles and ad-hoc signs the reviewed transitive dylib and 21-plugin closure, then runs a relocated isolated runtime probe; `--dmg` creates and reopens the drag-to-Applications image. Notarization remains unavailable. |
+| `build-macos.sh` | Adapted to a no-option native locked release desktop build with explicit `--diagnostic`, desktop-default quick modes, dependency and plugin gates, exact target binding, and pinned Mach-O inspection. `--app` assembles and ad-hoc signs the reviewed transitive dylib and 22-plugin closure, then runs a relocated isolated runtime probe; `--dmg` creates and reopens the drag-to-Applications image. Notarization remains unavailable. |
 | `build-windows.ps1` | Adapted to Tributary's desktop-default semantics with strict x86_64 CLANG64 and ARM64 CLANGARM64 profiles. The selected Rust target binds the MSYS2 environment, package prefix, PE machine type, probe receipt, and Inno architecture. `-Run` alone adds the console-attached developer feature to a release-profile build; package modes omit it and remain GUI-subsystem applications. `-Diagnostic` and `-InspectLocal` keep their narrow routes; `-Bundle`, `-Zip`, and `-InnoSetup` (with `-SkipBundle` and `-NoCargoBuild`) stage, probe, and reopen the matching package. `-Package` and `-Installer` remain invalid; `-CargoUpdate` stays unavailable. |
 | `macos-icon-bundle-policy.sh` | Adapted bundle icon gate with Balun identity and private temporary names |
 | `macos-package-policy.sh` | Adapted bounded Mach-O, completed-tree, signing, and reopened-DMG gate; broad copy-any-allowed-plugin staging API removed |
@@ -100,10 +100,11 @@ desktop features by default. Those desktop routes fail closed unless
 desktop build, each helper additionally checks the plugin files behind Balun's
 seven structural factories in the runtime's plugin directory and names the
 providing package for any missing file, adapting Tributary's Windows
-runtime-plugin gate to Balun's factory contract. The build-only route warns
-when libav is absent; the frozen package closures instead require their
-reviewed decoders. Quick modes and the diagnostic route skip the plugin check,
-and the installed-runtime probe remains the complete codec inventory rather
+runtime-plugin gate to Balun's factory contract. The macOS build-only desktop
+route requires libav and fails when `libgstlibav.dylib` is absent; the Linux and
+Windows build-only routes warn when libav is absent. The frozen package closures
+require their reviewed decoders. Quick modes and the diagnostic route skip the
+plugin check, and the installed-runtime probe remains the complete codec inventory rather
 than treating a file-presence gate as one. A 2026-09-02 parity audit
 against Tributary's helpers restored the release-profile Clippy pass in every
 lint mode, the actionable cargo, rustc, GNU readelf, and development-package

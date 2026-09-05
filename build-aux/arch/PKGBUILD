@@ -1,6 +1,6 @@
 # Maintainer: Balun Contributors <https://github.com/jm2/balun>
 pkgname=balun
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="A lightweight cross-platform HDHomeRun live TV viewer"
 arch=('x86_64')

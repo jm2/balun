@@ -87,6 +87,22 @@ fn synthetic_mpeg2_reaches_eos_and_renders_multiple_frames() {
         .downcast::<gst::Pipeline>()
         .unwrap_or_else(|_| panic!("playbin3 did not create a pipeline"));
     let mut teardown = PipelineTeardown::new(playbin);
+    #[cfg(target_os = "macos")]
+    let mpeg2_software_selected = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(target_os = "macos")]
+    {
+        let selected = std::sync::Arc::clone(&mpeg2_software_selected);
+        teardown
+            .pipeline()
+            .connect_deep_element_added(move |_, _, element| {
+                if element
+                    .factory()
+                    .is_some_and(|factory| factory.name() == "avdec_mpeg2video")
+                {
+                    selected.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            });
+    }
     let video_sink = make_element("gtk4paintablesink", "gtk4paintablesink is unavailable");
     let audio_sink = make_element("fakesink", "the silent audio sink is unavailable");
 
@@ -202,6 +218,11 @@ fn synthetic_mpeg2_reaches_eos_and_renders_multiple_frames() {
     assert!(
         observed_playing,
         "playbin3 must publish its top-level transition to PLAYING"
+    );
+    #[cfg(target_os = "macos")]
+    assert!(
+        mpeg2_software_selected.load(std::sync::atomic::Ordering::SeqCst),
+        "normal macOS playback must select libav for MPEG-2 without test rank overrides"
     );
     assert!(
         window_was_mapped,
