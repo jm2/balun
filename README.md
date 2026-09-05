@@ -101,8 +101,9 @@ winget. Download `SHA256SUMS.txt` with the package and verify its SHA-256 entry 
 
 ### Fedora (COPR)
 
-Balun is available from the [jmsqrd/balun](https://copr.fedorainfracloud.org/coprs/jmsqrd/balun/)
-COPR repository for Fedora 44 and 45 (x86_64, aarch64):
+Balun's Fedora packages are built in the
+[jmsqrd/balun](https://copr.fedorainfracloud.org/coprs/jmsqrd/balun/) COPR repository for Fedora 44
+and 45 (x86_64, aarch64) from each release, beginning with v0.1.0's first COPR build:
 
 ```bash
 sudo dnf copr enable jmsqrd/balun

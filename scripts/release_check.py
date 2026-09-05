@@ -93,13 +93,18 @@ def rpm_version_for_semver(version: str) -> str:
     """Encode a Semantic Version as an RPM ``Version``.
 
     RPM forbids hyphens in ``Version`` and sorts a tilde suffix before the
-    bare version, so a prerelease becomes ``1.2.3~alpha.1``. Build metadata
-    has no ordering-neutral spelling in RPM and is refused.
+    bare version, so a prerelease becomes ``1.2.3~alpha.1``. A hyphen inside
+    a prerelease identifier and build metadata have no faithful RPM spelling
+    and are refused.
     """
     release, plus, _build = version.partition("+")
     if plus:
         raise ValueError("build metadata has no RPM Version encoding")
     core, hyphen, prerelease = release.partition("-")
+    if "-" in prerelease:
+        raise ValueError(
+            f"prerelease {prerelease!r} contains a hyphen, which an RPM Version cannot"
+        )
     return f"{core}~{prerelease}" if hyphen else core
 
 

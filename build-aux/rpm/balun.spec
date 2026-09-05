@@ -7,8 +7,9 @@ License:        GPL-3.0-or-later
 URL:            https://github.com/jm2/balun
 Source0:        https://github.com/jm2/balun/archive/refs/tags/v%{version}.tar.gz
 
-BuildRequires:  rust
-BuildRequires:  cargo
+# Cargo.toml declares rust-version 1.98; fail before compiling on an older chroot.
+BuildRequires:  rust >= 1.98
+BuildRequires:  cargo >= 1.98
 BuildRequires:  bash
 BuildRequires:  binutils
 BuildRequires:  gcc

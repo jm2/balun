@@ -157,8 +157,9 @@ class ReleaseCheckTests(unittest.TestCase):
     def test_rpm_version_encodes_prereleases_with_a_tilde(self) -> None:
         self.assertEqual(release_check.rpm_version_for_semver("1.2.3"), "1.2.3")
         self.assertEqual(release_check.rpm_version_for_semver("1.2.3-alpha.1"), "1.2.3~alpha.1")
-        with self.assertRaises(ValueError):
-            release_check.rpm_version_for_semver("1.2.3+build")
+        for version in ("1.2.3+build", "1.2.3-alpha-a"):
+            with self.assertRaises(ValueError, msg=version):
+                release_check.rpm_version_for_semver(version)
 
     def test_arch_pkgver_uses_a_stable_upgrade_safe_prerelease_marker(self) -> None:
         self.assertEqual(release_check.arch_pkgver_for_semver("1.2.3"), "1.2.3")
@@ -197,9 +198,10 @@ class ReleaseCheckTests(unittest.TestCase):
                 metainfo_version="1.2.3-alpha-a",
             )
             problems = release_check.check_release(root, "v1.2.3-alpha-a")
-            self.assertEqual(len(problems), 1, problems)
+            self.assertEqual(len(problems), 2, problems)
             self.assertIn("no Arch pkgver encoding", problems[0])
             self.assertIn("'alpha-a'", problems[0])
+            self.assertIn("no RPM Version encoding", problems[1])
 
 
 if __name__ == "__main__":
