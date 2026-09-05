@@ -100,10 +100,11 @@ desktop features by default. Those desktop routes fail closed unless
 desktop build, each helper additionally checks the plugin files behind Balun's
 seven structural factories in the runtime's plugin directory and names the
 providing package for any missing file, adapting Tributary's Windows
-runtime-plugin gate to Balun's factory contract. The build-only route warns
-when libav is absent; the frozen package closures instead require their
-reviewed decoders. Quick modes and the diagnostic route skip the plugin check,
-and the installed-runtime probe remains the complete codec inventory rather
+runtime-plugin gate to Balun's factory contract. The macOS build-only desktop
+route requires libav and fails when `libgstlibav.dylib` is absent; the Linux and
+Windows build-only routes warn when libav is absent. The frozen package closures
+require their reviewed decoders. Quick modes and the diagnostic route skip the
+plugin check, and the installed-runtime probe remains the complete codec inventory rather
 than treating a file-presence gate as one. A 2026-09-02 parity audit
 against Tributary's helpers restored the release-profile Clippy pass in every
 lint mode, the actionable cargo, rustc, GNU readelf, and development-package

@@ -92,5 +92,8 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/*.metainfo.xml
 %{_datadir}/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg
 
 %changelog
+* Sat Sep 05 2026 John-Michael Mulesa <jmulesa@gmail.com> - 0.1.1-1
+- Fix macOS playback, icons, and menus; add shared About and Quit actions.
+
 * Sat Sep 05 2026 John-Michael Mulesa <jmulesa@gmail.com> - 0.1.0-1
 - Initial Fedora package.
