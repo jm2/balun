@@ -488,14 +488,17 @@ mod linux {
                     },
                     observing = await_replacement(self.runner.as_mut()) => {
                         publish_observer_health(&self.observers, observing);
+                        // The runner already retried a source that changed
+                        // during the handoff; the next routed request
+                        // establishes the observers afresh.
                         if !observing {
                             match self.runner.as_ref().and_then(Runner::observation_error) {
                                 Some(reason) => tracing::warn!(
                                     reason = %reason,
-                                    "routed discovery observer replacement failed"
+                                    "routed discovery observer replacement failed; the next routed request retries"
                                 ),
                                 None => tracing::warn!(
-                                    "routed discovery observer replacement failed"
+                                    "routed discovery observer replacement failed; the next routed request retries"
                                 ),
                             }
                         }

@@ -77,6 +77,35 @@ impl fmt::Display for ObserverPairFailure {
 
 impl std::error::Error for ObserverPairFailure {}
 
+impl ObserverPairFailure {
+    /// Whether a source changed while the pair was being established, so
+    /// only that attempt was rejected and a fresh one may succeed.
+    #[must_use]
+    fn is_source_change(self) -> bool {
+        self.0.is_source_change()
+    }
+}
+
+/// Waits after a replacement event before the first re-establishment.
+///
+/// Kernel and NetworkManager route changes arrive in bursts: an address
+/// lifetime refresh, for instance, is two or four datagrams a few hundred
+/// microseconds apart. The old pair publishes its event on the first one and
+/// a replacement subscribes within that gap, so the rest of the burst lands
+/// inside the new pair's barrier and rejects it. Letting the burst settle
+/// first makes that the exception.
+const REPLACEMENT_DEBOUNCE: Duration = Duration::from_millis(50);
+
+/// Waits before each further attempt after a source changed during the
+/// handoff. The total stays under one second so a shutdown or the next
+/// routed request is never held long.
+const REPLACEMENT_RETRY_DELAYS: [Duration; 4] = [
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+];
+
 /// One coalesced signal that the whole observer pair must be replaced.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ObserverPairEvent {
@@ -358,7 +387,7 @@ impl<F: ObserverPairFactory, P: RoutedTargetProber> MonitoredRoutedDiscovery<F, 
         pairs: Arc<F>,
         prober: Arc<P>,
     ) -> Result<Self, MonitoredRoutedError> {
-        let live = Self::establish(&coordinator, &store, &pairs)
+        let live = Self::establish_settled(&coordinator, &store, &pairs)
             .await
             .map_err(MonitoredRoutedError::Observers)?;
         Ok(Self {
@@ -407,6 +436,7 @@ impl<F: ObserverPairFactory, P: RoutedTargetProber> MonitoredRoutedDiscovery<F, 
         probe_config: ProbeConfig,
         scan_config: RoutedScanConfig,
     ) -> Result<StoredRoutedProposal, MonitoredRoutedError> {
+        self.ensure_observation().await;
         let result = self.propose_now(probe_config, scan_config);
         self.restore_observation().await;
         result
@@ -452,6 +482,7 @@ impl<F: ObserverPairFactory, P: RoutedTargetProber> MonitoredRoutedDiscovery<F, 
         trigger: RoutedScanTrigger,
         cancellation: &CancellationToken,
     ) -> Result<MonitoredRoutedRun, MonitoredRoutedError> {
+        self.ensure_observation().await;
         let result = self.run_now(proposal, trigger, cancellation).await;
         self.restore_observation().await;
         result
@@ -613,6 +644,13 @@ impl<F: ObserverPairFactory, P: RoutedTargetProber> MonitoredRoutedDiscovery<F, 
             return false;
         };
         let ObserverPairEvent::ReplacementRequired = live.pair.next_event().await;
+        // The pair retired its authority before publishing. Retire the
+        // actors too, then let the burst that woke them settle before a
+        // replacement subscribes.
+        if let Some(live) = self.live.take() {
+            live.pair.shutdown().await;
+        }
+        tokio::time::sleep(REPLACEMENT_DEBOUNCE).await;
         self.restore_observation().await;
         self.is_observing()
     }
@@ -624,16 +662,56 @@ impl<F: ObserverPairFactory, P: RoutedTargetProber> MonitoredRoutedDiscovery<F, 
         }
     }
 
+    /// Re-establish observation if the last replacement failed, so one lost
+    /// race with a burst of source events does not fail the next operation.
+    async fn ensure_observation(&mut self) {
+        if self.live.is_none() {
+            self.restore_observation().await;
+        }
+    }
+
+    /// Retire the live pair and establish a fresh one.
+    ///
+    /// A failure, including a burst that outlasts the bounded retries, leaves
+    /// the runner not observing until the next operation or replacement
+    /// tries again.
     async fn restore_observation(&mut self) {
         if let Some(live) = self.live.take() {
             live.pair.shutdown().await;
         }
-        match Self::establish(&self.coordinator, &self.store, &self.pairs).await {
+        match Self::establish_settled(&self.coordinator, &self.store, &self.pairs).await {
             Ok(live) => {
                 self.live = Some(live);
                 self.observation_error = None;
             }
             Err(error) => self.observation_error = Some(error),
+        }
+    }
+
+    /// Establish a pair, trying again after each of
+    /// [`REPLACEMENT_RETRY_DELAYS`] when a source changed during the
+    /// handoff. Such a change rejects only that attempt, exactly as it must;
+    /// any other failure is final at once.
+    async fn establish_settled(
+        coordinator: &Arc<RoutedObserverCoordinator>,
+        store: &Arc<ApprovalStore>,
+        pairs: &F,
+    ) -> Result<LivePair<F::Pair>, ObserverPairFailure> {
+        let mut delays = REPLACEMENT_RETRY_DELAYS.iter();
+        loop {
+            match Self::establish(coordinator, store, pairs).await {
+                Ok(live) => return Ok(live),
+                Err(error) => {
+                    let Some(delay) = delays.next().filter(|_| error.is_source_change()) else {
+                        return Err(error);
+                    };
+                    tracing::debug!(
+                        reason = %error,
+                        "routed observers changed during their handoff; retrying"
+                    );
+                    tokio::time::sleep(*delay).await;
+                }
+            }
         }
     }
 
@@ -860,11 +938,15 @@ mod tests {
     use ipnet::IpNet;
     use tokio::sync::Notify;
 
+    use super::super::activation::PairedObserverActivationError;
+    use super::super::linux::LinuxRouteObserverBridgeError;
     use super::super::store::LinuxStoreObserverBridgeError;
     use super::super::{RouteObserverSink, RoutedObserverIncarnation, StoreObserverSink};
     use super::*;
     use crate::discovery::approval::store::{ApprovalStoreStatus, StorePaths};
+    use crate::discovery::approval::watch::StoreWatchError;
     use crate::discovery::client::DiscoveryObservation;
+    use crate::discovery::routes::LinuxRouteMonitorError;
     use crate::discovery::routes::{
         InterfaceKind, NetworkInterface, NetworkRoute, RouteKind, RouteScope,
     };
@@ -931,7 +1013,8 @@ mod tests {
         snapshot: RouteSnapshot,
         prepared: AtomicUsize,
         shutdowns: AtomicUsize,
-        fail_prepare: Mutex<Option<usize>>,
+        /// Preparation sequence numbers which fail, and how.
+        fail_prepare: Mutex<BTreeMap<usize, ObserverPairFailure>>,
         replacement: Notify,
     }
 
@@ -946,6 +1029,20 @@ mod tests {
 
     fn coordinator_failure(error: ObserverCoordinatorError) -> ObserverPairFailure {
         ObserverPairFailure(LinuxObserverPairError::Coordinator(error))
+    }
+
+    /// The failure a real pair reports when a route event lands between its
+    /// subscription and its final pre-activation drain.
+    fn route_changed_during_handoff() -> ObserverPairFailure {
+        ObserverPairFailure(LinuxObserverPairError::Route(
+            LinuxRouteObserverBridgeError::Monitor(LinuxRouteMonitorError::ChangedDuringSnapshot),
+        ))
+    }
+
+    fn store_changed_during_handoff() -> ObserverPairFailure {
+        ObserverPairFailure(LinuxObserverPairError::Store(
+            LinuxStoreObserverBridgeError::Watch(StoreWatchError::ChangedDuringBaseline),
+        ))
     }
 
     impl ObserverPairFactory for FakePairFactory {
@@ -963,8 +1060,14 @@ mod tests {
             Read: FnOnce(&ApprovalStore, &RouteSnapshot) -> Result<R, E> + Send + 'static,
         {
             let sequence = self.0.prepared.fetch_add(1, Ordering::SeqCst) + 1;
-            if *self.0.fail_prepare.lock().expect("fake lock") == Some(sequence) {
-                return Err(coordinator_failure(ObserverCoordinatorError::Unhealthy));
+            if let Some(failure) = self
+                .0
+                .fail_prepare
+                .lock()
+                .expect("fake lock")
+                .get(&sequence)
+            {
+                return Err(*failure);
             }
             let mut incarnation = coordinator
                 .start_incarnation()
@@ -1087,7 +1190,10 @@ mod tests {
 
     type Runner = MonitoredRoutedDiscovery<FakePairFactory, FakeProber>;
 
-    async fn start(prober: FakeProber, fail_prepare: Option<usize>) -> (Fixture, Runner) {
+    async fn start(
+        prober: FakeProber,
+        fail_prepare: impl IntoIterator<Item = (usize, ObserverPairFailure)>,
+    ) -> (Fixture, Runner) {
         let temporary = tempfile::tempdir().expect("private store parent");
         let store = Arc::new(ApprovalStore::new(StorePaths::new(
             temporary.path().join("private"),
@@ -1097,7 +1203,7 @@ mod tests {
             snapshot: tunnel_snapshot(),
             prepared: AtomicUsize::new(0),
             shutdowns: AtomicUsize::new(0),
-            fail_prepare: Mutex::new(fail_prepare),
+            fail_prepare: Mutex::new(fail_prepare.into_iter().collect()),
             replacement: Notify::new(),
         });
         let prober = Arc::new(prober);
@@ -1135,7 +1241,7 @@ mod tests {
 
     #[tokio::test]
     async fn unapproved_proposal_reserves_nothing_and_needs_approval() {
-        let (fixture, mut runner) = start(FakeProber::new(), None).await;
+        let (fixture, mut runner) = start(FakeProber::new(), []).await;
         let proposal = runner
             .propose(ProbeConfig::default(), RoutedScanConfig::default())
             .await
@@ -1167,7 +1273,7 @@ mod tests {
     async fn approved_run_probes_every_target_under_fresh_authority_and_settles() {
         let mut prober = FakeProber::new();
         prober.found = Some("172.31.90.9".parse().expect("target"));
-        let (fixture, mut runner) = start(prober, None).await;
+        let (fixture, mut runner) = start(prober, []).await;
         let proposal = runner
             .propose(ProbeConfig::default(), RoutedScanConfig::default())
             .await
@@ -1253,7 +1359,7 @@ mod tests {
         let cancellation = CancellationToken::new();
         let cancel = cancellation.clone();
         prober.on_first_probe = Mutex::new(Some(Box::new(move || cancel.cancel())));
-        let (fixture, mut runner) = start(prober, None).await;
+        let (fixture, mut runner) = start(prober, []).await;
         let proposal = runner
             .propose(ProbeConfig::default(), RoutedScanConfig::default())
             .await
@@ -1284,7 +1390,7 @@ mod tests {
         let (fixture, mut runner) = {
             // The hook needs the coordinator, which the fixture creates, so
             // install it after start.
-            let (fixture, runner) = start(FakeProber::new(), None).await;
+            let (fixture, runner) = start(FakeProber::new(), []).await;
             drop(runner);
             drop(fixture);
             let coordinator_slot: Arc<Mutex<Option<Arc<RoutedObserverCoordinator>>>> =
@@ -1295,7 +1401,7 @@ mod tests {
                     coordinator.invalidate();
                 }
             })));
-            let (fixture, runner) = start(prober, None).await;
+            let (fixture, runner) = start(prober, []).await;
             *coordinator_slot.lock().expect("slot lock") = Some(Arc::clone(&fixture.coordinator));
             (fixture, runner)
         };
@@ -1331,10 +1437,116 @@ mod tests {
         runner.shutdown().await;
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn replacement_retries_after_a_source_changed_during_the_handoff() {
+        // Preparations 2..=4 lose the race with a continuing burst of route
+        // and store events; the fifth finds a quiet window.
+        let (fixture, mut runner) = start(
+            FakeProber::new(),
+            [
+                (2, route_changed_during_handoff()),
+                (3, store_changed_during_handoff()),
+                (
+                    4,
+                    ObserverPairFailure(LinuxObserverPairError::Activation(
+                        PairedObserverActivationError::Coordinator(
+                            ObserverCoordinatorError::StaleBaseline,
+                        ),
+                    )),
+                ),
+            ],
+        )
+        .await;
+        fixture.observers.replacement.notify_one();
+
+        assert!(
+            runner.await_replacement().await,
+            "{:?}",
+            runner.observation_error()
+        );
+        assert!(runner.is_observing());
+        assert_eq!(runner.observation_error(), None);
+        assert_eq!(fixture.observers.prepared.load(Ordering::SeqCst), 5);
+        assert_eq!(fixture.observers.shutdowns.load(Ordering::SeqCst), 1);
+        runner.shutdown().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_persistent_source_change_gives_up_and_the_next_operation_recovers() {
+        // Every debounced retry loses the race: the burst outlasts the
+        // bounded wait, so the replacement fails and the runner stops
+        // observing until something asks for routed work again.
+        let attempts = REPLACEMENT_RETRY_DELAYS.len() + 1;
+        let (fixture, mut runner) = start(
+            FakeProber::new(),
+            (2..=attempts + 1).map(|sequence| (sequence, route_changed_during_handoff())),
+        )
+        .await;
+        fixture.observers.replacement.notify_one();
+
+        assert!(!runner.await_replacement().await);
+        assert!(!runner.is_observing());
+        assert_eq!(
+            runner.observation_error(),
+            Some(route_changed_during_handoff())
+        );
+        assert_eq!(
+            fixture.observers.prepared.load(Ordering::SeqCst),
+            attempts + 1
+        );
+
+        // The next operation establishes a fresh pair instead of failing
+        // with a stale "not observing".
+        let proposal = runner
+            .propose(ProbeConfig::default(), RoutedScanConfig::default())
+            .await
+            .expect("a lost replacement race must not fail the next proposal");
+        assert!(proposal.summary().candidate_count() > 0);
+        assert!(runner.is_observing());
+        assert_eq!(runner.observation_error(), None);
+        // One re-establishment before the proposal, one rebaseline after.
+        assert_eq!(
+            fixture.observers.prepared.load(Ordering::SeqCst),
+            attempts + 3
+        );
+        runner.shutdown().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_first_pair_is_also_established_after_a_source_change() {
+        let (fixture, runner) =
+            start(FakeProber::new(), [(1, store_changed_during_handoff())]).await;
+        assert!(runner.is_observing());
+        assert_eq!(fixture.observers.prepared.load(Ordering::SeqCst), 2);
+        runner.shutdown().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_replacement_failure_that_is_not_a_source_change_is_not_retried() {
+        let (fixture, mut runner) = start(
+            FakeProber::new(),
+            [(2, coordinator_failure(ObserverCoordinatorError::Unhealthy))],
+        )
+        .await;
+        fixture.observers.replacement.notify_one();
+
+        assert!(!runner.await_replacement().await);
+        assert_eq!(
+            runner.observation_error(),
+            Some(coordinator_failure(ObserverCoordinatorError::Unhealthy))
+        );
+        assert_eq!(fixture.observers.prepared.load(Ordering::SeqCst), 2);
+        runner.shutdown().await;
+    }
+
     #[tokio::test]
     async fn observer_replacement_failure_after_publication_settles_and_recovers() {
         // The fourth preparation is the post-publication replacement.
-        let (fixture, mut runner) = start(FakeProber::new(), Some(4)).await;
+        let (fixture, mut runner) = start(
+            FakeProber::new(),
+            [(4, coordinator_failure(ObserverCoordinatorError::Unhealthy))],
+        )
+        .await;
         let proposal = runner
             .propose(ProbeConfig::default(), RoutedScanConfig::default())
             .await

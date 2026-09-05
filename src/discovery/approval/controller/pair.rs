@@ -16,7 +16,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::discovery::approval::store::ApprovalStore;
-use crate::discovery::routes::RouteSnapshot;
+use crate::discovery::approval::watch::StoreWatchError;
+use crate::discovery::routes::{LinuxRouteMonitorError, RouteSnapshot};
 
 use super::activation::{
     PairedObserverActivation, PairedObserverActivationError, RouteActivationCallback,
@@ -46,6 +47,27 @@ pub(super) enum LinuxObserverPairError {
     Store(LinuxStoreObserverBridgeError),
     #[error("the paired observer could not activate: {0}")]
     Activation(PairedObserverActivationError),
+}
+
+impl LinuxObserverPairError {
+    /// Whether a route or store event landed inside the establishment
+    /// sandwich, rejecting only this attempt. Bursts of kernel and
+    /// NetworkManager route changes make this the ordinary way a replacement
+    /// loses its first race, and a fresh attempt after the burst settles is
+    /// expected to succeed.
+    #[must_use]
+    pub(super) fn is_source_change(self) -> bool {
+        matches!(
+            self,
+            Self::Route(LinuxRouteObserverBridgeError::Monitor(
+                LinuxRouteMonitorError::ChangedDuringSnapshot
+            )) | Self::Store(LinuxStoreObserverBridgeError::Watch(
+                StoreWatchError::ChangedDuringBaseline
+            )) | Self::Activation(PairedObserverActivationError::Coordinator(
+                ObserverCoordinatorError::StaleBaseline
+            ))
+        )
+    }
 }
 
 /// One coalesced signal that the complete observer pair must be replaced.
@@ -119,7 +141,7 @@ impl LinuxObserverPair {
         let (epoch, owner) = owner
             .activate_or_shutdown()
             .await
-            .map_err(LinuxObserverPairError::Activation)?;
+            .map_err(activation_error)?;
 
         Ok((route_snapshot, reread, epoch, Self { owner }))
     }
@@ -151,6 +173,34 @@ impl LinuxObserverPair {
 impl fmt::Debug for LinuxObserverPair {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("LinuxObserverPair(<redacted>)")
+    }
+}
+
+/// Name the cause of a failed paired activation.
+///
+/// An actor that stops before its final clean drain drops its callback
+/// unused, which the rendezvous can only report as a dropped callback. The
+/// actor's own termination names why it stopped, so prefer that. A route
+/// actor whose activation was rejected, and a store actor that failed closed,
+/// may merely have found the rendezvous already failed by its sibling, so the
+/// route termination is consulted first and only when it is not that echo.
+fn activation_error(
+    failure: PairActivationFailure<LinuxRouteObserverTermination, LinuxStoreObserverTermination>,
+) -> LinuxObserverPairError {
+    match (failure.error, failure.route, failure.store) {
+        (
+            PairedObserverActivationError::CallbackDropped,
+            LinuxRouteObserverTermination::MonitorFailed(cause),
+            _,
+        ) if cause != LinuxRouteMonitorError::ActivationRejected => {
+            LinuxObserverPairError::Route(LinuxRouteObserverBridgeError::Monitor(cause))
+        }
+        (
+            PairedObserverActivationError::CallbackDropped,
+            _,
+            LinuxStoreObserverTermination::WatchFailed(cause),
+        ) => LinuxObserverPairError::Store(LinuxStoreObserverBridgeError::Watch(cause)),
+        (error, _, _) => LinuxObserverPairError::Activation(error),
     }
 }
 
@@ -189,6 +239,14 @@ impl ObserverActorOwner for LinuxStoreObserverSession {
 enum PairStartError<RouteError, StoreError> {
     Route(RouteError),
     Store(StoreError),
+}
+
+/// A failed rendezvous together with how each retired actor stopped.
+#[derive(Debug)]
+struct PairActivationFailure<RouteTermination, StoreTermination> {
+    error: PairedObserverActivationError,
+    route: RouteTermination,
+    store: StoreTermination,
 }
 
 /// Testable, source-agnostic ownership core used by the concrete Linux pair.
@@ -259,10 +317,13 @@ where
     }
 
     /// Await combined activation or retire and join both actors before
-    /// returning the activation error.
+    /// returning the activation error with both terminations.
     async fn activate_or_shutdown(
         mut self,
-    ) -> Result<(HealthyRoutedEpoch, Self), PairedObserverActivationError> {
+    ) -> Result<
+        (HealthyRoutedEpoch, Self),
+        PairActivationFailure<Route::Termination, Store::Termination>,
+    > {
         let activation = self
             .activation
             .as_mut()
@@ -273,8 +334,12 @@ where
                 // shutdown() is a synchronous constructor: it retires the
                 // activation before yielding its concurrent join future.
                 let shutdown = self.shutdown();
-                let _terminations = shutdown.await;
-                Err(error)
+                let (route, store) = shutdown.await;
+                Err(PairActivationFailure {
+                    error,
+                    route,
+                    store,
+                })
             }
         }
     }
@@ -652,10 +717,13 @@ mod tests {
         tokio::task::yield_now().await;
         assert!(!store_dropped.load(Ordering::SeqCst));
         store_release.send(()).unwrap();
-        assert!(matches!(
-            activation.await,
-            Err(PairedObserverActivationError::CallbackDropped)
-        ));
+        let failure = activation.await.expect_err("activation must fail");
+        assert_eq!(
+            failure.error,
+            PairedObserverActivationError::CallbackDropped
+        );
+        assert_eq!(failure.route, FakeTermination::Stopped);
+        assert_eq!(failure.store, FakeTermination::Stopped);
         assert!(route_dropped.load(Ordering::SeqCst));
         assert!(store_dropped.load(Ordering::SeqCst));
     }
@@ -802,6 +870,91 @@ mod tests {
 
         assert!(route_dropped.load(Ordering::SeqCst));
         assert!(coordinator.start_incarnation().is_ok());
+    }
+
+    #[test]
+    fn a_dropped_callback_is_named_by_the_actor_that_stopped_first() {
+        use LinuxRouteObserverTermination as Route;
+        use LinuxStoreObserverTermination as Store;
+        let dropped = PairedObserverActivationError::CallbackDropped;
+        let failure = |error, route, store| {
+            activation_error(PairActivationFailure {
+                error,
+                route,
+                store,
+            })
+        };
+
+        // A route event during the handoff: the store actor either never
+        // activated or found the rendezvous already failed.
+        for store in [
+            Store::Stopped,
+            Store::WatchFailed(StoreWatchError::FailedClosed),
+            Store::WatchFailed(StoreWatchError::ChangedDuringBaseline),
+        ] {
+            let error = failure(
+                dropped,
+                Route::MonitorFailed(LinuxRouteMonitorError::ChangedDuringSnapshot),
+                store,
+            );
+            assert_eq!(
+                error,
+                LinuxObserverPairError::Route(LinuxRouteObserverBridgeError::Monitor(
+                    LinuxRouteMonitorError::ChangedDuringSnapshot
+                ))
+            );
+            assert!(error.is_source_change());
+        }
+
+        // A store change during the handoff: the route actor either never
+        // activated or was rejected because the store had already failed.
+        for route in [
+            Route::Stopped,
+            Route::MonitorFailed(LinuxRouteMonitorError::ActivationRejected),
+        ] {
+            let error = failure(
+                dropped,
+                route,
+                Store::WatchFailed(StoreWatchError::ChangedDuringBaseline),
+            );
+            assert_eq!(
+                error,
+                LinuxObserverPairError::Store(LinuxStoreObserverBridgeError::Watch(
+                    StoreWatchError::ChangedDuringBaseline
+                ))
+            );
+            assert!(error.is_source_change());
+        }
+
+        // A store backend failure is named, but is not a source change.
+        assert!(
+            !failure(
+                dropped,
+                Route::Stopped,
+                Store::WatchFailed(StoreWatchError::FailedClosed)
+            )
+            .is_source_change()
+        );
+
+        // Without a named cause, or with any other rendezvous error, the
+        // activation error itself is reported.
+        assert_eq!(
+            failure(dropped, Route::Stopped, Store::Stopped),
+            LinuxObserverPairError::Activation(dropped)
+        );
+        let stale =
+            PairedObserverActivationError::Coordinator(ObserverCoordinatorError::StaleBaseline);
+        let error = failure(
+            stale,
+            Route::MonitorFailed(LinuxRouteMonitorError::ChangedDuringSnapshot),
+            Store::Stopped,
+        );
+        assert_eq!(error, LinuxObserverPairError::Activation(stale));
+        assert!(error.is_source_change());
+        assert!(
+            !LinuxObserverPairError::Coordinator(ObserverCoordinatorError::Unhealthy)
+                .is_source_change()
+        );
     }
 
     #[test]
