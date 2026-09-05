@@ -923,7 +923,7 @@ pub(super) fn configure_playbin_video(
     {
         return Err(PlaybackSessionFailure::PipelineConstruction);
     }
-    Ok(())
+    super::deinterlace::install(pipeline)
 }
 
 fn configure_playbin_audio(

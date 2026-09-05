@@ -7,6 +7,8 @@
 //! private `appsrc` source policy plus Balun-owned HTTP transport that the
 //! session consumes.
 
+#[cfg(feature = "desktop")]
+mod deinterlace;
 #[cfg(all(test, feature = "desktop"))]
 mod fake_device_e2e;
 #[cfg(all(test, feature = "desktop"))]

@@ -714,7 +714,7 @@ mod tests {
         let server = FixtureStreamServer::start(fixture_response(), StreamBehavior::Close);
         let video_sink = gst::ElementFactory::make("fakesink").build().unwrap();
         let audio_sink = gst::ElementFactory::make("fakesink").build().unwrap();
-        playbin.set_property("video-sink", &video_sink);
+        crate::playback::session::configure_playbin_video(&playbin, &video_sink).unwrap();
         playbin.set_property("audio-sink", &audio_sink);
         let policy = SourcePolicy::install(&playbin, handoff(&server.stream_url()), QUICK)
             .expect("install the appsrc policy");
@@ -779,6 +779,8 @@ mod tests {
         );
         assert!(!policy.is_rejected());
 
+        let deinterlacing = crate::playback::deinterlace::describe(playbin.upcast_ref());
+
         let mut transport = policy
             .retire()
             .expect("the played transport is returned once");
@@ -789,6 +791,11 @@ mod tests {
         assert_eq!(
             transport.join(Instant::now() + Duration::from_secs(5)),
             Ok(())
+        );
+        assert!(
+            deinterlacing.contains("deinterlace method=yadif output-framerate=")
+                && !deinterlacing.contains("output-framerate=not negotiated"),
+            "the actual playsink filter must retain the selected software method: {deinterlacing}"
         );
     }
 }

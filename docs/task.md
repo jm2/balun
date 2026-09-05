@@ -38,10 +38,11 @@ most evidence records.
 The remaining records are P4.1 and P4.5. P4.1 still needs packaged live-tuner
 acceptance across Linux, macOS, and Windows; the recorded Linux and Windows
 trials used development builds, and the macOS validation path does not supply
-the missing cross-platform evidence. For P4.5, the maintainer then creates a
-signed, annotated tag from the release commit, runs the release-candidate
-workflow, reviews its exact 12-artifact inventory and checksums, and publishes
-the draft. An unpublished draft does not count as a release.
+the missing cross-platform evidence. P4.5 has an Alpha draft with the exact
+12-artifact inventory and checksums from the release-candidate workflow.
+The maintainer approved an unsigned annotated `v0.1.0` tag for this release;
+signed annotated tags remain the procedure for subsequent releases. Publication
+is still pending. An unpublished draft does not count as a release.
 
 ## P0 — Evidence and contract
 
@@ -136,8 +137,8 @@ the draft. An unpublished draft does not count as a release.
 - [x] **P3.4 — Build the macOS arm64 app and DMG.** Complete the app tree,
   runtime closure, Mach-O inspection, signing policy, and reopened DMG check.
 
-- [x] **P3.5 — Complete release automation.** Build from one maintainer-signed,
-  annotated tag, require 12 public binaries and `SHA256SUMS.txt`, create a draft,
+- [x] **P3.5 — Complete release automation.** Build from one annotated tag
+  (signed after v0.1.0), require 12 public binaries and `SHA256SUMS.txt`, create a draft,
   and confine release-write authority to the final no-source job.
 
 - [x] **P3.6 — Harden CI for packages.** Add the dependency audit and
@@ -162,7 +163,7 @@ the draft. An unpublished draft does not count as a release.
   CONTRIBUTING and SECURITY.
 
 - [ ] **P4.5 — Cut and publish v0.1.0.** Pass every gate, have the maintainer
-  create a signed, annotated `v0.1.0` tag, validate the artifact set, and publish
+  create an annotated `v0.1.0` tag (unsigned by explicit approval), validate the artifact set, and publish
   release notes.
 
 ## Explicitly outside v0.1

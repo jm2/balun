@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-Balun is pre-release. No version has been released yet, so only the `main` branch
-receives fixes. This table will name the supported releases once `v0.1.0` is published.
+Balun v0.1 is an alpha. Security fixes land on `main` and are included in the next v0.1 update.
+Report vulnerabilities in the initial release candidate as well as published v0.1 versions.
 
 | Version | Supported |
 | --- | --- |
 | `main` | ✅ |
-| Released versions | None published yet |
+| `0.1.x` | ✅ |
 
 ## Reporting a vulnerability
 
@@ -30,7 +30,7 @@ value is not.
   credentials, stream URLs, or raw topology.
 - The stream transport: its refusal of proxies, redirects, DNS, and URL credentials, and the
   bounded size and time limits on device HTTP.
-- Package contents and the release component policy, once packages exist.
+- Package contents and the release component policy.
 - CI and release workflow permissions and their pinned tools.
 
 ## What is out of scope
