@@ -693,6 +693,7 @@ impl GstreamerPipeline {
         // This is a fail-safe pipeline action and does not alter the retained
         // process-local mute preference inherited by a successor.
         self.pipeline.set_property(PLAYBIN_MUTE_PROPERTY, true);
+        pipeline_failure::log_teardown_diagnostics(self.pipeline.upcast_ref());
         let request = self.pipeline.set_state(gst::State::Null);
         let (transition, current, pending) = self.pipeline.state(clock_time_until(deadline));
         let settled = request.is_ok()
@@ -803,6 +804,9 @@ impl PipelineBackend for GstreamerBackend {
                 }
                 _ => None,
             };
+            if matches!(event, Some(PipelineEvent::Playing)) {
+                pipeline_failure::log_playing_diagnostics(watched_pipeline.upcast_ref());
+            }
             let terminal = matches!(
                 event,
                 Some(PipelineEvent::EndOfStream | PipelineEvent::Error(_))
