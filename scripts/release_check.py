@@ -7,7 +7,9 @@ once so a maintainer fixes them in one commit:
 
 - the tag is a v-prefixed Semantic Version;
 - ``Cargo.toml`` and ``Cargo.lock`` carry that version, while the Arch PKGBUILD
-  carries its stable-upgrade-safe, hyphen-free ``pkgver`` encoding;
+  carries its stable-upgrade-safe, hyphen-free ``pkgver`` encoding and the
+  Fedora spec carries it as ``upstream_version`` beside its tilde-prerelease
+  RPM ``Version``;
 - ``CHANGELOG.md`` has a ``## [<version>]`` section and its compare link; and
 - the AppStream metainfo lists that version as its newest ``<release>``.
 """
@@ -28,6 +30,7 @@ CARGO_LOCKFILE = Path("Cargo.lock")
 CHANGELOG = Path("CHANGELOG.md")
 METAINFO = Path("data/io.github.jm2.Balun.metainfo.xml")
 ARCH_PKGBUILD = Path("build-aux/arch/PKGBUILD")
+RPM_SPEC = Path("build-aux/rpm/balun.spec")
 PACKAGE_NAME = "balun"
 
 
@@ -79,6 +82,48 @@ def arch_pkgbuild_version(pkgbuild: str) -> str | None:
     """Return the literal top-level ``pkgver`` from an Arch PKGBUILD."""
     match = re.search(r"^pkgver=([^\s#]+)\s*$", pkgbuild, re.M)
     return match.group(1) if match else None
+
+
+def rpm_spec_version(spec: str) -> str | None:
+    """Return the literal ``Version:`` declaration from an RPM spec."""
+    match = re.search(r"^Version:[ \t]*([^\s#]+)[ \t]*$", spec, re.M)
+    return match.group(1) if match else None
+
+
+def rpm_spec_upstream_version(spec: str) -> str | None:
+    """Return the literal ``%global upstream_version`` from an RPM spec."""
+    match = re.search(r"^%global[ \t]+upstream_version[ \t]+([^\s#]+)[ \t]*$", spec, re.M)
+    return match.group(1) if match else None
+
+
+RPM_PRERELEASE = re.compile(r"^(alpha|beta|rc|pre|preview)(\.\d+)?$")
+
+
+def rpm_version_for_semver(version: str) -> str:
+    """Encode a Semantic Version as an RPM ``Version``.
+
+    RPM forbids hyphens in ``Version`` and sorts a tilde suffix before the
+    bare version, so a prerelease becomes ``1.2.3~alpha.1``. That is also
+    what Packit writes when it rewrites ``Version`` from the tag, so the
+    accepted prereleases are exactly the ones it recognises: a word from
+    ``alpha``, ``beta``, ``rc``, ``pre``, or ``preview`` with at most one
+    numeric identifier. Within that set ``rpmvercmp`` keeps SemVer's order;
+    a bare numeric identifier such as ``1.2.3-1`` would sort after ``~alpha``
+    in RPM but before it in SemVer, so it and every other spelling, like
+    build metadata, are refused.
+    """
+    release, plus, _build = version.partition("+")
+    if plus:
+        raise ValueError("build metadata has no RPM Version encoding")
+    core, hyphen, prerelease = release.partition("-")
+    if not hyphen:
+        return core
+    if not RPM_PRERELEASE.match(prerelease):
+        raise ValueError(
+            f"prerelease {prerelease!r} is not alpha/beta/rc/pre/preview with at most "
+            "one number, the only spellings whose SemVer order an RPM Version keeps"
+        )
+    return f"{core}~{prerelease}"
 
 
 def arch_pkgver_for_semver(version: str) -> str:
@@ -158,6 +203,27 @@ def check_release(root: Path, tag: str) -> list[str]:
             problems.append(
                 f"{ARCH_PKGBUILD} pkgver is {pkgbuild_version}, "
                 f"not {expected_pkgbuild_version} for {version}"
+            )
+
+    spec_text = read_text(root, RPM_SPEC)
+    upstream_version = rpm_spec_upstream_version(spec_text)
+    if upstream_version is None:
+        problems.append(f"{RPM_SPEC} has no literal %global upstream_version")
+    elif upstream_version != version:
+        problems.append(f"{RPM_SPEC} upstream_version is {upstream_version}, not {version}")
+
+    spec_version = rpm_spec_version(spec_text)
+    try:
+        expected_spec_version = rpm_version_for_semver(version)
+    except ValueError as error:
+        problems.append(f"tag {tag} has no RPM Version encoding: {error}")
+    else:
+        if spec_version is None:
+            problems.append(f"{RPM_SPEC} has no literal Version")
+        elif spec_version != expected_spec_version:
+            problems.append(
+                f"{RPM_SPEC} Version is {spec_version}, "
+                f"not {expected_spec_version} for {version}"
             )
 
     section, link = changelog_has_release(read_text(root, CHANGELOG), version)

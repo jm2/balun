@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
+  `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
+
 ## [0.1.0] — 2026-09-05
 
 ### Added

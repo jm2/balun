@@ -48,7 +48,7 @@ address so you know which tuner failed.
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; live timing accounts for delayed media arrival; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Direct downloads from the Releases page; no COPR, AUR, or winget yet |
+| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Direct downloads from the Releases page; Fedora COPR; no AUR or winget yet |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
@@ -96,8 +96,19 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 
 Pre-built packages for Linux (Flatpak, `.deb`, `.rpm`, Arch), macOS (`.dmg`), and Windows
 (`.exe` installer, `.zip`) are available on the [Releases](https://github.com/jm2/balun/releases)
-page. Balun does not yet publish through COPR, the AUR, or winget. Download `SHA256SUMS.txt` with
-the package and verify its SHA-256 entry before installing.
+page. Fedora users can install from COPR instead. Balun does not yet publish through the AUR or
+winget. Download `SHA256SUMS.txt` with the package and verify its SHA-256 entry before installing.
+
+### Fedora (COPR)
+
+Balun's Fedora packages are built in the
+[jmsqrd/balun](https://copr.fedorainfracloud.org/coprs/jmsqrd/balun/) COPR repository for Fedora 44
+and 45 (x86_64, aarch64) from each release, beginning with v0.1.0's first COPR build:
+
+```bash
+sudo dnf copr enable jmsqrd/balun
+sudo dnf install balun
+```
 
 ### Linux
 
@@ -449,9 +460,11 @@ python3 scripts/sync_rust_toolchain.py --from-toolchain
 
 ### Cutting a release
 
-Bump the version in `Cargo.toml` (and `Cargo.lock`) and the `pkgver` in `build-aux/arch/PKGBUILD`
+Bump the version in `Cargo.toml` (and `Cargo.lock`), the `pkgver` in `build-aux/arch/PKGBUILD`
 (a prerelease such as `0.2.0-alpha.1` is spelled `0.2.0pre.1.alpha.0.1` there; the check prints
-the expected value), add the `## [version]` changelog section and its compare link, add the
+the expected value), and `upstream_version` plus `Version` in `build-aux/rpm/balun.spec`
+(`0.2.0-alpha.1` and `0.2.0~alpha.1`), add the `## [version]` changelog section and its compare
+link, add the
 `<release>` to the AppStream metainfo, then confirm they agree before tagging:
 
 ```bash

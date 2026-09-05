@@ -1,0 +1,27 @@
+# See the documentation for more information:
+# https://packit.dev/docs/configuration/
+
+specfile_path: build-aux/rpm/balun.spec
+
+# Use the source-git mode for syncing
+files_to_sync:
+  - build-aux/rpm/balun.spec
+  - .packit.yaml
+
+upstream_package_name: balun
+downstream_package_name: balun
+upstream_project_url: https://github.com/jm2/balun
+# Tags are v<version>; the spec carries the bare version.
+upstream_tag_template: "v{version}"
+enable_net: true
+
+jobs:
+  - job: copr_build
+    trigger: release
+    owner: jmsqrd
+    project: balun
+    targets:
+      - fedora-44-x86_64
+      - fedora-44-aarch64
+      - fedora-45-x86_64
+      - fedora-45-aarch64
