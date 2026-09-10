@@ -1,9 +1,10 @@
-# Balun v0.1 implementation backlog
+# Balun implementation backlog
 
-Last audited: 2026-09-04
+Last audited: 2026-09-09; expansion adopted after the September review.
 
-This is the executable work ledger for `v0.1.0`. Scope, architecture,
-and delivery order are authoritative in [`plan-v0.1.md`](plan-v0.1.md);
+This is the executable work ledger for v0.1.x hardening and the v0.2 roadmap,
+including the historical v0.1.0 records. Existing architecture and safety
+contracts remain authoritative in [`plan-v0.1.md`](plan-v0.1.md);
 sanitized real-device evidence belongs in
 [`compatibility-v0.1.md`](compatibility-v0.1.md); merged user-visible outcomes
 belong in [`../CHANGELOG.md`](../CHANGELOG.md). The original 64-record ledger is
@@ -11,9 +12,16 @@ archived at 24/64 in [`task-foundation-2026-09.md`](task-foundation-2026-09.md),
 and the decisions behind this restart are in
 [ADR-0002](architecture/adr-0002-scope-and-diagnostics.md).
 
+The [adopted September review](review-and-backlog-proposal-2026-09.md) supplies
+the evidence and acceptance details for H0–H4 and V2 below. Its implementation
+order supersedes the original delivery order for post-alpha work. New records
+remain unchecked; adopting work does not complete its implementation.
+
 ## How to use this file
 
-- Work from the earliest unchecked record whose prerequisites are satisfied.
+- Start with H0, then eligible H1/H3 work. H2/H4 are beta assurance tracks;
+  V2 work follows its stated prerequisites. P4.1 remains the single packaged
+  live-tuner acceptance record. Work the earliest eligible record in a track.
 - A top-level checkbox is one countable outcome. Check it only when its code,
   deterministic tests, relevant documentation, and changelog entry have
   landed on `main`.
@@ -28,21 +36,156 @@ and the decisions behind this restart are in
   in the compatibility notes, the changelog, or a design document, not here.
 - Recount the literal top-level checkboxes whenever a record is added, split,
   completed, or removed.
+- The maintainer owns triage and release decisions; record the implementer in
+  the linked issue or pull request when work is claimed. Track names are target
+  milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **29/30 (96.7%)** records complete. This is a dependency ledger,
-not an effort estimate; packaging and routed-discovery records are larger than
-most evidence records.
+Current status: **29/58 (50.0%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **0/21**, and roadmap V2 **0/7**. This is a
+dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
 
-The remaining record is P4.1: packaged live-tuner acceptance across Linux,
-macOS, and Windows. The recorded Linux and Windows trials used development
-builds, and the macOS validation path does not supply the missing
-cross-platform evidence. P4.5 closed on 2026-09-05 when "Balun v0.1.0 Alpha"
-was published with the 12-artifact inventory and `SHA256SUMS.txt` from the
-release-candidate workflow, from an unsigned annotated `v0.1.0` tag approved
-by the maintainer; signed annotated tags remain the procedure for subsequent
-releases.
+Close H0's five P2 findings and establish the affected package guarantees in
+H1 before claiming them for a new release. H3 maintains privacy and the review
+record. H2/H4 may proceed independently and do not delay a corrective patch
+solely to complete beta infrastructure. P4.1 follows the relevant fixes and
+candidate builds; development-build evidence does not complete it.
+
+P4.5 records publication of "Balun v0.1.0 Alpha" on 2026-09-05 with the
+12-artifact inventory and `SHA256SUMS.txt`. The initial tag was unsigned by
+maintainer approval; packaged live-tuner acceptance was still incomplete.
+Signed annotated tags remain the procedure for later releases; H2.1 adds
+machine enforcement of the chosen source policy.
+
+## H0 — Confirmed defects for v0.1.x
+
+- [ ] **H0.1 — Revalidate routed sends after readiness ([#85]).** Couple the
+  authority, deadline, and pin checks to the nonblocking send attempt; prove
+  revocation while pending prevents transmission, including retries.
+
+- [ ] **H0.2 — Serialize source retirement and startup ([#88]).** Account for
+  every admitted transport in teardown; prove an overlapping source callback
+  cannot allocate after retirement or escape the predecessor join.
+
+- [ ] **H0.3 — Bound resolver shutdown ([#89]).** Bound actual resolver work
+  and controller close even after async timeout; prove cancelled or timed-out
+  results cannot start probes and repeated lookups cannot grow without limit.
+
+- [ ] **H0.4 — Prove the full macOS native closure ([#86]).** Resolve every
+  non-system dependency inside the final app, including pixbuf loaders, and
+  reject external/unresolved references in the signed app and reopened DMG.
+
+- [ ] **H0.5 — Bind Windows reuse to the whole probed tree ([#87]).** Require
+  exact payload identity or a fresh runtime probe for installer-only reuse;
+  reject changed, missing, extra, and aliased non-anchor inputs.
+
+## H1 — Package and native dependency assurance
+
+- [ ] **H1.1 — Inspect the completed Windows installer ([#90]).** After H0.5,
+  safely extract and compare both architecture payloads with the validated
+  tree, repeating native/component checks before upload.
+
+- [ ] **H1.2 — Pin the Windows component policy ([#92]).** Apply the shared
+  digest, bounded strict text parsing, and regular non-reparse-file checks;
+  prove invalid policy inputs fail before build, copy, or probe.
+
+- [ ] **H1.3 — Inventory each shipped native runtime ([#91]).** Bind component
+  versions, source identities, licenses, and hashes to final artifact members;
+  emit an SBOM and distinguish bundled code from externally managed runtimes.
+
+- [ ] **H1.4 — Establish native advisory response ([#91]).** After H1.3,
+  record applicability, exception owners/expiry, and rebuild expectations;
+  exercise identification and rebuilding of an affected-version fixture.
+
+## H2 — Beta release assurance
+
+- [ ] **H2.1 — Enforce release source identity.** Define trusted signers and
+  reviewed-source ancestry, enforce the chosen tag policy before building,
+  and test rejection paths while retaining the initial alpha exception.
+
+- [ ] **H2.2 — Pin release build inputs.** Inventory and pin builder images,
+  native package inputs, tools, and transitive installer dependencies; record
+  reviewed exceptions and prove unapproved input drift is detected.
+
+- [ ] **H2.3 — Attach build provenance.** After H2.1/H2.2, bind source and
+  builder/input identity to final artifact digests, publish verifiable
+  attestations, and test mismatched source or payload rejection.
+
+- [ ] **H2.4 — Contain native archive inspection.** Preflight member paths,
+  types, links, sizes, and extraction budgets before processing untrusted
+  artifacts; retain the current trusted-local-output boundary until proven.
+
+## H3 — Security and privacy maintenance
+
+- [ ] **H3.1 — Make JSON diagnostics value-free ([#93]).** Replace raw serde
+  value echoes with safe categories across metadata, lineup, inspection, and
+  CLI errors; prove secret-shaped markers cannot reach diagnostic output.
+
+- [ ] **H3.2 — Define and enforce settings file trust.** Specify parent-path,
+  no-follow, replacement, permission, and newer-schema guarantees; test them
+  under concurrent replacement and slow I/O on each supported platform.
+
+- [ ] **H3.3 — Disposition the older low findings.** Recheck pacing/jitter,
+  CLI admission budgets, approval-key limits, and schema errors; fix each or
+  record a bounded acceptance with owner, reason, and review trigger.
+
+- [ ] **H3.4 — Refresh the security evidence.** After relevant H0/H1/H3 fixes,
+  consolidate current guarantees, threat boundaries, exceptions, and test links
+  at one commit; reconcile stale security, playback, release, and support prose.
+
+- [ ] **H3.5 — Decide the native media failure boundary.** Document decoder
+  trust, synchronous native-call and useful-media progress limits; use isolated
+  stall fixtures to choose enforced recovery or explicit bounded claims.
+
+## H4 — Beta regression and acceptance coverage
+
+- [ ] **H4.1 — Add sustained adversarial regression testing.** Seed fuzz and
+  property suites for packets, JSON/URLs, route/approval transitions, and
+  package manifests; run bounded CI smoke and scheduled extended corpora.
+
+- [ ] **H4.2 — Measure critical-path test coverage.** Establish a coverage
+  baseline for admission, cancellation, identity, privacy, and package gates;
+  ratchet meaningful missing branches without treating percentages as proof.
+
+- [ ] **H4.3 — Validate packaged accessibility.** Record keyboard and screen
+  reader behavior, dynamic status, focus recovery, high contrast, and large
+  text on the platform matrix; coordinate evidence with P4.1 and V2.6.
+
+## V2 — Feature roadmap with explicit prerequisites
+
+- [ ] **V2.1 — Instrument tune and media progress ([#63]).** After H0.2/H0.3,
+  measure each tune phase and usable-media deadlines, then retake package
+  first-frame, switching, and release budgets before optimization.
+
+- [ ] **V2.2 — Improve rapid switching and large lineups ([#63]).** After
+  V2.1, coalesce activations, preserve a safe last frame, and diff lineup rows;
+  prove one-stream ownership and measured responsiveness at 400-plus rows.
+
+- [ ] **V2.3 — Decide and validate pipeline reuse ([#63]).** After V2.1 and
+  H3.5, compare a reuse prototype with the baseline and retain teardown proofs;
+  speculative extra-tuner allocation requires a separate approved design.
+
+- [ ] **V2.4 — Add explicitly approved subnet discovery ([#71]).** After
+  H0.1, approve one consistent candidate/datagram/deadline contract before
+  implementation; preserve explicit consent and cross-platform cancellation.
+
+- [ ] **V2.5 — Complete deinterlacing quality evidence ([#78]).** Rebaseline
+  on implemented YADIF, measure mixed interlace/field order and CPU use, and
+  decide remaining GPU/film work from evidence rather than an obsolete default.
+
+- [ ] **V2.6 — Localize the interface ([#74]).** Add catalogs, pluralization,
+  locale fallback, and translated accessibility copy; verify missing keys and
+  long-string layouts across the supported locales.
+
+- [ ] **V2.7 — Prove mobile/TV prerequisites ([#64]).** After H0 and V2.1,
+  validate GTK-free playback, sink/network boundaries, and each platform's
+  feasibility; split proven platform milestones before implementing shells.
+
+## Historical v0.1.0 records
+
+Completed outcomes below remain historical evidence; the H records track
+newly discovered defects. P4.1 remains open and is not counted again above.
 
 ## P0 — Evidence and contract
 
@@ -162,17 +305,16 @@ releases.
   supported devices, platforms, codecs, and limitations from evidence; add
   CONTRIBUTING and SECURITY.
 
-- [x] **P4.5 — Cut and publish v0.1.0.** Pass every gate, have the maintainer
-  create an annotated `v0.1.0` tag (unsigned by explicit approval), validate the artifact set, and publish
-  release notes.
+- [x] **P4.5 — Cut and publish v0.1.0.** Validate the release artifact set,
+  publish notes and the annotated tag (unsigned by explicit approval), and
+  record that packaged live-tuner acceptance in P4.1 remains outstanding.
 
-## Explicitly outside v0.1
+## Outside the adopted implementation scope
 
 - Guide data: XMLTV, the HDHomeRun XMLTV API, and an in-band crawl of each
   full multiplex are v0.2 candidates; P0.8 ruled out now/next from the playing
   stream.
 - Native macOS and Windows route-table providers and observers.
-- SBOM, build provenance, scheduled fuzzing, and a coverage ratchet: beta.
 - Code of conduct, support policy, and issue forms until there are
   contributors.
 - Decryption, DRM bypass, CableCARD protected-channel playback, or any
@@ -190,3 +332,18 @@ M2.4, M2.5, M2.6, M2.7, M2.8, M2.9, M3.1, M3.2, M3.3, M3.8, and M5.1. The
 fake-device teardown-release proofs that closed the test-side half of M2.10
 are recorded there and in the changelog; P0.4 carries its live-device
 remainder.
+
+[#63]: https://github.com/jm2/balun/issues/63
+[#64]: https://github.com/jm2/balun/issues/64
+[#71]: https://github.com/jm2/balun/issues/71
+[#74]: https://github.com/jm2/balun/issues/74
+[#78]: https://github.com/jm2/balun/issues/78
+[#85]: https://github.com/jm2/balun/issues/85
+[#86]: https://github.com/jm2/balun/issues/86
+[#87]: https://github.com/jm2/balun/issues/87
+[#88]: https://github.com/jm2/balun/issues/88
+[#89]: https://github.com/jm2/balun/issues/89
+[#90]: https://github.com/jm2/balun/issues/90
+[#91]: https://github.com/jm2/balun/issues/91
+[#92]: https://github.com/jm2/balun/issues/92
+[#93]: https://github.com/jm2/balun/issues/93

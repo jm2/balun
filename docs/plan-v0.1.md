@@ -13,6 +13,11 @@ outcomes are in [`../CHANGELOG.md`](../CHANGELOG.md); decisions are in
 milestone plan and its ledger are archived in
 [`task-foundation-2026-09.md`](task-foundation-2026-09.md).
 
+Post-alpha delivery now follows the adopted H0–H4 and V2 tracks in `task.md`,
+with evidence in the [September review](review-and-backlog-proposal-2026-09.md).
+Those tracks supersede this plan's original sequencing and beta deferrals;
+existing safety contracts remain in force until an explicit design changes them.
+
 ## 1. Product direction
 
 Balun is a lightweight, cross-platform HDHomeRun live TV viewer built with
