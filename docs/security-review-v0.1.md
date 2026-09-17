@@ -186,6 +186,13 @@ This closes the prior JSON diagnostic exception; it is not the broader H3.4 audi
 
 ### Historical review summary
 
+H3.3 corrections and proposed remaining acceptances are recorded in the
+[September 17 finding dispositions](discovery-low-findings-2026-09.md).
+Routed positive jitter, stricter CLI admission/reply budgets, and a distinct
+newer-schema quarantine supersede the corresponding historical findings below.
+The library-loopback and sibling-key boundaries await maintainer disposition;
+the full H3.3 outcome is not yet complete.
+
 H0.2 / [#88](https://github.com/jm2/balun/issues/88) also has a targeted
 [startup/retirement correction](playback.md#source-startup-and-retirement-correction-2026-09-17):
 admission and worker ownership now share one lifecycle lock, including partial
