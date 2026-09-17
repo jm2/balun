@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
 
+### Fixed
+
+- macOS builds no longer require Homebrew's unavailable FDK AAC plugin; the bundled
+  libav, FAAD, and AudioToolbox decoders continue to provide AAC support.
+- Restore the Rust minimum-version CI check and prevent patch-only compiler-floor drift.
+
 ## [0.1.1] — 2026-09-05
 
 ### Fixed

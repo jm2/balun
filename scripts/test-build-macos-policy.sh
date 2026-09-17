@@ -124,7 +124,7 @@ printf '[Icon Theme]\nName=Adwaita\n' > "$fixture/share/icons/Adwaita/index.them
 for plugin in libgstcoreelements libgstplayback libgstapp libgsttypefindfunctions \
     libgstdeinterlace libgstmpegtsdemux libgstgtk4 libgstlibav \
     libgstvideoparsersbad libgstaudioparsers libgstapplemedia libgstmpg123 \
-    libgstfaad libgstfdkaac libgstvideoconvertscale libgstvideofilter \
+    libgstfaad libgstvideoconvertscale libgstvideofilter \
     libgstaudioconvert libgstaudioresample libgstopengl libgstautodetect libgstosxaudio libgstvolume; do
     : > "$plugin_directory/$plugin.dylib"
 done
@@ -709,6 +709,8 @@ expect_status 1
 expect_output 'Adwaita icons were not found'
 mv "$fixture/share/icons/Adwaita/index.theme.saved" "$fixture/share/icons/Adwaita/index.theme"
 
+# The supported Homebrew closure has no fdkaac plugin. Development launches
+# must still succeed with the retained libav/faad/AudioToolbox AAC providers.
 run_helper --run
 expect_status 0
 expect_output 'balun launched'
