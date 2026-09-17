@@ -76,6 +76,11 @@ module from 199/450 regions to 399/474 (84.18%); the uncovered ceiling tightens
 from 251 to 75. A fresh full desktop coverage run verifies the updated count
 and every other existing Rust threshold.
 
+The source-rejection follow-up serializes cancellation with transport publication.
+Forced request/disconnection schedules and poisoned-admission tests measure
+402/440 regions (91.36%) in source policy, up from 378/421. Its uncovered ceiling
+tightens from 43 to 38, and the denominator floor now includes the added lock path.
+
 Remaining gaps are preserved in the reports rather than excluded to raise
 percentages. Examples include native diagnostic bus paths, rare OS/thread
 creation failures, some filesystem error outcomes, and cycle/limit branches in
