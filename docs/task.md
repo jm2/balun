@@ -16,8 +16,8 @@ The [adopted September review](review-and-backlog-proposal-2026-09.md) supplies
 the evidence and acceptance details for H0–H4 and V2 below. Its implementation
 order supersedes the original delivery order for post-alpha work. New records
 remain unchecked; adopting work does not complete its implementation.
-The September 17 reassessment retains these outcomes and prerequisites, adds CI
-repair as an execution prerequisite, and identifies items awaiting maintainer
+The September 17 reassessment retains these outcomes and prerequisites, records the
+completed CI repair, and identifies items awaiting maintainer
 decisions or physical-platform evidence without counting those as completed.
 
 ## How to use this file
@@ -49,7 +49,8 @@ dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
 
-Restore the CI baseline, then close H0's five P2 findings and establish the
+The CI baseline repair landed in [PR #96](https://github.com/jm2/balun/pull/96)
+with all ten jobs passing. Close H0's five P2 findings and establish the
 affected package guarantees in H1 before claiming them for a new release.
 H3 maintains privacy and the review
 record. H2/H4 may proceed independently and do not delay a corrective patch
