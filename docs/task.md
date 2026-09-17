@@ -50,10 +50,9 @@ dependency ledger, not an effort estimate. P4.1 is carried forward once.
 ## Current focus
 
 The CI baseline repair landed in [PR #96](https://github.com/jm2/balun/pull/96)
-with all ten jobs passing. Close H0's five P2 findings and establish the
-affected package guarantees in H1 before claiming them for a new release.
-H3 maintains privacy and the review
-record. H2/H4 may proceed independently and do not delay a corrective patch
+with all ten jobs passing. H0's five corrections are complete. Establish the
+remaining package guarantees in H1 before claiming them for a new release.
+H3 maintains privacy and the review record. H2/H4 may proceed independently and do not delay a corrective patch
 solely to complete beta infrastructure. P4.1 follows the relevant fixes and
 candidate builds; development-build evidence does not complete it.
 
