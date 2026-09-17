@@ -19,7 +19,8 @@ from test_native_inventory import fixtures
 
 class ObservationTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR") or "/var/tmp")
+        scratch = os.environ.get("TMPDIR") or (None if os.name == "nt" else "/var/tmp")
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(temporary.cleanup)
         self.parent = Path(temporary.name)
         self.tree = self.parent / "reopened tree"

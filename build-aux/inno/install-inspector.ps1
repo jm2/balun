@@ -6,7 +6,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../../scripts/windows-installer-policy.ps1')
 $pins = Get-InnoInspectorPins
-if (-not [System.IO.Path]::IsPathRooted($Destination) -or (Test-Path -LiteralPath $Destination)) {
+if (-not [System.IO.Path]::IsPathFullyQualified($Destination) -or (Test-Path -LiteralPath $Destination)) {
     throw 'Inspector destination must be an absolute, new directory.'
 }
 $client = [System.Net.Http.HttpClient]::new()
