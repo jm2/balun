@@ -50,6 +50,7 @@ address so you know which tuner failed.
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, the AUR, and winget |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
+| macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
@@ -242,6 +243,10 @@ The `gstreamer` formula supplies the base, good, bad, and gst-plugins-rs plugins
 validates the resulting Mach-O against the release component policy and writes
 `target/<native-target>/release/balun`. Use `--app` to assemble, ad-hoc sign, relocate, and probe
 `dist/Balun.app`, or `--dmg` to add a reopened drag-to-Applications `dist/Balun.dmg`.
+Packaging also requires Python 3 and the system `sandbox-exec` tool. Native dependency
+validation covers all Mach-O members and architectures, including dynamically loaded
+pixbuf modules. Only Apple system library/framework paths may resolve outside the app.
+The relocated probe denies reads from the Homebrew prefix, `/opt/homebrew`, and `/usr/local`.
 Use `--run` to launch from the build tree with only Balun's playback plugins enabled.
 macOS prefers libav for MPEG-2 broadcasts because VideoToolbox advertises MPEG-2 even on
 Macs that cannot decode it; H.264 and HEVC retain their usual hardware decoder selection.

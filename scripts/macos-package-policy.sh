@@ -1632,7 +1632,10 @@ macos_validate_bundle_import_manifest() {
 
 macos_validate_bundle_copy_control() {
   local bundle_root="$1"
-  local physical_root manifest_dir members_before members_after validation_status
+  # Completed packages also supply the closure inspector. Keep the source
+  # component-only gate usable for unrelocated build artifacts and fixtures.
+  local closure_helper="${2:-}"
+  local physical_root manifest_dir members_before members_after validation_status closure_reason
 
   MACOS_PACKAGE_POLICY_REASON=""
   MACOS_PACKAGE_POLICY_RESULT=""
@@ -1663,7 +1666,7 @@ macos_validate_bundle_copy_control() {
     MACOS_PACKAGE_POLICY_RESULT="prohibited"
     return 1
   fi
-  if ! manifest_dir="$(mktemp -d "${TMPDIR:-/tmp}/balun-macos-bundle-policy.XXXXXX")"; then
+  if ! manifest_dir="$(mktemp -d "${TMPDIR:-/var/tmp}/balun-macos-bundle-policy.XXXXXX")"; then
     MACOS_PACKAGE_POLICY_REASON="could not create a private bundle-policy directory"
     MACOS_PACKAGE_POLICY_RESULT="uninspectable"
     return 2
@@ -1694,6 +1697,25 @@ macos_validate_bundle_copy_control() {
   if [[ "$validation_status" -ne 0 ]]; then
     macos_package_policy_remove_private_dir "$manifest_dir" || true
     return "$validation_status"
+  fi
+
+  if [[ -n "$closure_helper" ]]; then
+    if ! macos_package_policy_capture_output \
+        "macOS native closure" "$manifest_dir/closure.txt" \
+        "$MACOS_PACKAGE_POLICY_MAX_OUTPUT_BYTES" \
+        "$MACOS_PACKAGE_POLICY_MAX_TOOL_SECONDS" \
+        python3 "$closure_helper" bundle "$physical_root" --report-rejection; then
+      # The helper's opt-in report contains fixed policy text or an error class,
+      # never an input pathname. Preserve it only within the diagnostic bound.
+      if IFS= read -r closure_reason < "$manifest_dir/closure.txt" \
+          && [[ "$closure_reason" == 'macOS native closure rejected: '* \
+            && "${#closure_reason}" -le 512 \
+            && "$closure_reason" != *[$'\001'-$'\037'$'\177']* ]]; then
+        MACOS_PACKAGE_POLICY_REASON="$closure_reason"
+      fi
+      macos_package_policy_remove_private_dir "$manifest_dir" || true
+      return 2
+    fi
   fi
 
   if ! macos_package_policy_build_tree_manifest "$physical_root" "$members_after"; then
