@@ -59,6 +59,9 @@ jobs:
       - name: Test macOS native dependency closure
         run: python3 -B scripts/test_macos_native_closure.py
 
+      - name: Test native inventory membership and SBOM generation
+        run: python3 -B scripts/inventory/test_native_inventory.py
+
       - name: Adversarial package metadata smoke
         run: |
           python3 -B scripts/test_adversarial_packages.py
