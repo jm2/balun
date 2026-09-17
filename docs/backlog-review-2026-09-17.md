@@ -47,11 +47,12 @@ dependencies, or establish new physical-tuner or platform results.
 
 ## Execution prerequisites and issue corrections
 
-- [PR #96](https://github.com/jm2/balun/pull/96) addresses two existing CI failures:
-  the compiler-floor manifest contains `1.98.1` despite the enforced `X.Y.0`
-  policy, and the macOS closure requires `libgstfdkaac.dylib`, absent from the
-  Homebrew package used by PR #95. The retained AAC providers and packaged
-  decoder gate must pass native CI. This repair does not complete H0.4.
+- [PR #96](https://github.com/jm2/balun/pull/96) merged at `794fd02`, resolving two
+  existing CI failures: the compiler-floor manifest contained `1.98.1` despite
+  the enforced `X.Y.0` policy, and the macOS closure required the unavailable
+  `libgstfdkaac.dylib`. All ten CI jobs passed, including the native app/decoder
+  probe with the retained AAC providers. This completed prerequisite does not
+  complete H0.4; H0 is now the implementation focus.
 - Review the independent dependency updates in
   [PR #95](https://github.com/jm2/balun/pull/95) after rebasing onto that repair.
   A bot's "review skipped" check is not a clean review; obtain an actual review
