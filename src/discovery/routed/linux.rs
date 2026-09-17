@@ -380,11 +380,24 @@ mod tests {
         InterfaceId::new(text.trim().parse().expect("numeric loopback index"))
     }
 
-    fn loopback_probe_socket(authority: PreSendAuthority) -> PinnedProbeSocket {
-        open_pinned_routed_udp_socket(loopback_interface_id(), "lo")
-            .expect("pin the owned loopback test socket")
-            .into_probe_socket(authority)
-            .expect("register the pinned socket")
+    fn loopback_probe_socket(authority: PreSendAuthority) -> Option<PinnedProbeSocket> {
+        let pinned = match open_pinned_routed_udp_socket(loopback_interface_id(), "lo") {
+            Ok(pinned) => pinned,
+            Err(
+                error @ (PinnedRoutedUdpSocketError::PinInterface
+                | PinnedRoutedUdpSocketError::ReadInterfaceName
+                | PinnedRoutedUdpSocketError::ReadInterfaceId),
+            ) => {
+                eprintln!("skipping kernel-pin integration: socket option refused ({error})");
+                return None;
+            }
+            Err(error) => panic!("pin the owned loopback test socket: {error}"),
+        };
+        Some(
+            pinned
+                .into_probe_socket(authority)
+                .expect("register the pinned socket"),
+        )
     }
 
     fn loopback_receiver() -> StdUdpSocket {
@@ -406,7 +419,7 @@ mod tests {
             let request = CancellationToken::new();
             let epoch = CancellationToken::new();
             let deadline = Arc::new(Mutex::new(Instant::now() + Duration::from_secs(60)));
-            let socket = loopback_probe_socket({
+            let Some(socket) = loopback_probe_socket({
                 let request = request.clone();
                 let epoch = epoch.clone();
                 let deadline = Arc::clone(&deadline);
@@ -415,7 +428,9 @@ mod tests {
                         && !epoch.is_cancelled()
                         && Instant::now() < *deadline.lock().unwrap()
                 })
-            });
+            }) else {
+                return;
+            };
             let receiver = loopback_receiver();
             let target = receiver.local_addr().unwrap();
             let ready = Notify::new();
@@ -455,7 +470,9 @@ mod tests {
 
     #[tokio::test]
     async fn pending_send_rechecks_kernel_pin_after_readiness() {
-        let mut socket = loopback_probe_socket(Arc::new(|| true));
+        let Some(mut socket) = loopback_probe_socket(Arc::new(|| true)) else {
+            return;
+        };
         // Make the expected pin disagree with the real kernel readback.
         // Unbinding an already pinned socket requires CAP_NET_RAW, which
         // ordinary developer and CI runs deliberately do not require.
@@ -490,10 +507,12 @@ mod tests {
     #[tokio::test]
     async fn would_block_retry_rechecks_authority() {
         let live = Arc::new(AtomicBool::new(true));
-        let socket = loopback_probe_socket({
+        let Some(socket) = loopback_probe_socket({
             let live = Arc::clone(&live);
             Arc::new(move || live.load(Ordering::SeqCst))
-        });
+        }) else {
+            return;
+        };
         let receiver = loopback_receiver();
         let attempts = Cell::new(0);
         let error = socket
@@ -524,13 +543,15 @@ mod tests {
     #[tokio::test]
     async fn would_block_retry_sends_once_while_authority_and_pin_remain_valid() {
         let checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let socket = loopback_probe_socket({
+        let Some(socket) = loopback_probe_socket({
             let checks = Arc::clone(&checks);
             Arc::new(move || {
                 checks.fetch_add(1, Ordering::SeqCst);
                 true
             })
-        });
+        }) else {
+            return;
+        };
         let receiver = loopback_receiver();
         let attempts = Cell::new(0);
         let sent = socket
@@ -562,22 +583,14 @@ mod tests {
     #[tokio::test]
     async fn pinned_probe_socket_reaches_a_loopback_responder_only_while_authority_holds() {
         let device = FakeHdhrDevice::start(1, &[]);
-        let pinned = match open_pinned_routed_udp_socket(loopback_interface_id(), "lo") {
-            Ok(pinned) => pinned,
-            Err(PinnedRoutedUdpSocketError::PinInterface) => {
-                eprintln!("skipping: this kernel refuses SO_BINDTODEVICE without privileges");
-                return;
-            }
-            Err(error) => panic!("pin the loopback interface: {error}"),
-        };
         let live = Arc::new(AtomicBool::new(true));
         let authority: PreSendAuthority = {
             let live = Arc::clone(&live);
             Arc::new(move || live.load(Ordering::SeqCst))
         };
-        let socket = pinned
-            .into_probe_socket(authority)
-            .expect("register the pinned socket with the runtime");
+        let Some(socket) = loopback_probe_socket(authority) else {
+            return;
+        };
         assert!(!format!("{socket:?}").contains("lo"));
 
         let client = DiscoveryClient::default();
