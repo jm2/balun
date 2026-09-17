@@ -18,9 +18,12 @@ foreach ($function in $ast.FindAll({
 }, $false)) { . ([scriptblock]::Create($function.Extent.Text)) }
 function Exit-WithError { param([string]$Message) throw $Message }
 function Assert-Rejected {
-    param([scriptblock]$Action, [string]$Label)
+    param([scriptblock]$Action, [string]$Label, [string]$ExpectedMessage)
     $rejected = $false
-    try { & $Action | Out-Null } catch { $rejected = $true }
+    try { & $Action | Out-Null } catch {
+        if ($ExpectedMessage -and $_.Exception.Message -cne $ExpectedMessage) { throw }
+        $rejected = $true
+    }
     if (-not $rejected) { throw "Installer policy accepted $Label" }
 }
 function Get-FixtureListing {
@@ -38,6 +41,15 @@ try {
     $root = Join-Path $temporary 'Staged Tree'
     $null = New-Item -ItemType Directory -Path (Join-Path $root 'bin'), (Join-Path $root 'empty')
     $application = Join-Path $root 'bin/balun.exe'
+    $relativeInspectorPaths = @('relative-inspector')
+    if ($IsWindows) { $relativeInspectorPaths += @('C:BalunInnoInspector', '\BalunInnoInspector') }
+    foreach ($relativePath in $relativeInspectorPaths) {
+        Assert-Rejected { Get-ValidatedInnoInspector $relativePath } 'non-absolute inspector directory' `
+            'Set BALUN_INNOEXTRACT_DIR to the pinned inspector directory; see build-aux/inno/install-inspector.ps1.'
+        Assert-Rejected {
+            & (Join-Path $PSScriptRoot '../build-aux/inno/install-inspector.ps1') -Destination $relativePath
+        } 'non-absolute inspector installation destination' 'Inspector destination must be an absolute, new directory.'
+    }
     $pe = [byte[]]::new(512)
     $pe[0] = 0x4d; $pe[1] = 0x5a; $pe[0x3c] = 0x80
     $pe[0x80] = 0x50; $pe[0x81] = 0x45
