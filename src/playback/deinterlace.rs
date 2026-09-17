@@ -85,7 +85,11 @@ pub(super) fn describe(pipeline: &gst::Element) -> String {
                 .is_some_and(|factory| factory.name() == "deinterlace")
         })
         .map(|element| {
-            let method = enum_nick(&element, "method").unwrap_or_else(|| "unknown".into());
+            let method = if enum_nick(&element, "method").as_deref() == Some("yadif") {
+                "yadif"
+            } else {
+                "other"
+            };
             let rate = element
                 .static_pad("src")
                 .and_then(|pad| pad.current_caps())

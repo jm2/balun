@@ -331,12 +331,40 @@ review's pull request.
 
 ## 3. Logs and diagnostics
 
+### 2026-09-17 native diagnostic correction (H3.4 slice)
+
+The earlier claim that a constant pipeline URI made native error text safe was
+incorrect. A plugin can put stream-derived values into errors, debug strings,
+caps fields, structure names, or stream identifiers. No actual credential leak
+was observed; synthetic secret-shaped values demonstrate the logging path.
+
+Balun's native playback reports now discard error/debug text and details, map
+domains and factory names to closed labels, and retain only typed numeric codes
+and counters. Caps reports accept a closed media/format vocabulary and bounded
+integer dimensions/rates; familiar field names do not authorize arbitrary text,
+lists, or nested values. Stream collection summaries include at most 16 entries.
+Application markers report only known categories. Unknown labels become fixed
+`unknown`/`other` values. Deinterlacer reports expose the configured YADIF label
+or `other`, never an arbitrary native enum nickname.
+
+`emitted_native_logs_discard_plugin_text_and_stream_values` captures the actual
+tracing output for errors, warnings, missing plugins, stream collections,
+selection, application markers, and pipeline diagnostics. Fixtures poison the
+error domain, source name, error/debug/details, caps name and fields, stream ID,
+and collection ID; known event categories remain visible and none of the markers
+appear. `diagnostic_caps_require_typed_bounded_fields_and_known_labels` rejects
+mistyped/list/oversized fields and retains known audio/video formats.
+
+This applies to Balun's tracing subscriber. Separately enabled `GST_DEBUG` and
+other native libraries' own output bypass it; it is not a native-code sandbox.
+It does not finish H3.4's consolidated review or decide H3.5's recovery policy.
+
 ### Verified
 
 - Logging arrived on 2026-09-03: `tracing` with a standard-error subscriber
   (`src/logging.rs`, `RUST_LOG`, default `balun=info`). Log lines carry closed
-  categories, GStreamer's native error domain, code, and text (GStreamer never
-  receives an address or URL), HTTP status codes, the `Debug` of value-free
+  categories, the corrected native labels and numeric fields described above,
+  HTTP status codes, the `Debug` of value-free
   error enums, and the device identity ADR-0002 allows; no logged type carries
   `DeviceAuth`, a query value, or a stream URL, and the redacted `Debug`
   implementations above were re-checked when the sites were added. The 17
