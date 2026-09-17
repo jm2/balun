@@ -89,7 +89,10 @@ failed copies/rewrites or an exhausted traversal. It repeats completed-tree and
 closure validation after ad-hoc signing, after the runtime probe, and on the
 read-only reopened DMG. The existing relocated playback probe now uses a checked-in
 `sandbox-exec` profile denying reads from the actual Homebrew prefix and both
-standard Homebrew roots. This is packaging evidence, not a decoder sandbox or new
+standard Homebrew roots. The app, home, and caches are relocated to a canonical
+scratch directory outside those roots; an unsuitable `TMPDIR` fails with an
+explicit diagnostic. A native fixture launches a relocated copy from a checkout
+inside the denied prefix. This is packaging evidence, not a decoder sandbox or new
 signing/provenance policy.
 
 Portable fixtures cover malformed headers, hidden fat slices, loader/run-path

@@ -24,6 +24,16 @@ def canonical_probe_prefix(path):
                           text=True).stdout.strip()
 
 
+def create_probe_directory(prefix, temporary):
+    source = (Path(__file__).resolve().parent / "build-macos.sh").read_text()
+    helpers = "\n".join(re.search(r"^" + name + r"\(\) \{.*?^\}", source,
+                                 re.M | re.S).group() for name in
+                        ("canonical_runtime_probe_prefix", "create_runtime_probe_directory"))
+    return subprocess.run(["bash", "-c", helpers + '\ncreate_runtime_probe_directory "$1"',
+                           "fixture", str(prefix)], env=dict(os.environ, TMPDIR=str(temporary)),
+                          capture_output=True, text=True)
+
+
 def rewrite_id(path, install_id, environment=None):
     scripts = Path(__file__).resolve().parent
     helper = re.search(r"^rewrite_dylib_id\(\) \{.*?^\}",
@@ -66,6 +76,22 @@ class BundleFixture(unittest.TestCase):
 
 
 class ClosureTests(BundleFixture):
+    def test_probe_scratch_is_canonical_and_outside_the_denied_prefix(self):
+        vendor = self.parent / "Vendor Prefix"
+        vendor.mkdir()
+        alias = self.parent / "Vendor Alias"
+        alias.symlink_to(vendor, target_is_directory=True)
+        self.assertNotEqual(create_probe_directory(vendor, alias).returncode, 0)
+        self.assertNotEqual(create_probe_directory(vendor, self.parent / "missing").returncode, 0)
+        # A prefix-like sibling is allowed; comparisons respect path components.
+        scratch = self.parent / "Vendor Prefix Scratch"
+        scratch.mkdir()
+        result = create_probe_directory(alias, scratch)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        created = Path(result.stdout.strip())
+        self.assertEqual(created.parent, scratch.resolve())
+        self.assertTrue(created.is_dir())
+
     def test_runtime_probe_prefix_resolves_aliases_and_rejects_missing_paths(self):
         alias = self.parent / "Build Prefix Alias"
         alias.symlink_to(self.app, target_is_directory=True)
@@ -240,6 +266,19 @@ class NativeClosureTests(BundleFixture):
         self.run_tool(*(sandbox + [str(self.exe)]))
         library.unlink()
         self.run_tool(*(sandbox + [str(self.exe)]))
+
+        # A checkout inside the denied prefix cannot be its own relocated probe.
+        checkout_app = vendor / "checkout/dist/Balun.app"
+        checkout_app.parent.mkdir(parents=True)
+        shutil.copytree(self.app, checkout_app)
+        denied = subprocess.run(sandbox + [str(checkout_app / "Contents/MacOS/Balun-bin")],
+                                capture_output=True)
+        self.assertNotEqual(denied.returncode, 0)
+        relocated = create_probe_directory(alias, self.parent)
+        self.assertEqual(relocated.returncode, 0, relocated.stderr)
+        relocated_app = Path(relocated.stdout.strip()) / "Balun.app"
+        shutil.copytree(checkout_app, relocated_app)
+        self.run_tool(*(sandbox + [str(relocated_app / "Contents/MacOS/Balun-bin")]))
 
         for missing in ("@rpath/missing.dylib", "@loader_path/missing.dylib"):
             self.run_tool("install_name_tool", "-change", internal, missing, str(self.exe))
