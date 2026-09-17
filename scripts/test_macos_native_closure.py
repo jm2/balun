@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import macos_native_closure as closure
 
@@ -99,8 +100,16 @@ class ClosureTests(BundleFixture):
     def test_architecture_mismatch_is_rejected(self):
         self.exe.write_bytes(macho(["@loader_path/../Frameworks/libfoo.dylib"], kind=2))
         self.write("Contents/Frameworks/libfoo.dylib", macho(cpu=0x1000007))
-        with self.assertRaisesRegex(closure.Invalid, "compatible architecture"):
-            closure.validate(self.app)
+        walk = os.walk
+        for reverse in (False, True):
+            def ordered_walk(*args, **kwargs):
+                for directory, dirs, files in walk(*args, **kwargs):
+                    dirs.sort(reverse=reverse)
+                    yield directory, dirs, sorted(files, reverse=reverse)
+
+            with mock.patch.object(closure.os, "walk", ordered_walk):
+                with self.assertRaisesRegex(closure.Invalid, "compatible (architecture|executable context)"):
+                    closure.validate(self.app)
 
     def test_every_fat_slice_is_inspected(self):
         first = macho(kind=2)
