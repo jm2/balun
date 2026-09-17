@@ -74,6 +74,9 @@ The minimum supported Rust version is declared in `Cargo.toml`, mirrored in the 
 MSRV CI job, and proposed by Dependabot through `build-aux/toolchain/rust-toolchain.toml`. Run
 `python3 scripts/sync_rust_toolchain.py --check` after touching any of them, and raise the floor
 only through that helper.
+The proposal stays at the first patch release (`X.Y.0`) so CI tests the declared
+minimum. Dependabot ignores patch-only proposals for this manifest; ordinary build
+jobs track stable Rust and receive compiler patch fixes independently.
 
 ## License
 
