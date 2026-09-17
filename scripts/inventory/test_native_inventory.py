@@ -150,7 +150,8 @@ class NativeInventoryTests(unittest.TestCase):
 
     def test_cli_rejects_malformed_json_without_echoing_input(self):
         observed, catalog = fixtures()
-        with tempfile.TemporaryDirectory(prefix="balun-inventory-", dir=os.environ.get("TMPDIR") or "/var/tmp") as work:
+        scratch = os.environ.get("TMPDIR") or (None if os.name == "nt" else "/var/tmp")
+        with tempfile.TemporaryDirectory(prefix="balun-inventory-", dir=scratch) as work:
             observed_path = Path(work) / "observed.json"; catalog_path = Path(work) / "catalog.json"
             observed_path.write_text(json.dumps(observed)); catalog_path.write_text(json.dumps(catalog))
             command = [sys.executable, "-B", str(Path(inventory.__file__)), "--observed", str(observed_path),
