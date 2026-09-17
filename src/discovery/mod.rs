@@ -22,10 +22,11 @@ pub use client::{
     DiscoveryClient, DiscoveryError, DiscoveryObservation, DiscoveryReport, DiscoveryStats,
     InvalidProbeConfig, ProbeConfig, ProbeFailureClass, ProbeIssue,
 };
+pub(crate) use hostname::HostnameResolver;
 pub use hostname::{
     DiscoveryEntry, HOSTNAME_RESOLUTION_TIMEOUT, HostnameResolutionError, HostnameTarget,
-    InvalidDiscoveryEntry, InvalidHostnameTarget, MAX_HOSTNAME_BYTES, MAX_RESOLVED_ADDRESSES,
-    resolve_hostname,
+    InvalidDiscoveryEntry, InvalidHostnameTarget, MAX_CONCURRENT_HOSTNAME_LOOKUPS,
+    MAX_HOSTNAME_BYTES, MAX_RESOLVED_ADDRESSES, resolve_hostname,
 };
 pub use local::local_probe_endpoints;
 pub use manual::{

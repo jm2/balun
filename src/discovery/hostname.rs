@@ -9,12 +9,16 @@
 
 use std::fmt;
 use std::io;
+use std::net::ToSocketAddrs;
 use std::str::FromStr;
 use std::time::Duration;
 
 use thiserror::Error;
 
 use super::manual::{ExactDiscoveryTarget, InvalidExactDiscoveryTarget};
+
+mod resolver;
+pub(crate) use resolver::HostnameResolver;
 
 /// Longest hostname accepted from the entry field, per RFC 1123.
 pub const MAX_HOSTNAME_BYTES: usize = 253;
@@ -24,6 +28,8 @@ const MAX_LABEL_BYTES: usize = 63;
 pub const MAX_RESOLVED_ADDRESSES: usize = 4;
 /// Time allowed for one resolution.
 pub const HOSTNAME_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(5);
+/// Process-wide cap on system lookups, including those whose waiters stopped.
+pub const MAX_CONCURRENT_HOSTNAME_LOOKUPS: usize = 4;
 
 /// One validated, lowercase hostname that may be resolved into exact targets.
 ///
@@ -170,6 +176,8 @@ fn looks_like_address(value: &str) -> bool {
 /// Why a hostname produced no exact targets. No name or address is carried.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum HostnameResolutionError {
+    #[error("name resolution is busy; try an IP address or retry later")]
+    Busy,
     #[error("the device name did not resolve within {} seconds", HOSTNAME_RESOLUTION_TIMEOUT.as_secs())]
     Timeout,
     #[error("the device name could not be resolved ({0:?})")]
@@ -185,10 +193,12 @@ pub enum HostnameResolutionError {
 pub async fn resolve_hostname(
     target: &HostnameTarget,
 ) -> Result<Vec<ExactDiscoveryTarget>, HostnameResolutionError> {
-    let lookup = tokio::net::lookup_host((target.name(), 0));
-    let addresses = tokio::time::timeout(HOSTNAME_RESOLUTION_TIMEOUT, lookup)
-        .await
-        .map_err(|_| HostnameResolutionError::Timeout)?
+    HostnameResolver::default().resolve(target).await
+}
+
+fn system_lookup(name: &str) -> Result<Vec<ExactDiscoveryTarget>, HostnameResolutionError> {
+    let addresses = (name, 0)
+        .to_socket_addrs()
         .map_err(|error| HostnameResolutionError::Lookup(error.kind()))?;
 
     let mut targets: Vec<ExactDiscoveryTarget> = Vec::new();
@@ -326,6 +336,7 @@ mod tests {
     #[test]
     fn resolution_errors_carry_no_name_or_address() {
         for error in [
+            HostnameResolutionError::Busy,
             HostnameResolutionError::Timeout,
             HostnameResolutionError::Lookup(io::ErrorKind::NotFound),
             HostnameResolutionError::NoUsableAddress,

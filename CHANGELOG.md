@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Slow or stuck hostname lookups no longer hold window close open. Outstanding
+  lookups are capped across timeouts and restarts of the controller; busy resolution
+  offers direct IP entry or a later retry.
 - Playback startup and retirement now coordinate worker ownership, so an overlapping
   source callback or failed worker creation cannot escape the predecessor's teardown join.
 - Routed discovery rechecks approval, deadline, and the interface pin after socket

@@ -44,7 +44,7 @@ address so you know which tuner failed.
 | Network-change handling | 🚧 Linux: stale addresses expire and routed scans stop when adapters or routes change, and nothing rescans on its own; macOS and Windows in a future release |
 | Route-table-derived tunnel discovery | 🚧 Linux: approve each route set once; authority and interface pin rechecked after socket readiness and on retries; macOS and Windows in a future release |
 | Program guide (in-band PSIP/EIT, XMLTV) | 🚧 Future release |
-| Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name |
+| Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name; stuck name lookups cannot block closing the viewer |
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; live timing accounts for delayed media arrival; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
