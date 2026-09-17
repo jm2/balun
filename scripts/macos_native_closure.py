@@ -257,7 +257,7 @@ def validate(bundle):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("bundle", "imports", "rpaths"))
+    parser.add_argument("mode", choices=("bundle", "imports", "rpaths", "kind"))
     parser.add_argument("path", type=Path)
     arguments = parser.parse_args()
     try:
@@ -267,6 +267,11 @@ def main():
         else:
             images = inspect(arguments.path)
             require(images, "expected a native file")
+            if arguments.mode == "kind":
+                kinds = {image.kind for image in images}
+                require(len(kinds) == 1, "native slices disagree on file type")
+                print(kinds.pop())
+                return 0
             values = (value for image in images for value in getattr(image, arguments.mode))
             for value in dict.fromkeys(values):
                 print(value)
