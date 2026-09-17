@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Native playback logs now discard plugin-supplied error/debug text, arbitrary caps
+  values, stream identifiers, and unknown marker names while retaining closed labels
+  and typed counters. GStreamer's separately enabled debug output remains outside this filter.
 - Completed Windows installers now undergo bounded static payload extraction and exact
   manifest comparison, followed by repeated native/resource checks and a runtime probe
   on the extracted tree for both x86_64 and ARM64 before upload.
