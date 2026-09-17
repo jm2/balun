@@ -17,7 +17,7 @@ foreach ($function in $ast.FindAll({
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
         $node.Name -match '^(Get|Write|Assert)-WindowsProbe'
 }, $false)) {
-    . ([scriptblock]::Create($function.Extent.Text))
+    Set-Item -LiteralPath "Function:$($function.Name)" -Value ($function.Body.GetScriptBlock())
 }
 foreach ($assignment in $ast.FindAll({
     param($node)

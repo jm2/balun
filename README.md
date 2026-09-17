@@ -445,6 +445,8 @@ ledger.
 
 The [adversarial regression suites](docs/adversarial-regressions.md) run short,
 replayable parser and policy corpora in PR CI and longer generated corpora daily.
+CI also enforces [critical-path coverage baselines](docs/critical-coverage.md),
+with separate Rust, Python, and PowerShell measurements and explicit gaps.
 
 ```bash
 # Core checks (GTK- and GStreamer-free), as run by CI:

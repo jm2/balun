@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **38/58 (65.5%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **9/21**, and roadmap V2 **0/7**. This is a
+Current status: **39/58 (67.2%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **10/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -152,9 +152,9 @@ and paused. Independent correctness and package-inspection fixes may continue.
   and property suites cover packets, JSON/URLs, route/approval transitions, and
   package manifests in bounded PR and [scheduled corpora](adversarial-regressions.md).
 
-- [ ] **H4.2 — Measure critical-path test coverage.** Establish a coverage
-  baseline for admission, cancellation, identity, privacy, and package gates;
-  ratchet meaningful missing branches without treating percentages as proof.
+- [x] **H4.2 — Measure critical-path test coverage.** Separate Rust, Python, and
+  PowerShell [baselines and CI ratchets](critical-coverage.md) cover admission,
+  cancellation, identity, privacy, and package gates; native gaps remain explicit.
 
 - [ ] **H4.3 — Validate packaged accessibility.** Record keyboard and screen
   reader behavior, dynamic status, focus recovery, high contrast, and large

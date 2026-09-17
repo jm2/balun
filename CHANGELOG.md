@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Critical admission, cancellation, identity, privacy, and package gates have measured
+  coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
 - Reproducible adversarial parser, approval, route-budget, and package-manifest
   properties run in PR checks and scheduled extended corpora, with failure replay records.
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in

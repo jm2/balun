@@ -517,6 +517,18 @@ fn run_feeder(source: &gst::Element, mut feed: mpsc::Receiver<FeedItem>, started
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn completed_worker_join_is_idempotent_without_waiting_again() {
+        let mut worker = super::WorkerHandle::spawn("balun-join-fixture", || {}).unwrap();
+        worker
+            .join_until(std::time::Instant::now() + std::time::Duration::from_secs(5))
+            .unwrap();
+        // A consumed owner cannot wait on or try to join the old worker again,
+        // even when the next caller's deadline is already expired.
+        worker.join_until(std::time::Instant::now()).unwrap();
+        assert!(worker.thread.is_none());
+    }
+
     use std::cell::Cell;
     use std::env;
     use std::process::Command;
