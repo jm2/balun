@@ -32,7 +32,7 @@ jobs:
           printf 'TMPDIR=%s\nBALUN_ADVERSARIAL_FAILURE_DIR=%s/adversarial-counterexamples\n' \
             "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
           python3 --version
-          pwsh -NoProfile -Command '$PSVersionTable | Format-Table'
+          pwsh --version
 
       - name: Test pinned release component policy
         run: build-aux/packaging/test-release-component-policy.sh
