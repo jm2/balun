@@ -15,7 +15,7 @@ function Get-InnoInspectorPins {
 function Get-ValidatedInnoInspector {
     param([string]$Directory = $env:BALUN_INNOEXTRACT_DIR)
     if ([string]::IsNullOrWhiteSpace($Directory) -or
-        -not [System.IO.Path]::IsPathRooted($Directory)) {
+        -not [System.IO.Path]::IsPathFullyQualified($Directory)) {
         throw 'Set BALUN_INNOEXTRACT_DIR to the pinned inspector directory; see build-aux/inno/install-inspector.ps1.'
     }
     Assert-WindowsBundleRootIsNotReparsePoint $Directory
@@ -125,7 +125,7 @@ function Invoke-InnoPayloadInspector {
     param([string]$Inspector, [string]$Installer, [string]$OutputDirectory, [switch]$Extract)
     foreach ($path in @($Inspector, $Installer, $OutputDirectory)) {
         if ([string]::IsNullOrWhiteSpace($path)) { continue }
-        if (-not [System.IO.Path]::IsPathRooted($path) -or $path -match '[\x00-\x1f\x7f"]') {
+        if (-not [System.IO.Path]::IsPathFullyQualified($path) -or $path -match '[\x00-\x1f\x7f"]') {
             throw 'Installer inspector paths must be absolute and contain no quotes or controls.'
         }
     }
