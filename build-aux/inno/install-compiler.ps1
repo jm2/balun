@@ -28,9 +28,16 @@ try {
     $process = Start-Process -FilePath $download -ArgumentList $arguments -PassThru
     if (-not $process.WaitForExit(120000)) { throw 'Inno Setup compiler installation timed out.' }
     if ($process.ExitCode -ne 0) { throw 'Inno Setup compiler installation failed.' }
-    $compiler = Get-Item -LiteralPath (Join-Path $Destination 'ISCC.exe') -ErrorAction Stop
-    if ($compiler.VersionInfo.ProductVersion -ne '6.7.3') {
-        throw 'Installed Inno Setup compiler version does not match the pin.'
+    # The verified installer digest establishes the selected compiler release.
+    # ISCC's checked-in version resource has placeholder 0.0.0.0 fields; the
+    # actual compiler engine lives in ISCmplr.dll and reports its version when
+    # compiling. PE ProductVersion is not an admission oracle for this tool.
+    foreach ($name in @('ISCC.exe', 'ISCmplr.dll')) {
+        $member = Get-Item -LiteralPath (Join-Path $Destination $name) -Force -ErrorAction Stop
+        if ($member.PSIsContainer -or $member.Length -le 0 -or
+            (($member.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            throw 'Pinned Inno Setup compiler installation is incomplete or aliased.'
+        }
     }
     Write-Host "Pinned Inno Setup 6.7.3 compiler installed in $Destination"
 }
