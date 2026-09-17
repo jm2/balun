@@ -104,6 +104,10 @@ machine enforcement of the chosen source policy.
 
 ## H2 — Beta release assurance
 
+Maintainer direction on 2026-09-17: hold all new signing and provenance work.
+No trusted signing identities are designated; H2.1 and H2.3 remain unchecked
+and paused. Independent correctness and package-inspection fixes may continue.
+
 - [ ] **H2.1 — Enforce release source identity.** Define trusted signers and
   reviewed-source ancestry, enforce the chosen tag policy before building,
   and test rejection paths while retaining the initial alpha exception.
