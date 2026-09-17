@@ -423,6 +423,9 @@ ledger.
 
 ### Testing & Code Quality
 
+The [native-failure study](docs/native-media-failure-boundary.md) uses owned child
+processes to exercise stuck GStreamer calls without hanging the test runner.
+
 ```bash
 # Core checks (GTK- and GStreamer-free), as run by CI:
 cargo fmt --all -- --check

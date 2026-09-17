@@ -144,8 +144,8 @@ and paused. Independent correctness and package-inspection fixes may continue.
   at one commit; reconcile stale security, playback, release, and support prose.
 
 - [ ] **H3.5 — Decide the native media failure boundary.** Document decoder
-  trust, synchronous native-call and useful-media progress limits; use isolated
-  stall fixtures to choose enforced recovery or explicit bounded claims.
+  trust and useful-media progress limits; the [isolated stall study](native-media-failure-boundary.md)
+  informs the pending choice of enforced recovery or explicit bounded claims.
 
 ## H4 — Beta regression and acceptance coverage
 

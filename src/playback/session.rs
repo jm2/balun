@@ -19,6 +19,10 @@ use crate::controller::{OperationGeneration, StreamHandoff, StreamHandoffError, 
 use crate::domain::ChannelKey;
 
 const PIPELINE_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[cfg(test)]
+#[path = "native_failure_study.rs"]
+mod native_failure_study;
 const DEINTERLACE_PLAY_FLAG: &str = "deinterlace";
 const PAINTABLE_ASPECT_PROPERTY: &str = "force-aspect-ratio";
 const PLAYBIN_VOLUME_PROPERTY: &str = "volume";
