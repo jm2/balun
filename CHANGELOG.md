@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows packaging now checks the shared component-policy checksum against one
+  bounded, strict UTF-8, non-reparse file snapshot before any build, copy, or probe.
 - Windows installer-only reuse now binds a successful runtime probe to every staged
   file and directory, the build profile, and local packaging-policy inputs. Changed,
   missing, extra, or aliased inputs require a fresh bundle/probe before compilation.

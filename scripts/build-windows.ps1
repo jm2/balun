@@ -978,31 +978,135 @@ function Get-ValidatedBuildOutput {
 
 $script:ForbiddenBundledComponentTokens = @()
 
+function Read-WindowsComponentPolicySnapshot {
+    param([string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item -isnot [System.IO.FileInfo] -or $item.LinkType -or
+        ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Component policy must be an unaliased regular non-reparse file.'
+    }
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        if (-not ('BalunPackagingPolicy.Snapshot' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace BalunPackagingPolicy {
+    public static class Snapshot {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Info {
+            public uint Attributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;
+            public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access,
+            uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle file, out Info info);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint GetFileType(SafeFileHandle file);
+        public static byte[] Read(string path) {
+            // OPEN_REPARSE_POINT inspects the leaf itself. Sharing permits
+            // readers only, excluding replacement/writes for this handle's life.
+            using (var file = CreateFileW(path, 0x80000000, 1, IntPtr.Zero, 3,
+                                         0x00200000, IntPtr.Zero)) {
+                if (file.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                Info info;
+                if (!GetFileInformationByHandle(file, out info))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if (GetFileType(file) != 1 || (info.Attributes & 0x410) != 0 ||
+                    info.Links != 1 || info.SizeHigh != 0 || info.SizeLow > 65536)
+                    throw new IOException("Component policy is not a bounded regular unaliased file.");
+                using (var source = new FileStream(file, FileAccess.Read)) {
+                    byte[] bytes = new byte[65537];
+                    int total = 0, count;
+                    while (total < bytes.Length &&
+                           (count = source.Read(bytes, total, bytes.Length - total)) != 0)
+                        total += count;
+                    if (total > 65536 || total != info.SizeLow)
+                        throw new IOException("Component policy snapshot changed or exceeds 65536 bytes.");
+                    Array.Resize(ref bytes, total);
+                    return bytes;
+                }
+            }
+        }
+    }
+}
+'@
+        }
+        return ,([BalunPackagingPolicy.Snapshot]::Read($item.FullName))
+    }
+    # Portable policy fixtures run on non-Windows hosts; native packaging is
+    # admitted only on Windows and always uses the handle-checked path above.
+    $source = [System.IO.File]::Open($item.FullName, 'Open', 'Read', 'Read')
+    try {
+        $buffer = [byte[]]::new(65537)
+        $total = 0
+        while ($total -lt $buffer.Length -and
+            ($read = $source.Read($buffer, $total, $buffer.Length - $total)) -gt 0) {
+            $total += $read
+        }
+        if ($total -gt 65536) { throw 'Component policy exceeds 65536 bytes.' }
+        [Array]::Resize([ref]$buffer, $total)
+        return ,$buffer
+    }
+    finally { $source.Dispose() }
+}
+
+function ConvertFrom-WindowsComponentPolicyText {
+    param([string]$Text)
+    $tokens = [System.Collections.Generic.List[string]]::new()
+    $known = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $lines = $Text.Split([char]"`n")
+    $lineCount = $lines.Count
+    if ($Text.EndsWith("`n")) { $lineCount-- }
+    if ($lineCount -gt 1024) { throw 'Component policy exceeds 1024 lines.' }
+    foreach ($line in $lines) {
+        if ([System.Text.Encoding]::UTF8.GetByteCount($line) -gt 1024) {
+            throw 'Component policy contains an overlong line.'
+        }
+        $token = $line.Trim([char[]]@(32, 9, 13, 10, 11, 12))
+        if (-not $token -or $token.StartsWith('#')) { continue }
+        if ($token.Length -gt 64 -or $token -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') {
+            throw 'Component policy contains an invalid or overlong filename token.'
+        }
+        $token = $token.ToLowerInvariant()
+        if (-not $known.Add($token)) {
+            throw 'Component policy contains a duplicate filename token.'
+        }
+        $tokens.Add($token)
+        if ($tokens.Count -gt 256) { throw 'Component policy exceeds 256 tokens.' }
+    }
+    if ($tokens.Count -eq 0) { throw 'Component policy contains no filename tokens.' }
+    return @($tokens)
+}
+
 function Import-ForbiddenBundledComponentPolicy {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         Exit-WithError "Required bundled-component policy is missing: $Path"
     }
-
-    $tokens = [System.Collections.Generic.List[string]]::new()
-    $known = [System.Collections.Generic.HashSet[string]]::new(
-        [System.StringComparer]::OrdinalIgnoreCase
-    )
-    foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
-        $token = $line.Trim()
-        if (-not $token -or $token.StartsWith('#')) { continue }
-        if ($token -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]*$') {
-            Exit-WithError "Bundled-component policy contains an invalid filename token: '$token'"
+    try {
+        # Hash, decode, and parse this one in-memory snapshot. The checksum is
+        # shared with the Linux/macOS gates; approved updates change all three.
+        $bytes = Read-WindowsComponentPolicySnapshot $Path
+        $text = [System.Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+        if ($text.Contains([string][char]0)) { throw 'Component policy contains a NUL byte.' }
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try { $digest = [BitConverter]::ToString($sha256.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant() }
+        finally { $sha256.Dispose() }
+        $expectedDigest = '844f3ab37329b0785cf82ae8c29c6665f5052998ea3def790630b239408c8bed'
+        if ($digest -cne $expectedDigest) {
+            throw 'Component policy does not match the reviewed component set.'
         }
-        if (-not $known.Add($token)) {
-            Exit-WithError "Bundled-component policy contains a duplicate filename token: '$token'"
-        }
-        $tokens.Add($token)
+        return @(ConvertFrom-WindowsComponentPolicyText $text)
     }
-    if ($tokens.Count -eq 0) {
-        Exit-WithError "Bundled-component policy contains no filename tokens: $Path"
-    }
-    return @($tokens)
+    catch { Exit-WithError "Bundled-component policy validation failed: $($_.Exception.Message)" }
 }
 
 function Test-ForbiddenBundledComponentName {

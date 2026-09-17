@@ -51,7 +51,7 @@ address so you know which tuner failed.
 | Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, the AUR, and winget |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
-| Windows installer-only reuse | ✅ Probe receipt binds every staged file and directory, the build profile, and local packaging-policy inputs |
+| Windows package validation | ✅ Reviewed-policy checksum checked before packaging; probe receipt binds every staged member, the build profile, and local policy inputs |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features

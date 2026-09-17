@@ -429,6 +429,11 @@ jobs:
         shell: pwsh
         run: ./scripts/test-windows-probe-receipt.ps1
 
+      - name: Test checksum-pinned Windows component policy
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-component-policy.ps1
+
       - name: Install macOS desktop build dependencies
         if: runner.os == 'macOS'
         env:

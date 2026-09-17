@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **34/58 (58.6%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **5/21**, and roadmap V2 **0/7**. This is a
+Current status: **35/58 (60.3%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **6/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -90,7 +90,7 @@ machine enforcement of the chosen source policy.
   safely extract and compare both architecture payloads with the validated
   tree, repeating native/component checks before upload.
 
-- [ ] **H1.2 — Pin the Windows component policy ([#92]).** Apply the shared
+- [x] **H1.2 — Pin the Windows component policy ([#92]).** Apply the shared
   digest, bounded strict text parsing, and regular non-reparse-file checks;
   prove invalid policy inputs fail before build, copy, or probe.
 
