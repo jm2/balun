@@ -815,6 +815,19 @@ canonical_runtime_probe_prefix() {
     (cd -- "$1" && pwd -P)
 }
 
+create_runtime_probe_directory() {
+    local build_prefix scratch_base denied
+    build_prefix="$(canonical_runtime_probe_prefix "$1")" || return 1
+    scratch_base="$(canonical_runtime_probe_prefix "${TMPDIR:-/var/tmp}")" || return 1
+    # The app, home and caches must all be outside the profile's denied roots.
+    # Resolve aliases before comparing, just as Seatbelt resolves its paths.
+    for denied in /usr/local /opt/homebrew "$build_prefix"; do
+        case "$scratch_base/" in "$denied/"*) return 1 ;; esac
+    done
+    [[ "$build_prefix" != / ]] || return 1
+    mktemp -d "$scratch_base/Balun Runtime Probe With Spaces.XXXXXX"
+}
+
 rewrite_dylib_id() {
     local bin="$1" install_id="$2" kind
     kind="$(python3 "$script_dir/macos_native_closure.py" kind "$bin")" \
@@ -1015,23 +1028,25 @@ fi
 info "Code signature verified before runtime probe."
 
 # ── Relocated Read-Only Runtime Probe ────────────────────────────────────────
-PROBE_PARENT="dist/Balun Runtime Probe With Spaces"
+PROBE_PARENT="$(create_runtime_probe_directory "$BREW_PREFIX")" \
+    || fail 'Set TMPDIR to an existing scratch directory outside the denied build prefixes.'
 PROBE_APP="${PROBE_PARENT}/${APP_NAME}.app"
-PROBE_CACHE="$(mktemp -d "${TMPDIR:-/var/tmp}/Balun Runtime Cache With Spaces.XXXXXX")"
-PROBE_HOME="$(mktemp -d "${TMPDIR:-/var/tmp}/Balun Runtime Home With Spaces.XXXXXX")"
+PROBE_CACHE="$PROBE_PARENT/cache"
+PROBE_HOME="$PROBE_PARENT/home"
 cleanup_probe() {
     chmod -R u+w "$PROBE_PARENT" 2>/dev/null || true
-    rm -rf "$PROBE_PARENT" "$PROBE_CACHE" "$PROBE_HOME"
+    rm -rf "$PROBE_PARENT"
 }
 trap cleanup_probe EXIT
-rm -rf "$PROBE_PARENT"
-mkdir -p "$PROBE_PARENT"
+mkdir "$PROBE_CACHE" "$PROBE_HOME"
 ditto "$APP_BUNDLE" "$PROBE_APP"
 chmod -R a-w "$PROBE_APP"
 
 info "Running relocated read-only runtime probe loopback..."
 PROBE_BUILD_PREFIX="$(canonical_runtime_probe_prefix "$BREW_PREFIX")" \
     || fail 'Could not resolve the runtime-probe build prefix.'
+(
+cd "$PROBE_PARENT"
 HOME="$PROBE_HOME" \
 GST_REGISTRY="$PROBE_CACHE/hostile-registry.bin" \
 GST_REGISTRY_1_0="$PROBE_CACHE/hostile-registry-v1.bin" \
@@ -1059,6 +1074,7 @@ GIO_USE_PROXY_RESOLVER="dummy" \
     -f "$repository_root/build-aux/macos-runtime-probe.sb" \
     "$PROBE_APP/Contents/MacOS/${APP_NAME}" \
     --balun-platform-runtime-probe "$PROBE_CACHE"
+)
 
 SENTINEL_FILE="$PROBE_CACHE/balun-platform-runtime-probe.ok"
 [[ -f "$SENTINEL_FILE" ]] || fail "runtime probe did not write sentinel"
