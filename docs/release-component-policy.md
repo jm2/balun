@@ -99,13 +99,13 @@ binaries import while refusing forbidden or reparse-point sources and
 destinations, fails the bounded `llvm-readobj` import traversal on any denied
 dependency rather than omitting it, reinspects the completed tree after the
 packaged runtime probe, and reopens the ZIP to require its entry set and sizes
-to equal the staged tree. The installer (`-InnoSetup`) shares the first three
-gates: its payload is the staged tree that passed them immediately before
-compilation, and the compiled `balun-setup.exe` is reopened only for its
-version resource, because the helper has no tool that extracts an Inno Setup
-archive without running it. That narrower installer reopening is a documented
-gap against the fourth gate, not a claim of payload inspection; the
-packaged-artifact validation record P4.1 installs and exercises the result.
+to equal the staged tree. The installer (`-InnoSetup`) additionally uses a
+hash-pinned non-executing extractor to preflight the compiled payload, compare
+every member with the validated staging manifest, repeat native/resource checks,
+and probe the extracted runtime. This H1.1 gate closes the earlier documented
+version-resource-only reopening gap. The
+[inspection procedure](windows-installer-inspection.md) records limits and tool
+inputs; P4.1 still installs and exercises the result with a live tuner.
 The generic `libbluray` that `avformat` imports remains allowed under the
 distinction above.
 

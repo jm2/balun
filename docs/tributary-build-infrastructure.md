@@ -228,8 +228,10 @@ Setup. The deliberate differences are:
 - **Reopened artifacts.** Tributary reopens the ZIP for forbidden names only.
   Balun additionally requires the ZIP entry set and sizes to equal the staged
   tree, and reopens the installer's version resource for the product name and
-  the exact package version. The installer payload is the tree validated
-  immediately before compilation.
+  exact package version. It then preflights and extracts the complete installer
+  payload with a pinned inspector, compares every member/hash to staging, repeats
+  the native/resource gates, and probes the extracted runtime. Both native CI
+  lanes and release jobs require this before uploading candidates.
 - **Receipt.** The unshipped `dist\balun-windows.probe-v3` receipt binds every
   staged path, type, size, and SHA-256 to the selected profile and local helper,
   Cargo manifest/lock, component-policy, and installer-recipe inputs. Enumeration
@@ -238,8 +240,9 @@ Setup. The deliberate differences are:
   The same manifest must match before and after the runtime probe, after final
   validation, and immediately before installer compilation. Legacy receipts
   require a fresh bundle/probe. This is local stale-state detection, not an
-  authenticity or build-provenance guarantee; H1.1 still owns completed-installer
-  extraction and payload comparison.
+  authenticity or build-provenance guarantee. The separate
+  [H1.1 gate](windows-installer-inspection.md) performs completed-installer
+  extraction and payload comparison; its policy script is also receipt-bound.
 - **Resources.** `build.rs` ports Tributary's `winresource` and
   `embed-resource` step for the seven-image `data/balun.ico` and the package
   version; the helper requires exactly that resource set before staging and

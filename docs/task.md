@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **37/58 (63.8%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **8/21**, and roadmap V2 **0/7**. This is a
+Current status: **38/58 (65.5%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **9/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -86,7 +86,7 @@ machine enforcement of the chosen source policy.
 
 ## H1 — Package and native dependency assurance
 
-- [ ] **H1.1 — Inspect the completed Windows installer ([#90]).** After H0.5,
+- [x] **H1.1 — Inspect the completed Windows installer ([#90]).** After H0.5,
   safely extract and compare both architecture payloads with the validated
   tree, repeating native/component checks before upload.
 
