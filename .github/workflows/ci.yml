@@ -424,6 +424,11 @@ jobs:
         shell: pwsh
         run: ./scripts/test-build-windows-routing.ps1
 
+      - name: Test complete-tree Windows probe receipts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-probe-receipt.ps1
+
       - name: Install macOS desktop build dependencies
         if: runner.os == 'macOS'
         env:
@@ -528,6 +533,13 @@ jobs:
         env:
           MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: ./scripts/build-windows.ps1 -Zip -NoCargoBuild
+
+      - name: Reject a changed native DLL after the successful packaged probe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          ./scripts/test-windows-probe-receipt.ps1
+          -StagedRoot dist/balun-windows -Profile '${{ matrix.windows_arch }}'
 
       - name: Upload the Windows ZIP
         if: runner.os == 'Windows'

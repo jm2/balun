@@ -1534,7 +1534,7 @@ exit $global:LASTEXITCODE
         '''--coff-resources "''',
         "= '--balun-platform-runtime-probe'",
         '= "balun-windows-runtime-probe-v1`n"',
-        "= 'balun-windows-runtime-probe-v2'",
+        "= 'balun-windows-runtime-probe-v3'",
         '$lines.Add("rust-target=$DesktopRustTarget")',
         '$lines.Add("msys-environment=$MsysEnvironment")',
         '$lines.Add("inno-architecture=$InnoTargetArchitecture")',

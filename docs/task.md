@@ -43,19 +43,18 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **33/58 (56.9%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **4/21**, and roadmap V2 **0/7**. This is a
+Current status: **34/58 (58.6%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **5/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
 
-The CI baseline repair landed in [PR #96](https://github.com/jm2/balun/pull/96)
-with all ten jobs passing. Close H0's five P2 findings and establish the
-affected package guarantees in H1 before claiming them for a new release.
-H3 maintains privacy and the review
-record. H2/H4 may proceed independently and do not delay a corrective patch
-solely to complete beta infrastructure. P4.1 follows the relevant fixes and
-candidate builds; development-build evidence does not complete it.
+The CI baseline repair landed in [PR #96](https://github.com/jm2/balun/pull/96) with all
+ten jobs passing. H0's five corrections are complete. Establish the remaining package
+guarantees in H1 before claiming them for a new release. H3 maintains privacy and the
+review record. H2/H4 may proceed independently and do not delay a corrective patch
+solely to complete beta infrastructure. P4.1 follows the relevant fixes and candidate
+builds; development-build evidence does not complete it.
 
 P4.5 records publication of "Balun v0.1.0 Alpha" on 2026-09-05 with the
 12-artifact inventory and `SHA256SUMS.txt`. The initial tag was unsigned by
@@ -81,7 +80,7 @@ machine enforcement of the chosen source policy.
   non-system dependency inside the final app, including pixbuf loaders, and
   reject external/unresolved references in the signed app and reopened DMG.
 
-- [ ] **H0.5 — Bind Windows reuse to the whole probed tree ([#87]).** Require
+- [x] **H0.5 — Bind Windows reuse to the whole probed tree ([#87]).** Require
   exact payload identity or a fresh runtime probe for installer-only reuse;
   reject changed, missing, extra, and aliased non-anchor inputs.
 

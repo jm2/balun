@@ -102,6 +102,34 @@ external/missing/pixbuf dependencies, proves the probe profile denies the vendor
 library, and launches the valid bundled case after deleting that external library.
 Physical packaged-tuner acceptance remains P4.1; archive containment remains H2.4.
 
+### 2026-09-17 Windows complete-tree probe receipt (H0.5)
+
+[Issue #87](https://github.com/jm2/balun/issues/87) reproduced a changed or deleted
+non-anchor DLL retaining the four-file runtime-probe receipt. Version 3 binds the
+whole staged tree: ordinal, case-collision-checked relative paths, member types,
+file sizes, and SHA-256 content hashes, including hidden files and empty directories.
+It also binds the selected profile and local packaging helper, Cargo manifest/lock,
+component-policy file, and Inno recipe. Reparse points, hard-link aliases, unsafe
+paths, and Windows alternate data streams are refused.
+
+Manifest budgets are 65,536 members, 64 path components, 1,024 path characters,
+1 GiB per file, 4 GiB total file bytes, 16 MiB manifest text, and five minutes.
+Files are hashed in bounded chunks with a post-read size/write-time check; Windows
+opens exclude concurrent writes/deletes. The receipt itself is at most 4 KiB and
+strictly decoded as UTF-8. A pre-probe manifest must match before a receipt is
+written; final gates and the last step before invoking Inno revalidate it.
+
+The portable PowerShell regressions exercise both profiles, every former non-anchor
+class, same-size/write-time modifications, missing/extra members, aliases, policy
+changes, malformed/legacy receipts, and mutation while the probe runs. Native
+Windows CI changes only the COFF timestamp of the already-probed GStreamer core
+DLL, preserving its code/imports/exports and PE structure, verifies receipt rejection,
+restores it, and verifies acceptance again.
+
+This receipt is not an authenticity boundary against someone able to rewrite both
+payload and receipt. It does not inspect a completed installer; H1.1 remains open.
+No signing identities, release attestations, or new provenance work are introduced.
+
 ### Historical review summary
 
 H0.2 / [#88](https://github.com/jm2/balun/issues/88) also has a targeted
