@@ -80,8 +80,9 @@
 .PARAMETER InnoSetup
     Everything Zip does, then compile dist\balun-setup.exe from
     build-aux\inno\balun.iss with a preinstalled Inno Setup 6 and reopen the
-    installer's version resource. With SkipBundle, build only the installer
-    from an existing dist tree whose probe receipt still matches.
+    installer's version resource and complete payload using the pinned
+    BALUN_INNOEXTRACT_DIR tool. With SkipBundle, compile from an existing
+    dist tree whose probe receipt still matches, then inspect the installer.
 
 .PARAMETER SkipBundle
     With InnoSetup, skip the build, staging, and probe and accept the existing
@@ -1532,7 +1533,8 @@ function Invoke-BoundedInspector {
         [AllowNull()][System.Diagnostics.Stopwatch]$ClosureClock,
         [int]$ClosureDeadlineMs,
         [int]$ProcessDeadlineMs,
-        [int64]$OutputByteLimit
+        [int64]$OutputByteLimit,
+        [switch]$RejectStandardError
     )
 
     $token = [Guid]::NewGuid().ToString('N')
@@ -1585,6 +1587,9 @@ function Invoke-BoundedInspector {
         }
         if ($process.ExitCode -ne 0) {
             throw "PE inspector exited with status $($process.ExitCode) ($Label)"
+        }
+        if ($RejectStandardError -and $stderrLength -ne 0) {
+            throw "Inspector reported warnings or unsupported input ($Label)"
         }
         $stdoutLines = @([System.IO.File]::ReadAllLines($stdoutPath))
     }
@@ -2264,7 +2269,7 @@ function Get-WindowsProbeSha256 {
 }
 
 function Get-WindowsProbeTreeDigest {
-    param([Parameter(Mandatory = $true)][string]$Root)
+    param([Parameter(Mandatory = $true)][string]$Root, [switch]$IncludeRecords)
 
     $rootItem = Get-Item -LiteralPath $Root -Force -ErrorAction Stop
     if ($rootItem -isnot [System.IO.DirectoryInfo] -or $rootItem.LinkType -or
@@ -2333,7 +2338,11 @@ function Get-WindowsProbeTreeDigest {
             $null = $digest.TransformBlock($bytes, 0, $bytes.Length, $bytes, 0)
         }
         $null = $digest.TransformFinalBlock([byte[]]::new(0), 0, 0)
-        return [BitConverter]::ToString($digest.Hash).Replace('-', '').ToLowerInvariant()
+        $hex = [BitConverter]::ToString($digest.Hash).Replace('-', '').ToLowerInvariant()
+        if ($IncludeRecords) {
+            return [PSCustomObject]@{ Digest = $hex; Records = $records }
+        }
+        return $hex
     }
     finally { $digest.Dispose() }
 }
@@ -2348,6 +2357,7 @@ function Get-WindowsProbeReceiptLines {
     $lines.Add(('pe-machine=0x{0:X4}' -f $ExpectedPeMachine))
     $lines.Add("inno-architecture=$InnoTargetArchitecture")
     foreach ($inputPath in @('scripts/build-windows.ps1', 'Cargo.toml', 'Cargo.lock',
+        'scripts/windows-installer-policy.ps1',
         'build-aux/packaging/forbidden-bundled-components.txt', 'build-aux/inno/balun.iss')) {
         $lines.Add("input:$inputPath=$(Get-WindowsProbeSha256 (Join-Path $RepositoryRoot $inputPath))")
     }
@@ -3267,6 +3277,9 @@ function Invoke-InnoSetup {
     )
 
     $iscc = Find-InnoSetupCompiler
+    . (Join-Path $RepositoryRoot 'scripts/windows-installer-policy.ps1')
+    $payloadInspector = Get-ValidatedInnoInspector
+    $expectedManifest = Get-WindowsProbeTreeDigest $Distribution -IncludeRecords
     $issFile = Join-Path $RepositoryRoot $InnoScriptRelativePath
     if (-not (Test-Path -LiteralPath $issFile -PathType Leaf)) {
         Exit-WithError "The Inno Setup recipe is missing: $issFile"
@@ -3277,7 +3290,7 @@ function Invoke-InnoSetup {
 
     Write-Info 'Running the Inno Setup compiler...'
     # Last payload operation before invoking the compiler, including the
-    # installer-only path. Installer extraction remains a separate gate.
+    # installer-only path. The compiled payload is independently reopened below.
     Assert-WindowsProbeReceipt $Distribution
     $global:LASTEXITCODE = 0
     & $iscc "/DAppVersion=$Version" "/DAppNumericVersion=$NumericVersion" `
@@ -3285,9 +3298,7 @@ function Invoke-InnoSetup {
         "/DTargetArch=$InnoTargetArchitecture" $issFile
     if ($LASTEXITCODE -ne 0) { Exit-WithError 'Inno Setup compilation failed.' }
 
-    # Reopen the installer's version resource: the payload is the tree that
-    # was validated moments ago, and this proves the artifact carries Balun's
-    # identity and the exact package version.
+    # Check installer identity before the separate static payload extraction.
     $installerItem = Get-ValidatedBuildOutput $installerPath 'installer'
     Assert-MzHeader $installerItem.FullName 'Completed installer'
     # Inno Setup pads its version-resource strings with trailing blanks, so
@@ -3303,7 +3314,11 @@ function Invoke-InnoSetup {
     if (([string]$versionInfo.FileVersion).Trim($padding) -cne $Version) {
         Exit-WithError "Completed installer FileVersion metadata does not match package version $Version."
     }
-    Write-Info "Installer created and reopened: $($installerItem.FullName)"
+    Assert-WindowsInstallerPayload -Installer $installerItem.FullName `
+        -Distribution $Distribution -Inspector $payloadInspector `
+        -PeInspector $PackagingTools.PeInspector -ExpectedVersion $Version `
+        -ExpectedManifest $expectedManifest
+    Write-Info "Installer created, extracted, compared, and validated: $($installerItem.FullName)"
 }
 
 $RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).ProviderPath

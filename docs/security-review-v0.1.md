@@ -124,7 +124,7 @@ DLL, preserving its code/imports/exports and PE structure, verifies receipt reje
 restores it, and verifies acceptance again.
 
 This receipt is not an authenticity boundary against someone able to rewrite both
-payload and receipt. It does not inspect a completed installer; H1.1 remains open.
+payload and receipt. The separate H1.1 gate below inspects the completed installer.
 No signing identities, release attestations, or new provenance work are introduced.
 
 ### 2026-09-17 Windows policy snapshot (H1.2)
@@ -143,6 +143,25 @@ digest, malformed UTF-8, NUL, oversized bytes, aliases/reparse inputs, case-fold
 duplicates, and each syntax limit. Routing fixtures verify refusal before downstream
 packaging tools or Cargo. The [component-policy document](release-component-policy.md)
 records the historical overclaim and the exercised replacement guarantee.
+
+### 2026-09-17 completed Windows installer payload (H1.1)
+
+[Issue #90](https://github.com/jm2/balun/issues/90) is covered by the
+[installer inspection gate](windows-installer-inspection.md). After compilation,
+a pinned non-executing tool supplies raw paths, sizes, and SHA-256 hashes for
+bounded preflight and exact comparison with staging. Only a matching manifest
+can trigger extraction into a fresh scratch directory. The extracted tree must
+match again, pass the native/resource gates and relocated runtime probe, and
+remain identical through the final check. The installer is held read-only on
+Windows and its content hash is checked before and after inspection.
+
+Portable regressions prove changed, missing, extra, escaping, conflicting,
+oversized, and unsupported member declarations cannot start extraction. They
+also exercise wrong PE architecture and mutation during the final probe. The
+document records the separate static comparison of both published v0.1.0
+installers with their ZIPs. Both native Windows CI lanes must validate the new
+implementation before merge. P4.1 installed playback and H2.4 containment for
+arbitrary untrusted native archives remain separate outcomes.
 
 ### 2026-09-17 value-free JSON diagnostics (H3.1)
 

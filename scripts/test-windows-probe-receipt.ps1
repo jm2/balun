@@ -85,6 +85,7 @@ $inputRoot = Join-Path $temporary 'Local Packaging Inputs'
 $originalRepository = $RepositoryRoot
 try {
     foreach ($path in @('scripts/build-windows.ps1', 'Cargo.toml', 'Cargo.lock',
+        'scripts/windows-installer-policy.ps1',
         'build-aux/packaging/forbidden-bundled-components.txt', 'build-aux/inno/balun.iss')) {
         $destination = Join-Path $inputRoot $path
         [System.IO.Directory]::CreateDirectory((Split-Path -Parent $destination)) | Out-Null

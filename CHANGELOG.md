@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Completed Windows installers now undergo bounded static payload extraction and exact
+  manifest comparison, followed by repeated native/resource checks and a runtime probe
+  on the extracted tree for both x86_64 and ARM64 before upload.
 - Device and lineup JSON errors now retain only fixed failure categories and line/column
   positions, preventing mistyped device values from reaching inspection, debug output,
   CLI diagnostics, or nested error sources.
