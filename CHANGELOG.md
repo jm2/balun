@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Native inventory tooling independently hashes reopened package trees and completed
   artifacts, validates exact native membership/content against component metadata, and
-  emits a native-scope CycloneDX SBOM. An installed Homebrew recipe collector preserves
+  emits a native-scope CycloneDX SBOM. The macOS helper records each native copy's
+  input owner and pre/post-relocation content, rejecting unknown final members.
+  An installed Homebrew recipe collector preserves
   actual package/source/license metadata. Final ownership binding and release attachment
   remain pending; current packages do not yet include these reports.
 - Critical admission, cancellation, identity, privacy, and package gates have measured

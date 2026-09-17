@@ -64,6 +64,7 @@ jobs:
           python3 -B scripts/inventory/test_native_inventory.py
           python3 -B scripts/inventory/test_observe_native.py
           python3 -B scripts/inventory/test_homebrew_metadata.py
+          python3 -B scripts/inventory/test_native_copy_ledger.py
 
       - name: Adversarial package metadata smoke
         run: |
@@ -492,7 +493,9 @@ jobs:
 
       - name: Test native package observation on macOS
         if: runner.os == 'macOS'
-        run: python3 -B scripts/inventory/test_observe_native.py
+        run: |
+          python3 -B scripts/inventory/test_observe_native.py
+          python3 -B scripts/inventory/test_native_copy_ledger.py
 
       - name: Test packaged-hardware output privacy with system Bash
         if: runner.os == 'macOS'
@@ -621,6 +624,23 @@ jobs:
       - name: Stage, sign, and probe the macOS app through helper
         if: runner.os == 'macOS'
         run: /bin/bash scripts/build-macos.sh --app
+
+      - name: Bind installed metadata to every copied macOS native input
+        if: runner.os == 'macOS'
+        run: |
+          python3 -B scripts/inventory/homebrew_metadata.py --cellar "$(brew --cellar)" \
+            --copy-ledger dist/Balun.native-copies.json > "$RUNNER_TEMP/macos-native-owners.json"
+
+      - name: Retain macOS native ownership evidence
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-native-copy-ownership
+          path: |
+            dist/Balun.native-copies.json
+            ${{ runner.temp }}/macos-native-owners.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Probe installed playback runtime through macOS helper
         if: runner.os == 'macOS'

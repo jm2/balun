@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 import homebrew_metadata as collector
+import native_copy_ledger as copies
 
 
 class HomebrewMetadataTests(unittest.TestCase):
@@ -173,6 +174,22 @@ class HomebrewMetadataTests(unittest.TestCase):
         self.assertEqual(run.stdout, "")
         self.assertNotIn("private-marker-9321", run.stderr)
         self.assertNotIn("Traceback", run.stderr)
+
+    def test_frozen_copy_ledger_selects_owners_and_rejects_changed_installed_bytes(self):
+        tree = self.root / "app"
+        tree.mkdir()
+        destination = tree / "library.dylib"
+        shutil.copyfile(self.member, destination)
+        path = self.root / "copies.json"
+        ledger = copies.read_ledger(path, missing=True)
+        deadline = time.monotonic() + 10
+        copies.record_copy(ledger, tree, self.member, destination, self.cellar, deadline)
+        destination.write_bytes(destination.read_bytes() + b" relocated")
+        copies.write_ledger(path, copies.freeze(ledger, tree, deadline))
+        self.assertEqual(collector.collect_from_ledger(self.cellar, path, query=self.query), self.collect())
+        self.member.write_bytes(self.member.read_bytes() + b" replaced after copying")
+        with self.assertRaisesRegex(collector.Invalid, "no longer match"):
+            collector.collect_from_ledger(self.cellar, path, query=self.query)
 
 
 if __name__ == "__main__":

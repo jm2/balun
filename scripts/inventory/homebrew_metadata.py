@@ -19,6 +19,7 @@ import tempfile
 import time
 
 from native_inventory import MAX_DOCUMENT, Invalid, member_path, reference, require, text, unique_object
+from native_copy_ledger import read_ledger
 from observe_native import checkpoint, ordinary, signature, snapshot_file
 
 MAX_METADATA = 1024**2
@@ -205,13 +206,34 @@ def collect(cellar, members, *, query=query_formula):
     return result
 
 
+def collect_from_ledger(cellar, ledger_path, *, query=query_formula):
+    ledger = read_ledger(ledger_path, frozen=True)
+    sources = {}
+    for record in ledger["records"]:
+        if record["origin"]["kind"] != "homebrew":
+            continue
+        member = record["origin"]["member"]
+        require(member not in sources or sources[member] == record["copied"],
+                "repeated installed source has inconsistent copy identities")
+        sources[member] = record["copied"]
+    result = collect(cellar, [cellar / name for name in sorted(sources)], query=query)
+    require({member["path"]: {"size": member["size"], "sha256": member["sha256"]}
+             for member in result["members"]} == sources,
+            "installed bytes no longer match the native copy ledger")
+    require(read_ledger(ledger_path, frozen=True) == ledger, "copy ledger changed during metadata collection")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cellar", required=True, type=Path)
-    parser.add_argument("--member", required=True, action="append", type=Path)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--member", action="append", type=Path)
+    inputs.add_argument("--copy-ledger", type=Path)
     args = parser.parse_args()
     try:
-        result = collect(args.cellar, args.member)
+        result = (collect_from_ledger(args.cellar, args.copy_ledger) if args.copy_ledger
+                  else collect(args.cellar, args.member))
         encoded = json.dumps(result, sort_keys=True, indent=2) + "\n"
         require(len(encoded.encode()) <= MAX_DOCUMENT, "metadata report exceeds byte budget")
     except (OSError, ValueError, RecursionError, RuntimeError):
