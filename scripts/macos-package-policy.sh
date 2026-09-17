@@ -1632,6 +1632,9 @@ macos_validate_bundle_import_manifest() {
 
 macos_validate_bundle_copy_control() {
   local bundle_root="$1"
+  # Completed packages also supply the closure inspector. Keep the source
+  # component-only gate usable for unrelocated build artifacts and fixtures.
+  local closure_helper="${2:-}"
   local physical_root manifest_dir members_before members_after validation_status
 
   MACOS_PACKAGE_POLICY_REASON=""
@@ -1663,7 +1666,7 @@ macos_validate_bundle_copy_control() {
     MACOS_PACKAGE_POLICY_RESULT="prohibited"
     return 1
   fi
-  if ! manifest_dir="$(mktemp -d "${TMPDIR:-/tmp}/balun-macos-bundle-policy.XXXXXX")"; then
+  if ! manifest_dir="$(mktemp -d "${TMPDIR:-/var/tmp}/balun-macos-bundle-policy.XXXXXX")"; then
     MACOS_PACKAGE_POLICY_REASON="could not create a private bundle-policy directory"
     MACOS_PACKAGE_POLICY_RESULT="uninspectable"
     return 2
@@ -1694,6 +1697,17 @@ macos_validate_bundle_copy_control() {
   if [[ "$validation_status" -ne 0 ]]; then
     macos_package_policy_remove_private_dir "$manifest_dir" || true
     return "$validation_status"
+  fi
+
+  if [[ -n "$closure_helper" ]]; then
+    if ! macos_package_policy_capture_output \
+        "macOS native closure" "$manifest_dir/closure.txt" \
+        "$MACOS_PACKAGE_POLICY_MAX_OUTPUT_BYTES" \
+        "$MACOS_PACKAGE_POLICY_MAX_TOOL_SECONDS" \
+        python3 "$closure_helper" bundle "$physical_root"; then
+      macos_package_policy_remove_private_dir "$manifest_dir" || true
+      return 2
+    fi
   fi
 
   if ! macos_package_policy_build_tree_manifest "$physical_root" "$members_after"; then

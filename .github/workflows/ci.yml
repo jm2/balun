@@ -47,6 +47,9 @@ jobs:
       - name: Test macOS package policy scaffolding
         run: scripts/test-macos-package-policy.sh
 
+      - name: Test macOS native dependency closure
+        run: python3 -B scripts/test_macos_native_closure.py
+
       - name: Test packaged-hardware output privacy
         run: scripts/test-hardware-validation-privacy.sh
 
@@ -407,6 +410,10 @@ jobs:
       - name: Test macOS build helper with system Bash
         if: runner.os == 'macOS'
         run: /bin/bash scripts/test-build-macos-policy.sh
+
+      - name: Test real Mach-O dependency closure and isolated launch
+        if: runner.os == 'macOS'
+        run: python3 -B scripts/test_macos_native_closure.py
 
       - name: Test packaged-hardware output privacy with system Bash
         if: runner.os == 'macOS'

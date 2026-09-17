@@ -135,6 +135,14 @@ and installer gates described below. The release-candidate workflow selects
 diagnostic routes explicitly and admits only the exact public package
 inventory.
 
+Completed macOS apps also require Python 3 for bounded, all-architecture Mach-O
+closure inspection. All non-system references must resolve inside the app, including
+pixbuf loaders and helper executables; the shared component gate detects tree changes
+during inspection. Validation repeats after signing, after the runtime probe, and on
+the reopened DMG. The probe uses the system `sandbox-exec` tool to deny reads from the
+build's Homebrew prefix and both standard Homebrew roots. See the
+[H0.4 evidence and system-path policy](security-review-v0.1.md#2026-09-17-macos-native-closure-h04).
+
 The packaged macOS launcher asks the signed `Balun-bin` to derive its canonical
 install-key hash, so an ordinary app launch does not execute Perl. Perl remains
 a build/check-only tool for bounded package-policy validation, including the

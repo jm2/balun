@@ -200,6 +200,8 @@ prepare_development_runtime()
 
 require_packaging_runtime()
 {
+    require_command python3 'install Python 3 explicitly'
+    [[ -x /usr/bin/sandbox-exec ]] || fail 'The macOS sandbox-exec runtime-probe tool is unavailable.'
     require_command otool 'install Xcode Command Line Tools via xcode-select --install'
     require_command install_name_tool 'install Xcode Command Line Tools via xcode-select --install'
     require_command codesign 'install Xcode Command Line Tools via xcode-select --install'
@@ -812,9 +814,10 @@ copy_dylib() {
     basename="$(basename "$src")"
     local dest="${FRAMEWORKS_DIR}/${basename}"
     [[ -f "$dest" ]] && return 1
-    cp -L "$src" "$dest"
-    chmod u+w "$dest"
-    install_name_tool -id "@executable_path/../Frameworks/${basename}" "$dest" 2>/dev/null || true
+    cp -L "$src" "$dest" || fail "Could not copy $src into the bundle"
+    chmod u+w "$dest" || fail "Could not make $dest writable for relocation"
+    install_name_tool -id "@executable_path/../Frameworks/${basename}" "$dest" \
+        || fail "Could not rewrite the install name of $dest"
     return 0
 }
 
@@ -845,8 +848,11 @@ resolve_dylib_source() {
         fi
     done
 
-    local rpath_dir
+    local rpath_dir rpaths
+    rpaths="$(python3 "$script_dir/macos_native_closure.py" rpaths "$bin")" \
+        || fail "Could not inspect run paths in $bin"
     while IFS= read -r rpath_dir; do
+        [[ -n "$rpath_dir" ]] || continue
         local resolved_rpath="$rpath_dir"
         resolved_rpath="${resolved_rpath//@loader_path/$(dirname "$bin")}"
         resolved_rpath="${resolved_rpath//@executable_path/${APP_BUNDLE}/Contents/MacOS}"
@@ -854,7 +860,7 @@ resolve_dylib_source() {
             printf '%s' "${resolved_rpath}/${basename}"
             return 0
         fi
-    done < <(otool -l "$bin" 2>/dev/null | awk '$1 == "path" {print $2}')
+    done <<< "$rpaths"
 
     return 1
 }
@@ -862,8 +868,15 @@ resolve_dylib_source() {
 fix_rpaths() {
     local bin="$1"
     local newly_found=()
+    local imports
+    imports="$(python3 "$script_dir/macos_native_closure.py" imports "$bin")" \
+        || fail "Could not inspect dependencies in $bin"
 
     while IFS= read -r libpath; do
+        [[ -n "$libpath" ]] || continue
+        case "$libpath" in
+            /usr/lib/*|/System/Library/Frameworks/*|/System/Library/PrivateFrameworks/*) continue ;;
+        esac
         local basename
         basename="$(basename "$libpath")"
 
@@ -873,12 +886,12 @@ fix_rpaths() {
                 newly_found+=("${FRAMEWORKS_DIR}/${basename}")
             fi
             install_name_tool -change "$libpath" \
-                "@executable_path/../Frameworks/${basename}" "$bin" 2>/dev/null || true
+                "@executable_path/../Frameworks/${basename}" "$bin" \
+                || fail "Could not rewrite $libpath in $bin"
         else
-            warn "Could not resolve dylib source for $libpath referenced by $bin"
+            fail "Could not resolve dylib source for $libpath referenced by $bin"
         fi
-    done < <(otool -L "$bin" 2>/dev/null \
-        | awk '/\/opt\/homebrew|\/usr\/local|@rpath\/|@loader_path\// {print $1}')
+    done <<< "$imports"
 
     NEWLY_COPIED=("${newly_found[@]+"${newly_found[@]}"}")
 }
@@ -895,8 +908,8 @@ BIN="${APP_BUNDLE}/Contents/MacOS/${APP_NAME}-bin"
 for plugin in "${GST_PLUGIN_DEST}"/*.dylib; do
     [[ -f "$plugin" ]] || continue
     chmod u+w "$plugin"
-    install_name_tool -id "@rpath/$(basename "$plugin")" "$plugin" 2>/dev/null || true
-    install_name_tool -add_rpath "@loader_path/../../../Frameworks" "$plugin" 2>/dev/null || true
+    install_name_tool -id "@rpath/$(basename "$plugin")" "$plugin" \
+        || fail "Could not rewrite the install name of $plugin"
     SEED_BINARIES+=("$plugin")
 done
 
@@ -904,7 +917,8 @@ if [[ -d "$PIXBUF_LOADERS_DEST" ]]; then
     for loader in "${PIXBUF_LOADERS_DEST}"/*.so "${PIXBUF_LOADERS_DEST}"/*.dylib; do
         [[ -f "$loader" ]] || continue
         chmod u+w "$loader"
-        install_name_tool -id "@rpath/$(basename "$loader")" "$loader" 2>/dev/null || true
+        install_name_tool -id "@rpath/$(basename "$loader")" "$loader" \
+            || fail "Could not rewrite the install name of $loader"
         SEED_BINARIES+=("$loader")
     done
 fi
@@ -930,56 +944,12 @@ while [[ ${#QUEUE[@]} -gt 0 ]]; do
     QUEUE=("${NEXT_QUEUE[@]+"${NEXT_QUEUE[@]}"}")
     PASS=$((PASS + 1))
     if [[ $PASS -gt 40 ]]; then
-        warn "Dylib recursion exceeded 40 passes — stopping."
-        break
+        fail "Dylib recursion exceeded 40 passes."
     fi
-done
-
-info "Finalizing dylib install names and cross-references..."
-for dylib in "${FRAMEWORKS_DIR}"/*.dylib; do
-    [[ -f "$dylib" ]] || continue
-    chmod u+w "$dylib"
-    install_name_tool -id "@executable_path/../Frameworks/$(basename "$dylib")" "$dylib" 2>/dev/null || true
-    while IFS= read -r libpath; do
-        dep_base="$(basename "$libpath")"
-        if [[ -f "${FRAMEWORKS_DIR}/${dep_base}" ]]; then
-            install_name_tool -change "$libpath" "@executable_path/../Frameworks/${dep_base}" "$dylib" 2>/dev/null || true
-        fi
-    done < <(otool -L "$dylib" 2>/dev/null | awk '/\/opt\/homebrew|\/usr\/local|@rpath\/|@loader_path\// {print $1}')
 done
 
 TOTAL_DYLIBS=$(ls -1 "${FRAMEWORKS_DIR}"/*.dylib 2>/dev/null | wc -l | tr -d ' ')
 info "Bundled ${TOTAL_DYLIBS} dylibs into Frameworks/."
-
-info "Verifying bundled library closure..."
-missing_deps=0
-for bin_check in "$BIN" "$GST_SCANNER_DEST" "$PIXBUF_QUERY_DEST" "${GST_PLUGIN_DEST}"/*.dylib "${FRAMEWORKS_DIR}"/*.dylib; do
-    [[ -f "$bin_check" ]] || continue
-    own_id=$(otool -D "$bin_check" 2>/dev/null | tail -1 | tr -d ' ' || true)
-    while IFS= read -r dep; do
-        [[ -n "$dep" ]] || continue
-        if [[ -n "$own_id" && "$dep" == "$own_id" ]]; then
-            continue
-        fi
-        case "$dep" in
-            @executable_path/../Frameworks/*)
-                target="${FRAMEWORKS_DIR}/$(basename "$dep")"
-                if [[ ! -f "$target" ]]; then
-                    warn "Missing bundled dylib dependency: $dep referenced by $(basename "$bin_check")"
-                    missing_deps=$((missing_deps + 1))
-                fi
-                ;;
-            /opt/homebrew/*|/usr/local/*)
-                warn "Unpatched external dependency remains in $(basename "$bin_check"): $dep"
-                missing_deps=$((missing_deps + 1))
-                ;;
-        esac
-    done < <(otool -L "$bin_check" 2>/dev/null | awk 'NR > 1 {print $1}')
-done
-if [[ $missing_deps -gt 0 ]]; then
-    fail "Bundled dylib closure has $missing_deps unsatisfied or unpatched dependencies."
-fi
-info "Bundled dylib closure verified with 0 unpatched or missing references."
 
 rm -f "${RESOURCES_DIR}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
 rm -f "${APP_BUNDLE}/Contents/MacOS/gst-registry.bin"
@@ -992,7 +962,7 @@ fi
 info "macOS icon policy passed for $APP_BUNDLE."
 
 info "Validating package against macOS copy-control policy..."
-if ! macos_validate_bundle_copy_control "$APP_BUNDLE"; then
+if ! macos_validate_bundle_copy_control "$APP_BUNDLE" "$script_dir/macos_native_closure.py"; then
     fail "Application bundle failed macOS component policy: $MACOS_PACKAGE_POLICY_REASON"
 fi
 info "macOS component policy passed for $APP_BUNDLE."
@@ -1020,6 +990,9 @@ codesign --force --sign - "${BIN_DEST}"
 codesign --force --deep --sign - "$APP_BUNDLE"
 
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+if ! macos_validate_bundle_copy_control "$APP_BUNDLE" "$script_dir/macos_native_closure.py"; then
+    fail "Signed application bundle failed native closure policy: $MACOS_PACKAGE_POLICY_REASON"
+fi
 if ! macos_validate_app_icon_bundle "$APP_BUNDLE" "$BUNDLE_ID"; then
     fail "Signed application bundle failed macOS icon policy: $MACOS_ICON_POLICY_REASON"
 fi
@@ -1028,8 +1001,8 @@ info "Code signature verified before runtime probe."
 # ── Relocated Read-Only Runtime Probe ────────────────────────────────────────
 PROBE_PARENT="dist/Balun Runtime Probe With Spaces"
 PROBE_APP="${PROBE_PARENT}/${APP_NAME}.app"
-PROBE_CACHE="$(mktemp -d "${TMPDIR:-/tmp}/Balun Runtime Cache With Spaces.XXXXXX")"
-PROBE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/Balun Runtime Home With Spaces.XXXXXX")"
+PROBE_CACHE="$(mktemp -d "${TMPDIR:-/var/tmp}/Balun Runtime Cache With Spaces.XXXXXX")"
+PROBE_HOME="$(mktemp -d "${TMPDIR:-/var/tmp}/Balun Runtime Home With Spaces.XXXXXX")"
 cleanup_probe() {
     chmod -R u+w "$PROBE_PARENT" 2>/dev/null || true
     rm -rf "$PROBE_PARENT" "$PROBE_CACHE" "$PROBE_HOME"
@@ -1064,6 +1037,8 @@ ALL_PROXY="socks5://127.0.0.1:9" \
 NO_PROXY="invalid.example" \
 GIO_EXTRA_MODULES="$PROBE_CACHE/hostile-gio-modules" \
 GIO_USE_PROXY_RESOLVER="dummy" \
+    /usr/bin/sandbox-exec -D "BUILD_PREFIX=$BREW_PREFIX" \
+    -f "$repository_root/build-aux/macos-runtime-probe.sb" \
     "$PROBE_APP/Contents/MacOS/${APP_NAME}" \
     --balun-platform-runtime-probe "$PROBE_CACHE"
 
@@ -1095,6 +1070,9 @@ if [[ -e "$PROBE_APP/Contents/MacOS/gst-registry.bin" \
 fi
 codesign --verify --deep --strict --verbose=2 "$PROBE_APP"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+if ! macos_validate_bundle_copy_control "$APP_BUNDLE" "$script_dir/macos_native_closure.py"; then
+    fail "Final application bundle failed native closure policy: $MACOS_PACKAGE_POLICY_REASON"
+fi
 info "Signed runtime probe and final signature verification passed."
 trap - EXIT
 cleanup_probe
@@ -1118,7 +1096,7 @@ if $make_dmg; then
     hdiutil verify "$DMG_PATH" >/dev/null \
         || fail "hdiutil could not verify the created DMG"
 
-    DMG_MOUNT="$(mktemp -d "${TMPDIR:-/tmp}/Balun DMG Mount With Spaces.XXXXXX")"
+    DMG_MOUNT="$(mktemp -d "${TMPDIR:-/var/tmp}/Balun DMG Mount With Spaces.XXXXXX")"
     DMG_ATTACHED=false
     cleanup_dmg() {
         if $DMG_ATTACHED; then
@@ -1134,7 +1112,7 @@ if $make_dmg; then
     MOUNTED_APP="$DMG_MOUNT/${APP_NAME}.app"
     [ -d "$MOUNTED_APP" ] \
         || fail "mounted DMG does not contain ${APP_NAME}.app"
-    if ! macos_validate_bundle_copy_control "$MOUNTED_APP"; then
+    if ! macos_validate_bundle_copy_control "$MOUNTED_APP" "$script_dir/macos_native_closure.py"; then
         fail "DMG app failed macOS component policy: $MACOS_PACKAGE_POLICY_REASON"
     fi
     if ! macos_validate_app_icon_bundle "$MOUNTED_APP" "$BUNDLE_ID"; then

@@ -62,6 +62,43 @@ blocked past timeout, checks 100 rejected submissions, closes the controller,
 and starts a replacement that still observes the occupied slot, without a
 discovery service call. Normal address filtering and the four-address cap remain.
 
+### 2026-09-17 macOS native closure (H0.4)
+
+[Issue #86](https://github.com/jm2/balun/issues/86) reproduced a dependency under
+an arbitrary external prefix that the old final check silently accepted.
+`scripts/macos_native_closure.py` now reads bounded Mach-O headers and every
+architecture's load commands. It enumerates all regular native members, including
+scanner/query helpers, frameworks, and dynamically loaded GStreamer/pixbuf modules.
+The completed-tree component gate brackets closure inspection with its existing
+content manifests, so changes during inspection invalidate the result.
+
+Every non-system dependency must resolve to a compatible native slice inside the
+canonical app root. Loader and executable tokens use their owning contexts;
+run paths include the importing chain, and an external run-path candidate rejects
+the package even if a later bundled candidate exists. Dynamic modules must work
+under every compatible packaged executable context. Absolute non-system install
+names, bare relative names, missing dependencies, symlink escapes, malformed
+headers, and dyld environment overrides fail closed. Weak dependencies receive
+the same closure requirement. Only normalized `/usr/lib/`,
+`/System/Library/Frameworks/`, and `/System/Library/PrivateFrameworks/` install
+names may remain external: Apple supplies these from the OS, including its shared
+cache. This policy does not assert their availability on every older OS version.
+
+The packager extracts complete import strings, including spaces, and stops on
+failed copies/rewrites or an exhausted traversal. It repeats completed-tree and
+closure validation after ad-hoc signing, after the runtime probe, and on the
+read-only reopened DMG. The existing relocated playback probe now uses a checked-in
+`sandbox-exec` profile denying reads from the actual Homebrew prefix and both
+standard Homebrew roots. This is packaging evidence, not a decoder sandbox or new
+signing/provenance policy.
+
+Portable fixtures cover malformed headers, hidden fat slices, loader/run-path
+resolution, pixbuf imports, path escapes, architecture mismatch, and valid
+transitive closure. The native CI fixture compiles real Mach-O files, reproduces
+external/missing/pixbuf dependencies, proves the probe profile denies the vendor
+library, and launches the valid bundled case after deleting that external library.
+Physical packaged-tuner acceptance remains P4.1; archive containment remains H2.4.
+
 ### Historical review summary
 
 H0.2 / [#88](https://github.com/jm2/balun/issues/88) also has a targeted

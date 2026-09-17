@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- macOS package validation now rejects external, unresolved, or escaping native dependencies
+  in every Mach-O member and architecture, including pixbuf loaders, after signing and
+  reopening the DMG. The relocated runtime probe cannot read Homebrew's libraries.
 - Slow or stuck hostname lookups no longer hold window close open. Outstanding
   lookups are capped across timeouts and restarts of the controller; busy resolution
   offers direct IP entry or a later retry.
