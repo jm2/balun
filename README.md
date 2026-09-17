@@ -94,6 +94,9 @@ The product plan is [`docs/plan-v0.1.md`](docs/plan-v0.1.md), the countable ledg
 └──────────────────────────────┴──────────────────────────────┘
 ```
 
+Source admission, rejection, and retirement share ownership of the stream workers. Rejection
+cancels an overlapping startup while retaining those workers for the normal teardown join.
+
 The GTK layer only ever sees stable device and channel identities plus immutable, URL-free
 snapshots published by one controller thread. Stream URLs stay inside the controller and the
 playback library.

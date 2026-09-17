@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent source rejection now cancels a transport that is still being published,
+  zeroizes pending handoffs, and retains all workers for the normal teardown join.
+
 - Settings now use a pinned private profile, no-follow file admission, a cooperative
   transaction lock, and schema revalidation before replacement. Loading and close-time
   saving wait at most two seconds on one worker with a bounded latest-save queue;
