@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Routed discovery rechecks approval, deadline, and the interface pin after socket
+  readiness, including retries, so a pending send cannot bypass revocation.
 - macOS builds no longer require Homebrew's unavailable FDK AAC plugin; the bundled
   libav, FAAD, and AudioToolbox decoders continue to provide AAC support.
 - Restore the Rust minimum-version CI check and prevent patch-only compiler-floor drift.

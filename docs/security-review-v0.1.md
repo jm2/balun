@@ -12,6 +12,28 @@ Contracts audited: [`plan-v0.1.md`](plan-v0.1.md) §5-§8,
 checked in. The default and `desktop` test suites, strict Clippy, and
 `cargo audit` pass with the fixes applied; the live-hardware tests were not run.
 
+## 2026-09-17 routed-send correction (H0.1)
+
+The historical pre-send proof below did not cover an asynchronous send waiting
+for write readiness. [Issue #85](https://github.com/jm2/balun/issues/85) identified
+that gap. The pinned sender now waits for readiness, rechecks current authority
+(including cancellation/epoch invalidation and the deadline) and both kernel
+pin views, then attempts a synchronous nonblocking send without another await.
+Every `WouldBlock` retry repeats the same checks. This closes the pending-send
+gap without relying on cancellation-select ordering or changing packet budgets.
+
+Deterministic Linux regressions in `src/discovery/routed/linux.rs` cover a
+pending request cancelled, invalidated, or expired before readiness; a failed
+kernel pin readback; revocation after `WouldBlock`; and a valid retry sending
+exactly one datagram. The receiver reads the kernel directly to verify that
+refused attempts produce no packet. Existing monitored-runner tests retain
+reservation completion, invalidation, and cancellation coverage.
+
+This is a targeted correction, not H3.4's refreshed audit. The historical
+summary and findings below describe their reviewed revisions; the other open
+findings in [the adopted review](review-and-backlog-proposal-2026-09.md) remain
+tracked in [the active ledger](task.md).
+
 ## Summary
 
 | Area | Result | Section |

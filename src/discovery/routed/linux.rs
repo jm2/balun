@@ -100,6 +100,29 @@ impl PinnedProbeSocket {
         )
         .map_err(PinnedSendRefusal::Pin)
     }
+
+    /// Readiness is only a hint: a nonblocking attempt may still return
+    /// `WouldBlock`. Each retry must cross the authority and pin boundary
+    /// again, with no await between verification and the actual send.
+    async fn send_when_writable<W, F, S>(
+        &self,
+        mut writable: W,
+        mut try_send: S,
+    ) -> io::Result<usize>
+    where
+        W: FnMut() -> F,
+        F: Future<Output = io::Result<()>>,
+        S: FnMut() -> io::Result<usize>,
+    {
+        loop {
+            writable().await?;
+            self.verify_before_send().map_err(io::Error::other)?;
+            match try_send() {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+                result => return result,
+            }
+        }
+    }
 }
 
 impl fmt::Debug for PinnedProbeSocket {
@@ -110,8 +133,11 @@ impl fmt::Debug for PinnedProbeSocket {
 
 impl ProbeSocket for PinnedProbeSocket {
     async fn send_to(&self, buffer: &[u8], target: SocketAddr) -> io::Result<usize> {
-        self.verify_before_send().map_err(io::Error::other)?;
-        self.socket.send_to(buffer, target).await
+        self.send_when_writable(
+            || self.socket.writable(),
+            || self.socket.try_send_to(buffer, target),
+        )
+        .await
     }
 
     fn recv_from(
@@ -329,11 +355,15 @@ fn verify_interface_pin<O: PinnedUdpSocketOps>(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::os::fd::{AsFd, AsRawFd};
-    #[cfg(feature = "desktop")]
+    use std::pin::pin;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::task::{Context, Poll, Waker};
+    use std::time::{Duration, Instant};
 
-    #[cfg(feature = "desktop")]
+    use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -344,11 +374,188 @@ mod tests {
     #[cfg(feature = "desktop")]
     use crate::hdhr::fake_device::FakeHdhrDevice;
 
-    #[cfg(feature = "desktop")]
     fn loopback_interface_id() -> InterfaceId {
         let text = std::fs::read_to_string("/sys/class/net/lo/ifindex")
             .expect("Linux exposes the loopback interface index");
         InterfaceId::new(text.trim().parse().expect("numeric loopback index"))
+    }
+
+    fn loopback_probe_socket(authority: PreSendAuthority) -> PinnedProbeSocket {
+        open_pinned_routed_udp_socket(loopback_interface_id(), "lo")
+            .expect("pin the owned loopback test socket")
+            .into_probe_socket(authority)
+            .expect("register the pinned socket")
+    }
+
+    fn loopback_receiver() -> StdUdpSocket {
+        let receiver = StdUdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        receiver.set_nonblocking(true).unwrap();
+        receiver
+    }
+
+    fn assert_no_datagram(receiver: &StdUdpSocket) {
+        // Read the kernel directly, without Tokio's cached readiness, so a
+        // first-poll WouldBlock cannot hide an incorrectly transmitted packet.
+        let error = receiver.recv_from(&mut [0; 64]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+    }
+
+    #[tokio::test]
+    async fn pending_send_rechecks_cancellation_epoch_and_deadline_after_readiness() {
+        for reason in ["request", "epoch", "deadline"] {
+            let request = CancellationToken::new();
+            let epoch = CancellationToken::new();
+            let deadline = Arc::new(Mutex::new(Instant::now() + Duration::from_secs(60)));
+            let socket = loopback_probe_socket({
+                let request = request.clone();
+                let epoch = epoch.clone();
+                let deadline = Arc::clone(&deadline);
+                Arc::new(move || {
+                    !request.is_cancelled()
+                        && !epoch.is_cancelled()
+                        && Instant::now() < *deadline.lock().unwrap()
+                })
+            });
+            let receiver = loopback_receiver();
+            let target = receiver.local_addr().unwrap();
+            let ready = Notify::new();
+            let attempts = Cell::new(0);
+            let mut send = pin!(socket.send_when_writable(
+                || async {
+                    socket.socket.writable().await?;
+                    ready.notified().await;
+                    Ok(())
+                },
+                || {
+                    attempts.set(attempts.get() + 1);
+                    socket.socket.try_send_to(b"probe", target)
+                },
+            ));
+            assert!(matches!(
+                send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Pending
+            ));
+            match reason {
+                "request" => request.cancel(),
+                "epoch" => epoch.cancel(),
+                "deadline" => *deadline.lock().unwrap() = Instant::now(),
+                _ => unreachable!(),
+            }
+            ready.notify_one();
+            let error = send.await.unwrap_err();
+            assert_eq!(
+                error.get_ref().unwrap().downcast_ref::<PinnedSendRefusal>(),
+                Some(&PinnedSendRefusal::AuthorityLost),
+                "{reason}"
+            );
+            assert_eq!(attempts.get(), 0, "{reason}");
+            assert_no_datagram(&receiver);
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_send_rechecks_kernel_pin_after_readiness() {
+        let mut socket = loopback_probe_socket(Arc::new(|| true));
+        // Make the expected pin disagree with the real kernel readback.
+        // Unbinding an already pinned socket requires CAP_NET_RAW, which
+        // ordinary developer and CI runs deliberately do not require.
+        socket.interface_name = b"wrong-pin".to_vec();
+        let receiver = loopback_receiver();
+        let ready = Notify::new();
+        let mut send = pin!(socket.send_when_writable(
+            || async {
+                socket.socket.writable().await?;
+                ready.notified().await;
+                Ok(())
+            },
+            || {
+                socket
+                    .socket
+                    .try_send_to(b"probe", receiver.local_addr().unwrap())
+            },
+        ));
+        assert!(matches!(
+            send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        ready.notify_one();
+        let error = send.await.unwrap_err();
+        assert!(matches!(
+            error.get_ref().unwrap().downcast_ref::<PinnedSendRefusal>(),
+            Some(PinnedSendRefusal::Pin(_))
+        ));
+        assert_no_datagram(&receiver);
+    }
+
+    #[tokio::test]
+    async fn would_block_retry_rechecks_authority() {
+        let live = Arc::new(AtomicBool::new(true));
+        let socket = loopback_probe_socket({
+            let live = Arc::clone(&live);
+            Arc::new(move || live.load(Ordering::SeqCst))
+        });
+        let receiver = loopback_receiver();
+        let attempts = Cell::new(0);
+        let error = socket
+            .send_when_writable(
+                || socket.socket.writable(),
+                || {
+                    attempts.set(attempts.get() + 1);
+                    if attempts.get() == 1 {
+                        live.store(false, Ordering::SeqCst);
+                        Err(io::ErrorKind::WouldBlock.into())
+                    } else {
+                        socket
+                            .socket
+                            .try_send_to(b"probe", receiver.local_addr().unwrap())
+                    }
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(attempts.get(), 1);
+        assert_eq!(
+            error.get_ref().unwrap().downcast_ref::<PinnedSendRefusal>(),
+            Some(&PinnedSendRefusal::AuthorityLost)
+        );
+        assert_no_datagram(&receiver);
+    }
+
+    #[tokio::test]
+    async fn would_block_retry_sends_once_while_authority_and_pin_remain_valid() {
+        let checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let socket = loopback_probe_socket({
+            let checks = Arc::clone(&checks);
+            Arc::new(move || {
+                checks.fetch_add(1, Ordering::SeqCst);
+                true
+            })
+        });
+        let receiver = loopback_receiver();
+        let attempts = Cell::new(0);
+        let sent = socket
+            .send_when_writable(
+                || socket.socket.writable(),
+                || {
+                    attempts.set(attempts.get() + 1);
+                    if attempts.get() == 1 {
+                        Err(io::ErrorKind::WouldBlock.into())
+                    } else {
+                        socket
+                            .socket
+                            .try_send_to(b"probe", receiver.local_addr().unwrap())
+                    }
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(sent, 5);
+        assert_eq!(attempts.get(), 2);
+        assert_eq!(checks.load(Ordering::SeqCst), 2);
+        let mut bytes = [0; 64];
+        let (length, _) = receiver.recv_from(&mut bytes).unwrap();
+        assert_eq!(&bytes[..length], b"probe");
+        assert_no_datagram(&receiver);
     }
 
     #[cfg(feature = "desktop")]
