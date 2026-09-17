@@ -808,6 +808,13 @@ PLIST
 # ── Dylib BFS and Rpath Rewriting ───────────────────────────────────────────
 info "Bundling dylibs and rewriting rpaths via BFS..."
 
+canonical_runtime_probe_prefix() {
+    # Seatbelt matches resolved filesystem paths, including /var -> /private/var.
+    # A nonexistent prefix must fail rather than leave an ineffective deny rule.
+    [[ -d "$1" ]] || return 1
+    (cd -- "$1" && pwd -P)
+}
+
 rewrite_dylib_id() {
     local bin="$1" install_id="$2" kind
     kind="$(python3 "$script_dir/macos_native_closure.py" kind "$bin")" \
@@ -1023,6 +1030,8 @@ ditto "$APP_BUNDLE" "$PROBE_APP"
 chmod -R a-w "$PROBE_APP"
 
 info "Running relocated read-only runtime probe loopback..."
+PROBE_BUILD_PREFIX="$(canonical_runtime_probe_prefix "$BREW_PREFIX")" \
+    || fail 'Could not resolve the runtime-probe build prefix.'
 HOME="$PROBE_HOME" \
 GST_REGISTRY="$PROBE_CACHE/hostile-registry.bin" \
 GST_REGISTRY_1_0="$PROBE_CACHE/hostile-registry-v1.bin" \
@@ -1046,7 +1055,7 @@ ALL_PROXY="socks5://127.0.0.1:9" \
 NO_PROXY="invalid.example" \
 GIO_EXTRA_MODULES="$PROBE_CACHE/hostile-gio-modules" \
 GIO_USE_PROXY_RESOLVER="dummy" \
-    /usr/bin/sandbox-exec -D "BUILD_PREFIX=$BREW_PREFIX" \
+    /usr/bin/sandbox-exec -D "BUILD_PREFIX=$PROBE_BUILD_PREFIX" \
     -f "$repository_root/build-aux/macos-runtime-probe.sb" \
     "$PROBE_APP/Contents/MacOS/${APP_NAME}" \
     --balun-platform-runtime-probe "$PROBE_CACHE"
