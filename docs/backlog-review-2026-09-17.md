@@ -1,5 +1,9 @@
 # Backlog reassessment — 2026-09-17
 
+Historical assessment of `main` at `068778b`, with the later CI repair recorded
+below. Counts, defect descriptions, and pending decisions describe that snapshot;
+the [current ledger](task.md) supersedes this assessment for implementation status.
+
 ## Decision
 
 Retain all 58 outcomes in [the ledger](task.md), with 29 complete. The five H0
