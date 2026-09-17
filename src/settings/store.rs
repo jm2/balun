@@ -693,17 +693,33 @@ mod tests {
     }
 
     #[cfg(windows)]
+    fn assert_windows_sharing_denial(error: io::Error) {
+        use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION};
+
+        // Rust does not necessarily map ERROR_SHARING_VIOLATION to
+        // PermissionDenied. Check the native denial, then prove release below.
+        assert!(
+            matches!(
+                error
+                    .raw_os_error()
+                    .and_then(|code| u32::try_from(code).ok()),
+                Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION)
+            ),
+            "unexpected sharing error: {error}"
+        );
+    }
+
+    #[cfg(windows)]
     #[test]
     fn a_held_lock_cannot_be_removed_or_replaced() {
         let (_root, store) = store();
         let lock = store.profile().unwrap().lock().unwrap();
-        assert_eq!(
-            fs::remove_file(store.directory().join(LOCK_NAME))
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::PermissionDenied
+        assert_windows_sharing_denial(
+            fs::remove_file(store.directory().join(LOCK_NAME)).unwrap_err(),
         );
         store.profile().unwrap().check_lock(&lock).unwrap();
+        drop(lock);
+        fs::remove_file(store.directory().join(LOCK_NAME)).unwrap();
     }
 
     #[cfg(windows)]
@@ -794,8 +810,11 @@ mod tests {
                 // handles are retained. This is also an admitted safe outcome.
                 #[cfg(windows)]
                 {
-                    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+                    assert_windows_sharing_denial(error);
                     store.save(&Settings::default()).unwrap();
+                    let directory = store.directory().to_path_buf();
+                    drop(store);
+                    fs::rename(directory, moved).unwrap();
                 }
                 #[cfg(not(windows))]
                 panic!("profile rename failed unexpectedly: {error}");
