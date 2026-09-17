@@ -2,6 +2,7 @@
 """Independent filesystem observation with synthetic, never-executed payloads."""
 
 import copy
+from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -52,6 +54,32 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(result["artifact"]["sha256"], hashlib.sha256(self.artifact.read_bytes()).hexdigest())
         self.assertEqual(result["artifact"]["size"], self.artifact.stat().st_size)
         self.assertEqual(result, self.observe())
+
+    def test_incomplete_windows_directory_cache_cannot_replace_file_identity(self):
+        expected = self.observe()
+        original_scandir = os.scandir
+
+        class CachedEntry:
+            def __init__(self, entry):
+                self.name, self.path = entry.name, entry.path
+                metadata = entry.stat(follow_symlinks=False)
+                self.metadata = SimpleNamespace(**{key: getattr(metadata, key) for key in dir(metadata)
+                                                   if key.startswith("st_")})
+                self.metadata.st_ino = self.metadata.st_dev = self.metadata.st_nlink = 0
+
+            def stat(self, *, follow_symlinks):
+                return self.metadata
+
+        @contextmanager
+        def windows_cached_entries(path):
+            with original_scandir(path) as entries:
+                yield [CachedEntry(entry) for entry in entries]
+
+        with patch.object(observer.os, "scandir", windows_cached_entries):
+            self.assertEqual(self.observe(), expected)
+            os.link(self.native, self.tree / "hard-link")
+            with self.assertRaisesRegex(inventory.Invalid, "hard-linked"):
+                self.observe()
 
     def test_observed_manifest_joins_real_file_bytes_to_separate_ownership_records(self):
         observed = self.observe()

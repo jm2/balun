@@ -39,7 +39,7 @@ jobs:
           printf 'BALUN_ADVERSARIAL_FAILURE_DIR=%s/adversarial-counterexamples\n' \
             "$RUNNER_TEMP" >> "$GITHUB_ENV"
           python3 --version
-          pwsh -NoProfile -Command '$PSVersionTable | Format-Table'
+          pwsh --version
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master

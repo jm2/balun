@@ -33,7 +33,7 @@ jobs:
             "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
           printf 'XDG_CACHE_HOME=%s/tool-cache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
           python3 --version
-          pwsh -NoProfile -Command '$PSVersionTable | Format-Table'
+          pwsh --version
 
       - name: Test pinned release component policy
         run: build-aux/packaging/test-release-component-policy.sh
