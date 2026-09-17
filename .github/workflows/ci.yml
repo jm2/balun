@@ -21,10 +21,19 @@ jobs:
   quality:
     name: Linux quality
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Prepare adversarial replay environment
+        run: |
+          printf 'TMPDIR=%s\nBALUN_ADVERSARIAL_FAILURE_DIR=%s/adversarial-counterexamples\n' \
+            "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'XDG_CACHE_HOME=%s/tool-cache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          python3 --version
+          pwsh -NoProfile -Command '$PSVersionTable | Format-Table'
 
       - name: Test pinned release component policy
         run: build-aux/packaging/test-release-component-policy.sh
@@ -46,6 +55,41 @@ jobs:
 
       - name: Test macOS package policy scaffolding
         run: scripts/test-macos-package-policy.sh
+
+      - name: Test macOS native dependency closure
+        run: python3 -B scripts/test_macos_native_closure.py
+
+      - name: Adversarial package metadata smoke
+        run: |
+          python3 -B scripts/test_adversarial_packages.py
+          pwsh -NoProfile -File scripts/test-adversarial-installer.ps1
+
+      - name: Install pinned portable coverage tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/package-coverage-python"
+          "$RUNNER_TEMP/package-coverage-python/bin/pip" install -r scripts/coverage/requirements.txt
+
+      - name: Install pinned PowerShell coverage profiler
+        shell: pwsh
+        run: >-
+          Save-Module -Name Pester -RequiredVersion 6.2.0 -Repository PSGallery
+          -Path "$env:RUNNER_TEMP/coverage-modules" -Force -ErrorAction Stop
+
+      - name: Measure and ratchet portable package gates
+        run: |
+          python3 -B -m unittest discover -s scripts/coverage -p 'test_*.py'
+          "$RUNNER_TEMP/package-coverage-python/bin/python" -B scripts/coverage/run-packages.py \
+            --output "$RUNNER_TEMP/package-coverage" \
+            --pester-module "$RUNNER_TEMP/coverage-modules/Pester/6.2.0/Pester.psd1"
+
+      - name: Retain portable package coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: critical-coverage-packages
+          path: ${{ runner.temp }}/package-coverage/*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Test packaged-hardware output privacy
         run: scripts/test-hardware-validation-privacy.sh
@@ -80,6 +124,15 @@ jobs:
 
       - name: Test (release)
         run: cargo test --release --all-targets --locked
+
+      - name: Retain synthetic counterexample replay records
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: adversarial-smoke-counterexamples
+          path: ${{ runner.temp }}/adversarial-counterexamples/*.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
   desktop-metadata:
     name: Desktop metadata
@@ -325,7 +378,7 @@ jobs:
           dnf install -y binutils dbus-daemon gcc gstreamer1-devel
           gstreamer1-plugin-gtk4 gstreamer1-plugin-libav gstreamer1-plugins-bad-free
           gstreamer1-plugins-base gstreamer1-plugins-good gtk4-devel libadwaita-devel
-          pkgconf-pkg-config git curl wayland-utils weston
+          pkgconf-pkg-config git curl python3 wayland-utils weston
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -345,6 +398,25 @@ jobs:
 
       - name: Test desktop bridge
         run: cargo test --locked --features desktop --all-targets
+
+      - name: Install the fixed coverage compiler and matching LLVM tools
+        run: rustup toolchain install 1.98.0 --profile minimal --component llvm-tools-preview
+
+      - name: Measure and ratchet critical Rust regions
+        env:
+          RUSTUP_TOOLCHAIN: 1.98.0
+        run: |
+          export TMPDIR="$RUNNER_TEMP"
+          python3 -B scripts/coverage/run-rust.py --output "$RUNNER_TEMP/rust-coverage"
+
+      - name: Retain critical Rust coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: critical-coverage-rust
+          path: ${{ runner.temp }}/rust-coverage/*
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Probe installed playback runtime through helper
         run: scripts/build-linux.sh --probe-playback
@@ -408,6 +480,10 @@ jobs:
         if: runner.os == 'macOS'
         run: /bin/bash scripts/test-build-macos-policy.sh
 
+      - name: Test real Mach-O dependency closure and isolated launch
+        if: runner.os == 'macOS'
+        run: python3 -B scripts/test_macos_native_closure.py
+
       - name: Test packaged-hardware output privacy with system Bash
         if: runner.os == 'macOS'
         run: /bin/bash scripts/test-hardware-validation-privacy.sh
@@ -416,6 +492,21 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test-build-windows-routing.ps1
+
+      - name: Test complete-tree Windows probe receipts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-probe-receipt.ps1
+
+      - name: Test checksum-pinned Windows component policy
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-component-policy.ps1
+
+      - name: Test Windows installer payload preflight
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-installer-policy.ps1
 
       - name: Install macOS desktop build dependencies
         if: runner.os == 'macOS'
@@ -480,6 +571,14 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test --lib --locked
 
+      - name: Test desktop and isolated native-failure boundaries on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+          TMPDIR: ${{ runner.temp }}
+        run: ./scripts/build-windows.ps1 -Test
+
       - name: Build and inspect macOS diagnostic through helper
         if: runner.os == 'macOS'
         run: /bin/bash scripts/build-macos.sh --diagnostic
@@ -522,11 +621,38 @@ jobs:
           MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: ./scripts/build-windows.ps1 -Zip -NoCargoBuild
 
-      - name: Upload the Windows ZIP
+      - name: Reject a changed native DLL after the successful packaged probe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          ./scripts/test-windows-probe-receipt.ps1
+          -StagedRoot dist/balun-windows -Profile '${{ matrix.windows_arch }}'
+
+      - name: Install the bounded installer inspection tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = Join-Path $env:RUNNER_TEMP 'balun-inno-compiler'
+          ./build-aux/inno/install-compiler.ps1 -Destination $compiler
+          "BALUN_ISCC=$(Join-Path $compiler 'ISCC.exe')" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          $inspector = Join-Path $env:RUNNER_TEMP 'balun-inno-inspector'
+          ./build-aux/inno/install-inspector.ps1 -Destination $inspector
+          "BALUN_INNOEXTRACT_DIR=$inspector" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Compile and independently inspect the Windows installer payload
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: ./scripts/build-windows.ps1 -InnoSetup -SkipBundle -NoCargoBuild
+
+      - name: Upload the Windows candidates
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: balun-windows-${{ matrix.windows_arch }}
-          path: dist/balun-windows.zip
+          path: |
+            dist/balun-windows.zip
+            dist/balun-setup.exe
           if-no-files-found: error
           retention-days: 7

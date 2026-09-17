@@ -21,6 +21,11 @@
 //! directory-only watch after the baseline. Production wiring must retain the
 //! sibling watcher for the full authority epoch; hostile same-UID actors and
 //! privileged namespace replacement remain outside this cooperative boundary.
+//!
+//! The fingerprint key is an anti-correlation salt for a state file copied
+//! without its sibling key. It is not encryption or authentication against an
+//! actor who can read or replace this private directory. Possessing both files
+//! permits candidate-topology guessing; neither file belongs in diagnostics.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -558,8 +563,10 @@ pub(crate) enum QuarantineReason {
     StateUnreadable,
     #[error("the approval state exceeds the byte limit")]
     StateTooLarge,
-    #[error("the approval state is malformed, unsupported, or semantically invalid")]
+    #[error("the approval state is malformed or semantically invalid")]
     InvalidState,
+    #[error("the approval state uses a newer schema and has been preserved")]
+    UnsupportedSchema,
     #[error("the key is missing while approval state exists")]
     MissingKey,
     #[error("the approval state is missing while an initialized key exists")]
@@ -1273,6 +1280,13 @@ impl ApprovalStore {
                 QuarantineReason::UnsafeStatePermissions,
             ));
         }
+        let header: StoredSchemaHeader = match serde_json::from_slice(&bytes) {
+            Ok(header) => header,
+            Err(_) => return Ok(StateLoad::Quarantined(QuarantineReason::InvalidState)),
+        };
+        if header.schema_version > STATE_SCHEMA_VERSION {
+            return Ok(StateLoad::Quarantined(QuarantineReason::UnsupportedSchema));
+        }
         let stored: StoredEnvelopeV1 = match serde_json::from_slice(&bytes) {
             Ok(stored) => stored,
             Err(_) => return Ok(StateLoad::Quarantined(QuarantineReason::InvalidState)),
@@ -1892,6 +1906,13 @@ impl ApprovalLedger {
     }
 }
 
+// Inspect only the version before selecting the strict shape. A future
+// schema can introduce fields that the current envelope deliberately rejects.
+#[derive(Deserialize)]
+struct StoredSchemaHeader {
+    schema_version: u32,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct StoredEnvelopeV1 {
@@ -2505,13 +2526,40 @@ mod tests {
     }
 
     #[test]
-    fn unknown_duplicate_malformed_and_future_json_are_quarantined_in_place() {
+    fn newer_schema_is_distinct_and_preserved_even_with_a_new_shape() {
+        let (_temporary, store, _backend) = test_store();
+        initialize_key(&store);
+        for bytes in [
+            br#"{"schema_version":2,"last_issued_run_id":null,"approvals":[]}"#.as_slice(),
+            br#"{"schema_version":99,"future_structure":{"private":"DO_NOT_ECHO"}}"#,
+        ] {
+            write_private(&store.paths.state(), bytes);
+            assert_quarantined(&store, QuarantineReason::UnsupportedSchema);
+            assert_eq!(read(&store.paths.state()), bytes);
+            assert!(
+                !QuarantineReason::UnsupportedSchema
+                    .to_string()
+                    .contains("DO_NOT_ECHO")
+            );
+        }
+        for bytes in [
+            br#"{"schema_version":0,"last_issued_run_id":null,"approvals":[]}"#.as_slice(),
+            br#"{"schema_version":99,"schema_version":1}"#,
+            br#"{"schema_version":99,"future_structure":[}"#,
+        ] {
+            write_private(&store.paths.state(), bytes);
+            assert_quarantined(&store, QuarantineReason::InvalidState);
+            assert_eq!(read(&store.paths.state()), bytes);
+        }
+    }
+
+    #[test]
+    fn unknown_duplicate_and_malformed_json_are_quarantined_in_place() {
         let (_temporary, store, _backend) = test_store();
         initialize_key(&store);
         let cases: &[&[u8]] = &[
             br#"{"schema_version":1,"last_issued_run_id":null,"approvals":[],"extra":true}"#,
             br#"{"schema_version":1,"schema_version":1,"last_issued_run_id":null,"approvals":[]}"#,
-            br#"{"schema_version":2,"last_issued_run_id":null,"approvals":[]}"#,
             br#"{"schema_version":1,"last_issued_run_id":null,"approvals":[]"#,
         ];
         for bytes in cases {

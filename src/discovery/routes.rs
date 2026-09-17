@@ -568,6 +568,64 @@ fn wholly_rfc1918(network: Ipv4Net) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn adversarial_route_permutations_exclusions_and_budgets() {
+        crate::adversarial::run("route-budgets", |random| {
+            let address = Ipv4Addr::new(172, 20, random.next().to_le_bytes()[0], 0);
+            let prefix = 24 + u8::try_from(random.index(9)).unwrap();
+            let network = Ipv4Net::new(address, prefix).unwrap();
+            let tunnel = interface(7, InterfaceKind::Tunnel, true, &["10.255.0.2/32"]);
+            let broad = NetworkRoute::effective(
+                IpNet::V4(network),
+                Some(id(7)),
+                RouteKind::Unicast,
+                RouteScope::OnLink,
+            );
+            let snapshot = RouteSnapshot::from_effective_routes(vec![tunnel.clone()], vec![broad]);
+            let admitted = select_route_candidates(&snapshot, &[]).unwrap();
+            assert_eq!(
+                candidate_addresses(&admitted),
+                network.hosts().collect::<Vec<_>>()
+            );
+            assert!(admitted.len() <= MAX_ROUTED_CANDIDATES);
+
+            let blocked = admitted[random.index(admitted.len())].address();
+            let exclusion = NetworkRoute::effective(
+                IpNet::V4(Ipv4Net::new(blocked, 32).unwrap()),
+                None,
+                RouteKind::Other,
+                RouteScope::Other,
+            );
+            let routes = [broad, exclusion];
+            let mut expected = candidate_addresses(&admitted);
+            expected.retain(|address| *address != blocked);
+            for order in [vec![routes[0], routes[1]], vec![routes[1], routes[0]]] {
+                let snapshot = RouteSnapshot::from_effective_routes(vec![tunnel.clone()], order);
+                assert_eq!(
+                    candidate_addresses(&select_route_candidates(&snapshot, &[]).unwrap()),
+                    expected
+                );
+            }
+            let down = interface(7, InterfaceKind::Tunnel, false, &["10.255.0.2/32"]);
+            let snapshot = RouteSnapshot::from_effective_routes(vec![down], routes.to_vec());
+            assert!(select_route_candidates(&snapshot, &[]).unwrap().is_empty());
+
+            // Many individually valid ranges must still respect the aggregate cap.
+            let ranges: Vec<_> = (0..2 + random.index(4))
+                .map(|index| {
+                    IpNet::V4(
+                        Ipv4Net::new(Ipv4Addr::new(10, 30, u8::try_from(index).unwrap(), 0), 24)
+                            .unwrap(),
+                    )
+                })
+                .collect();
+            assert!(matches!(
+                select_route_candidates(&RouteSnapshot::default(), &ranges),
+                Err(RouteCandidateError::TooManyCandidates { .. })
+            ));
+        });
+    }
+
     #[derive(Clone, Debug)]
     struct FakeRouteProvider {
         snapshot: RouteSnapshot,

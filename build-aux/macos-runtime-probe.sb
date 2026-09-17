@@ -1,0 +1,8 @@
+;; This is a packaging test, not the application's runtime security boundary.
+;; The app and helpers must run using the staged libraries and Apple runtime.
+(version 1)
+(allow default)
+(deny file-read*
+    (subpath "/opt/homebrew")
+    (subpath "/usr/local")
+    (subpath (param "BUILD_PREFIX")))

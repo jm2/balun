@@ -33,6 +33,7 @@ address so you know which tuner failed.
 | Adaptive three-pane GTK 4 / libadwaita window | ✅ |
 | Window size and maximized state remembered across launches | ✅ |
 | Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Linux, macOS, and Windows against real tuners |
+| Native media failure boundary | ⚠️ In-process native hangs can block the UI/close path; network bytes do not guarantee useful media. [Accepted limits and review triggers](docs/native-media-failure-boundary.md) |
 | Stop, volume, mute, and fullscreen controls | ✅ Stop and switching account for overlapping startup and partial worker creation before completing teardown |
 | Software deinterlacing | ✅ Adaptive YADIF, automatic field order, full field rate; progressive video passes through |
 | Keep the display and computer awake during playback | ✅ While playing or buffering, where the desktop permits inhibition |
@@ -50,6 +51,10 @@ address so you know which tuner failed.
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, the AUR, and winget |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
+| macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
+| Windows package validation | ✅ Pinned policy and full-tree probe receipt; completed installer payload independently extracted, compared, checked, and runtime-probed |
+| Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
+| Native playback log privacy | ✅ Closed error and media labels retain useful diagnostics without plugin error text, arbitrary caps values, or stream identifiers |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
@@ -242,6 +247,10 @@ The `gstreamer` formula supplies the base, good, bad, and gst-plugins-rs plugins
 validates the resulting Mach-O against the release component policy and writes
 `target/<native-target>/release/balun`. Use `--app` to assemble, ad-hoc sign, relocate, and probe
 `dist/Balun.app`, or `--dmg` to add a reopened drag-to-Applications `dist/Balun.dmg`.
+Packaging also requires Python 3 and the system `sandbox-exec` tool. Native dependency
+validation covers all Mach-O members and architectures, including dynamically loaded
+pixbuf modules. Only Apple system library/framework paths may resolve outside the app.
+The relocated probe denies reads from the Homebrew prefix, `/opt/homebrew`, and `/usr/local`.
 Use `--run` to launch from the build tree with only Balun's playback plugins enabled.
 macOS prefers libav for MPEG-2 broadcasts because VideoToolbox advertises MPEG-2 even on
 Macs that cannot decode it; H.264 and HEVC retain their usual hardware decoder selection.
@@ -304,7 +313,13 @@ The package keeps the MSYS2 prefix shape (`bin\balun.exe` beside its DLLs, `lib\
 DLLs those binaries import. Before the archive is written, the helper runs the staged `balun.exe`
 itself with a sanitized environment so the bundled scanner, a fresh registry, and the synthetic
 MPEG-2 fixture are proven inside the tree, then reopens the ZIP against it. `-InnoSetup
--SkipBundle` rebuilds only the installer from a tree whose probe receipt still matches.
+-SkipBundle` rebuilds only the installer from a tree whose complete-payload probe receipt
+still matches. Changes to any staged member or local packaging policy require a fresh
+bundle/probe. The local receipt detects stale state; it is not a signature or provenance
+attestation. `-InnoSetup` also requires the pinned `BALUN_INNOEXTRACT_DIR` build tool and
+independently extracts and compares the complete installer payload, repeats native/resource
+checks, and probes the extracted runtime before success. See the
+[installer inspection procedure](docs/windows-installer-inspection.md) for tool setup and limits.
 
 ---
 
@@ -322,8 +337,11 @@ GST_DEBUG=2 RUST_LOG=balun=debug cargo run --locked --features desktop --bin bal
 ```
 
 Balun logs discovery, lineup, tune, and playback outcomes to standard error at `info` by default;
-`RUST_LOG` selects the level, as in Tributary. A playback failure logs the native GStreamer error
-behind its fixed category. `./scripts/build-linux.sh --run` and `./scripts/build-macos.sh --run`
+`RUST_LOG` selects the level, as in Tributary. Native playback reports retain known error domains,
+numeric codes, closed media/format labels, and typed counters. Plugin error/debug text, stream
+identifiers, arbitrary caps values, and unknown marker names are discarded. GStreamer's own
+opt-in `GST_DEBUG` output bypasses Balun's filtering and can contain stream-derived text.
+`./scripts/build-linux.sh --run` and `./scripts/build-macos.sh --run`
 build the desktop and launch it in the same terminal. On Windows,
 `.\scripts\build-windows.ps1 -Run` uses a console-attached
 release-profile developer build, so those logs remain visible in the invoking PowerShell session.
@@ -355,6 +373,13 @@ cargo run --locked --bin balun-discover -- --providers
 candidates with a bounded packet rate and concurrency, and stops after 15 seconds. Only scan a
 network you own or administer, and prefer `--target` whenever the address is known. `Ctrl+C`
 cancels any run.
+
+`--target` applies the desktop's unicast address rules and accepts no URL, hostname, port,
+loopback, multicast, unspecified, broadcast, or scoped/link-local IPv6 address. Each exact
+probe sends at most two requests, waits 200 ms per attempt, and accepts at most 16 reply
+datagrams and one device identity. One invocation admits at most 32 actions and one
+`--approved-range`. Routed target starts add up to 25% positive jitter without extending
+the deadline or increasing the nominal rate.
 
 On Windows, `.\scripts\build-windows.ps1 -InspectLocal` builds the diagnostic and runs exactly
 `--inspect --local`.
@@ -422,6 +447,13 @@ packagers or dependencies. The helpers keep Tributary's filenames and flags;
 ledger.
 
 ### Testing & Code Quality
+
+The [native-failure study](docs/native-media-failure-boundary.md) uses owned child
+processes to exercise stuck GStreamer calls without hanging the test runner.
+The [adversarial regression suites](docs/adversarial-regressions.md) run short,
+replayable parser and policy corpora in PR CI and longer generated corpora daily.
+CI also enforces [critical-path coverage baselines](docs/critical-coverage.md),
+with separate Rust, Python, and PowerShell measurements and explicit gaps.
 
 ```bash
 # Core checks (GTK- and GStreamer-free), as run by CI:
