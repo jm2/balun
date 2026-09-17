@@ -48,7 +48,12 @@ The archive and both members are hash-pinned in
 `scripts/windows-installer-policy.ps1`. Downloading is bounded to 2 MiB and
 60 seconds; ZIP members are checked against the exact expected names, types,
 sizes, and hashes before writing. The ordinary build helper never downloads
-or updates a tool. CI/release install the tested Inno Setup 6.7.3 compiler.
+or updates a tool. CI/release use `build-aux/inno/install-compiler.ps1` to download
+the [upstream Inno Setup 6.7.3 compiler](https://github.com/jrsoftware/issrc/releases/tag/is-6_7_3)
+with a fixed SHA-256, 16 MiB/60-second download limit and two-minute installation
+deadline. Installation uses an explicit runner scratch directory. `BALUN_ISCC`
+selects that compiler without falling back to a runner's preinstalled version.
+Chocolatey does not carry this compiler version; no floating package is used.
 
 Upstream [innoextract](https://github.com/dscharrer/innoextract) advertises support
 through Inno Setup 6.3.3. The chosen Windows fork supplies 6.7 support. The

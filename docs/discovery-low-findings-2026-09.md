@@ -1,8 +1,9 @@
 # Discovery low findings — September 17, 2026
 
 This records the H3.3 dispositions against the earlier security review.
-The fixes below are implemented in this change; the two proposed acceptances
-still require the maintainer's decision. H3.3 remains unchecked until then.
+The fixes below are implemented in this change. On September 17, 2026, the
+maintainer accepted both bounded exceptions below, including their ownership
+and review triggers. H3.3 completes when this change lands on `main`.
 
 ## Implemented corrections
 
@@ -31,12 +32,12 @@ duplicate version fields, and zero/current invalid versions retain
 `InvalidState`. Every quarantine still refuses authority. Tests exercise
 both categories through the actual private store and check preserved bytes.
 
-## Proposed bounded acceptances — awaiting maintainer decision
+## Maintainer-approved bounded acceptances
 
-| Boundary | Proposed disposition | Owner and review trigger |
+| Boundary | Accepted disposition | Owner and review trigger |
 | --- | --- | --- |
-| Library loopback support | Retain loopback-capable `DiscoveryClient` as a protocol primitive for existing real-socket fixtures and embedders. Both shipped application entry points require the stricter exact-target parser. This does not permit a user-entered loopback target in the desktop or CLI. | Proposed owner: `jm2`. Revisit before beta and whenever a new network entry point bypasses `ExactDiscoveryTarget`. |
-| Approval fingerprint key | Retain the key beside the state in the private profile. It prevents correlation of a copied state file without the key; it is not encryption or authentication against someone who reads/replaces both files. Neither belongs in diagnostic exports. Existing owner/mode, no-follow, pinned-directory, and mutation checks remain. | Proposed owner: `jm2`. Revisit before beta, before exporting/syncing the directory, or if hostile same-user processes enter the threat model. |
+| Library loopback support | Retain loopback-capable `DiscoveryClient` as a protocol primitive for existing real-socket fixtures and embedders. Both shipped application entry points require the stricter exact-target parser. This does not permit a user-entered loopback target in the desktop or CLI. | Owner: `jm2`. Revisit before beta and whenever a new network entry point is added. |
+| Approval fingerprint key | Retain the key beside the state in the private profile. It prevents correlation of a copied state file without the key; it is not encryption or authentication against someone who reads/replaces both files. Neither belongs in diagnostic exports. Existing owner/mode, no-follow, pinned-directory, and mutation checks remain. | Owner: `jm2`. Revisit before beta, before exporting/syncing the directory, or if hostile same-user processes enter the threat model. |
 
 The key's limitation is now explicit in the store's source documentation.
 Moving it elsewhere in the same account alone would not provide a defensible

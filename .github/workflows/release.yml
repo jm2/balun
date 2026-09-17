@@ -408,9 +408,9 @@ jobs:
       - name: Install the bounded installer inspection tools
         shell: pwsh
         run: |
-          choco install innosetup --version=6.7.3 --allow-downgrade -y --no-progress
-          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed.' }
-          echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $compiler = Join-Path $env:RUNNER_TEMP 'balun-inno-compiler'
+          ./build-aux/inno/install-compiler.ps1 -Destination $compiler
+          "BALUN_ISCC=$(Join-Path $compiler 'ISCC.exe')" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           $inspector = Join-Path $env:RUNNER_TEMP 'balun-inno-inspector'
           ./build-aux/inno/install-inspector.ps1 -Destination $inspector
           "BALUN_INNOEXTRACT_DIR=$inspector" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
