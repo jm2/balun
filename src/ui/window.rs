@@ -1055,6 +1055,20 @@ struct HostnameProbes {
     resolved: HashSet<(ExactDiscoveryTarget, HostnameTarget)>,
 }
 
+impl HostnameProbes {
+    /// Preserve a remembered name after transient resolver saturation, but
+    /// never restore authority revoked by Stop or Forget while retrying.
+    fn defer_busy(&mut self, host: HostnameTarget, epoch: u64) -> bool {
+        if self.epoch != epoch || !self.rememberable.contains(&host) {
+            return false;
+        }
+        if !self.unresolved.contains(&host) {
+            self.unresolved.push_back(host);
+        }
+        true
+    }
+}
+
 impl RediscoveryWiring {
     fn remember(&self, target: RememberedTarget) {
         if let Some(pending_save) = self.settings.remember_target(target) {
@@ -1293,7 +1307,7 @@ fn resolve_hostname_into_queue(wiring: Rc<RediscoveryWiring>, host: HostnameTarg
             return;
         }
     };
-    await_resolution(wiring, host, receiver);
+    await_resolution(wiring, host, receiver, false);
 }
 
 /// Hand remembered names to the controller until its command queue is full;
@@ -1305,7 +1319,7 @@ fn submit_unresolved_hostnames(wiring: &Rc<RediscoveryWiring>) {
             return;
         };
         match wiring.controller.try_resolve_hostname(host.clone()) {
-            Ok(receiver) => await_resolution(Rc::clone(wiring), host, receiver),
+            Ok(receiver) => await_resolution(Rc::clone(wiring), host, receiver, true),
             Err(_) => {
                 wiring.hostnames.borrow_mut().unresolved.push_front(host);
                 return;
@@ -1318,6 +1332,7 @@ fn await_resolution(
     wiring: Rc<RediscoveryWiring>,
     host: HostnameTarget,
     receiver: HostnameResolutionReceiver,
+    retry_busy: bool,
 ) {
     wiring
         .hostnames
@@ -1334,6 +1349,17 @@ fn await_resolution(
             return;
         }
         match outcome {
+            Err(HostnameResolutionError::Busy) if retry_busy => {
+                // At most the bounded remembered list waits here. A busy
+                // result must not immediately resubmit itself: OS workers
+                // may stay stuck even after their async timeout expires.
+                gtk::glib::timeout_future_seconds(1).await;
+                let retry = wiring.hostnames.borrow_mut().defer_busy(host, epoch);
+                if retry {
+                    let discovery = wiring.accepted.borrow().discovery();
+                    advance_rediscovery(&wiring, discovery);
+                }
+            }
             Ok(addresses) => {
                 {
                     let mut hostnames = wiring.hostnames.borrow_mut();
@@ -1633,6 +1659,34 @@ mod tests {
                 ),
             );
         }
+    }
+
+    #[test]
+    fn busy_remembered_names_survive_saturation_but_not_stop_or_forget() {
+        let names: Vec<_> = (0..8)
+            .map(|index| HostnameTarget::parse(&format!("tuner-{index}.example")).unwrap())
+            .collect();
+        let mut probes = HostnameProbes {
+            rememberable: names.iter().cloned().collect(),
+            ..HostnameProbes::default()
+        };
+        // The first four slots are occupied; every other remembered name
+        // returns Busy. Repeated retry notifications must not duplicate it.
+        for _ in 0..2 {
+            for host in &names[4..] {
+                assert!(probes.defer_busy(host.clone(), 0));
+            }
+        }
+        assert_eq!(
+            probes.unresolved.iter().collect::<Vec<_>>(),
+            names[4..].iter().collect::<Vec<_>>()
+        );
+        probes.unresolved.clear();
+        probes.rememberable.remove(&names[4]);
+        assert!(!probes.defer_busy(names[4].clone(), 0));
+        probes.epoch += 1;
+        assert!(!probes.defer_busy(names[5].clone(), 0));
+        assert!(probes.unresolved.is_empty());
     }
 
     #[test]
