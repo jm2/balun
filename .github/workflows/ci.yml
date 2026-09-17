@@ -21,10 +21,18 @@ jobs:
   quality:
     name: Linux quality
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Prepare adversarial replay environment
+        run: |
+          printf 'TMPDIR=%s\nBALUN_ADVERSARIAL_FAILURE_DIR=%s/adversarial-counterexamples\n' \
+            "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          python3 --version
+          pwsh -NoProfile -Command '$PSVersionTable | Format-Table'
 
       - name: Test pinned release component policy
         run: build-aux/packaging/test-release-component-policy.sh
@@ -49,6 +57,11 @@ jobs:
 
       - name: Test macOS native dependency closure
         run: python3 -B scripts/test_macos_native_closure.py
+
+      - name: Adversarial package metadata smoke
+        run: |
+          python3 -B scripts/test_adversarial_packages.py
+          pwsh -NoProfile -File scripts/test-adversarial-installer.ps1
 
       - name: Test packaged-hardware output privacy
         run: scripts/test-hardware-validation-privacy.sh
@@ -83,6 +96,15 @@ jobs:
 
       - name: Test (release)
         run: cargo test --release --all-targets --locked
+
+      - name: Retain synthetic counterexample replay records
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: adversarial-smoke-counterexamples
+          path: ${{ runner.temp }}/adversarial-counterexamples/*.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
   desktop-metadata:
     name: Desktop metadata

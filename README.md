@@ -443,6 +443,9 @@ ledger.
 
 ### Testing & Code Quality
 
+The [adversarial regression suites](docs/adversarial-regressions.md) run short,
+replayable parser and policy corpora in PR CI and longer generated corpora daily.
+
 ```bash
 # Core checks (GTK- and GStreamer-free), as run by CI:
 cargo fmt --all -- --check
