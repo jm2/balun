@@ -15,6 +15,15 @@ from unittest import mock
 import macos_native_closure as closure
 
 
+def canonical_probe_prefix(path):
+    helper = re.search(r"^canonical_runtime_probe_prefix\(\) \{.*?^\}",
+                       (Path(__file__).resolve().parent / "build-macos.sh").read_text(),
+                       re.M | re.S).group()
+    return subprocess.run(["bash", "-c", helper + '\ncanonical_runtime_probe_prefix "$1"',
+                           "fixture", str(path)], check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+
 def rewrite_id(path, install_id, environment=None):
     scripts = Path(__file__).resolve().parent
     helper = re.search(r"^rewrite_dylib_id\(\) \{.*?^\}",
@@ -57,6 +66,13 @@ class BundleFixture(unittest.TestCase):
 
 
 class ClosureTests(BundleFixture):
+    def test_runtime_probe_prefix_resolves_aliases_and_rejects_missing_paths(self):
+        alias = self.parent / "Build Prefix Alias"
+        alias.symlink_to(self.app, target_is_directory=True)
+        self.assertEqual(canonical_probe_prefix(alias), str(self.app.resolve()))
+        with self.assertRaises(subprocess.CalledProcessError):
+            canonical_probe_prefix(self.parent / "missing")
+
     def test_production_id_rewrite_only_calls_tool_for_dylibs(self):
         tools = self.parent / "tools"
         tools.mkdir()
@@ -194,7 +210,10 @@ class NativeClosureTests(BundleFixture):
             closure.validate(self.app)
 
         profile = Path(__file__).resolve().parent.parent / "build-aux/macos-runtime-probe.sb"
-        sandbox = ["/usr/bin/sandbox-exec", "-D", f"BUILD_PREFIX={vendor}", "-f", str(profile)]
+        alias = self.parent / "Vendor Alias"
+        alias.symlink_to(vendor, target_is_directory=True)
+        sandbox = ["/usr/bin/sandbox-exec", "-D",
+                   f"BUILD_PREFIX={canonical_probe_prefix(alias)}", "-f", str(profile)]
         # Prove the same probe profile actually denies the build-host library.
         denied = subprocess.run(sandbox + ["/bin/cat", str(library)], capture_output=True)
         self.assertNotEqual(denied.returncode, 0)
