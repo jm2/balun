@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **37/58 (63.8%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **8/21**, and roadmap V2 **0/7**. This is a
+Current status: **38/58 (65.5%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **9/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -134,9 +134,9 @@ and paused. Independent correctness and package-inspection fixes may continue.
   no-follow, replacement, permission, and newer-schema guarantees; test them
   under concurrent replacement and slow I/O on each supported platform.
 
-- [ ] **H3.3 — Disposition the older low findings.** Recheck pacing/jitter,
-  CLI admission budgets, approval-key limits, and schema errors; fix each or
-  record a bounded acceptance with owner, reason, and review trigger.
+- [x] **H3.3 — Disposition the older low findings.** Pacing/jitter, CLI admission,
+  and schema fixes are [recorded](discovery-low-findings-2026-09.md), together with
+  maintainer-approved loopback and fingerprint-key limits, owners, and review triggers.
 
 - [ ] **H3.4 — Refresh the security evidence.** After relevant H0/H1/H3 fixes,
   consolidate current guarantees, threat boundaries, exceptions, and test links
