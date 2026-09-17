@@ -34,7 +34,7 @@ dependencies, or establish new physical-tuner or platform results.
 | H1.1 / #90 | Finished installer payload comparison remains absent and depends on H0.5. Resource/version inspection is insufficient. |
 | H1.2 / #92 | The Windows policy loader still reads unbounded text without the shared digest. This independent correction can proceed once H0 is addressed. |
 | H1.3–H1.4 / #91 | Inventory generation and advisory response are distinct outcomes under one issue. Keep both unchecked until final membership and the maintainer-approved response process are exercised. |
-| H2 | Source identity, input pinning, provenance, and archive containment remain separate guarantees. H2.1 needs trusted signer and ancestry decisions; H2.3 follows H2.1/H2.2. |
+| H2 | Source identity, input pinning, provenance, and archive containment remain separate guarantees. The maintainer directed that all new signing/provenance work be held; H2.1 and H2.3 are paused, with no trusted identities designated. |
 | H3.1 / #93 | Device and lineup errors still retain raw serde errors. Fix every public diagnostic path and the inaccurate historical URL-echo claim. |
 | H3.2–H3.5 | Keep settings trust, older finding dispositions, refreshed evidence, and native-call/media-progress boundaries separate. An accepted risk requires a stated owner and review trigger, not an implementation checkbox alone. |
 | H4 | Retain fuzz/property testing, meaningful coverage, and packaged accessibility as separate evidence tracks. Ordinary unit tests cannot complete screen-reader or packaged live acceptance. |
@@ -70,7 +70,7 @@ dependencies, or establish new physical-tuner or platform results.
 
 | Record | Input needed before dependent work or completion |
 | --- | --- |
-| H2.1 | Trusted signing identities/public keys and the release-tag ancestry rule. Preserve the initial alpha exception. |
+| H2.1, H2.3 | Held by explicit maintainer direction on September 17: no designated signers and no new signing or provenance work. Resume only on a new instruction. Preserve the initial alpha exception. |
 | H1.4, H3.3, H3.5 | Approval of concrete response deadlines, owned exceptions, and any remaining native-failure limitations after evidence is prepared. |
 | V2.4 | Approval of one proposed candidate/attempt/rate/deadline/consent contract before implementing expanded scan authority. |
 | P4.1, H4.3, V2.1, V2.5 | Versioned packaged tests on physical Linux Wayland/X11, macOS, and Windows systems with accessible tuners, plus screen-reader and visual/resource observations where required. Prepare candidates and sanitized instructions first. |
