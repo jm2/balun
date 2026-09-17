@@ -9,6 +9,7 @@ use balun::discovery::{
 };
 #[cfg(any(target_os = "linux", test))]
 use balun::discovery::{RouteCandidateError, RouteSnapshot, select_route_candidates};
+use balun::domain::DeviceId;
 use balun::hdhr::{
     DeviceInspectionError, DeviceInspectionIssueKind, DeviceInspectionReport, DeviceInspector,
 };
@@ -391,20 +392,14 @@ fn advertised_url_summary(_url: &str) -> &'static str {
 fn print_inspection_report(report: &DeviceInspectionReport) {
     for device in report.devices() {
         for issue in device.issues() {
-            match issue.kind() {
-                DeviceInspectionIssueKind::UnsupportedEndpoint => eprintln!(
-                    "inspection route issue: {} source={} is unsupported: {}",
-                    device.device_id(),
-                    issue.source(),
-                    issue.message(),
-                ),
-                DeviceInspectionIssueKind::SnapshotFailed => eprintln!(
-                    "inspection route issue: {} source={} snapshot failed: {}",
-                    device.device_id(),
-                    issue.source(),
-                    issue.message(),
-                ),
-            }
+            write_inspection_issue(
+                &mut std::io::stderr().lock(),
+                device.device_id(),
+                issue.source(),
+                issue.kind(),
+                issue.message(),
+            )
+            .expect("write inspection diagnostic");
         }
 
         if let Some(summary) = device.summary() {
@@ -437,6 +432,23 @@ fn print_inspection_report(report: &DeviceInspectionReport) {
     }
 }
 
+fn write_inspection_issue(
+    stderr: &mut impl std::io::Write,
+    device_id: DeviceId,
+    source: SocketAddr,
+    kind: DeviceInspectionIssueKind,
+    message: &str,
+) -> std::io::Result<()> {
+    let reason = match kind {
+        DeviceInspectionIssueKind::UnsupportedEndpoint => "is unsupported",
+        DeviceInspectionIssueKind::SnapshotFailed => "snapshot failed",
+    };
+    writeln!(
+        stderr,
+        "inspection route issue: {device_id} source={source} {reason}: {message}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use balun::discovery::{
@@ -444,6 +456,38 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn cli_inspection_stderr_keeps_json_category_and_position_without_values() {
+        use balun::hdhr::{
+            DeviceHttpError, DeviceSnapshotError, JsonParseError, LineupError, LineupFetchError,
+        };
+        const MARKER: &str =
+            "http://user:PRIVATE_PASSWORD@invalid.example/stream?secret=JSON_MARKER_719";
+        let parse_error = || {
+            let json = serde_json::to_string(MARKER).unwrap();
+            JsonParseError::from(serde_json::from_str::<u8>(&json).unwrap_err())
+        };
+        for error in [
+            DeviceSnapshotError::Metadata(DeviceHttpError::Json(parse_error())),
+            DeviceSnapshotError::Lineup(LineupFetchError::Lineup(LineupError::Json(parse_error()))),
+        ] {
+            let mut stderr = Vec::new();
+            write_inspection_issue(
+                &mut stderr,
+                DeviceId::new(0x105A_1232).unwrap(),
+                "192.0.2.1:65001".parse().unwrap(),
+                DeviceInspectionIssueKind::SnapshotFailed,
+                &error.to_string(),
+            )
+            .unwrap();
+            let stderr = String::from_utf8(stderr).unwrap();
+            assert!(stderr.contains("snapshot failed:"));
+            assert!(stderr.contains("JSON field type or shape mismatch at line 1, column"));
+            assert!(!stderr.contains("PRIVATE_PASSWORD"), "{stderr}");
+            assert!(!stderr.contains("JSON_MARKER_719"), "{stderr}");
+        }
+    }
 
     fn parse(values: &[&str]) -> Result<Option<Cli>, CliError> {
         parse_cli(values.iter().map(|value| (*value).to_owned()))

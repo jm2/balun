@@ -52,6 +52,7 @@ address so you know which tuner failed.
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
 | Windows package validation | ✅ Reviewed-policy checksum checked before packaging; probe receipt binds every staged member, the build profile, and local policy inputs |
+| Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features

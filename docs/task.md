@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **35/58 (60.3%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **6/21**, and roadmap V2 **0/7**. This is a
+Current status: **36/58 (62.1%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **7/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -126,7 +126,7 @@ and paused. Independent correctness and package-inspection fixes may continue.
 
 ## H3 — Security and privacy maintenance
 
-- [ ] **H3.1 — Make JSON diagnostics value-free ([#93]).** Replace raw serde
+- [x] **H3.1 — Make JSON diagnostics value-free ([#93]).** Replace raw serde
   value echoes with safe categories across metadata, lineup, inspection, and
   CLI errors; prove secret-shaped markers cannot reach diagnostic output.
 

@@ -147,6 +147,27 @@ duplicates, and each syntax limit. Routing fixtures verify refusal before downst
 packaging tools or Cargo. The [component-policy document](release-component-policy.md)
 records the historical overclaim and the exercised replacement guarantee.
 
+### 2026-09-17 value-free JSON diagnostics (H3.1)
+
+[Issue #93](https://github.com/jm2/balun/issues/93) demonstrated that a mistyped
+JSON field could echo a secret-shaped URL through serde's error text. The earlier
+claim that these errors could never include a URL was incorrect; ignoring the
+`DeviceAuth` field did not prevent a value in another field from being echoed.
+
+Both device metadata and lineup parsing now convert serde errors immediately into
+`JsonParseError`: a fixed I/O/syntax/data/end-of-input category and numeric line/column
+positions. The original error is discarded, including its source chain. `Display`,
+`Debug`, and nested `DeviceSnapshotError`/`LineupFetchError` sources therefore cannot
+recover a device-chosen JSON value. The public category/position accessors preserve
+useful classification without changing response bounds or identity validation.
+
+Regressions prove the raw serde error would expose a synthetic credential/query URL,
+then verify its absence from parser errors, both debug formats, every nested source,
+inspection issue messages/report debug, and the actual CLI stderr writer. Cases cover
+wrong field types, arbitrary strings, malformed/truncated JSON, trailing data, ignored
+authorization fields, and an I/O source carrying the marker. No real credential is used.
+This closes the prior JSON diagnostic exception; it is not the broader H3.4 audit.
+
 ### Historical review summary
 
 H0.2 / [#88](https://github.com/jm2/balun/issues/88) also has a targeted
@@ -332,9 +353,10 @@ review's pull request.
   No production path rendered them.
 - Low, fixed here (test only): `DeviceHttpError::Transport` depends on
   `without_url()` at each construction site; the new test guards it.
-- Low, open: `DeviceHttpError::Json` and `LineupError::Json` render serde's
-  message, which can echo a mistyped device-chosen value into the diagnostic's
-  stderr; bounded, escaped, never `DeviceAuth` or a URL.
+- Low, resolved by H3.1 on 2026-09-17: `DeviceHttpError::Json` and
+  `LineupError::Json` previously rendered serde's value-bearing message.
+  Contrary to the earlier review text, a mistyped field could include a URL
+  or secret-shaped value. Both errors now retain only category and position.
 - Accepted under ADR-0002: `DeviceEndpoint`'s derived `Debug` shows
   responder-pinned URLs, and the lineup body is not zeroized.
 
@@ -503,8 +525,9 @@ Still open:
 
 - Routed pacing has no jitter (plan §5, ADR-0001).
 - `DiscoveryClient::invalid_target` does not refuse loopback (§1).
-- `DeviceHttpError::Json` and `LineupError::Json` still render serde's message
-  (§3); both wrap `serde_json::Error` directly.
+- At that revision, `DeviceHttpError::Json` and `LineupError::Json` still
+  rendered serde's message (§3). H3.1 resolved this on 2026-09-17 by discarding
+  the raw error at both parsing boundaries.
 - The approval store has no unsupported-version quarantine reason.
 - The hostname resolver, network-change reconciliation, and Windows ARM64
   profile were reviewed for bounds and fail-closed defaults only.
@@ -514,8 +537,8 @@ Still open:
 - Add jitter to the routed pacing or amend plan §5 and ADR-0001 (P2).
 - Refuse loopback in `DiscoveryClient` `invalid_target` so `balun-discover
   --target` cannot probe it.
-- Render `DeviceHttpError::Json` and `LineupError::Json` as serde positions
-  only, without the message that can echo a device-chosen value.
+- JSON diagnostic follow-up completed by H3.1 on 2026-09-17: fixed categories
+  and positions replace value-bearing serde errors across diagnostic paths.
 - Approval store: document the key threat model and add an unsupported-version
   quarantine reason.
 - The CI Flatpak job's `gnome-50` builder image is still a moving tag; pin it
