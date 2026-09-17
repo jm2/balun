@@ -239,6 +239,8 @@ def validate(bundle):
             matches = [candidate for candidate in native[target]
                        if compatible(candidate, image.cpu, image.subtype)]
             require(matches, "dependency has no compatible architecture")
+            require(all(candidate.kind == 6 for candidate in matches),
+                    "linked dependency is not a dylib")
             visit(target, matches[0], executable, stack, active | {path})
 
     # Plugins can be dlopened rather than reached by a load command. Validate
