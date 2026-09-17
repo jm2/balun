@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Routed scans add bounded positive jitter; the diagnostic uses desktop exact-address
+  admission and reply limits, caps each invocation, and rejects repeated range scans.
+  Newer approval-state schemas now have a distinct, preserving quarantine reason.
 - Device and lineup JSON errors now retain only fixed failure categories and line/column
   positions, preventing mistyped device values from reaching inspection, debug output,
   CLI diagnostics, or nested error sources.

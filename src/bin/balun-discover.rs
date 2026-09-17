@@ -1,11 +1,11 @@
 use std::env;
 use std::error::Error;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use balun::discovery::{
-    ApprovedIpv4Range, DiscoveryClient, DiscoveryReport, ProbeConfig, RegistryError,
-    RoutedRangeError, RoutedScanConfig,
+    ApprovedIpv4Range, DiscoveryClient, DiscoveryReport, ExactDiscoveryTarget, ProbeConfig,
+    RegistryError, RoutedRangeError, RoutedScanConfig,
 };
 #[cfg(any(target_os = "linux", test))]
 use balun::discovery::{RouteCandidateError, RouteSnapshot, select_route_candidates};
@@ -31,7 +31,11 @@ without sending packets or printing any address or route.
 --inspect also fetches bounded device metadata and lineup counts; it never
 starts a stream or allocates a tuner.
 Routed enumeration requires the explicit --approved-range option and is
-limited by Balun's private-/24 and packet-rate safety policy.";
+limited by Balun's private-/24 and packet-rate safety policy.
+At most 32 actions and one approved range are accepted per invocation.
+--target uses the desktop's unicast address rules and bounded reply budget.";
+
+const MAX_CLI_ACTIONS: usize = 32;
 
 #[derive(Clone, Copy, Debug)]
 enum Action {
@@ -151,24 +155,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let client = DiscoveryClient::default();
+    let exact_client = DiscoveryClient::new(ProbeConfig::exact_target());
     let inspector = DeviceInspector::default();
     let inspect = cli.inspect;
     let mut inspection = InspectionOutcome::default();
-    if cli
-        .actions
-        .iter()
-        .any(|action| !matches!(action, Action::Providers))
-    {
-        print_probe_budget(client.config());
-    }
     for action in cli.actions {
+        match action {
+            Action::Providers => {}
+            Action::Target(_) => print_probe_budget(exact_client.config()),
+            Action::Local | Action::ApprovedRange(_) => print_probe_budget(client.config()),
+        }
         let report = match action {
             Action::Providers => {
                 print_providers();
                 continue;
             }
             Action::Local => client.discover_local(&cancellation).await?,
-            Action::Target(target) => client.discover_target(target, None, &cancellation).await?,
+            Action::Target(target) => {
+                exact_client
+                    .discover_target(target, None, &cancellation)
+                    .await?
+            }
             Action::ApprovedRange(range) => {
                 let scan = RoutedScanConfig::default();
                 eprintln!(
@@ -224,6 +231,14 @@ fn parse_cli(arguments: impl Iterator<Item = String>) -> Result<Option<Cli>, Cli
                 actions.push(Action::Target(parse_target(&value)?));
             }
             "--approved-range" => {
+                if actions
+                    .iter()
+                    .any(|action| matches!(action, Action::ApprovedRange(_)))
+                {
+                    return Err(CliError::Usage(
+                        "only one approved range is allowed per invocation".to_owned(),
+                    ));
+                }
                 let value = arguments.next().ok_or_else(|| {
                     CliError::Usage("--approved-range requires a private IPv4 CIDR".to_owned())
                 })?;
@@ -239,6 +254,11 @@ fn parse_cli(arguments: impl Iterator<Item = String>) -> Result<Option<Cli>, Cli
             }
             _ => return Err(CliError::Usage(format!("unknown option {argument:?}"))),
         }
+        if actions.len() > MAX_CLI_ACTIONS {
+            return Err(CliError::Usage(format!(
+                "at most {MAX_CLI_ACTIONS} actions are allowed per invocation"
+            )));
+        }
     }
 
     if actions.is_empty() {
@@ -249,12 +269,8 @@ fn parse_cli(arguments: impl Iterator<Item = String>) -> Result<Option<Cli>, Cli
 }
 
 fn parse_target(value: &str) -> Result<SocketAddr, CliError> {
-    if let Ok(address) = value.parse::<SocketAddr>() {
-        return Ok(address);
-    }
-    value
-        .parse::<IpAddr>()
-        .map(|address| SocketAddr::new(address, 0))
+    ExactDiscoveryTarget::parse(value)
+        .map(|target| SocketAddr::new(target.ip_addr(), 0))
         .map_err(|error| CliError::Target {
             value: value.to_owned(),
             message: error.to_string(),
@@ -573,6 +589,53 @@ mod tests {
 
         assert!(matches!(actions[0], Action::Target(address) if address.ip().is_ipv4()));
         assert!(matches!(actions[1], Action::Target(address) if address.ip().is_ipv6()));
+    }
+
+    #[test]
+    fn target_admission_and_reply_budget_match_the_desktop_boundary() {
+        for target in [
+            "127.0.0.1",
+            "127.255.255.254",
+            "::1",
+            "::ffff:127.0.0.1",
+            "0.0.0.0",
+            "::",
+            "224.0.0.1",
+            "255.255.255.255",
+            "fe80::1",
+            "[fe80::1%3]",
+            "192.0.2.1:1234",
+            "http://192.0.2.1/",
+            "localhost",
+        ] {
+            assert!(parse(&["--target", target]).is_err(), "{target}");
+        }
+        let config = ProbeConfig::exact_target();
+        assert_eq!(config.attempts(), 2);
+        assert_eq!(config.response_window(), Duration::from_millis(200));
+        assert_eq!(config.max_received_datagrams(), 16);
+        assert_eq!(config.max_unique_devices(), 1);
+    }
+
+    #[test]
+    fn complete_cli_is_admitted_before_any_action_can_run() {
+        let mut arguments = ["--target", "192.0.2.1"].repeat(MAX_CLI_ACTIONS);
+        assert_eq!(
+            parse(&arguments).unwrap().unwrap().actions.len(),
+            MAX_CLI_ACTIONS
+        );
+        arguments.extend(["--target", "192.0.2.2"]);
+        assert!(parse(&arguments).is_err());
+        assert!(parse(&["--local", "--target", "127.0.0.1"]).is_err());
+        assert!(
+            parse(&[
+                "--approved-range",
+                "10.0.0.0/24",
+                "--approved-range",
+                "10.0.1.0/24"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

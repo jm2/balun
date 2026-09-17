@@ -366,6 +366,13 @@ candidates with a bounded packet rate and concurrency, and stops after 15 second
 network you own or administer, and prefer `--target` whenever the address is known. `Ctrl+C`
 cancels any run.
 
+`--target` applies the desktop's unicast address rules and accepts no URL, hostname, port,
+loopback, multicast, unspecified, broadcast, or scoped/link-local IPv6 address. Each exact
+probe sends at most two requests, waits 200 ms per attempt, and accepts at most 16 reply
+datagrams and one device identity. One invocation admits at most 32 actions and one
+`--approved-range`. Routed target starts add up to 25% positive jitter without extending
+the deadline or increasing the nominal rate.
+
 On Windows, `.\scripts\build-windows.ps1 -InspectLocal` builds the diagnostic and runs exactly
 `--inspect --local`.
 
