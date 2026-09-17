@@ -808,6 +808,18 @@ PLIST
 # ── Dylib BFS and Rpath Rewriting ───────────────────────────────────────────
 info "Bundling dylibs and rewriting rpaths via BFS..."
 
+rewrite_dylib_id() {
+    local bin="$1" install_id="$2" kind
+    kind="$(python3 "$script_dir/macos_native_closure.py" kind "$bin")" \
+        || fail "Could not inspect the native file type of $bin"
+    case "$kind" in
+        6) install_name_tool -id "$install_id" "$bin" \
+            || fail "Could not rewrite the install name of $bin" ;;
+        8) ;; # MH_BUNDLE loaders have no LC_ID_DYLIB; rewrite their imports below.
+        *) fail "Expected a dylib or bundle loader: $bin" ;;
+    esac
+}
+
 copy_dylib() {
     local src="$1"
     local basename
@@ -816,8 +828,7 @@ copy_dylib() {
     [[ -f "$dest" ]] && return 1
     cp -L "$src" "$dest" || fail "Could not copy $src into the bundle"
     chmod u+w "$dest" || fail "Could not make $dest writable for relocation"
-    install_name_tool -id "@executable_path/../Frameworks/${basename}" "$dest" \
-        || fail "Could not rewrite the install name of $dest"
+    rewrite_dylib_id "$dest" "@executable_path/../Frameworks/${basename}"
     return 0
 }
 
@@ -908,8 +919,7 @@ BIN="${APP_BUNDLE}/Contents/MacOS/${APP_NAME}-bin"
 for plugin in "${GST_PLUGIN_DEST}"/*.dylib; do
     [[ -f "$plugin" ]] || continue
     chmod u+w "$plugin"
-    install_name_tool -id "@rpath/$(basename "$plugin")" "$plugin" \
-        || fail "Could not rewrite the install name of $plugin"
+    rewrite_dylib_id "$plugin" "@rpath/$(basename "$plugin")"
     SEED_BINARIES+=("$plugin")
 done
 
@@ -917,8 +927,7 @@ if [[ -d "$PIXBUF_LOADERS_DEST" ]]; then
     for loader in "${PIXBUF_LOADERS_DEST}"/*.so "${PIXBUF_LOADERS_DEST}"/*.dylib; do
         [[ -f "$loader" ]] || continue
         chmod u+w "$loader"
-        install_name_tool -id "@rpath/$(basename "$loader")" "$loader" \
-            || fail "Could not rewrite the install name of $loader"
+        rewrite_dylib_id "$loader" "@rpath/$(basename "$loader")"
         SEED_BINARIES+=("$loader")
     done
 fi
