@@ -526,6 +526,42 @@ mod tests {
     const SECOND_ID: u32 = 0x105A_1243;
 
     #[tokio::test]
+    async fn inspection_messages_and_debug_omit_json_value_markers() {
+        use crate::hdhr::test_support::JSON_SECRET_MARKER;
+        use crate::hdhr::{JsonParseError, LineupError};
+        let raw_error = || {
+            let json = serde_json::to_string(JSON_SECRET_MARKER).unwrap();
+            JsonParseError::from(serde_json::from_str::<u8>(&json).unwrap_err())
+        };
+        for error in [
+            DeviceSnapshotError::Metadata(DeviceHttpError::Json(raw_error())),
+            DeviceSnapshotError::Lineup(LineupFetchError::Lineup(LineupError::Json(raw_error()))),
+        ] {
+            let inspector =
+                FakeInspector::new(vec![Err(InspectionAttemptError::Failed(error.to_string()))]);
+            let report = DiscoveryReport {
+                observations: vec![observation(FIRST_ID, 65_001, DiscoveryMethod::Targeted)],
+                ..DiscoveryReport::default()
+            };
+            let inspected =
+                inspect_discovery_report(&inspector, &report, &CancellationToken::new())
+                    .await
+                    .unwrap();
+            assert_eq!(inspected.failed_devices(), 1);
+            let message = inspected.devices()[0].issues()[0].message();
+            assert!(message.contains("JSON field type or shape mismatch at line 1"));
+            for rendered in [
+                message.to_owned(),
+                format!("{inspected:?}"),
+                format!("{inspected:#?}"),
+            ] {
+                assert!(!rendered.contains("JSON_SECRET_719"), "{rendered}");
+                assert!(!rendered.contains("fixture-password"), "{rendered}");
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn retries_each_locator_with_the_same_expected_identity() {
         let expected = DeviceId::new(FIRST_ID).unwrap();
         let inspector = FakeInspector::new(vec![

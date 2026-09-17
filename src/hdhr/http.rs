@@ -578,7 +578,8 @@ struct RawDeviceInfo {
 }
 
 fn parse_device_info(body: &[u8], expected: DeviceId) -> Result<DeviceInfo, DeviceHttpError> {
-    let raw: RawDeviceInfo = serde_json::from_slice(body).map_err(DeviceHttpError::Json)?;
+    let raw: RawDeviceInfo = serde_json::from_slice(body)
+        .map_err(|error| DeviceHttpError::Json(super::JsonParseError::from(error)))?;
     let device_id = match raw.device_id {
         RawDeviceId::Text(value) => {
             if value.len() != 8 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -810,7 +811,7 @@ pub enum DeviceHttpError {
     Cancelled,
 
     #[error("invalid device JSON: {0}")]
-    Json(#[source] serde_json::Error),
+    Json(#[source] super::JsonParseError),
 
     #[error("device JSON contains an invalid DeviceID")]
     InvalidDeviceId,
@@ -1041,6 +1042,26 @@ mod tests {
             ),
             Err(EndpointError::HostMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn metadata_json_failures_never_retain_device_values() {
+        use crate::hdhr::test_support::{JSON_SECRET_MARKER, assert_value_free_error};
+        let marker = serde_json::to_string(JSON_SECRET_MARKER).unwrap();
+        for body in [
+            format!(r#"{{"DeviceID":"105A1232","TunerCount":{marker}}}"#),
+            format!(r#"{{"DeviceID":{marker},"FriendlyName":false}}"#),
+            format!(
+                r#"{{"DeviceID":"105A1232","DeviceAuth":{marker},"TunerCount":{{"secret":{marker}}}}}"#
+            ),
+            format!(r#"{{"DeviceID":"105A1232","secret":{marker},"TunerCount":]}}"#),
+            format!(r#"{{"DeviceID":"105A1232","secret":{marker},"TunerCount":"#),
+        ] {
+            let error = parse_device_info(body.as_bytes(), expected_id()).unwrap_err();
+            assert!(matches!(error, DeviceHttpError::Json(_)), "{error:?}");
+            assert_value_free_error(&error);
+            assert_value_free_error(&super::super::DeviceSnapshotError::Metadata(error));
+        }
     }
 
     #[test]

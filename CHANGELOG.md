@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Device and lineup JSON errors now retain only fixed failure categories and line/column
+  positions, preventing mistyped device values from reaching inspection, debug output,
+  CLI diagnostics, or nested error sources.
 - Windows packaging now checks the shared component-policy checksum against one
   bounded, strict UTF-8, non-reparse file snapshot before any build, copy, or probe.
 - Windows installer-only reuse now binds a successful runtime probe to every staged
