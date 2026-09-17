@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=scripts/macos-package-policy.sh
 source "${SCRIPT_DIR}/macos-package-policy.sh"
 
-TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/balun-macos-package-policy.XXXXXX")"
+TEST_ROOT="$(mktemp -d "${TMPDIR:-/var/tmp}/balun-macos-package-policy.XXXXXX")"
 POLICY_TMPDIR="${TEST_ROOT}/Policy Temp"
 mkdir -p "$POLICY_TMPDIR"
 TMPDIR="$POLICY_TMPDIR"
@@ -570,6 +570,11 @@ ln -s 'ordinary-codecs/helper.dat' \
 assert_status 0 macos_validate_bundle_copy_control "$SAFE_BUNDLE"
 [[ "$MACOS_PACKAGE_POLICY_RESULT" == allowed ]] \
   || fail "safe synthetic bundle was not marked allowed"
+assert_no_policy_temporaries
+
+assert_status 2 macos_validate_bundle_copy_control "$SAFE_BUNDLE" \
+  "$SCRIPT_DIR/macos_native_closure.py"
+assert_reason_contains 'native library is not an inspectable Mach-O file'
 assert_no_policy_temporaries
 
 SAFE_PARENT_BUNDLE="${TEST_ROOT}/${DENIED_TOKEN}-parent/SafeParent.app"
