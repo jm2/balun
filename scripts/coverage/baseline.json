@@ -110,16 +110,16 @@
       "percent": 44.22
     },
     "python-lines:scripts/macos_native_closure.py": {
-      "covered": 198,
-      "total": 201,
+      "covered": 202,
+      "total": 205,
       "uncovered": 3,
-      "percent": 98.51
+      "percent": 98.54
     },
     "python-branches:scripts/macos_native_closure.py": {
-      "covered": 52,
-      "total": 56,
+      "covered": 54,
+      "total": 58,
       "uncovered": 4,
-      "percent": 92.86
+      "percent": 93.1
     },
     "powershell-lines:scripts/build-windows.ps1:Read-WindowsComponentPolicySnapshot": {
       "covered": 15,
@@ -206,10 +206,10 @@
       "percent": 100.0
     },
     "powershell-lines:scripts/windows-installer-policy.ps1:Assert-WindowsInstallerPayload": {
-      "covered": 25,
-      "total": 27,
+      "covered": 31,
+      "total": 33,
       "uncovered": 2,
-      "percent": 92.59
+      "percent": 93.94
     },
     "powershell-lines:scripts/build-windows.ps1:Assert-WindowsBundleRootIsNotReparsePoint": {
       "covered": 2,

@@ -14,16 +14,16 @@ measurements help find omissions in that evidence.
 
 ## What is measured
 
-| Surface | Measurement | Initial measured result |
+| Surface | Measurement | Recorded baseline |
 | --- | --- | --- |
 | Discovery admission and approval | Rust source regions in six modules | 79.77%–97.69%, with per-file counts rather than one project percentage |
 | Resolver, controller, source retirement and transport | Rust source regions in four modules | 88.96%–94.52% |
 | Identity registry, device identity, protocol, metadata and lineup | Rust source regions in five modules | 84.62%–96.69% |
 | JSON failure conversion and logging setup | Rust source regions | 30/30 and 11/11 respectively |
 | Native playback failure classification and diagnostics | Rust source regions | 199/450 (44.22%); display-backed diagnostics remain a visible gap |
-| Mach-O closure parser and CLI | Python executable lines and branch edges | 198/201 lines (98.51%); 52/56 branches (92.86%) |
+| Mach-O closure parser and CLI | Python executable lines and branch edges | 202/205 lines (98.54%); 54/58 branches (93.10%) |
 | Windows policy snapshots and whole-tree receipts | PowerShell executable lines in ten selected gate functions | 78.57%–100%, reported independently per function |
-| Installer tool admission, paths, manifests and final gate | PowerShell executable lines in five selected gate functions | 92.59%–100%, reported independently per function |
+| Installer tool admission, paths, manifests and final gate | PowerShell executable lines in five selected gate functions | 93.94%–100%, reported independently per function |
 | Package roots, PE headers, inspector invocation and process termination | PowerShell executable lines in six additional gate functions | Separate counts retain native fallback and timeout-path gaps; no branch percentage is inferred |
 
 Rust uses `-C instrument-coverage`, Rust 1.98.0, and matching LLVM 22.1.8 tools.
@@ -59,6 +59,10 @@ paths. New fixtures reject a non-Apple `LC_LOAD_DYLINKER`, verify the permitted
 loader, exercise each inspection mode, and ensure invalid UTF-8 exits with a
 controlled rejection rather than a traceback. Measured coverage rose from
 174/201 to 198/201 lines and from 44/56 to 52/56 branches.
+Subsequent reviewed changes preserve a bounded, value-free CLI rejection reason
+and retain the primary installer failure when cleanup also fails. Their
+regressions bring the parser to 202/205 lines and 54/58 branches, and the final
+installer gate to 31/33 lines. The uncovered ceilings remain unchanged.
 
 An independent Rust run found two regions that earlier tests reached only by
 scheduling chance. New tests close both the network-change and command sources

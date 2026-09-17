@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from unittest import mock
 
 import macos_native_closure as closure
 
@@ -53,12 +54,13 @@ def command(kind, value):
     return struct.pack("<III", kind, length, prefix) + bytes(prefix - 12) + payload + bytes(length - prefix - len(payload))
 
 
-def macho(imports=(), rpaths=(), *, cpu=0x100000C, kind=6):
+def macho(imports=(), rpaths=(), *, cpu=0x100000C, subtype=None, kind=6):
     commands = [struct.pack("<II", 0x1B, 24) + bytes(16)]
     commands += [command(0xC, value) for value in imports]
     commands += [command(0x8000001C, value) for value in rpaths]
     data = b"".join(commands)
-    return struct.pack("<IIIIIIII", 0xFEEDFACF, cpu, 3 if cpu == 0x1000007 else 0,
+    subtype = (3 if cpu == 0x1000007 else 0) if subtype is None else subtype
+    return struct.pack("<IIIIIIII", 0xFEEDFACF, cpu, subtype,
                        kind, len(commands), len(data), 0, 0) + data
 
 
@@ -107,6 +109,38 @@ class ClosureTests(BundleFixture):
         self.assertEqual(output, "")
         self.assertIn("macOS native closure rejected:", error)
         self.assertNotIn("Traceback", error)
+
+    def test_process_subtype_survives_generic_intermediate_and_context_cache(self):
+        for cpu, generic, specialized in ((0x100000C, 0, 2), (0x1000007, 3, 8)):
+            with self.subTest(cpu=cpu):
+                imports = ["@loader_path/../Frameworks/first.dylib"]
+                special = macho(imports, cpu=cpu, subtype=specialized, kind=2)
+                ordinary = macho(imports, cpu=cpu, subtype=generic, kind=2)
+                self.exe.write_bytes(special)
+                self.write("Contents/Frameworks/first.dylib",
+                           macho(["@loader_path/second.dylib"], cpu=cpu, subtype=generic))
+                self.write("Contents/Frameworks/second.dylib", macho(cpu=cpu, subtype=specialized))
+                self.assertEqual(closure.validate(self.app), 3)
+                # Two slices in one executable must not share the generic
+                # intermediate's visited key across distinct process subtypes.
+                fat = struct.pack(">II", 0xCAFEBABE, 2)
+                fat += struct.pack(">IIIII", cpu, specialized, 48, len(special), 0)
+                fat += struct.pack(">IIIII", cpu, generic, 48 + len(special), len(ordinary), 0)
+                self.exe.write_bytes(fat + special + ordinary)
+                with self.assertRaisesRegex(closure.Invalid, "dependency has no compatible architecture"):
+                    closure.validate(self.app)
+
+    def test_package_rejection_report_preserves_policy_cause_without_paths(self):
+        for error, expected in ((closure.Invalid("unresolved @rpath dependency"),
+                                 "unresolved @rpath dependency"),
+                                (OSError("private-path-marker"), "OSError")):
+            output = io.StringIO()
+            with mock.patch.object(sys, "argv", ["closure", "bundle", str(self.app), "--report-rejection"]), \
+                    mock.patch.object(closure, "validate", side_effect=error), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(closure.main(), 1)
+            self.assertEqual(output.getvalue(), f"macOS native closure rejected: {expected}\n")
+            self.assertNotIn("private-path-marker", output.getvalue())
 
     def test_probe_scratch_is_canonical_and_outside_the_denied_prefix(self):
         vendor = self.parent / "Vendor Prefix"

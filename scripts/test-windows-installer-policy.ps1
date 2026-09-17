@@ -171,6 +171,35 @@ try {
     Assert-Rejected {
         Assert-WindowsInstallerPayload $dummyInstaller $root 'fixture-tool' 'fixture-pe-tool' '1.0' $expected
     } 'mutation during final runtime validation'
+
+    # Cleanup failure cannot hide the primary validation defect. Conversely,
+    # cleanup-only failure must still fail the packaging gate.
+    $script:CleanupPaths = [System.Collections.Generic.List[string]]::new()
+    function Remove-Item {
+        param([string]$LiteralPath, [switch]$Recurse, [switch]$Force, [string]$ErrorAction)
+        $script:CleanupPaths.Add($LiteralPath)
+        throw 'forced payload cleanup failure'
+    }
+    try {
+        foreach ($mutate in @($true, $false)) {
+            $script:MutateDuringProbe = $mutate
+            $failure = $null
+            try {
+                Assert-WindowsInstallerPayload $dummyInstaller $root 'fixture-tool' 'fixture-pe-tool' '1.0' $expected
+            }
+            catch { $failure = $_.Exception.Message }
+            $expectedFailure = if ($mutate) { 'Installer or payload changed during final inspection.' }
+                else { 'forced payload cleanup failure' }
+            if ($failure -cne $expectedFailure) { throw "Unexpected primary error after cleanup failure: $failure" }
+        }
+        if ($script:CleanupPaths.Count -ne 2) { throw 'Cleanup failure fixtures did not exercise both paths.' }
+    }
+    finally {
+        Microsoft.PowerShell.Management\Remove-Item -LiteralPath Function:Remove-Item
+        foreach ($path in $script:CleanupPaths) {
+            Microsoft.PowerShell.Management\Remove-Item -LiteralPath $path -Recurse -Force
+        }
+    }
     Set-Item Function:Invoke-InnoPayloadInspector $originalInspector
 
     $warningScript = Join-Path $temporary 'Warning Tool.ps1'

@@ -154,7 +154,9 @@ function Assert-WindowsInstallerPayload {
     # while the inspector reopens it for listing and extraction.
     $installerHash = Get-WindowsProbeSha256 $Installer
     $held = [System.IO.File]::Open($Installer, 'Open', 'Read', 'Read')
-    $temporary = Join-Path ([System.IO.Path]::GetTempPath()) ('balun-inno-' + [Guid]::NewGuid().ToString('N'))
+    $temporaryBase = if ($env:TMPDIR) { $env:TMPDIR } else { [System.IO.Path]::GetTempPath() }
+    $temporary = Join-Path $temporaryBase ('balun-inno-' + [Guid]::NewGuid().ToString('N'))
+    $validationFailed = $false
     try {
         if ((Get-WindowsProbeSha256 $Installer) -cne $installerHash) {
             throw 'Installer changed before inspection.'
@@ -183,10 +185,21 @@ function Assert-WindowsInstallerPayload {
         }
         Assert-WindowsProbeReceipt $Distribution
     }
+    catch {
+        $validationFailed = $true
+        throw
+    }
     finally {
         $held.Dispose()
-        if (Test-Path -LiteralPath $temporary) {
-            Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction Stop
+        try {
+            if (Test-Path -LiteralPath $temporary) {
+                Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction Stop
+            }
+        }
+        catch {
+            if (-not $validationFailed) { throw }
+            Write-Warning "Installer validation failed and its scratch payload could not be removed: $temporary" `
+                -WarningAction Continue
         }
     }
 }

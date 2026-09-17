@@ -209,7 +209,7 @@ def validate(bundle):
 
     visited = set()
 
-    def visit(path, image, executable, inherited, active):
+    def visit(path, image, executable, process_arch, inherited, active):
         budget()
         if path in active:
             return
@@ -217,7 +217,7 @@ def validate(bundle):
         own = tuple(expand(name, path, executable) for name in image.rpaths)
         stack = tuple(dict.fromkeys(own + inherited))
         require(len(stack) <= 256, "native run-path stack is too large")
-        key = (path, image, executable, stack)
+        key = (path, image, executable, process_arch, stack)
         if key in visited:
             return
         visited.add(key)
@@ -237,11 +237,11 @@ def validate(bundle):
                 target = contained(expand(name, path, executable))
             require(target in native, "dependency does not name a bundled native file")
             matches = [candidate for candidate in native[target]
-                       if compatible(candidate, image.cpu, image.subtype)]
+                       if compatible(candidate, *process_arch)]
             require(matches, "dependency has no compatible architecture")
             require(all(candidate.kind == 6 for candidate in matches),
                     "linked dependency is not a dylib")
-            visit(target, matches[0], executable, stack, active | {path})
+            visit(target, matches[0], executable, process_arch, stack, active | {path})
 
     # Plugins can be dlopened rather than reached by a load command. Validate
     # every slice under each compatible main/helper executable context too.
@@ -253,7 +253,7 @@ def validate(bundle):
             require(contexts, "native slice has no compatible executable context")
             for exe, main in contexts:
                 inherited = tuple(expand(name, exe, exe) for name in main.rpaths)
-                visit(path, image, exe, inherited, frozenset())
+                visit(path, image, exe, (main.cpu, main.subtype), inherited, frozenset())
     return len(native)
 
 
@@ -261,6 +261,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("bundle", "imports", "rpaths", "kind"))
     parser.add_argument("path", type=Path)
+    parser.add_argument("--report-rejection", action="store_true",
+                        help="also emit a bounded, path-free rejection on stdout for package gates")
     arguments = parser.parse_args()
     try:
         if arguments.mode == "bundle":
@@ -279,6 +281,9 @@ def main():
                 print(value)
     except (Invalid, OSError, UnicodeError, struct.error, RuntimeError) as error:
         print(f"macOS native closure rejected: {error}", file=sys.stderr)
+        if arguments.report_rejection:
+            reason = str(error) if isinstance(error, Invalid) else type(error).__name__
+            print(f"macOS native closure rejected: {reason[:256]}")
         return 1
     return 0
 
