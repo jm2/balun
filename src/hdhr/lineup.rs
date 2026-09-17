@@ -269,8 +269,10 @@ fn parse_lineup(
     let mut deserializer = serde_json::Deserializer::from_slice(body);
     let bounded = RawLineupSeed { maximum_channels }
         .deserialize(&mut deserializer)
-        .map_err(LineupError::Json)?;
-    deserializer.end().map_err(LineupError::Json)?;
+        .map_err(|error| LineupError::Json(super::JsonParseError::from(error)))?;
+    deserializer
+        .end()
+        .map_err(|error| LineupError::Json(super::JsonParseError::from(error)))?;
     let raw_channels = match bounded {
         BoundedRawLineup::WithinLimit(rows) => rows,
         BoundedRawLineup::TooMany { actual } => {
@@ -477,7 +479,7 @@ pub enum LineupFetchError {
 #[derive(Debug, Error)]
 pub enum LineupError {
     #[error("invalid lineup JSON: {0}")]
-    Json(#[source] serde_json::Error),
+    Json(#[source] super::JsonParseError),
 
     #[error("lineup has {actual} channels; maximum is {maximum}")]
     TooManyChannels { actual: usize, maximum: usize },
@@ -523,6 +525,31 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn lineup_json_failures_and_nested_sources_never_retain_device_values() {
+        use crate::hdhr::test_support::{JSON_SECRET_MARKER, assert_value_free_error};
+        let marker = serde_json::to_string(JSON_SECRET_MARKER).unwrap();
+        for body in [
+            marker.clone(),
+            format!(
+                r#"[{{"GuideNumber":"1","GuideName":{{"secret":{marker}}},"URL":"http://192.0.2.10:5004/auto/v1"}}]"#
+            ),
+            format!(
+                r#"[{{"GuideNumber":"1","GuideName":"fixture","URL":"http://192.0.2.10:5004/auto/v1","DRM":{marker}}}]"#
+            ),
+            format!(r#"[{{"secret":{marker},"GuideName":]}}]"#),
+            format!(r#"[{{"secret":{marker},"GuideName":"#),
+            format!(r"[] {marker}"),
+        ] {
+            let error = parse_lineup(body.as_bytes(), id(), &endpoint(), 10).unwrap_err();
+            assert!(matches!(error, LineupError::Json(_)), "{error:?}");
+            assert_value_free_error(&error);
+            assert_value_free_error(&DeviceSnapshotError::Lineup(LineupFetchError::Lineup(
+                error,
+            )));
+        }
     }
 
     #[test]

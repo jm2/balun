@@ -18,7 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Concurrent source rejection now cancels a transport that is still being published,
   zeroizes pending handoffs, and retains all workers for the normal teardown join.
-
+- Routed scans add bounded positive jitter; the diagnostic uses desktop exact-address
+  admission and reply limits, caps each invocation, and rejects repeated range scans.
+  Newer approval-state schemas now have a distinct, preserving quarantine reason.
+- Device and lineup JSON errors now retain only fixed failure categories and line/column
+  positions, preventing mistyped device values from reaching inspection, debug output,
+  CLI diagnostics, or nested error sources.
+- Windows packaging now checks the shared component-policy checksum against one
+  bounded, strict UTF-8, non-reparse file snapshot before any build, copy, or probe.
+- Windows installer-only reuse now binds a successful runtime probe to every staged
+  file and directory, the build profile, and local packaging-policy inputs. Changed,
+  missing, extra, or aliased inputs require a fresh bundle/probe before compilation.
+- macOS package validation now rejects external, unresolved, or escaping native dependencies
+  in every Mach-O member and architecture, including pixbuf loaders, after signing and
+  reopening the DMG. The relocated runtime probe cannot read Homebrew's libraries.
 - Slow or stuck hostname lookups no longer hold window close open. Outstanding
   lookups are capped across timeouts and restarts of the controller; busy resolution
   offers direct IP entry or a later retry.

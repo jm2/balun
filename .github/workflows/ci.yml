@@ -47,6 +47,9 @@ jobs:
       - name: Test macOS package policy scaffolding
         run: scripts/test-macos-package-policy.sh
 
+      - name: Test macOS native dependency closure
+        run: python3 -B scripts/test_macos_native_closure.py
+
       - name: Test packaged-hardware output privacy
         run: scripts/test-hardware-validation-privacy.sh
 
@@ -408,6 +411,10 @@ jobs:
         if: runner.os == 'macOS'
         run: /bin/bash scripts/test-build-macos-policy.sh
 
+      - name: Test real Mach-O dependency closure and isolated launch
+        if: runner.os == 'macOS'
+        run: python3 -B scripts/test_macos_native_closure.py
+
       - name: Test packaged-hardware output privacy with system Bash
         if: runner.os == 'macOS'
         run: /bin/bash scripts/test-hardware-validation-privacy.sh
@@ -416,6 +423,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test-build-windows-routing.ps1
+
+      - name: Test complete-tree Windows probe receipts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-probe-receipt.ps1
+
+      - name: Test checksum-pinned Windows component policy
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-component-policy.ps1
 
       - name: Install macOS desktop build dependencies
         if: runner.os == 'macOS'
@@ -521,6 +538,13 @@ jobs:
         env:
           MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: ./scripts/build-windows.ps1 -Zip -NoCargoBuild
+
+      - name: Reject a changed native DLL after the successful packaged probe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          ./scripts/test-windows-probe-receipt.ps1
+          -StagedRoot dist/balun-windows -Profile '${{ matrix.windows_arch }}'
 
       - name: Upload the Windows ZIP
         if: runner.os == 'Windows'

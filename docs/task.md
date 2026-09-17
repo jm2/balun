@@ -43,19 +43,18 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **32/58 (55.2%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **3/21**, and roadmap V2 **0/7**. This is a
+Current status: **37/58 (63.8%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **8/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
 
-The CI baseline repair landed in [PR #96](https://github.com/jm2/balun/pull/96)
-with all ten jobs passing. Close H0's five P2 findings and establish the
-affected package guarantees in H1 before claiming them for a new release.
-H3 maintains privacy and the review
-record. H2/H4 may proceed independently and do not delay a corrective patch
-solely to complete beta infrastructure. P4.1 follows the relevant fixes and
-candidate builds; development-build evidence does not complete it.
+The CI baseline repair landed in [PR #96](https://github.com/jm2/balun/pull/96) with all
+ten jobs passing. H0's five corrections are complete. Establish the remaining package
+guarantees in H1 before claiming them for a new release. H3 maintains privacy and the
+review record. H2/H4 may proceed independently and do not delay a corrective patch
+solely to complete beta infrastructure. P4.1 follows the relevant fixes and candidate
+builds; development-build evidence does not complete it.
 
 P4.5 records publication of "Balun v0.1.0 Alpha" on 2026-09-05 with the
 12-artifact inventory and `SHA256SUMS.txt`. The initial tag was unsigned by
@@ -77,11 +76,11 @@ machine enforcement of the chosen source policy.
   four process-wide, with no queue; timed-out or cancelled jobs retain their
   slots until exit, while controller close and stale-result rejection stay bounded.
 
-- [ ] **H0.4 — Prove the full macOS native closure ([#86]).** Resolve every
+- [x] **H0.4 — Prove the full macOS native closure ([#86]).** Resolve every
   non-system dependency inside the final app, including pixbuf loaders, and
   reject external/unresolved references in the signed app and reopened DMG.
 
-- [ ] **H0.5 — Bind Windows reuse to the whole probed tree ([#87]).** Require
+- [x] **H0.5 — Bind Windows reuse to the whole probed tree ([#87]).** Require
   exact payload identity or a fresh runtime probe for installer-only reuse;
   reject changed, missing, extra, and aliased non-anchor inputs.
 
@@ -91,7 +90,7 @@ machine enforcement of the chosen source policy.
   safely extract and compare both architecture payloads with the validated
   tree, repeating native/component checks before upload.
 
-- [ ] **H1.2 — Pin the Windows component policy ([#92]).** Apply the shared
+- [x] **H1.2 — Pin the Windows component policy ([#92]).** Apply the shared
   digest, bounded strict text parsing, and regular non-reparse-file checks;
   prove invalid policy inputs fail before build, copy, or probe.
 
@@ -127,7 +126,7 @@ and paused. Independent correctness and package-inspection fixes may continue.
 
 ## H3 — Security and privacy maintenance
 
-- [ ] **H3.1 — Make JSON diagnostics value-free ([#93]).** Replace raw serde
+- [x] **H3.1 — Make JSON diagnostics value-free ([#93]).** Replace raw serde
   value echoes with safe categories across metadata, lineup, inspection, and
   CLI errors; prove secret-shaped markers cannot reach diagnostic output.
 
@@ -135,9 +134,9 @@ and paused. Independent correctness and package-inspection fixes may continue.
   no-follow, replacement, permission, and newer-schema guarantees; test them
   under concurrent replacement and slow I/O on each supported platform.
 
-- [ ] **H3.3 — Disposition the older low findings.** Recheck pacing/jitter,
-  CLI admission budgets, approval-key limits, and schema errors; fix each or
-  record a bounded acceptance with owner, reason, and review trigger.
+- [x] **H3.3 — Disposition the older low findings.** Pacing/jitter, CLI admission,
+  and schema fixes are [recorded](discovery-low-findings-2026-09.md), together with
+  maintainer-approved loopback and fingerprint-key limits, owners, and review triggers.
 
 - [ ] **H3.4 — Refresh the security evidence.** After relevant H0/H1/H3 fixes,
   consolidate current guarantees, threat boundaries, exceptions, and test links

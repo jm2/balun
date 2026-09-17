@@ -50,6 +50,9 @@ address so you know which tuner failed.
 | Protected (DRM) channels | ❌ Out of scope |
 | Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, the AUR, and winget |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
+| macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
+| Windows package validation | ✅ Reviewed-policy checksum checked before packaging; probe receipt binds every staged member, the build profile, and local policy inputs |
+| Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
@@ -245,6 +248,10 @@ The `gstreamer` formula supplies the base, good, bad, and gst-plugins-rs plugins
 validates the resulting Mach-O against the release component policy and writes
 `target/<native-target>/release/balun`. Use `--app` to assemble, ad-hoc sign, relocate, and probe
 `dist/Balun.app`, or `--dmg` to add a reopened drag-to-Applications `dist/Balun.dmg`.
+Packaging also requires Python 3 and the system `sandbox-exec` tool. Native dependency
+validation covers all Mach-O members and architectures, including dynamically loaded
+pixbuf modules. Only Apple system library/framework paths may resolve outside the app.
+The relocated probe denies reads from the Homebrew prefix, `/opt/homebrew`, and `/usr/local`.
 Use `--run` to launch from the build tree with only Balun's playback plugins enabled.
 macOS prefers libav for MPEG-2 broadcasts because VideoToolbox advertises MPEG-2 even on
 Macs that cannot decode it; H.264 and HEVC retain their usual hardware decoder selection.
@@ -307,7 +314,10 @@ The package keeps the MSYS2 prefix shape (`bin\balun.exe` beside its DLLs, `lib\
 DLLs those binaries import. Before the archive is written, the helper runs the staged `balun.exe`
 itself with a sanitized environment so the bundled scanner, a fresh registry, and the synthetic
 MPEG-2 fixture are proven inside the tree, then reopens the ZIP against it. `-InnoSetup
--SkipBundle` rebuilds only the installer from a tree whose probe receipt still matches.
+-SkipBundle` rebuilds only the installer from a tree whose complete-payload probe receipt
+still matches. Changes to any staged member or local packaging policy require a fresh
+bundle/probe. The local receipt detects stale state; it is not a signature or provenance
+attestation, and completed-installer payload comparison remains tracked separately.
 
 ---
 
@@ -358,6 +368,13 @@ cargo run --locked --bin balun-discover -- --providers
 candidates with a bounded packet rate and concurrency, and stops after 15 seconds. Only scan a
 network you own or administer, and prefer `--target` whenever the address is known. `Ctrl+C`
 cancels any run.
+
+`--target` applies the desktop's unicast address rules and accepts no URL, hostname, port,
+loopback, multicast, unspecified, broadcast, or scoped/link-local IPv6 address. Each exact
+probe sends at most two requests, waits 200 ms per attempt, and accepts at most 16 reply
+datagrams and one device identity. One invocation admits at most 32 actions and one
+`--approved-range`. Routed target starts add up to 25% positive jitter without extending
+the deadline or increasing the nominal rate.
 
 On Windows, `.\scripts\build-windows.ps1 -InspectLocal` builds the diagnostic and runs exactly
 `--inspect --local`.

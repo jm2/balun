@@ -5,6 +5,7 @@ pub(crate) mod fake_device;
 mod fallback;
 mod http;
 mod inspection;
+mod json_error;
 mod lineup;
 pub mod protocol;
 mod resolver;
@@ -21,6 +22,7 @@ pub use inspection::{
     DeviceInspectionIssueKind, DeviceInspectionReport, DeviceInspectionSummary, DeviceInspector,
     MAX_INSPECTION_OBSERVATIONS,
 };
+pub use json_error::{JsonFailureCategory, JsonParseError};
 pub use lineup::{
     DeviceLineup, DeviceSnapshot, DeviceSnapshotError, LineupChannel, LineupError,
     LineupFetchError, MAX_GUIDE_NAME_BYTES, MAX_TAG_BYTES, MAX_TAG_COUNT, MAX_TAGS_BYTES,
