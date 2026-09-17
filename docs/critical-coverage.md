@@ -79,10 +79,15 @@ from 251 to 75. A fresh full desktop coverage run verifies the updated count
 and every other existing Rust threshold.
 
 H3.2 adds four settings surfaces to the ratchet without weakening the existing
-18 Rust ceilings. The full measured run passes 663 library, 65 desktop, and
+18 Rust ceilings. The full measured run passes 665 library, 65 desktop, and
 12 CLI tests; 21 display/hardware/child-entry tests remain intentionally ignored
 in that run. The new baseline retains unexecuted OS-error, thread-creation,
 poison-recovery, and display-dependent geometry paths as visible gaps.
+
+The source-rejection follow-up serializes cancellation with transport publication.
+Forced request/disconnection schedules and poisoned-admission tests measure
+402/440 regions (91.36%) in source policy, up from 378/421. Its uncovered ceiling
+tightens from 43 to 38, and the denominator floor now includes the added lock path.
 
 Remaining gaps are preserved in the reports rather than excluded to raise
 percentages. Examples include native diagnostic bus paths, rare OS/thread
