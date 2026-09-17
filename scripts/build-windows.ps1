@@ -3474,6 +3474,7 @@ try {
 
         if ($Zip.IsPresent -or $InnoSetup.IsPresent) {
             $null = New-WindowsZip $Distribution
+            Assert-WindowsProbeReceipt $Distribution
         }
         if ($InnoSetup.IsPresent) {
             try {
