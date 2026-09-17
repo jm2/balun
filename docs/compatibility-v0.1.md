@@ -242,8 +242,16 @@ Audio sinks: `osxaudiosink` (selected by `autoaudiosink`), `oss4sink`. The
 foundation factories all come from GStreamer 1.28.6 except `gtk4paintablesink`
 from gst-plugins-rs 0.15.3-RELEASE. Like Windows and unlike Linux, macOS can
 decode HEVC video via VideoToolbox and libav, so an ATSC 3.0 channel fails
-closed on AC-4 audio alone; E-AC-3 is also decodable. This inventory freezes
-the macOS contract and completes P0.5.
+closed on AC-4 audio alone; E-AC-3 is also decodable. This inventory completes
+P0.5 and freezes the required stream-type and sink coverage, not every optional
+decoder found on that development host.
+
+Packaging update, 2026-09-17: `fdkaacdec` above is historical host evidence;
+it is not part of the current macOS package contract. The current Homebrew
+GStreamer package no longer supplies its plugin. Balun's 21-plugin closure
+retains libav, FAAD, and AudioToolbox AAC providers, and the relocated packaged
+runtime probe still requires a bundled AAC decoder. The historical inventory
+does not promise that an optional host decoder is shipped in later packages.
 
 ## Windows package smoke
 
