@@ -13,7 +13,8 @@ foreach ($function in $ast.FindAll({
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
         $node.Name -in @('Get-WindowsProbeSha256', 'Get-WindowsProbeTreeDigest',
             'Get-PeMachine', 'Assert-PeMachine', 'Invoke-BoundedInspector',
-            'Stop-BoundedProcessTree', 'Get-BoundedProbeDiagnostic', 'Test-IsWindowsHost')
+            'Stop-BoundedProcessTree', 'Get-BoundedProbeDiagnostic', 'Test-IsWindowsHost',
+            'Find-InnoSetupCompiler', 'Get-RegularFilePath')
 }, $false)) { . ([scriptblock]::Create($function.Extent.Text)) }
 function Exit-WithError { param([string]$Message) throw $Message }
 function Assert-Rejected {
@@ -42,6 +43,18 @@ try {
     $pe[0x80] = 0x50; $pe[0x81] = 0x45
     [BitConverter]::GetBytes([uint16]0x8664).CopyTo($pe, 0x84)
     [System.IO.File]::WriteAllBytes($application, $pe)
+    $oldCompiler = $env:BALUN_ISCC
+    try {
+        $env:BALUN_ISCC = $application
+        if ((Find-InnoSetupCompiler) -cne $application) { throw 'Explicit compiler override was ignored.' }
+        $env:BALUN_ISCC = 'relative-compiler.exe'
+        Assert-Rejected { Find-InnoSetupCompiler } 'relative compiler override'
+        $env:BALUN_ISCC = Join-Path $root 'missing.exe'
+        Assert-Rejected { Find-InnoSetupCompiler } 'missing compiler override'
+        $env:BALUN_ISCC = $root
+        Assert-Rejected { Find-InnoSetupCompiler } 'directory compiler override'
+    }
+    finally { $env:BALUN_ISCC = $oldCompiler }
     $expected = Get-WindowsProbeTreeDigest $root -IncludeRecords
     if ((Get-WindowsProbeTreeDigest $root) -cne $expected.Digest) { throw 'Manifest API changed digest identity.' }
     $listing = @(Get-FixtureListing $expected)
