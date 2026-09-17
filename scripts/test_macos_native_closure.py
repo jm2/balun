@@ -3,6 +3,7 @@
 
 import os
 from pathlib import Path
+import re
 import shutil
 import struct
 import subprocess
@@ -12,6 +13,16 @@ import unittest
 from unittest import mock
 
 import macos_native_closure as closure
+
+
+def rewrite_id(path, install_id, environment=None):
+    scripts = Path(__file__).resolve().parent
+    helper = re.search(r"^rewrite_dylib_id\(\) \{.*?^\}",
+                       (scripts / "build-macos.sh").read_text(), re.M | re.S).group()
+    script = 'set -eu\nscript_dir="$1"\nfail() { echo "$*" >&2; exit 1; }\n' + helper
+    return subprocess.run(["bash", "-c", script + '\nrewrite_dylib_id "$2" "$3"',
+                           "fixture", str(scripts), str(path), install_id],
+                          env=environment, capture_output=True, text=True)
 
 
 def command(kind, value):
@@ -46,6 +57,23 @@ class BundleFixture(unittest.TestCase):
 
 
 class ClosureTests(BundleFixture):
+    def test_production_id_rewrite_only_calls_tool_for_dylibs(self):
+        tools = self.parent / "tools"
+        tools.mkdir()
+        log = self.parent / "calls"
+        tool = tools / "install_name_tool"
+        tool.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$ID_CALL_LOG"\n')
+        tool.chmod(0o755)
+        environment = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                           ID_CALL_LOG=str(log))
+        bundle = self.write("Contents/Resources/loader.so", macho(kind=8))
+        library = self.write("Contents/Frameworks/libtest.dylib", macho())
+        self.assertEqual(rewrite_id(bundle, "@rpath/loader.so", environment).returncode, 0)
+        self.assertFalse(log.exists())
+        self.assertEqual(rewrite_id(library, "@rpath/libtest.dylib", environment).returncode, 0)
+        self.assertEqual(log.read_text().splitlines(), [f"-id @rpath/libtest.dylib {library}"])
+        self.assertNotEqual(rewrite_id(self.exe, "@rpath/not-a-library", environment).returncode, 0)
+
     def test_bundled_system_framework_and_transitive_inherited_rpath(self):
         self.exe.write_bytes(macho(["@rpath/libfirst.dylib", "/usr/lib/libSystem.B.dylib"],
                                   ["@executable_path/../Frameworks"], kind=2))
@@ -193,6 +221,8 @@ class NativeClosureTests(BundleFixture):
         loader = self.app / "Contents/Resources/lib/gdk-pixbuf/loaders/libpixbufloader.so"
         loader.parent.mkdir(parents=True)
         self.run_tool("clang", "-bundle", str(source), str(bundled), "-o", str(loader))
+        self.assertEqual(rewrite_id(loader, "@rpath/libpixbufloader.so").returncode, 0)
+        self.assertEqual(rewrite_id(bundled, "@rpath/libfixture.dylib").returncode, 0)
         with self.assertRaisesRegex(closure.Invalid, "absolute non-system"):
             closure.validate(self.app)
 

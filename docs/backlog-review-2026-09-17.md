@@ -7,9 +7,9 @@ defects still apply to `main` at `068778b`. The nine hardening issues (#85–#93
 and five feature issues (#63, #64, #71, #74, #78) cover the adopted work without
 duplicate issues. None can be closed from the current source alone.
 
-Repair the existing CI failures before merging backlog changes. Continue with
-the established H0 order, then eligible H1/H3 work. Keep assurance, measured
-feature work, and physical acceptance subject to their existing prerequisites.
+The CI prerequisite is complete in PR #96. Continue with the established H0
+order, then eligible H1/H3 work. Keep assurance, measured feature work, and
+physical acceptance subject to their existing prerequisites.
 Implementation is assigned to Codex at the maintainer's request; the maintainer
 retains the policy and physical-acceptance decisions listed below.
 
