@@ -1360,6 +1360,9 @@ fn await_resolution(
 
 const fn resolution_failure_copy(error: HostnameResolutionError) -> &'static str {
     match error {
+        HostnameResolutionError::Busy => {
+            "Name resolution is busy. Try an IP address or retry later."
+        }
         HostnameResolutionError::Timeout => "Resolving the device name timed out.",
         HostnameResolutionError::Lookup(_) => "The device name could not be resolved.",
         HostnameResolutionError::NoUsableAddress => {

@@ -36,6 +36,34 @@ tracked in [the active ledger](task.md).
 
 ## Summary
 
+### 2026-09-17 hostname worker lifetime (H0.3)
+
+[Issue #89](https://github.com/jm2/balun/issues/89) showed that the five-second
+async timeout did not stop a system resolver job in Tokio's blocking pool;
+dropping the controller runtime could therefore wait indefinitely. System
+lookups now use separately owned threads under one process-wide four-slot
+semaphore. Admission never queues, and the worker holds its slot until it
+actually exits, including after timeout, caller cancellation, or controller
+shutdown. All controller instances and the public resolver share this limit.
+
+The OS resolver remains non-cancellable. Up to four native threads can remain
+for an unbounded duration, until their system calls return or the process
+exits. This is a bounded worker-count policy, not a claim that the OS lookup
+itself finishes within five seconds. At saturation, further names return the
+fixed `Busy` category; direct IP entry remains available. No controller Tokio
+runtime owns these jobs, so they cannot delay its destruction or window close.
+
+Workers only send to a private one-shot result channel. Timeout, dropped
+receivers, and shutdown discard late results; workers never initiate device
+probes. `hostname::resolver::tests` uses a blocked resolver and virtual time to
+prove timeout/cancellation retain admission, repeated submissions add no work,
+and capacity returns on actual exit. The controller regression keeps a resolver
+blocked past timeout, checks 100 rejected submissions, closes the controller,
+and starts a replacement that still observes the occupied slot, without a
+discovery service call. Normal address filtering and the four-address cap remain.
+
+### Historical review summary
+
 H0.2 / [#88](https://github.com/jm2/balun/issues/88) also has a targeted
 [startup/retirement correction](playback.md#source-startup-and-retirement-correction-2026-09-17):
 admission and worker ownership now share one lifecycle lock, including partial

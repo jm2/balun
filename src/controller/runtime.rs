@@ -34,7 +34,7 @@ use super::{
 use crate::discovery::{
     DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryMethod, DiscoveryObservation,
     DiscoveryReport, ExactDiscoveryTarget, ExpirationOutcome, HostnameResolutionError,
-    HostnameTarget, LocatorOrigin, NetworkChange, ProbeConfig, RegistryInstant, resolve_hostname,
+    HostnameResolver, HostnameTarget, LocatorOrigin, NetworkChange, ProbeConfig, RegistryInstant,
 };
 use crate::discovery::{MAX_ROUTED_CANDIDATES, RoutedProposalOriginSummary, RoutedScanTrigger};
 use crate::domain::{ChannelKey, DeviceId};
@@ -407,6 +407,28 @@ impl ControllerRuntime {
         D: DiscoveryService,
         S: SelectedDeviceService,
     {
+        Self::start_with_services_and_resolver(
+            discovery_service,
+            selection_service,
+            routed_service,
+            network_source,
+            command_capacity,
+            HostnameResolver::default(),
+        )
+    }
+
+    fn start_with_services_and_resolver<D, S>(
+        discovery_service: D,
+        selection_service: S,
+        routed_service: Arc<dyn RoutedDiscoveryService>,
+        network_source: Arc<dyn NetworkChangeSource>,
+        command_capacity: usize,
+        hostname_resolver: HostnameResolver,
+    ) -> Result<Self, ControllerStartError>
+    where
+        D: DiscoveryService,
+        S: SelectedDeviceService,
+    {
         if !(1..=MAX_COMMAND_CAPACITY).contains(&command_capacity) {
             return Err(ControllerStartError::InvalidCommandCapacity {
                 value: command_capacity,
@@ -438,7 +460,7 @@ impl ControllerRuntime {
                         return Ok(());
                     }
                 };
-                let actor = ControllerActor::new(
+                let mut actor = ControllerActor::new(
                     discovery_service,
                     selection_service,
                     routed_service,
@@ -447,6 +469,7 @@ impl ControllerRuntime {
                     actor_shutdown,
                     snapshot_sender,
                 );
+                actor.hostname_resolver = hostname_resolver;
                 if ready_sender.send(Ok(())).is_err() {
                     return Ok(());
                 }
@@ -638,6 +661,7 @@ impl ControllerHandle {
 }
 
 struct ControllerActor {
+    hostname_resolver: HostnameResolver,
     discovery_service: Arc<dyn DiscoveryService>,
     selection_service: Arc<dyn SelectedDeviceService>,
     routed_service: Arc<dyn RoutedDiscoveryService>,
@@ -680,6 +704,7 @@ impl ControllerActor {
     ) -> Self {
         let routed = initial_routed_state(&*routed_service);
         Self {
+            hostname_resolver: HostnameResolver::default(),
             discovery_service,
             selection_service,
             routed_service,
@@ -800,17 +825,20 @@ impl ControllerActor {
                     }
                     let _ = reply.send(handoff);
                 }
-                ActorEvent::Command(Some(ActorCommand::ResolveHostname { target, reply })) => {
-                    // Resolution runs beside the actor so a slow resolver never
-                    // delays commands; shutdown abandons it with a fixed error.
+                ActorEvent::Command(Some(ActorCommand::ResolveHostname { target, mut reply })) => {
+                    // Actual system work has process-wide admission and is not
+                    // owned by this runtime's blocking pool. Cancelling this
+                    // waiter does not release the worker's capacity permit.
                     let shutdown = self.shutdown.clone();
+                    let resolver = self.hostname_resolver.clone();
                     tokio::spawn(async move {
                         let result = tokio::select! {
                             biased;
+                            () = reply.closed() => return,
                             () = shutdown.cancelled() => {
                                 Err(HostnameResolutionError::ControllerStopped)
                             }
-                            result = resolve_hostname(&target) => result,
+                            result = resolver.resolve(&target) => result,
                         };
                         let _ = reply.send(result);
                     });
@@ -2345,6 +2373,85 @@ mod tests {
     /// panic inside the controller thread symbolizes its backtrace before the
     /// task can be joined, which has taken longer than three seconds.
     const WAIT: Duration = Duration::from_secs(10);
+
+    #[tokio::test]
+    async fn timed_out_system_lookup_cannot_hold_controller_close_or_start_late_probes() {
+        let (entered, started) = std_mpsc::channel();
+        let (release, released) = std_mpsc::channel();
+        let released = Mutex::new(released);
+        let resolver = HostnameResolver::with_lookup(1, Duration::from_secs(5), move |_| {
+            entered.send(()).unwrap();
+            let _ = released.lock().unwrap().recv_timeout(WAIT * 2);
+            Ok(vec![
+                ExactDiscoveryTarget::from_ip("192.0.2.7".parse().unwrap()).unwrap(),
+            ])
+        });
+        let (service, _) = ScriptedService::new([]);
+        let observed = service.clone();
+        let (selection, _) = ScriptedSelectionService::new([]);
+        let controller = ControllerRuntime::start_with_services_and_resolver(
+            service,
+            selection,
+            Arc::new(unavailable_routed()),
+            Arc::new(UnavailableNetworkChangeSource),
+            DEFAULT_COMMAND_CAPACITY,
+            resolver.clone(),
+        )
+        .unwrap();
+        let handle = controller.handle();
+        let target = HostnameTarget::parse("blocked.example").unwrap();
+        let first = handle.try_resolve_hostname(target.clone()).unwrap();
+        started.recv_timeout(WAIT).unwrap();
+        assert_eq!(first.receive().await, Err(HostnameResolutionError::Timeout));
+        for _ in 0..100 {
+            assert_eq!(
+                handle
+                    .try_resolve_hostname(target.clone())
+                    .unwrap()
+                    .receive()
+                    .await,
+                Err(HostnameResolutionError::Busy)
+            );
+        }
+        let (closed, close) = std_mpsc::channel();
+        let closing = thread::spawn(move || {
+            let _ = closed.send(controller.shutdown());
+        });
+        close
+            .recv_timeout(WAIT)
+            .expect("close must finish while the OS lookup is still blocked")
+            .unwrap();
+        closing.join().unwrap();
+
+        // A replacement controller shares the outstanding worker's permit.
+        let (service, _) = ScriptedService::new([]);
+        let (selection, _) = ScriptedSelectionService::new([]);
+        let replacement = ControllerRuntime::start_with_services_and_resolver(
+            service,
+            selection,
+            Arc::new(unavailable_routed()),
+            Arc::new(UnavailableNetworkChangeSource),
+            DEFAULT_COMMAND_CAPACITY,
+            resolver,
+        )
+        .unwrap();
+        assert_eq!(
+            replacement
+                .handle()
+                .try_resolve_hostname(target)
+                .unwrap()
+                .receive()
+                .await,
+            Err(HostnameResolutionError::Busy)
+        );
+        replacement.shutdown().unwrap();
+        release.send(()).unwrap();
+        assert_eq!(
+            observed.shared.calls.load(Ordering::SeqCst),
+            0,
+            "late resolver results cannot admit probes"
+        );
+    }
 
     #[derive(Clone)]
     struct ScriptedService {

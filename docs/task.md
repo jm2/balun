@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **31/58 (53.4%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **2/21**, and roadmap V2 **0/7**. This is a
+Current status: **32/58 (55.2%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **3/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -72,9 +72,9 @@ machine enforcement of the chosen source policy.
   lock accounts for all admitted and partially started workers in teardown;
   forced overlap, failed-spawn, poison, and successor tests prove joined release.
 
-- [ ] **H0.3 — Bound resolver shutdown ([#89]).** Bound actual resolver work
-  and controller close even after async timeout; prove cancelled or timed-out
-  results cannot start probes and repeated lookups cannot grow without limit.
+- [x] **H0.3 — Bound resolver shutdown ([#89]).** Cap actual system lookups at
+  four process-wide, with no queue; timed-out or cancelled jobs retain their
+  slots until exit, while controller close and stale-result rejection stay bounded.
 
 - [ ] **H0.4 — Prove the full macOS native closure ([#86]).** Resolve every
   non-system dependency inside the final app, including pixbuf loaders, and
