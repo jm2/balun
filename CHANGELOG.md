@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent source rejection now cancels a transport that is still being published,
+  zeroizes pending handoffs, and retains all workers for the normal teardown join.
+
 - Slow or stuck hostname lookups no longer hold window close open. Outstanding
   lookups are capped across timeouts and restarts of the controller; busy resolution
   offers direct IP entry or a later retry.
