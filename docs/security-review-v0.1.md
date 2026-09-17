@@ -36,6 +36,12 @@ tracked in [the active ledger](task.md).
 
 ## Summary
 
+H0.2 / [#88](https://github.com/jm2/balun/issues/88) also has a targeted
+[startup/retirement correction](playback.md#source-startup-and-retirement-correction-2026-09-17):
+admission and worker ownership now share one lifecycle lock, including partial
+thread-creation failures. Its deterministic overlap evidence is described there.
+The following table remains the historical September 3 review summary.
+
 | Area | Result | Section |
 | --- | --- | --- |
 | 1. Network admission | Pass; Low findings open | [§1](#1-network-admission) |
