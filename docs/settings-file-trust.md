@@ -2,17 +2,24 @@
 
 Status: maintainer-approved H3.2 contract, September 17, 2026. The maintainer
 accepted both the private-profile boundary and the two-second startup/close
-limits. Implementation is in progress; this document alone does not complete
-H3.2 or claim the implementation already enforces it.
+limits. The implementation and regressions below are staged in PR #109;
+completion takes effect only when CI and bot review are clean and the PR merges.
 
-## Current gaps
+## Implemented changes
 
-`SettingsStore::load` checks the pathname and then opens it normally. Replacement
-between those operations can bypass the final-component symlink check. Parent
-directory traversal is not pinned. Saves create parent directories recursively
-and replace the document without checking whether a newer schema appeared after
-startup. The desktop loads synchronously and waits indefinitely for saves when
-closing. File-size limits do not bound a stalled filesystem operation.
+`SettingsStore` pins its profile on first access and shares that handle with its
+clones. `cap-std`/`cap-fs-ext` provide relative, no-follow operations without
+unsafe code in Balun. The cooperative `.settings.lock` covers admission,
+reading, schema validation, and atomic replacement. The actual locked handle
+stays open for the entire transaction. Every save re-reads the current document,
+so a newer or malformed file introduced after startup is preserved.
+
+The desktop uses one named thread for loading and every subsequent save. One
+snapshot can be in flight and at most the newest snapshot is queued. Both
+startup loading and close-time draining have a two-second main-context timer.
+Timeout or failed admission disables further persistence for that session;
+late load results cannot replace in-memory preferences. A stopped worker is
+never replaced. Quit during startup cancels loading and joins the controller.
 
 ## Accepted trust boundary
 
@@ -27,7 +34,11 @@ Reject final-component aliases, non-regular documents, hard-linked documents,
 oversized or malformed content, and changed identities during an operation.
 Create the Balun directory and temporary files privately. On Unix, enforce the
 effective owner and owner-only permissions for the Balun directory/document;
-reject a writable-by-others parent. On Windows, require a normal private profile
+reject a writable-by-others parent. An existing owned profile with read/search
+permissions for others, such as the old 0755 directory, is tightened through its
+held handle to 0700 only after rejecting foreign ownership and group/other write
+permission. Existing documents must already be owner-only; their contents and
+permissions are not silently repaired. On Windows, require a normal private profile
 with a restrictive inherited DACL and retain that inheritance. Do not claim
 that Rust file mode checks attest Windows ACLs.
 
@@ -68,7 +79,34 @@ before publication so this does not turn a valid document into partial JSON.
 An atomic publication already in the OS may finish after the deadline; the
 application must not claim that a timed-out save definitely did not occur.
 
-## Required implementation evidence
+## Regression evidence and limits
+
+The portable store tests run with the library on Linux, macOS, and Windows;
+the desktop worker tests run in the native desktop jobs. Local Linux results
+are recorded in the PR; native CI must pass before merge.
+
+- `src/settings/store.rs`: forced admission/open substitution with a regular
+  file, outside symlink, hard link, and Unix FIFO; hard-linked lock rejection;
+  independent cooperative writers; newer/malformed schema preservation;
+  profile rename containment; Unix lock loss and mode/owner rejection; private
+  directory migration. Windows fixtures require junction refusal and deny
+  removal of a held lock. Their results do not attest the inherited DACL.
+- `src/ui/settings_session.rs`: blocked startup keeps the GLib context running;
+  the late result is discarded; a blocked save retains only the latest queued
+  snapshot on one worker; close reaches its deadline, drops queued work, and
+  disables later saves; a failed save preserves a newer schema.
+- Store fixtures pause at the write and flush boundaries, then cancel and
+  resume. They verify that the prior complete document remains and temporary
+  siblings are cleaned. These are deterministic boundary injections, not proof
+  of interrupting a kernel read, write, flush, or rename that never returns.
+- `scripts/test-desktop-lifecycle.sh`: real GTK startup, repeated activation,
+  quit before window creation, normal close, and About/quit join the controller.
+  The native playback hang limitation remains the accepted H3.5 boundary.
+- The Linux coverage ratchet includes schema admission, profile transactions,
+  settings-session decisions, and the single worker. Platform-only paths still
+  require their native regression jobs.
+
+## Required acceptance evidence
 
 - Force replacement between admission and open; reject a substituted symlink,
   special file, or hard link without reading outside the admitted document.
@@ -83,5 +121,6 @@ application must not claim that a timed-out save definitely did not occur.
   deadline, one-worker limit, bounded queue, late-result rejection, and complete
   document behavior without claiming to cancel an arbitrary OS syscall.
 
-H3.2 remains unchecked until the accepted contract, implementation, regression
-tests, documentation, CI, and bot review have landed.
+H3.2 completes only when the accepted contract, implementation, regressions,
+documentation, CI, and bot review land together. A checked PR ledger is staged
+for that merge, not a claim that a still-open PR has already landed.

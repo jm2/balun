@@ -299,7 +299,13 @@ review's pull request.
 
 ### Verified
 
-- `settings.json` (`src/settings/mod.rs`): platform configuration directory,
+- `settings.json` (`src/settings/mod.rs`, `src/settings/store.rs`): pinned private
+  profile and cooperative transaction lock, no-follow opens, regular single-link
+  files, checked owner/modes on Unix and trusted inherited DACL on Windows;
+  every save preserves a newer or malformed current document. The accepted
+  [settings boundary](settings-file-trust.md) excludes shared/network profiles
+  and hostile same-account writers; one worker and two-second load/close waits
+  bound UI waiting without claiming cancellation of OS I/O. The schema uses
   `SCHEMA_VERSION` 2, `deny_unknown_fields` on every stored struct;
   `StoredSettingsV2` can hold only window state, remembered addresses or
   hostnames, and DeviceID-to-name pairs; `load` refuses symlinks, non-regular
@@ -568,7 +574,7 @@ Re-verified in place:
   parser (`src/discovery/manual.rs`) and skipped in interface enumeration
   (`local.rs`); `DiscoveryClient::invalid_target` still accepts them, so the
   diagnostic's `--target` follow-up stays open.
-- `settings.json` is created with mode `0o600` (`src/settings/mod.rs`).
+- `settings.json` is created with mode `0o600` (`src/settings/store.rs`).
 - The routed runner re-checks authority, the deadline, and the interface pin
   before every datagram (`src/discovery/approval/controller/runner.rs`).
 - The Windows console feature exists only for the developer `-Run` build;

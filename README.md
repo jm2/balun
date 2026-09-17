@@ -55,11 +55,19 @@ address so you know which tuner failed.
 | Windows package validation | ✅ Pinned policy and full-tree probe receipt; completed installer payload independently extracted, compared, checked, and runtime-probed |
 | Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
 | Native playback log privacy | ✅ Closed error and media labels retain useful diagnostics without plugin error text, arbitrary caps values, or stream identifiers |
+| Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
 today. Local broadcast and multicast discovery, exact IP or hostname discovery, and remembered
 targets work on Linux, macOS, and Windows.
+
+Settings support a private local profile under the account's existing configuration parent.
+Windows retains that parent's inherited permissions; shared or network profiles are outside the
+contract. A load timeout uses defaults with persistence disabled for that session. A save timeout
+allows closing with the newest preferences potentially unsaved; an OS publication already in
+progress may finish later. See the [settings boundary](docs/settings-file-trust.md) for the accepted
+limits and review triggers.
 
 The product plan is [`docs/plan-v0.1.md`](docs/plan-v0.1.md), the countable ledger is
 [`docs/task.md`](docs/task.md), sanitized hardware observations are in
@@ -584,7 +592,8 @@ src/
 │   ├── network.rs          # Network-change source boundary and Linux watcher thread
 │   └── handoff.rs          # One-shot, URL-redacted stream handoff
 ├── settings/
-│   └── mod.rs              # Versioned, atomic settings.json store
+│   ├── mod.rs              # Versioned settings schema and validation
+│   └── store.rs            # Pinned private-profile transactions
 ├── playback/
 │   ├── runtime.rs          # GStreamer initialization and factory snapshot
 │   ├── session.rs          # Generation-owned playbin3 session and teardown
@@ -598,7 +607,8 @@ src/
     ├── channel_sidebar.rs  # Selected device's channel list and badges
     ├── exact_discovery_dialog.rs # Find device by address dialog
     ├── player_view.rs      # Live-TV picture, status, and playback controls
-    ├── settings_session.rs # Loads settings once and saves window state on close
+    ├── settings_session.rs # Bounded asynchronous settings load and close
+    ├── settings_session/   # One worker and the latest queued settings snapshot
     └── objects.rs          # GObject wrappers for the sidebar models
 
 scripts/

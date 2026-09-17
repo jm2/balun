@@ -20,6 +20,8 @@ windows-console = []
 [dependencies]
 adw = { version = "0.9", package = "libadwaita", features = ["v1_6"], optional = true }
 blake3 = { version = "1.8", features = ["zeroize"] }
+cap-fs-ext = "4.0.3"
+cap-std = "4.0.3"
 crc32fast = "1.5"
 getrandom = "0.4"
 gstreamer = { version = "0.25", default-features = false, features = ["v1_20"], optional = true }
