@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **33/58 (56.9%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **4/21**, and roadmap V2 **0/7**. This is a
+Current status: **34/58 (58.6%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **5/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -80,7 +80,7 @@ machine enforcement of the chosen source policy.
   non-system dependency inside the final app, including pixbuf loaders, and
   reject external/unresolved references in the signed app and reopened DMG.
 
-- [ ] **H0.5 — Bind Windows reuse to the whole probed tree ([#87]).** Require
+- [x] **H0.5 — Bind Windows reuse to the whole probed tree ([#87]).** Require
   exact payload identity or a fresh runtime probe for installer-only reuse;
   reject changed, missing, extra, and aliased non-anchor inputs.
 

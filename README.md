@@ -51,6 +51,7 @@ address so you know which tuner failed.
 | Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, the AUR, and winget |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
+| Windows installer-only reuse | ✅ Probe receipt binds every staged file and directory, the build profile, and local packaging-policy inputs |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
@@ -309,7 +310,10 @@ The package keeps the MSYS2 prefix shape (`bin\balun.exe` beside its DLLs, `lib\
 DLLs those binaries import. Before the archive is written, the helper runs the staged `balun.exe`
 itself with a sanitized environment so the bundled scanner, a fresh registry, and the synthetic
 MPEG-2 fixture are proven inside the tree, then reopens the ZIP against it. `-InnoSetup
--SkipBundle` rebuilds only the installer from a tree whose probe receipt still matches.
+-SkipBundle` rebuilds only the installer from a tree whose complete-payload probe receipt
+still matches. Changes to any staged member or local packaging policy require a fresh
+bundle/probe. The local receipt detects stale state; it is not a signature or provenance
+attestation, and completed-installer payload comparison remains tracked separately.
 
 ---
 

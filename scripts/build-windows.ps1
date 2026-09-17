@@ -197,8 +197,8 @@ $InnoTargetArchitecture = $null
 $PlatformProbeFlag = '--balun-platform-runtime-probe'
 $PlatformProbeSentinelName = 'balun-platform-runtime-probe.ok'
 $PlatformProbeSentinel = "balun-windows-runtime-probe-v1`n"
-$ProbeReceiptSuffix = '.probe-v2'
-$ProbeReceiptHeader = 'balun-windows-runtime-probe-v2'
+$ProbeReceiptSuffix = '.probe-v3'
+$ProbeReceiptHeader = 'balun-windows-runtime-probe-v3'
 $RequiredIconEntryCount = 7
 $PlatformProbeDeadlineMs = 90000
 $PlatformProbeOutputLimit = 1MB
@@ -2099,18 +2099,11 @@ function Assert-WindowsBundlePeImportPolicy {
 # ---------------------------------------------------------------------------
 # Packaging: probe receipt
 #
-# The receipt binds an existing, already-probed tree to the exact application
-# and the capability anchors of the closure, so installer-only mode can accept
-# the tree only while none of them changed. It is written beside the tree and
-# is never shipped.
+# The receipt binds a successful probe to every path, type, size and content
+# hash, plus its build profile and local packaging-policy inputs. It is written
+# beside the tree and never shipped. It detects stale local state, not an
+# attacker who can rewrite both the payload and the receipt.
 # ---------------------------------------------------------------------------
-
-$ProbeReceiptAnchors = @(
-    'bin\balun.exe',
-    'lib\gstreamer-1.0\libgstgtk4.dll',
-    'lib\gstreamer-1.0\libgstwasapi2.dll',
-    'lib\gstreamer-1.0\libgstlibav.dll'
-)
 
 function Get-WindowsProbeReceiptPath {
     param([Parameter(Mandatory = $true)][string]$Root)
@@ -2118,13 +2111,127 @@ function Get-WindowsProbeReceiptPath {
 }
 
 function Get-WindowsProbeSha256 {
-    param([Parameter(Mandatory = $true)][string]$Path)
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [System.Diagnostics.Stopwatch]$Clock = [System.Diagnostics.Stopwatch]::StartNew()
+    )
 
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
-    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw 'A Windows runtime-probe receipt input must be a regular file.'
+    if ($item -isnot [System.IO.FileInfo] -or $item.LinkType -or
+        ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $item.Length -gt 1GB) {
+        throw 'A Windows runtime-probe receipt input must be an unaliased regular file within 1 GiB.'
     }
-    return (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        foreach ($stream in Get-Item -LiteralPath $Path -Stream * -ErrorAction Stop) {
+            if ($stream.Stream -cne ':$DATA') {
+                throw 'A Windows runtime-probe input has an alternate data stream.'
+            }
+        }
+    }
+    $length = $item.Length
+    $written = $item.LastWriteTimeUtc.Ticks
+    $source = [System.IO.File]::Open($item.FullName, 'Open', 'Read', 'Read')
+    $digest = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $buffer = [byte[]]::new(1MB)
+        $bytes = 0L
+        while (($read = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            if ($Clock.ElapsedMilliseconds -ge 300000) {
+                throw 'Windows runtime-probe manifest exceeded its five-minute budget.'
+            }
+            $bytes += $read
+            if ($bytes -gt $length) { throw 'Windows runtime-probe input grew during hashing.' }
+            $null = $digest.TransformBlock($buffer, 0, $read, $buffer, 0)
+        }
+        $null = $digest.TransformFinalBlock([byte[]]::new(0), 0, 0)
+        $item.Refresh()
+        if ($bytes -ne $length -or $item.Length -ne $length -or
+            $item.LastWriteTimeUtc.Ticks -ne $written -or $item.LinkType -or
+            ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Windows runtime-probe input changed during hashing.'
+        }
+        return [BitConverter]::ToString($digest.Hash).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $source.Dispose()
+        $digest.Dispose()
+    }
+}
+
+function Get-WindowsProbeTreeDigest {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $rootItem = Get-Item -LiteralPath $Root -Force -ErrorAction Stop
+    if ($rootItem -isnot [System.IO.DirectoryInfo] -or $rootItem.LinkType -or
+        ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Windows runtime-probe tree must be a real directory.'
+    }
+    $rootFull = $rootItem.FullName.TrimEnd([char[]]@('\', '/'))
+    $pending = [System.Collections.Generic.Queue[System.IO.DirectoryInfo]]::new()
+    $pending.Enqueue($rootItem)
+    $records = [System.Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+    $folded = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $totalBytes = 0L
+    $manifestBytes = 0L
+    $encoding = [System.Text.UTF8Encoding]::new($false, $true)
+    while ($pending.Count -gt 0) {
+        $directory = $pending.Dequeue()
+        $directory = Get-Item -LiteralPath $directory.FullName -Force -ErrorAction Stop
+        if ($directory -isnot [System.IO.DirectoryInfo] -or $directory.LinkType -or
+            ($directory.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Windows runtime-probe directory changed into an alias during enumeration.'
+        }
+        # Enumerate lazily: an oversized directory must fail at the entry cap,
+        # rather than allocating its entire member list before checking it.
+        foreach ($entry in $directory.EnumerateFileSystemInfos()) {
+            if ($clock.ElapsedMilliseconds -ge 300000 -or $records.Count -ge 65536) {
+                throw 'Windows runtime-probe tree exceeded its time or member budget.'
+            }
+            $member = Get-Item -LiteralPath $entry.FullName -Force -ErrorAction Stop
+            if ($member.LinkType -or
+                ($member.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw 'Windows runtime-probe tree contains a reparse point or hard-link alias.'
+            }
+            $relative = $member.FullName.Substring($rootFull.Length + 1).Replace('\', '/')
+            if ($relative.Length -gt 1024 -or $relative -match '[\x00-\x1f\x7f:<>"|?*]' -or
+                @($relative.Split('/')).Count -gt 64 -or
+                @($relative.Split('/') | Where-Object { $_ -match '[. ]$' }).Count -gt 0 -or
+                -not $folded.Add($relative)) {
+                throw 'Windows runtime-probe tree has an unsafe, deep, or colliding path.'
+            }
+            $pathKey = [Convert]::ToBase64String($encoding.GetBytes($relative))
+            if ($member -is [System.IO.DirectoryInfo]) {
+                $record = "D`t$pathKey"
+                $pending.Enqueue($member)
+            }
+            elseif ($member -is [System.IO.FileInfo]) {
+                $totalBytes += $member.Length
+                if ($totalBytes -gt 4GB) { throw 'Windows runtime-probe tree exceeds 4 GiB.' }
+                $record = "F`t$pathKey`t$($member.Length)`t$(Get-WindowsProbeSha256 $member.FullName $clock)"
+            }
+            else { throw 'Windows runtime-probe tree contains a non-regular member.' }
+            $manifestBytes += $encoding.GetByteCount($record) + 1
+            if ($manifestBytes -gt 16MB) { throw 'Windows runtime-probe manifest exceeds 16 MiB.' }
+            $records.Add($relative, $record)
+        }
+    }
+    if (-not $records.ContainsKey('bin/balun.exe')) {
+        throw 'Windows runtime-probe tree has no application executable.'
+    }
+    $paths = [string[]]@($records.Keys)
+    [Array]::Sort($paths, [StringComparer]::Ordinal)
+    $digest = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($path in $paths) {
+            $bytes = $encoding.GetBytes($records[$path] + "`n")
+            $null = $digest.TransformBlock($bytes, 0, $bytes.Length, $bytes, 0)
+        }
+        $null = $digest.TransformFinalBlock([byte[]]::new(0), 0, 0)
+        return [BitConverter]::ToString($digest.Hash).Replace('-', '').ToLowerInvariant()
+    }
+    finally { $digest.Dispose() }
 }
 
 function Get-WindowsProbeReceiptLines {
@@ -2136,22 +2243,24 @@ function Get-WindowsProbeReceiptLines {
     $lines.Add("msys-environment=$MsysEnvironment")
     $lines.Add(('pe-machine=0x{0:X4}' -f $ExpectedPeMachine))
     $lines.Add("inno-architecture=$InnoTargetArchitecture")
-    foreach ($anchor in $ProbeReceiptAnchors) {
-        $path = Join-Path $Root $anchor
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            throw "Required receipt anchor is missing from the Windows bundle: $anchor"
-        }
-        $lines.Add("$anchor=$(Get-WindowsProbeSha256 $path)")
+    foreach ($inputPath in @('scripts/build-windows.ps1', 'Cargo.toml', 'Cargo.lock',
+        'build-aux/packaging/forbidden-bundled-components.txt', 'build-aux/inno/balun.iss')) {
+        $lines.Add("input:$inputPath=$(Get-WindowsProbeSha256 (Join-Path $RepositoryRoot $inputPath))")
     }
+    $lines.Add("tree-sha256=$(Get-WindowsProbeTreeDigest $Root)")
     return @($lines)
 }
 
 function Write-WindowsProbeReceipt {
-    param([Parameter(Mandatory = $true)][string]$Root)
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string[]]$ProbedLines
+    )
 
     $receipt = Get-WindowsProbeReceiptPath $Root
     $temporary = "$receipt.$([Guid]::NewGuid().ToString('N')).tmp"
     $lines = @(Get-WindowsProbeReceiptLines $Root)
+    Assert-WindowsProbeReceiptLines $ProbedLines $lines
     try {
         [System.IO.File]::WriteAllLines(
             $temporary,
@@ -2165,6 +2274,18 @@ function Write-WindowsProbeReceipt {
     }
 }
 
+function Assert-WindowsProbeReceiptLines {
+    param([string[]]$Lines, [string[]]$Expected)
+    if ($Lines.Count -ne $Expected.Count) {
+        throw 'The Windows packaged-runtime probe receipt has an unsupported format.'
+    }
+    for ($index = 0; $index -lt $Expected.Count; $index++) {
+        if ([string]$Lines[$index] -cne [string]$Expected[$index]) {
+            throw 'The Windows packaged-runtime probe receipt does not match the existing bundle; rerun -Bundle or -Zip.'
+        }
+    }
+}
+
 function Assert-WindowsProbeReceipt {
     param([Parameter(Mandatory = $true)][string]$Root)
 
@@ -2173,24 +2294,29 @@ function Assert-WindowsProbeReceipt {
         throw 'The existing Windows bundle has no packaged-runtime probe receipt; run -Bundle or -Zip first.'
     }
     $receiptItem = Get-Item -LiteralPath $receipt -Force -ErrorAction Stop
-    if (($receiptItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        $receiptItem.Length -gt 1024) {
+    if ($receiptItem.LinkType -or
+        ($receiptItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $receiptItem.Length -gt 4096) {
         throw 'The Windows packaged-runtime probe receipt is not a bounded regular file.'
     }
 
-    $lines = @([System.IO.File]::ReadAllLines(
-        $receiptItem.FullName,
-        [System.Text.UTF8Encoding]::new($false, $true)
-    ))
-    $expected = @(Get-WindowsProbeReceiptLines $Root)
-    if ($lines.Count -ne $expected.Count) {
-        throw 'The Windows packaged-runtime probe receipt has an unsupported format.'
-    }
-    for ($index = 0; $index -lt $expected.Count; $index++) {
-        if ([string]$lines[$index] -cne [string]$expected[$index]) {
-            throw 'The Windows packaged-runtime probe receipt does not match the existing bundle; rerun -Bundle or -Zip.'
+    $source = [System.IO.File]::Open($receiptItem.FullName, 'Open', 'Read', 'Read')
+    try {
+        $buffer = [byte[]]::new(4097)
+        $total = 0
+        while ($total -lt $buffer.Length -and
+            ($read = $source.Read($buffer, $total, $buffer.Length - $total)) -gt 0) {
+            $total += $read
         }
+        if ($total -gt 4096) { throw 'Windows runtime-probe receipt exceeds 4096 bytes.' }
+        $text = [System.Text.UTF8Encoding]::new($false, $true).GetString($buffer, 0, $total)
     }
+    finally { $source.Dispose() }
+    $text = $text.Replace("`r`n", "`n")
+    if (-not $text.EndsWith("`n")) { throw 'Windows runtime-probe receipt is incomplete.' }
+    $lines = @($text.Substring(0, $text.Length - 1).Split([char]"`n"))
+    $expected = @(Get-WindowsProbeReceiptLines $Root)
+    Assert-WindowsProbeReceiptLines $lines $expected
 }
 
 # ---------------------------------------------------------------------------
@@ -3046,6 +3172,9 @@ function Invoke-InnoSetup {
     Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
 
     Write-Info 'Running the Inno Setup compiler...'
+    # Last payload operation before invoking the compiler, including the
+    # installer-only path. Installer extraction remains a separate gate.
+    Assert-WindowsProbeReceipt $Distribution
     $global:LASTEXITCODE = 0
     & $iscc "/DAppVersion=$Version" "/DAppNumericVersion=$NumericVersion" `
         "/DSourceDir=$Distribution" "/DOutputDir=$outputDir" `
@@ -3272,8 +3401,8 @@ try {
 
         if ($InnoSetup.IsPresent -and $SkipBundle.IsPresent) {
             # Installer-only mode: the existing tree is untrusted stale input.
-            # Its probe receipt must still match the exact application and
-            # closure anchors, and every non-executing gate is repeated.
+            # Its probe receipt must still match the entire payload and local
+            # policy inputs, and every non-executing gate is repeated.
             if (-not (Test-Path -LiteralPath $Distribution -PathType Container)) {
                 Exit-WithError "No staged Windows bundle exists at $Distribution; run -Bundle or -Zip first."
             }
@@ -3329,9 +3458,10 @@ try {
 
         Write-Info "Staging the Windows package under $Distribution ..."
         $Distribution = Invoke-WindowsPackageStaging $MsysLayout $PackagingTools $Distribution $BinaryItem.FullName
-        Invoke-PackagedRuntimeProbe $Distribution
         try {
-            Write-WindowsProbeReceipt $Distribution
+            $ProbedLines = @(Get-WindowsProbeReceiptLines $Distribution)
+            Invoke-PackagedRuntimeProbe $Distribution
+            Write-WindowsProbeReceipt $Distribution $ProbedLines
         }
         catch {
             Exit-WithError "Could not persist the Windows packaged-runtime probe receipt: $($_.Exception.Message)"
@@ -3339,6 +3469,7 @@ try {
         # Recheck immediately before archiving so the emitted artifact, rather
         # than merely the earlier staging snapshot, is covered by every gate.
         Assert-WindowsPackageFinalGates $Distribution $PackagingTools.PeInspector $PackageVersion
+        Assert-WindowsProbeReceipt $Distribution
         Write-Info "Staged package: $Distribution"
 
         if ($Zip.IsPresent -or $InnoSetup.IsPresent) {
