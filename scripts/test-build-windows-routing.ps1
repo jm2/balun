@@ -900,6 +900,21 @@ exit $global:LASTEXITCODE
         Copy-Item -LiteralPath (
             Join-Path $ScriptDirectory '..\build-aux\packaging\forbidden-bundled-components.txt'
         ) -Destination (Join-Path $FixturePolicyDirectory 'forbidden-bundled-components.txt')
+        $FixturePolicy = Join-Path $FixturePolicyDirectory 'forbidden-bundled-components.txt'
+        $ReviewedPolicy = [System.IO.File]::ReadAllBytes($FixturePolicy)
+        foreach ($InvalidPolicy in @('dummy-token', "token`0", ('#' * 65537))) {
+            [System.IO.File]::WriteAllText($FixturePolicy, $InvalidPolicy)
+            Invoke-TestHelper -Arguments @('-Bundle')
+            Assert-ExpectedStatus 1
+            Assert-ExpectedOutput 'Bundled-component policy validation failed'
+            Assert-EmptyLog $CommandLog 'Cargo'
+        }
+        [System.IO.File]::WriteAllBytes($FixturePolicy, [byte[]]@(0xc0, 0xaf))
+        Invoke-TestHelper -Arguments @('-Zip')
+        Assert-ExpectedStatus 1
+        Assert-ExpectedOutput 'Bundled-component policy validation failed'
+        Assert-EmptyLog $CommandLog 'Cargo'
+        [System.IO.File]::WriteAllBytes($FixturePolicy, $ReviewedPolicy)
         Invoke-TestHelper -Arguments @('-Zip')
         Assert-ExpectedStatus 1
         Assert-ExpectedOutput 'Required packaging tools are missing from MSYS2 CLANG64'
@@ -1534,7 +1549,7 @@ exit $global:LASTEXITCODE
         '''--coff-resources "''',
         "= '--balun-platform-runtime-probe'",
         '= "balun-windows-runtime-probe-v1`n"',
-        "= 'balun-windows-runtime-probe-v2'",
+        "= 'balun-windows-runtime-probe-v3'",
         '$lines.Add("rust-target=$DesktopRustTarget")',
         '$lines.Add("msys-environment=$MsysEnvironment")',
         '$lines.Add("inno-architecture=$InnoTargetArchitecture")',

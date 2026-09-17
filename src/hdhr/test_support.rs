@@ -4,6 +4,23 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+pub(crate) const JSON_SECRET_MARKER: &str =
+    "http://fixture-user:fixture-password@invalid.example/stream?token=JSON_SECRET_719";
+
+pub(crate) fn assert_value_free_error(error: &(dyn std::error::Error + 'static)) {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        let rendered = format!("{error}\n{error:?}\n{error:#?}");
+        for marker in [JSON_SECRET_MARKER, "fixture-password", "JSON_SECRET_719"] {
+            assert!(
+                !rendered.contains(marker),
+                "device value escaped: {rendered}"
+            );
+        }
+        current = error.source();
+    }
+}
+
 pub(crate) struct ScriptedResponse {
     pub(crate) bytes: Vec<u8>,
     pub(crate) delay: Duration,

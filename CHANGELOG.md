@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Isolated native-call stall regressions document the limits of playback teardown
   timeouts; Windows CI now executes the desktop tests as well as compiling them.
+- Critical admission, cancellation, identity, privacy, and package gates have measured
+  coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
+- Reproducible adversarial parser, approval, route-budget, and package-manifest
+  properties run in PR checks and scheduled extended corpora, with failure replay records.
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
@@ -18,6 +22,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Completed Windows installers now undergo bounded static payload extraction and exact
+  manifest comparison, followed by repeated native/resource checks and a runtime probe
+  on the extracted tree for both x86_64 and ARM64 before upload.
+- Routed scans add bounded positive jitter; the diagnostic uses desktop exact-address
+  admission and reply limits, caps each invocation, and rejects repeated range scans.
+  Newer approval-state schemas now have a distinct, preserving quarantine reason.
+- Device and lineup JSON errors now retain only fixed failure categories and line/column
+  positions, preventing mistyped device values from reaching inspection, debug output,
+  CLI diagnostics, or nested error sources.
+- Windows packaging now checks the shared component-policy checksum against one
+  bounded, strict UTF-8, non-reparse file snapshot before any build, copy, or probe.
+- Windows installer-only reuse now binds a successful runtime probe to every staged
+  file and directory, the build profile, and local packaging-policy inputs. Changed,
+  missing, extra, or aliased inputs require a fresh bundle/probe before compilation.
+- macOS package validation now rejects external, unresolved, or escaping native dependencies
+  in every Mach-O member and architecture, including pixbuf loaders, after signing and
+  reopening the DMG. The relocated runtime probe cannot read Homebrew's libraries.
 - Slow or stuck hostname lookups no longer hold window close open. Outstanding
   lookups are capped across timeouts and restarts of the controller; busy resolution
   offers direct IP entry or a later retry.

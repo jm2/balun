@@ -584,6 +584,67 @@ mod tests {
     ];
 
     #[test]
+    fn adversarial_packet_mutations_preserve_bounds_and_iterator_progress() {
+        crate::adversarial::run("packets", |random| {
+            let mutated = random.mutate(&GOLDEN_DISCOVER_REPLY, MAX_PACKET_SIZE + 1);
+            // Half the cases repair the outer frame so malformed TLVs reach the
+            // inner parser instead of stopping at the CRC admission check.
+            let packet = if random.index(2) == 0 {
+                let payload = random.mutate(
+                    &GOLDEN_DISCOVER_REPLY[4..GOLDEN_DISCOVER_REPLY.len() - 4],
+                    MAX_PAYLOAD_SIZE,
+                );
+                encode_frame(TYPE_DISCOVER_REPLY, &payload).unwrap()
+            } else {
+                mutated
+            };
+            if let Ok(frame) = parse_frame(&packet) {
+                assert!(packet.len() <= MAX_PACKET_SIZE);
+                assert_eq!(frame.payload.len() + FRAME_OVERHEAD, packet.len());
+                let mut iterator = frame.tlvs();
+                let mut consumed = 0;
+                for _ in 0..=frame.payload.len() {
+                    match iterator.next() {
+                        Some(Ok(item)) => {
+                            consumed += item.value.len() + 2;
+                            assert!(consumed <= frame.payload.len());
+                        }
+                        Some(Err(_)) | None => break,
+                    }
+                }
+                assert_eq!(iterator.next(), None);
+                assert_eq!(iterator.next(), None);
+            }
+            if let Ok(reply) = parse_tuner_discover_response(&packet) {
+                assert!(is_concrete_device_id(reply.device_id));
+                assert!(reply.device_types.contains(&DEVICE_TYPE_TUNER));
+                for value in [reply.base_url, reply.lineup_url].into_iter().flatten() {
+                    assert!(!value.contains('\0'));
+                    assert!(value.len() <= MAX_PAYLOAD_SIZE);
+                }
+            }
+
+            // Structured positive corpus: arbitrary unknown TLVs must not alter
+            // the concrete identity, including both wire length encodings.
+            let mut payload = GOLDEN_DISCOVER_REPLY[4..GOLDEN_DISCOVER_REPLY.len() - 4].to_vec();
+            let extension = random.bytes(512);
+            payload.push(0x7e);
+            if extension.len() < 128 {
+                payload.push(u8::try_from(extension.len()).unwrap());
+            } else {
+                payload.push(u8::try_from(extension.len() & 0x7f).unwrap() | 0x80);
+                payload.push(u8::try_from(extension.len() >> 7).unwrap());
+            }
+            payload.extend(extension);
+            let packet = encode_frame(TYPE_DISCOVER_REPLY, &payload).unwrap();
+            assert_eq!(
+                parse_tuner_discover_response(&packet).unwrap().device_id,
+                0x105A_1232
+            );
+        });
+    }
+
+    #[test]
     fn encodes_current_all_tuners_request_golden_vector() {
         let encoded = encode_tuner_discover_request(None).expect("request should encode");
         assert_eq!(encoded, GOLDEN_ALL_TUNERS_REQUEST);

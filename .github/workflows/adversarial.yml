@@ -1,0 +1,67 @@
+name: Extended adversarial regression
+
+on:
+  schedule:
+    - cron: '31 4 * * *'
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: 'Replay seed (decimal integer, 0 through 9223372036854775807)'
+        required: true
+        default: '20260917'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: adversarial-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  extended:
+    name: Extended synthetic corpora
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RUST_BACKTRACE: '1'
+      BALUN_ADVERSARIAL_SEED: ${{ inputs.seed || github.run_id }}
+      BALUN_ADVERSARIAL_CASES: '8192'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare adversarial replay environment
+        run: |
+          printf 'TMPDIR=%s\nCARGO_TARGET_DIR=%s/adversarial-target\n' \
+            "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'BALUN_ADVERSARIAL_FAILURE_DIR=%s/adversarial-counterexamples\n' \
+            "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          python3 --version
+          pwsh -NoProfile -Command '$PSVersionTable | Format-Table'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+
+      - name: Mutate packets and JSON, generate URL and approval properties
+        run: cargo test --locked --lib adversarial_ -- --nocapture
+
+      - name: Mutate Mach-O headers and generate native dependency graphs
+        run: python3 -B scripts/test_adversarial_packages.py
+
+      - name: Generate installer manifest properties
+        env:
+          BALUN_ADVERSARIAL_CASES: '2048'
+        run: pwsh -NoProfile -File scripts/test-adversarial-installer.ps1
+
+      - name: Retain synthetic counterexample replay records
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: adversarial-extended-counterexamples
+          path: ${{ runner.temp }}/adversarial-counterexamples/*.txt
+          if-no-files-found: ignore
+          retention-days: 14

@@ -135,6 +135,14 @@ and installer gates described below. The release-candidate workflow selects
 diagnostic routes explicitly and admits only the exact public package
 inventory.
 
+Completed macOS apps also require Python 3 for bounded, all-architecture Mach-O
+closure inspection. All non-system references must resolve inside the app, including
+pixbuf loaders and helper executables; the shared component gate detects tree changes
+during inspection. Validation repeats after signing, after the runtime probe, and on
+the reopened DMG. The probe uses the system `sandbox-exec` tool to deny reads from the
+build's Homebrew prefix and both standard Homebrew roots. See the
+[H0.4 evidence and system-path policy](security-review-v0.1.md#2026-09-17-macos-native-closure-h04).
+
 The packaged macOS launcher asks the signed `Balun-bin` to derive its canonical
 install-key hash, so an ordinary app launch does not execute Perl. Perl remains
 a build/check-only tool for bounded package-policy validation, including the
@@ -220,13 +228,21 @@ Setup. The deliberate differences are:
 - **Reopened artifacts.** Tributary reopens the ZIP for forbidden names only.
   Balun additionally requires the ZIP entry set and sizes to equal the staged
   tree, and reopens the installer's version resource for the product name and
-  the exact package version. The installer payload is the tree validated
-  immediately before compilation.
-- **Receipt.** The unshipped `dist\balun-windows.probe-v2` receipt binds the
-  probed tree to the selected Rust target, MSYS2 environment, Inno architecture,
-  `bin\balun.exe`, `libgstgtk4.dll`, `libgstwasapi2.dll`, and `libgstlibav.dll`;
-  `-InnoSetup -SkipBundle` accepts the tree only while it matches and still
-  repeats every non-executing gate.
+  exact package version. It then preflights and extracts the complete installer
+  payload with a pinned inspector, compares every member/hash to staging, repeats
+  the native/resource gates, and probes the extracted runtime. Both native CI
+  lanes and release jobs require this before uploading candidates.
+- **Receipt.** The unshipped `dist\balun-windows.probe-v3` receipt binds every
+  staged path, type, size, and SHA-256 to the selected profile and local helper,
+  Cargo manifest/lock, component-policy, and installer-recipe inputs. Enumeration
+  is ordinal and bounded; hidden files and empty directories count, while reparse
+  points, hard links, colliding paths, and alternate data streams are rejected.
+  The same manifest must match before and after the runtime probe, after final
+  validation, and immediately before installer compilation. Legacy receipts
+  require a fresh bundle/probe. This is local stale-state detection, not an
+  authenticity or build-provenance guarantee. The separate
+  [H1.1 gate](windows-installer-inspection.md) performs completed-installer
+  extraction and payload comparison; its policy script is also receipt-bound.
 - **Resources.** `build.rs` ports Tributary's `winresource` and
   `embed-resource` step for the seven-image `data/balun.ico` and the package
   version; the helper requires exactly that resource set before staging and

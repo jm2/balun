@@ -62,7 +62,140 @@ blocked past timeout, checks 100 rejected submissions, closes the controller,
 and starts a replacement that still observes the occupied slot, without a
 discovery service call. Normal address filtering and the four-address cap remain.
 
+### 2026-09-17 macOS native closure (H0.4)
+
+[Issue #86](https://github.com/jm2/balun/issues/86) reproduced a dependency under
+an arbitrary external prefix that the old final check silently accepted.
+`scripts/macos_native_closure.py` now reads bounded Mach-O headers and every
+architecture's load commands. It enumerates all regular native members, including
+scanner/query helpers, frameworks, and dynamically loaded GStreamer/pixbuf modules.
+The completed-tree component gate brackets closure inspection with its existing
+content manifests, so changes during inspection invalidate the result.
+
+Every non-system dependency must resolve to a compatible native slice inside the
+canonical app root. Loader and executable tokens use their owning contexts;
+run paths include the importing chain, and an external run-path candidate rejects
+the package even if a later bundled candidate exists. Dynamic modules must work
+under every compatible packaged executable context. Absolute non-system install
+names, bare relative names, missing dependencies, symlink escapes, malformed
+headers, and dyld environment overrides fail closed. Weak dependencies receive
+the same closure requirement. Only normalized `/usr/lib/`,
+`/System/Library/Frameworks/`, and `/System/Library/PrivateFrameworks/` install
+names may remain external: Apple supplies these from the OS, including its shared
+cache. This policy does not assert their availability on every older OS version.
+
+The packager extracts complete import strings, including spaces, and stops on
+failed copies/rewrites or an exhausted traversal. It repeats completed-tree and
+closure validation after ad-hoc signing, after the runtime probe, and on the
+read-only reopened DMG. The existing relocated playback probe now uses a checked-in
+`sandbox-exec` profile denying reads from the actual Homebrew prefix and both
+standard Homebrew roots. The app, home, and caches are relocated to a canonical
+scratch directory outside those roots; an unsuitable `TMPDIR` fails with an
+explicit diagnostic. A native fixture launches a relocated copy from a checkout
+inside the denied prefix. This is packaging evidence, not a decoder sandbox or new
+signing/provenance policy.
+
+Portable fixtures cover malformed headers, hidden fat slices, loader/run-path
+resolution, pixbuf imports, path escapes, architecture mismatch, and valid
+transitive closure. The native CI fixture compiles real Mach-O files, reproduces
+external/missing/pixbuf dependencies, proves the probe profile denies the vendor
+library, and launches the valid bundled case after deleting that external library.
+Physical packaged-tuner acceptance remains P4.1; archive containment remains H2.4.
+
+### 2026-09-17 Windows complete-tree probe receipt (H0.5)
+
+[Issue #87](https://github.com/jm2/balun/issues/87) reproduced a changed or deleted
+non-anchor DLL retaining the four-file runtime-probe receipt. Version 3 binds the
+whole staged tree: ordinal, case-collision-checked relative paths, member types,
+file sizes, and SHA-256 content hashes, including hidden files and empty directories.
+It also binds the selected profile and local packaging helper, Cargo manifest/lock,
+component-policy file, and Inno recipe. Reparse points, hard-link aliases, unsafe
+paths, and Windows alternate data streams are refused.
+
+Manifest budgets are 65,536 members, 64 path components, 1,024 path characters,
+1 GiB per file, 4 GiB total file bytes, 16 MiB manifest text, and five minutes.
+Files are hashed in bounded chunks with a post-read size/write-time check; Windows
+opens exclude concurrent writes/deletes. The receipt itself is at most 4 KiB and
+strictly decoded as UTF-8. A pre-probe manifest must match before a receipt is
+written; final gates and the last step before invoking Inno revalidate it.
+
+The portable PowerShell regressions exercise both profiles, every former non-anchor
+class, same-size/write-time modifications, missing/extra members, aliases, policy
+changes, malformed/legacy receipts, and mutation while the probe runs. Native
+Windows CI changes only the COFF timestamp of the already-probed GStreamer core
+DLL, preserving its code/imports/exports and PE structure, verifies receipt rejection,
+restores it, and verifies acceptance again.
+
+This receipt is not an authenticity boundary against someone able to rewrite both
+payload and receipt. The separate H1.1 gate below inspects the completed installer.
+No signing identities, release attestations, or new provenance work are introduced.
+
+### 2026-09-17 Windows policy snapshot (H1.2)
+
+[Issue #92](https://github.com/jm2/balun/issues/92) identified that Windows accepted
+syntactically valid replacement policy tokens without checking the reviewed digest.
+The native Windows loader now opens the leaf with `FILE_FLAG_OPEN_REPARSE_POINT`,
+checks the opened disk-file handle's attributes, size, and single-link count, and
+shares it for reads only. A bounded byte snapshot is strictly decoded without NUL,
+hashed against the shared checksum, then parsed using the shared token/line limits.
+The digest and parser never reread a pathname. No source-directory immutability or
+parent-path trust stronger than the existing local-checkout boundary is claimed.
+
+Portable and native PowerShell regressions cover replaced/deleted tokens, invalid
+digest, malformed UTF-8, NUL, oversized bytes, aliases/reparse inputs, case-folding,
+duplicates, and each syntax limit. Routing fixtures verify refusal before downstream
+packaging tools or Cargo. The [component-policy document](release-component-policy.md)
+records the historical overclaim and the exercised replacement guarantee.
+
+### 2026-09-17 completed Windows installer payload (H1.1)
+
+[Issue #90](https://github.com/jm2/balun/issues/90) is covered by the
+[installer inspection gate](windows-installer-inspection.md). After compilation,
+a pinned non-executing tool supplies raw paths, sizes, and SHA-256 hashes for
+bounded preflight and exact comparison with staging. Only a matching manifest
+can trigger extraction into a fresh scratch directory. The extracted tree must
+match again, pass the native/resource gates and relocated runtime probe, and
+remain identical through the final check. The installer is held read-only on
+Windows and its content hash is checked before and after inspection.
+
+Portable regressions prove changed, missing, extra, escaping, conflicting,
+oversized, and unsupported member declarations cannot start extraction. They
+also exercise wrong PE architecture and mutation during the final probe. The
+document records the separate static comparison of both published v0.1.0
+installers with their ZIPs. Both native Windows CI lanes must validate the new
+implementation before merge. P4.1 installed playback and H2.4 containment for
+arbitrary untrusted native archives remain separate outcomes.
+
+### 2026-09-17 value-free JSON diagnostics (H3.1)
+
+[Issue #93](https://github.com/jm2/balun/issues/93) demonstrated that a mistyped
+JSON field could echo a secret-shaped URL through serde's error text. The earlier
+claim that these errors could never include a URL was incorrect; ignoring the
+`DeviceAuth` field did not prevent a value in another field from being echoed.
+
+Both device metadata and lineup parsing now convert serde errors immediately into
+`JsonParseError`: a fixed I/O/syntax/data/end-of-input category and numeric line/column
+positions. The original error is discarded, including its source chain. `Display`,
+`Debug`, and nested `DeviceSnapshotError`/`LineupFetchError` sources therefore cannot
+recover a device-chosen JSON value. The public category/position accessors preserve
+useful classification without changing response bounds or identity validation.
+
+Regressions prove the raw serde error would expose a synthetic credential/query URL,
+then verify its absence from parser errors, both debug formats, every nested source,
+inspection issue messages/report debug, and the actual CLI stderr writer. Cases cover
+wrong field types, arbitrary strings, malformed/truncated JSON, trailing data, ignored
+authorization fields, and an I/O source carrying the marker. No real credential is used.
+This closes the prior JSON diagnostic exception; it is not the broader H3.4 audit.
+
 ### Historical review summary
+
+H3.3 corrections and maintainer-approved bounded acceptances are recorded in the
+[September 17 finding dispositions](discovery-low-findings-2026-09.md).
+Routed positive jitter, stricter CLI admission/reply budgets, and a distinct
+newer-schema quarantine supersede the corresponding historical findings below.
+The maintainer accepted the library-loopback and sibling-key boundaries on
+September 17, 2026, with `jm2` as owner and the linked review triggers. H3.3
+completes when these corrections and dispositions land on `main`.
 
 H0.2 / [#88](https://github.com/jm2/balun/issues/88) also has a targeted
 [startup/retirement correction](playback.md#source-startup-and-retirement-correction-2026-09-17):
@@ -247,9 +380,10 @@ review's pull request.
   No production path rendered them.
 - Low, fixed here (test only): `DeviceHttpError::Transport` depends on
   `without_url()` at each construction site; the new test guards it.
-- Low, open: `DeviceHttpError::Json` and `LineupError::Json` render serde's
-  message, which can echo a mistyped device-chosen value into the diagnostic's
-  stderr; bounded, escaped, never `DeviceAuth` or a URL.
+- Low, resolved by H3.1 on 2026-09-17: `DeviceHttpError::Json` and
+  `LineupError::Json` previously rendered serde's value-bearing message.
+  Contrary to the earlier review text, a mistyped field could include a URL
+  or secret-shaped value. Both errors now retain only category and position.
 - Accepted under ADR-0002: `DeviceEndpoint`'s derived `Debug` shows
   responder-pinned URLs, and the lineup body is not zeroized.
 
@@ -418,8 +552,9 @@ Still open:
 
 - Routed pacing has no jitter (plan §5, ADR-0001).
 - `DiscoveryClient::invalid_target` does not refuse loopback (§1).
-- `DeviceHttpError::Json` and `LineupError::Json` still render serde's message
-  (§3); both wrap `serde_json::Error` directly.
+- At that revision, `DeviceHttpError::Json` and `LineupError::Json` still
+  rendered serde's message (§3). H3.1 resolved this on 2026-09-17 by discarding
+  the raw error at both parsing boundaries.
 - The approval store has no unsupported-version quarantine reason.
 - The hostname resolver, network-change reconciliation, and Windows ARM64
   profile were reviewed for bounds and fail-closed defaults only.
@@ -429,8 +564,8 @@ Still open:
 - Add jitter to the routed pacing or amend plan §5 and ADR-0001 (P2).
 - Refuse loopback in `DiscoveryClient` `invalid_target` so `balun-discover
   --target` cannot probe it.
-- Render `DeviceHttpError::Json` and `LineupError::Json` as serde positions
-  only, without the message that can echo a device-chosen value.
+- JSON diagnostic follow-up completed by H3.1 on 2026-09-17: fixed categories
+  and positions replace value-bearing serde errors across diagnostic paths.
 - Approval store: document the key threat model and add an unsupported-version
   quarantine reason.
 - The CI Flatpak job's `gnome-50` builder image is still a moving tag; pin it

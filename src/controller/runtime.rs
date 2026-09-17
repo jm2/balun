@@ -53,10 +53,6 @@ pub const MAX_COMMAND_CAPACITY: usize = 1_024;
 /// Maximum distinct exact addresses admitted during one controller session.
 pub const MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION: usize = 32;
 
-const EXACT_DISCOVERY_ATTEMPTS: u8 = 2;
-const EXACT_DISCOVERY_RESPONSE_WINDOW: Duration = Duration::from_millis(200);
-const EXACT_DISCOVERY_MAX_RECEIVED_DATAGRAMS: usize = 16;
-const EXACT_DISCOVERY_MAX_UNIQUE_DEVICES: usize = 1;
 const MAX_RETAINED_LOCAL_OBSERVATIONS: usize = match DeviceRegistry::DEFAULT_MAX_DEVICES
     .checked_mul(DeviceRegistry::DEFAULT_MAX_LOCATORS_PER_DEVICE)
 {
@@ -212,13 +208,7 @@ fn default_network_change_source() -> Arc<dyn NetworkChangeSource> {
 }
 
 fn exact_probe_config() -> ProbeConfig {
-    ProbeConfig::new(
-        EXACT_DISCOVERY_ATTEMPTS,
-        EXACT_DISCOVERY_RESPONSE_WINDOW,
-        EXACT_DISCOVERY_MAX_RECEIVED_DATAGRAMS,
-        EXACT_DISCOVERY_MAX_UNIQUE_DEVICES,
-    )
-    .expect("fixed exact-discovery probe budget must be valid")
+    ProbeConfig::exact_target()
 }
 
 fn discovery_failure(error: DiscoveryError) -> DiscoveryFailure {
@@ -2773,6 +2763,26 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn disconnected_network_source_cannot_starve_command_channel_shutdown() {
+        struct ClosedChangeSource;
+        impl NetworkChangeSource for ClosedChangeSource {
+            fn subscribe(&self) -> Option<mpsc::Receiver<NetworkChange>> {
+                let (sender, receiver) = mpsc::channel(1);
+                drop(sender);
+                Some(receiver)
+            }
+        }
+        let mut actor = test_actor();
+        actor.network_source = Arc::new(ClosedChangeSource);
+        // Both receivers are already closed. Network events have priority, so
+        // the actor must retire that source before it can observe command EOF.
+        tokio::time::timeout(Duration::from_secs(1), actor.run())
+            .await
+            .expect("a closed change source must not spin or starve shutdown")
+            .unwrap();
+    }
+
     fn ready_stream_actor(
         protected: bool,
         selected_source: &str,
@@ -2911,16 +2921,10 @@ mod tests {
     fn exact_probe_budget_is_fixed_and_neighbor_friendly() {
         let config = exact_probe_config();
 
-        assert_eq!(config.attempts(), EXACT_DISCOVERY_ATTEMPTS);
-        assert_eq!(config.response_window(), EXACT_DISCOVERY_RESPONSE_WINDOW);
-        assert_eq!(
-            config.max_received_datagrams(),
-            EXACT_DISCOVERY_MAX_RECEIVED_DATAGRAMS
-        );
-        assert_eq!(
-            config.max_unique_devices(),
-            EXACT_DISCOVERY_MAX_UNIQUE_DEVICES
-        );
+        assert_eq!(config.attempts(), 2);
+        assert_eq!(config.response_window(), Duration::from_millis(200));
+        assert_eq!(config.max_received_datagrams(), 16);
+        assert_eq!(config.max_unique_devices(), 1);
     }
 
     #[test]

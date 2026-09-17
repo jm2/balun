@@ -35,6 +35,17 @@ pub struct ProbeConfig {
 }
 
 impl ProbeConfig {
+    /// The shared desktop/CLI budget for one explicitly entered address.
+    #[must_use]
+    pub const fn exact_target() -> Self {
+        Self {
+            attempts: 2,
+            response_window: Duration::from_millis(200),
+            max_received_datagrams: 16,
+            max_unique_devices: 1,
+        }
+    }
+
     pub fn new(
         attempts: u8,
         response_window: Duration,
