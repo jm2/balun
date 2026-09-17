@@ -2,6 +2,8 @@
 
 Last reviewed: 2026-09-03
 
+Windows policy-loader correction: 2026-09-17 (H1.2 / [#92](https://github.com/jm2/balun/issues/92)).
+
 Balun plays unprotected live television supplied by HDHomeRun devices. It does
 not implement DVD or Blu-ray playback, protected-channel playback, or a
 proprietary content-decryption module. Release inputs and future application
@@ -21,6 +23,18 @@ reviewed bytes are pinned by checksum in the validator. It starts with
 Tributary's current optical-disc and proprietary-DRM deny list and adds the
 Widevine, DTCP, and OpenCDM names relevant to protected television paths. The
 policy remains intentionally narrow.
+
+The earlier Windows "pinned policy" wording below overstated its local loader:
+it checked token syntax without the shared digest. H1.2 corrects that gap.
+Windows now opens the policy without following a leaf reparse point, checks the
+opened file's type/link count, excludes concurrent writes/replacement, and reads
+at most 65,537 bytes to enforce the 65,536-byte limit. Strict NUL-free UTF-8
+decoding, the shared SHA-256, and token parsing all use that one memory snapshot.
+Parsing matches the shared 1,024-line/1,024-byte-line, 64-character-token, and
+256-token limits with ASCII normalization and case-insensitive duplicate rejection.
+Native Windows CI exercises the loader and proves invalid bytes fail before
+packaging-tool lookup, Cargo, copying, or the runtime probe; a cross-loader test
+requires Linux, macOS, and Windows to retain the same reviewed checksum.
 
 Ordinary video and audio codecs, MPEG-TS and other container support, TLS, and
 general-purpose cryptography are not denied by this policy. They are necessary

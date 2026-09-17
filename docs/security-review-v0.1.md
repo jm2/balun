@@ -127,6 +127,23 @@ This receipt is not an authenticity boundary against someone able to rewrite bot
 payload and receipt. It does not inspect a completed installer; H1.1 remains open.
 No signing identities, release attestations, or new provenance work are introduced.
 
+### 2026-09-17 Windows policy snapshot (H1.2)
+
+[Issue #92](https://github.com/jm2/balun/issues/92) identified that Windows accepted
+syntactically valid replacement policy tokens without checking the reviewed digest.
+The native Windows loader now opens the leaf with `FILE_FLAG_OPEN_REPARSE_POINT`,
+checks the opened disk-file handle's attributes, size, and single-link count, and
+shares it for reads only. A bounded byte snapshot is strictly decoded without NUL,
+hashed against the shared checksum, then parsed using the shared token/line limits.
+The digest and parser never reread a pathname. No source-directory immutability or
+parent-path trust stronger than the existing local-checkout boundary is claimed.
+
+Portable and native PowerShell regressions cover replaced/deleted tokens, invalid
+digest, malformed UTF-8, NUL, oversized bytes, aliases/reparse inputs, case-folding,
+duplicates, and each syntax limit. Routing fixtures verify refusal before downstream
+packaging tools or Cargo. The [component-policy document](release-component-policy.md)
+records the historical overclaim and the exercised replacement guarantee.
+
 ### Historical review summary
 
 H0.2 / [#88](https://github.com/jm2/balun/issues/88) also has a targeted
