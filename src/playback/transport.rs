@@ -43,7 +43,6 @@ const READER_THREAD_NAME: &str = "balun-stream-reader";
 const FEEDER_THREAD_NAME: &str = "balun-stream-feeder";
 const FEED_QUEUE_CAPACITY: usize = 8;
 const RUNTIME_SHUTDOWN_BOUND: Duration = Duration::from_secs(1);
-const FAILED_START_JOIN_BOUND: Duration = Duration::from_secs(1);
 
 /// Bounded deadlines for one live stream request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +85,31 @@ pub(super) enum TransportStartError {
     Thread,
 }
 
+/// A failed second spawn still owns the first worker. Return that ownership
+/// to the source policy so ordinary teardown proves its completion too.
+pub(super) struct TransportStartFailure {
+    pub(super) error: TransportStartError,
+    pub(super) transport: Option<StreamTransport>,
+}
+
+impl std::fmt::Debug for TransportStartFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TransportStartFailure")
+            .field("error", &self.error)
+            .finish()
+    }
+}
+
+impl From<TransportStartError> for TransportStartFailure {
+    fn from(error: TransportStartError) -> Self {
+        Self {
+            error,
+            transport: None,
+        }
+    }
+}
+
 /// The owned workers did not finish inside the teardown bound.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct TransportJoinError;
@@ -108,7 +132,7 @@ enum ReaderStop {
 /// feeder waiting on the bounded byte limit.
 pub(super) struct StreamTransport {
     cancellation: CancellationToken,
-    reader: WorkerHandle,
+    reader: Option<WorkerHandle>,
     feeder: WorkerHandle,
 }
 
@@ -118,7 +142,7 @@ impl StreamTransport {
         source: gst::Element,
         pipeline: &gst::Pipeline,
         config: TransportConfig,
-    ) -> Result<Self, TransportStartError> {
+    ) -> Result<Self, TransportStartFailure> {
         validate_feed_signals(&source)?;
         // The handoff is consumed and zeroized here. Only the parsed URL lives
         // on, and only inside the reader thread's private state.
@@ -147,16 +171,21 @@ impl StreamTransport {
         match reader {
             Ok(reader) => Ok(Self {
                 cancellation,
-                reader,
+                reader: Some(reader),
                 feeder,
             }),
             Err(error) => {
                 // The unspawned closure dropped the feed sender, so the feeder
                 // observes a closed channel and exits without emitting EOS.
-                let mut feeder = feeder;
                 cancellation.cancel();
-                let _ = feeder.join_until(Instant::now() + FAILED_START_JOIN_BOUND);
-                Err(error)
+                Err(TransportStartFailure {
+                    error,
+                    transport: Some(Self {
+                        cancellation,
+                        reader: None,
+                        feeder,
+                    }),
+                })
             }
         }
     }
@@ -169,7 +198,10 @@ impl StreamTransport {
     /// Wait for both workers. Call after the pipeline reached `NULL`.
     pub(super) fn join(&mut self, deadline: Instant) -> Result<(), TransportJoinError> {
         self.cancellation.cancel();
-        let reader = self.reader.join_until(deadline);
+        let reader = self
+            .reader
+            .as_mut()
+            .map_or(Ok(()), |reader| reader.join_until(deadline));
         let feeder = self.feeder.join_until(deadline);
         reader.and(feeder)
     }
@@ -191,6 +223,13 @@ impl WorkerHandle {
         name: &str,
         work: impl FnOnce() + Send + 'static,
     ) -> Result<Self, TransportStartError> {
+        #[cfg(test)]
+        SPAWN_HOOK.with(|hook| {
+            if let Some(hook) = hook.borrow().as_ref() {
+                hook(name)?;
+            }
+            Ok::<_, TransportStartError>(())
+        })?;
         let (finished_sender, finished) = std_mpsc::channel();
         let thread = thread::Builder::new()
             .name(name.to_owned())
@@ -220,6 +259,31 @@ impl WorkerHandle {
             }
         }
     }
+}
+
+#[cfg(test)]
+type SpawnHook = Box<dyn Fn(&str) -> Result<(), TransportStartError>>;
+
+#[cfg(test)]
+thread_local! {
+    /// Thread-local injection confines failed/paused creation to one source
+    /// callback; parallel playback tests never inherit it.
+    static SPAWN_HOOK: std::cell::RefCell<Option<SpawnHook>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+pub(super) fn with_spawn_hook<T>(hook: SpawnHook, action: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            SPAWN_HOOK.with(|hook| hook.replace(None));
+        }
+    }
+    SPAWN_HOOK.with(|slot| assert!(slot.replace(Some(hook)).is_none()));
+    let _reset = Reset;
+    action()
 }
 
 /// Posts the transport's own bus messages: fixed failure categories and the
@@ -333,6 +397,9 @@ async fn stream_body(
     cancellation: &CancellationToken,
     feed: &mpsc::Sender<FeedItem>,
 ) -> Result<(), ReaderStop> {
+    if cancellation.is_cancelled() {
+        return Err(ReaderStop::Cancelled);
+    }
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(redirect::Policy::none())
@@ -346,6 +413,7 @@ async fn stream_body(
         .map_err(|_| ReaderStop::Failed(PlaybackPipelineFailure::Internal))?;
     let request = client.get(url).send();
     let mut response = tokio::select! {
+        biased;
         () = cancellation.cancelled() => return Err(ReaderStop::Cancelled),
         result = tokio::time::timeout(config.response_timeout, request) => match result {
             Ok(Ok(response)) => response,
@@ -640,7 +708,8 @@ mod tests {
                 &fixture.pipeline,
                 QUICK,
             )
-            .err(),
+            .err()
+            .map(|failure| failure.error),
             Some(TransportStartError::InvalidHandoff)
         );
         let foreign = gst::ElementFactory::make("fakesrc").build().unwrap();
@@ -651,8 +720,31 @@ mod tests {
                 &fixture.pipeline,
                 QUICK,
             )
-            .err(),
+            .err()
+            .map(|failure| failure.error),
             Some(TransportStartError::SignalSchema)
+        );
+    }
+
+    #[tokio::test]
+    async fn already_cancelled_reader_never_opens_a_stream_connection() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = Url::parse(&format!(
+            "http://{}/auto/v5.1",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let (feed, _receiver) = mpsc::channel(FEED_QUEUE_CAPACITY);
+        assert!(matches!(
+            stream_body(url, QUICK, &cancellation, &feed).await,
+            Err(ReaderStop::Cancelled)
+        ));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
         );
     }
 

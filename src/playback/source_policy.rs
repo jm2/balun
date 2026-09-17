@@ -20,6 +20,8 @@ use super::transport::{StreamTransport, TransportConfig};
 use crate::controller::StreamHandoff;
 
 #[cfg(test)]
+mod lifecycle_tests;
+#[cfg(test)]
 mod timing_tests;
 
 const SOURCE_SETUP_SIGNAL: &str = "source-setup";
@@ -41,12 +43,31 @@ struct PendingStream {
 
 struct SourcePolicyState {
     expected_factory: gst::ElementFactory,
-    pending: Mutex<Option<PendingStream>>,
-    transport: Mutex<Option<StreamTransport>>,
-    accepted_source: Mutex<Option<gst::Object>>,
+    lifecycle: Mutex<SourceLifecycle>,
     rejected: AtomicBool,
-    retired: AtomicBool,
+    #[cfg(test)]
+    startup_hook: Mutex<Option<StartupHook>>,
 }
+
+/// Admission, handoff consumption, worker startup/publication, and retirement
+/// share one lock. Once retirement returns, no callback can publish new workers.
+struct SourceLifecycle {
+    pending: Option<PendingStream>,
+    transport: Option<StreamTransport>,
+    accepted_source: Option<gst::Object>,
+    retired: bool,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StartupStage {
+    BeforeAdmission,
+    HandoffTaken,
+    TransportStarted,
+}
+
+#[cfg(test)]
+type StartupHook = Arc<dyn Fn(StartupStage) + Send + Sync>;
 
 pub(super) struct SourcePolicy {
     state: Arc<SourcePolicyState>,
@@ -77,11 +98,15 @@ impl SourcePolicy {
         let signal_id = validated_source_setup_signal(playbin)?;
         let state = Arc::new(SourcePolicyState {
             expected_factory,
-            pending: Mutex::new(Some(PendingStream { handoff, config })),
-            transport: Mutex::new(None),
-            accepted_source: Mutex::new(None),
+            lifecycle: Mutex::new(SourceLifecycle {
+                pending: Some(PendingStream { handoff, config }),
+                transport: None,
+                accepted_source: None,
+                retired: false,
+            }),
             rejected: AtomicBool::new(false),
-            retired: AtomicBool::new(false),
+            #[cfg(test)]
+            startup_hook: Mutex::new(None),
         });
         let playbin_weak = playbin.downgrade();
         let callback_playbin = playbin_weak.clone();
@@ -133,16 +158,16 @@ impl SourcePolicy {
     /// transport. The returned transport must be joined after the pipeline
     /// reaches `NULL`; a later call returns `None`.
     pub(super) fn retire(&self) -> Option<StreamTransport> {
-        self.state.retired.store(true, Ordering::Release);
-        if let Ok(mut pending) = self.state.pending.lock() {
-            pending.take();
-        }
-        let transport = self
+        // Even a poisoned admission must retain its workers for the same
+        // teardown join; poison is never evidence that no transport exists.
+        let mut lifecycle = self
             .state
-            .transport
+            .lifecycle
             .lock()
-            .ok()
-            .and_then(|mut transport| transport.take());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        lifecycle.retired = true;
+        lifecycle.pending.take();
+        let transport = lifecycle.transport.take();
         if let Some(transport) = transport.as_ref() {
             transport.cancel();
         }
@@ -152,9 +177,10 @@ impl SourcePolicy {
     #[cfg(test)]
     fn accepted_factory_name(&self) -> Option<String> {
         self.state
-            .accepted_source
+            .lifecycle
             .lock()
             .ok()?
+            .accepted_source
             .as_ref()?
             .downcast_ref::<gst::Element>()?
             .factory()
@@ -177,8 +203,16 @@ impl Drop for SourcePolicy {
 }
 
 impl SourcePolicyState {
+    #[cfg(test)]
+    fn at_startup_stage(&self, stage: StartupStage) {
+        let hook = self.startup_hook.lock().unwrap().clone();
+        if let Some(hook) = hook {
+            hook(stage);
+        }
+    }
+
     fn inspect_source(&self, playbin: &gst::Pipeline, source: &gst::Element) {
-        if self.rejected.load(Ordering::Acquire) || self.retired.load(Ordering::Acquire) {
+        if self.rejected.load(Ordering::Acquire) {
             self.reject(
                 Some(playbin),
                 Some(source),
@@ -203,22 +237,27 @@ impl SourcePolicyState {
             return;
         }
 
-        let Ok(mut accepted) = self.accepted_source.lock() else {
-            self.reject(Some(playbin), Some(source), "accepted-source lock poisoned");
+        #[cfg(test)]
+        self.at_startup_stage(StartupStage::BeforeAdmission);
+        let Ok(mut lifecycle) = self.lifecycle.lock() else {
+            self.reject(
+                Some(playbin),
+                Some(source),
+                "source lifecycle lock poisoned",
+            );
             return;
         };
-        if accepted.is_some() || self.rejected.load(Ordering::Acquire) {
-            drop(accepted);
-            self.reject(Some(playbin), Some(source), "a source was already accepted");
+        if lifecycle.retired
+            || lifecycle.accepted_source.is_some()
+            || self.rejected.load(Ordering::Acquire)
+        {
+            drop(lifecycle);
+            self.reject(Some(playbin), Some(source), "source admission is closed");
             return;
         }
-        let pending = self
-            .pending
-            .lock()
-            .ok()
-            .and_then(|mut pending| pending.take());
+        let pending = lifecycle.pending.take();
         let Some(pending) = pending else {
-            drop(accepted);
+            drop(lifecycle);
             self.reject(
                 Some(playbin),
                 Some(source),
@@ -226,16 +265,22 @@ impl SourcePolicyState {
             );
             return;
         };
+        #[cfg(test)]
+        self.at_startup_stage(StartupStage::HandoffTaken);
         match StreamTransport::start(pending.handoff, source.clone(), playbin, pending.config) {
             Ok(transport) => {
-                *accepted = Some(source.clone().upcast::<gst::Object>());
-                drop(accepted);
-                if let Ok(mut slot) = self.transport.lock() {
-                    *slot = Some(transport);
-                }
+                lifecycle.accepted_source = Some(source.clone().upcast::<gst::Object>());
+                lifecycle.transport = Some(transport);
+                #[cfg(test)]
+                self.at_startup_stage(StartupStage::TransportStarted);
             }
-            Err(error) => {
-                drop(accepted);
+            Err(failure) => {
+                // A partial start still belongs to this generation. Teardown
+                // must join it before the session can admit a successor.
+                lifecycle.transport = failure.transport;
+                let error = failure.error;
+                lifecycle.retired = true;
+                drop(lifecycle);
                 tracing::warn!(target: "balun::playback", ?error, "stream transport failed to start");
                 self.reject(
                     Some(playbin),
@@ -541,8 +586,8 @@ mod tests {
 
         assert!(!policy.is_rejected());
         assert_eq!(policy.accepted_factory_name().as_deref(), Some("appsrc"));
-        assert!(policy.state.pending.lock().unwrap().is_none());
-        assert!(policy.state.transport.lock().unwrap().is_some());
+        assert!(policy.state.lifecycle.lock().unwrap().pending.is_none());
+        assert!(policy.state.lifecycle.lock().unwrap().transport.is_some());
 
         let repeat = gst::ElementFactory::make("appsrc").build().unwrap();
         playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&repeat]);
@@ -580,7 +625,7 @@ mod tests {
         assert!(first.is_locked_state());
         assert!(second.is_locked_state());
         assert!(
-            policy.state.pending.lock().unwrap().is_some(),
+            policy.state.lifecycle.lock().unwrap().pending.is_some(),
             "a rejected foreign source never consumes the handoff"
         );
         let message = bus
@@ -599,7 +644,7 @@ mod tests {
                 .is_none()
         );
         assert!(policy.retire().is_none());
-        assert!(policy.state.pending.lock().unwrap().is_none());
+        assert!(policy.state.lifecycle.lock().unwrap().pending.is_none());
     }
 
     #[test]
@@ -636,13 +681,13 @@ mod tests {
             return;
         };
         assert!(policy.retire().is_none());
-        assert!(policy.state.pending.lock().unwrap().is_none());
+        assert!(policy.state.lifecycle.lock().unwrap().pending.is_none());
 
         let late = gst::ElementFactory::make("appsrc").build().unwrap();
         playbin.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&late]);
         assert!(policy.is_rejected());
         assert!(late.is_locked_state());
-        assert!(policy.state.transport.lock().unwrap().is_none());
+        assert!(policy.state.lifecycle.lock().unwrap().transport.is_none());
     }
 
     /// Explicit runtime probe for CI lanes: the installed GStreamer must map

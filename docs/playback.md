@@ -10,6 +10,29 @@ classification. Those landed as archived ledger records M2.4-M2.9 in
 remains authoritative in [`plan-v0.1.md`](plan-v0.1.md), and the active
 countable ledger is [`task.md`](task.md).
 
+## Source startup and retirement correction (2026-09-17)
+
+H0.2 / [#88](https://github.com/jm2/balun/issues/88) closes the overlap between
+`source-setup` and retirement. One lifecycle lock now coordinates final source
+admission, single-use handoff consumption, worker startup/publication, and
+retirement. A callback that reaches admission after retirement cannot start
+transport. A callback already admitted publishes its owned workers before
+retirement takes and cancels them, so the existing pipeline teardown joins the
+same complete worker set before a successor can start.
+
+If the reader thread cannot be created after the feeder starts, that partial
+transport also transfers to teardown. A timed-out cleanup is not discarded or
+treated as successful. A poisoned lifecycle lock still yields its owned workers
+to retirement. An already cancelled reader does not begin a stream request.
+
+`source_policy::lifecycle_tests` forces overlaps before final admission, after
+handoff consumption, between worker creation, and before the startup lock is
+released. It exercises real appsrc/transport workers, failed creation of either
+thread, poisoned state, joined release, and successor startup against owned
+loopback listeners. Existing session tests retain failed-teardown quarantine
+and generation checks. H3.5 still owns synchronous native-call stall limits;
+this correction does not claim process isolation or new hardware timings.
+
 ## Current status
 
 Balun has an optional, GTK-free GStreamer initialization and capability layer.

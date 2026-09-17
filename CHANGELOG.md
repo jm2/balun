@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Playback startup and retirement now coordinate worker ownership, so an overlapping
+  source callback or failed worker creation cannot escape the predecessor's teardown join.
 - Routed discovery rechecks approval, deadline, and the interface pin after socket
   readiness, including retries, so a pending send cannot bypass revocation.
 - macOS builds no longer require Homebrew's unavailable FDK AAC plugin; the bundled

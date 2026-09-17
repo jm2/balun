@@ -33,7 +33,7 @@ address so you know which tuner failed.
 | Adaptive three-pane GTK 4 / libadwaita window | ✅ |
 | Window size and maximized state remembered across launches | ✅ |
 | Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Linux, macOS, and Windows against real tuners |
-| Stop, volume, mute, and fullscreen controls | ✅ |
+| Stop, volume, mute, and fullscreen controls | ✅ Stop and switching account for overlapping startup and partial worker creation before completing teardown |
 | Software deinterlacing | ✅ Adaptive YADIF, automatic field order, full field rate; progressive video passes through |
 | Keep the display and computer awake during playback | ✅ While playing or buffering, where the desktop permits inhibition |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
