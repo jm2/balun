@@ -1236,6 +1236,14 @@ mod tests {
 
     #[test]
     fn adversarial_approval_sequences_preserve_authority_and_run_identity() {
+        #[derive(Debug, Eq, PartialEq)]
+        enum ExpectedBegin {
+            Pending,
+            Busy,
+            CoolingDown(Duration),
+            InvalidRunId,
+        }
+
         crate::adversarial::run("approval-sequences", |random| {
             let original = proposal_for(&test_snapshot());
             let changed = proposal_for(&snapshot_with(
@@ -1283,8 +1291,39 @@ mod tests {
                         } else {
                             RoutedScanTrigger::ExplicitRefresh
                         };
+                        let effective_now = now.max(before.last_observed_time());
+                        let expected =
+                            if before.active.is_some_and(|a| effective_now < a.expires_at) {
+                                ExpectedBegin::Busy
+                            } else if trigger == RoutedScanTrigger::Automatic
+                                && effective_now < before.automatic_not_before()
+                            {
+                                ExpectedBegin::CoolingDown(Duration::from_secs(
+                                    before.automatic_not_before().as_seconds()
+                                        - effective_now.as_seconds(),
+                                ))
+                            } else if before.last_issued_run_id.is_some_and(|last| run_id <= last) {
+                                ExpectedBegin::InvalidRunId
+                            } else {
+                                ExpectedBegin::Pending
+                            };
                         let decision =
                             state.plan_begin(proposals[selected].clone(), trigger, now, run_id);
+                        let actual = match &decision {
+                            RoutedBeginDecision::Pending(_) => ExpectedBegin::Pending,
+                            RoutedBeginDecision::Busy => ExpectedBegin::Busy,
+                            RoutedBeginDecision::CoolingDown { remaining } => {
+                                ExpectedBegin::CoolingDown(*remaining)
+                            }
+                            RoutedBeginDecision::InvalidRunId => ExpectedBegin::InvalidRunId,
+                            RoutedBeginDecision::NeedsApproval(_) => {
+                                panic!("matching proposal lost its approval")
+                            }
+                        };
+                        assert_eq!(
+                            actual, expected,
+                            "generated begin returned the wrong decision"
+                        );
                         assert_eq!(state, before, "planning alone cannot publish authority");
                         if let RoutedBeginDecision::Pending(pending) = decision {
                             assert!(counter > high_water);
@@ -1321,7 +1360,50 @@ mod tests {
                             RoutedScanOutcome::CompleteEmpty,
                             RoutedScanOutcome::Indeterminate,
                         ];
-                        let decision = state.complete(run_id, outcomes[random.index(3)], now);
+                        let outcome = outcomes[random.index(3)];
+                        let effective_now = now.max(before.last_observed_time());
+                        let expected = match before.active.filter(|a| a.run_id == run_id) {
+                            None => RoutedCompletionDecision::Stale,
+                            Some(active) if effective_now >= active.expires_at => {
+                                RoutedCompletionDecision::Expired
+                            }
+                            Some(active) => {
+                                let streak = match (outcome, active.trigger) {
+                                    (RoutedScanOutcome::Found, _) => 0,
+                                    (
+                                        RoutedScanOutcome::CompleteEmpty,
+                                        RoutedScanTrigger::Automatic,
+                                    ) => (before.empty_run_streak() + 1).min(MAX_EMPTY_RUN_STREAK),
+                                    _ => before.empty_run_streak(),
+                                };
+                                let cooldown = if outcome == RoutedScanOutcome::CompleteEmpty
+                                    && active.trigger == RoutedScanTrigger::Automatic
+                                    && streak == MAX_EMPTY_RUN_STREAK
+                                {
+                                    MAX_AUTOMATIC_COOLDOWN
+                                } else {
+                                    BASE_AUTOMATIC_COOLDOWN
+                                };
+                                let next = RoutedPolicyTime::from_seconds(
+                                    effective_now
+                                        .as_seconds()
+                                        .saturating_add(cooldown.as_secs()),
+                                );
+                                RoutedCompletionDecision::Applied {
+                                    automatic_not_before: if outcome == RoutedScanOutcome::Found {
+                                        next
+                                    } else {
+                                        next.max(active.previous_automatic_not_before)
+                                    },
+                                    empty_run_streak: streak,
+                                }
+                            }
+                        };
+                        let decision = state.complete(run_id, outcome, now);
+                        assert_eq!(
+                            decision, expected,
+                            "generated completion returned the wrong decision"
+                        );
                         if before.active_run_id() != Some(run_id) {
                             assert_eq!(decision, RoutedCompletionDecision::Stale);
                             assert_eq!(state, before, "stale work changed current authority");
