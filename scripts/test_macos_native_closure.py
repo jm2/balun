@@ -155,6 +155,16 @@ class ClosureTests(BundleFixture):
                 with self.assertRaisesRegex(closure.Invalid, "compatible (architecture|executable context)"):
                     closure.validate(self.app)
 
+    def test_linked_import_requires_a_dylib_even_with_matching_architecture(self):
+        self.exe.write_bytes(macho(["@loader_path/../Frameworks/libfoo.dylib"], kind=2))
+        library = self.write("Contents/Frameworks/libfoo.dylib", macho())
+        self.assertEqual(closure.validate(self.app), 2)
+        for kind in (2, 8):
+            with self.subTest(kind=kind):
+                library.write_bytes(macho(kind=kind))
+                with self.assertRaisesRegex(closure.Invalid, "linked dependency is not a dylib"):
+                    closure.validate(self.app)
+
     def test_every_fat_slice_is_inspected(self):
         first = macho(kind=2)
         second = macho(["/unbundled/libfoo.dylib"], cpu=0x1000007, kind=2)
