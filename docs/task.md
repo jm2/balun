@@ -1,6 +1,6 @@
 # Balun implementation backlog
 
-Last audited: 2026-09-09; expansion adopted after the September review.
+Last audited: 2026-09-17; see the [reassessment](backlog-review-2026-09-17.md).
 
 This is the executable work ledger for v0.1.x hardening and the v0.2 roadmap,
 including the historical v0.1.0 records. Existing architecture and safety
@@ -16,6 +16,9 @@ The [adopted September review](review-and-backlog-proposal-2026-09.md) supplies
 the evidence and acceptance details for H0–H4 and V2 below. Its implementation
 order supersedes the original delivery order for post-alpha work. New records
 remain unchecked; adopting work does not complete its implementation.
+The September 17 reassessment retains these outcomes and prerequisites, records the
+completed CI repair, and identifies items awaiting maintainer
+decisions or physical-platform evidence without counting those as completed.
 
 ## How to use this file
 
@@ -46,8 +49,10 @@ dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
 
-Close H0's five P2 findings and establish the affected package guarantees in
-H1 before claiming them for a new release. H3 maintains privacy and the review
+The CI baseline repair landed in [PR #96](https://github.com/jm2/balun/pull/96)
+with all ten jobs passing. Close H0's five P2 findings and establish the
+affected package guarantees in H1 before claiming them for a new release.
+H3 maintains privacy and the review
 record. H2/H4 may proceed independently and do not delay a corrective patch
 solely to complete beta infrastructure. P4.1 follows the relevant fixes and
 candidate builds; development-build evidence does not complete it.
@@ -99,6 +104,10 @@ machine enforcement of the chosen source policy.
   exercise identification and rebuilding of an affected-version fixture.
 
 ## H2 — Beta release assurance
+
+Maintainer direction on 2026-09-17: hold all new signing and provenance work.
+No trusted signing identities are designated; H2.1 and H2.3 remain unchecked
+and paused. Independent correctness and package-inspection fixes may continue.
 
 - [ ] **H2.1 — Enforce release source identity.** Define trusted signers and
   reviewed-source ancestry, enforce the chosen tag policy before building,
@@ -170,8 +179,8 @@ machine enforcement of the chosen source policy.
   H0.1, approve one consistent candidate/datagram/deadline contract before
   implementation; preserve explicit consent and cross-platform cancellation.
 
-- [ ] **V2.5 — Complete deinterlacing quality evidence ([#78]).** Rebaseline
-  on implemented YADIF, measure mixed interlace/field order and CPU use, and
+- [ ] **V2.5 — Complete deinterlacing quality evidence ([#78]).** Retain the
+  implemented YADIF policy and diagnostics; measure mixed fields and CPU use,
   decide remaining GPU/film work from evidence rather than an obsolete default.
 
 - [ ] **V2.6 — Localize the interface ([#74]).** Add catalogs, pluralization,
