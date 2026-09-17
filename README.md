@@ -51,7 +51,7 @@ address so you know which tuner failed.
 | Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, the AUR, and winget |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
-| Windows package validation | ✅ Reviewed-policy checksum checked before packaging; probe receipt binds every staged member, the build profile, and local policy inputs |
+| Windows package validation | ✅ Pinned policy and full-tree probe receipt; completed installer payload independently extracted, compared, checked, and runtime-probed |
 | Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
@@ -317,7 +317,10 @@ MPEG-2 fixture are proven inside the tree, then reopens the ZIP against it. `-In
 -SkipBundle` rebuilds only the installer from a tree whose complete-payload probe receipt
 still matches. Changes to any staged member or local packaging policy require a fresh
 bundle/probe. The local receipt detects stale state; it is not a signature or provenance
-attestation, and completed-installer payload comparison remains tracked separately.
+attestation. `-InnoSetup` also requires the pinned `BALUN_INNOEXTRACT_DIR` build tool and
+independently extracts and compares the complete installer payload, repeats native/resource
+checks, and probes the extracted runtime before success. See the
+[installer inspection procedure](docs/windows-installer-inspection.md) for tool setup and limits.
 
 ---
 

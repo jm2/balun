@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Concurrent source rejection now cancels a transport that is still being published,
   zeroizes pending handoffs, and retains all workers for the normal teardown join.
+- Completed Windows installers now undergo bounded static payload extraction and exact
+  manifest comparison, followed by repeated native/resource checks and a runtime probe
+  on the extracted tree for both x86_64 and ARM64 before upload.
 - Routed scans add bounded positive jitter; the diagnostic uses desktop exact-address
   admission and reply limits, caps each invocation, and rejects repeated range scans.
   Newer approval-state schemas now have a distinct, preserving quarantine reason.

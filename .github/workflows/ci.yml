@@ -434,6 +434,11 @@ jobs:
         shell: pwsh
         run: ./scripts/test-windows-component-policy.ps1
 
+      - name: Test Windows installer payload preflight
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-installer-policy.ps1
+
       - name: Install macOS desktop build dependencies
         if: runner.os == 'macOS'
         env:
@@ -546,11 +551,31 @@ jobs:
           ./scripts/test-windows-probe-receipt.ps1
           -StagedRoot dist/balun-windows -Profile '${{ matrix.windows_arch }}'
 
-      - name: Upload the Windows ZIP
+      - name: Install the bounded installer inspection tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = Join-Path $env:RUNNER_TEMP 'balun-inno-compiler'
+          ./build-aux/inno/install-compiler.ps1 -Destination $compiler
+          "BALUN_ISCC=$(Join-Path $compiler 'ISCC.exe')" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          $inspector = Join-Path $env:RUNNER_TEMP 'balun-inno-inspector'
+          ./build-aux/inno/install-inspector.ps1 -Destination $inspector
+          "BALUN_INNOEXTRACT_DIR=$inspector" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Compile and independently inspect the Windows installer payload
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: ./scripts/build-windows.ps1 -InnoSetup -SkipBundle -NoCargoBuild
+
+      - name: Upload the Windows candidates
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: balun-windows-${{ matrix.windows_arch }}
-          path: dist/balun-windows.zip
+          path: |
+            dist/balun-windows.zip
+            dist/balun-setup.exe
           if-no-files-found: error
           retention-days: 7
