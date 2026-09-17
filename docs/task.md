@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **29/58 (50.0%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **0/21**, and roadmap V2 **0/7**. This is a
+Current status: **30/58 (51.7%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **1/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -65,9 +65,9 @@ machine enforcement of the chosen source policy.
 
 ## H0 — Confirmed defects for v0.1.x
 
-- [ ] **H0.1 — Revalidate routed sends after readiness ([#85]).** Couple the
-  authority, deadline, and pin checks to the nonblocking send attempt; prove
-  revocation while pending prevents transmission, including retries.
+- [x] **H0.1 — Revalidate routed sends after readiness ([#85]).** Recheck
+  authority, deadline, and pin before every nonblocking attempt; pending-send
+  and retry regressions are [recorded here](security-review-v0.1.md#2026-09-17-routed-send-correction-h01).
 
 - [ ] **H0.2 — Serialize source retirement and startup ([#88]).** Account for
   every admitted transport in teardown; prove an overlapping source callback
