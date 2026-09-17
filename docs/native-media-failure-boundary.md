@@ -1,8 +1,9 @@
 # Native media failure boundary
 
-H3.5 evidence, September 17, 2026. The isolated failure study is implemented;
-the recovery policy and any accepted residual limits remain a maintainer decision.
-H3.5 remains unchecked. This does not establish a new decoder sandbox.
+H3.5 evidence and accepted boundary, September 17, 2026. The maintainer accepted
+in-process decoding with the limits below. Owner: `jm2`; review before beta and
+after any reproduced native hang. H3.5 completes when this evidence and the
+reconciled claims land on `main`. This does not establish a decoder sandbox.
 
 ## Measured synchronous-call limit
 
@@ -62,23 +63,23 @@ can all execute synchronous native code. Moving only `set_state` to a detached
 thread would leave those calls and resource ownership unresolved. A timer on the
 same blocked GTK context also cannot supply independent recovery.
 
-## Decision required
+## Maintainer-approved boundary
 
-The maintainer must choose between the following concrete scopes before H3.5
-can be completed:
+On September 17, 2026, the maintainer accepted retaining the current in-process
+decoder boundary. The five-second value governs asynchronous settlement and
+owned-worker waits after synchronous native work returns. It is not a universal
+close, UI responsiveness, or tuner-release guarantee under a native hang.
+Network progress does not establish useful-media progress; an unusable stream
+that keeps supplying bytes can remain active without producing a frame or audio.
 
-- Retain the current in-process decoder boundary with explicit limited claims.
-  The five-second value governs asynchronous settlement and owned-worker waits
-  after synchronous native work returns; it is not a universal close/release
-  guarantee under a native hang. Require useful-media instrumentation and revisit
-  the boundary before beta. Proposed owner: `jm2`.
-- Require recovery from an indefinitely blocked native call. Prototype an owned
-  decoder process with an independent supervisor and enforce kill/reap deadlines.
-  Re-establish one-stream ownership, rendering/audio integration, endpoint
-  privacy, process resource limits, and platform packaging before adopting it.
-  A child process alone is not a security sandbox; a confinement policy would
-  need its own concrete threat model and platform tests.
+Owner: `jm2`. Review before beta and after any reproduced native hang. V2.1 still
+owns tune-phase and useful-media instrumentation. Record reproduced failures
+without credentials or raw topology and reassess whether an independently
+supervised decoder process is required. The present acceptance does not authorize
+claims of enforced recovery or native-code confinement.
 
-Neither choice is treated as approved here. Once chosen, reconcile the playback,
-security, support, and release claims in H3.4, and retain the stall fixture as
-evidence of the boundary that the implementation actually enforces.
+The playback contract, security review, support limits, release component
+policy, README, and implementation plan now state this boundary. The isolated
+stall fixture remains an ordinary regression on all native CI platforms. H3.4
+still owns the consolidated post-fix review; this focused disposition does not
+complete that separate outcome.

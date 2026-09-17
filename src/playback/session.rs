@@ -1,4 +1,7 @@
-//! Generation-owned playback session and deterministic pipeline teardown.
+//! Generation-owned playback session and serialized native pipeline teardown.
+//!
+//! Native calls run in-process and may block before timed waits are reached.
+//! The teardown deadline cannot interrupt such a call or guarantee UI shutdown.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -18,6 +21,7 @@ use super::transport::{PIPELINE_URI, STREAM_STARTED_MESSAGE, StreamTransport, Tr
 use crate::controller::{OperationGeneration, StreamHandoff, StreamHandoffError, StreamSelection};
 use crate::domain::ChannelKey;
 
+// Bounds later settlement/join waits after synchronous native calls return.
 const PIPELINE_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
@@ -1006,7 +1010,8 @@ fn queue_main_context_work(
 /// The session is deliberately neither `Send` nor `Sync`. It owns the runtime,
 /// exact active pipeline, and generation-tagged local bus watch. Dropping the
 /// session performs a final fail-safe `NULL` request; normal window shutdown
-/// should call [`Self::shut_down`] so bounded settlement is observable.
+/// should call [`Self::shut_down`] so settlement or failure is observable.
+/// Synchronous native calls can block before its timed settlement waits.
 pub struct PlaybackSession {
     inner: Rc<RefCell<SessionCore<GstreamerBackend>>>,
     main_context: gst::glib::MainContext,

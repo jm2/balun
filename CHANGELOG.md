@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
 
+### Changed
+
+- Playback and shutdown claims now reflect the accepted in-process native boundary:
+  native hangs can block the UI or close before timed waits, and network bytes do not
+  establish useful-media progress. Review is owned before beta and after a reproduced hang.
+
 ### Fixed
 
 - Native playback logs now discard plugin-supplied error/debug text, arbitrary caps

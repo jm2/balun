@@ -187,6 +187,20 @@ wrong field types, arbitrary strings, malformed/truncated JSON, trailing data, i
 authorization fields, and an I/O source carrying the marker. No real credential is used.
 This closes the prior JSON diagnostic exception; it is not the broader H3.4 audit.
 
+### 2026-09-17 accepted native media failure boundary (H3.5)
+
+The maintainer accepted [in-process native decoding with explicit limits](native-media-failure-boundary.md).
+A native call can block the UI and close path before any timed wait is reached;
+the five-second teardown deadline is not a universal release guarantee. Native
+code shares application memory and is not confined by Rust's unsafe-code ban.
+Network progress and first body bytes do not establish useful-media progress.
+No independent useful-media deadline is currently enforced.
+
+Owner: `jm2`; review before beta and after any reproduced native hang. The
+isolated startup/teardown stall fixture records why later timed waits cannot
+supply recovery. This accepted boundary supersedes unconditional teardown-bound
+wording in the historical review below. H3.4's consolidated review remains open.
+
 ### Historical review summary
 
 H3.3 corrections and maintainer-approved bounded acceptances are recorded in the

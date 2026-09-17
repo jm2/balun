@@ -33,6 +33,7 @@ address so you know which tuner failed.
 | Adaptive three-pane GTK 4 / libadwaita window | ✅ |
 | Window size and maximized state remembered across launches | ✅ |
 | Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Linux, macOS, and Windows against real tuners |
+| Native media failure boundary | ⚠️ In-process native hangs can block the UI/close path; network bytes do not guarantee useful media. [Accepted limits and review triggers](docs/native-media-failure-boundary.md) |
 | Stop, volume, mute, and fullscreen controls | ✅ Stop and switching account for overlapping startup and partial worker creation before completing teardown |
 | Software deinterlacing | ✅ Adaptive YADIF, automatic field order, full field rate; progressive video passes through |
 | Keep the display and computer awake during playback | ✅ While playing or buffering, where the desktop permits inhibition |

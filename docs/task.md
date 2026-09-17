@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **40/58 (69.0%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **11/21**, and roadmap V2 **0/7**. This is a
+Current status: **41/58 (70.7%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **12/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -142,9 +142,9 @@ and paused. Independent correctness and package-inspection fixes may continue.
   consolidate current guarantees, threat boundaries, exceptions, and test links
   at one commit; reconcile stale security, playback, release, and support prose.
 
-- [ ] **H3.5 — Decide the native media failure boundary.** Document decoder
-  trust and useful-media progress limits; the [isolated stall study](native-media-failure-boundary.md)
-  informs the pending choice of enforced recovery or explicit bounded claims.
+- [x] **H3.5 — Decide the native media failure boundary.** The maintainer accepted
+  [in-process native-call and media-progress limits](native-media-failure-boundary.md);
+  isolated stall tests, reconciled claims, and owned pre-beta/hang review preserve that boundary.
 
 ## H4 — Beta regression and acceptance coverage
 

@@ -107,7 +107,8 @@ main context. The owner is intentionally neither `Send` nor `Sync`, takes one
 immutable startup capability snapshot, and is retained by the player pane until
 the joined window-close transaction completes. GStreamer process-global state
 is not deinitialized when this owner drops; future pipelines must still perform
-their own bounded transition to `NULL` before shutdown.
+their own transition to `NULL` before shutdown, subject to the accepted
+native-call limits below.
 
 Initialization exposes only fixed, path-free error copy:
 
@@ -178,6 +179,22 @@ a channel row with the keyboard remains inert. Clicking or pressing Enter on a
 valid, unprotected row constructs a URL-free `StreamSelection`; only the controller's
 validated opaque handoff can then open the stream through `PlaybackSession`.
 
+## Accepted native-call and media-progress limits
+
+The maintainer accepted the [H3.5 boundary](native-media-failure-boundary.md) on
+September 17, 2026. Decoders, plugins, sinks, and graphics drivers run in the
+application process. Synchronous native calls, including state changes,
+properties, diagnostics and finalizers, can block the GTK thread or close path.
+The five-second teardown deadline limits later waits only after those calls
+return. It cannot interrupt an indefinitely blocked native call; the application
+may require external termination in that case.
+
+Network connection/header/read deadlines and the first received bytes do not
+prove a decoded frame, audible samples, or useful continued media. Independent
+useful-media deadlines are still V2.1 work. Owner: `jm2`; revisit before beta and
+after any reproduced native hang. Existing one-stream ownership and refusal to
+start a successor after observed teardown failure remain required.
+
 ## Generation-owned tune session
 
 `PlaybackSession` owns the GStreamer runtime and exactly one serialized tune
@@ -186,8 +203,9 @@ mutations fail with fixed URL-free errors when that context is not owned or a
 native callback reenters an in-progress borrow; they do not panic. The immutable
 capability-ready bit remains directly readable. `begin_tune` first assigns the
 successor's `TuneGeneration`, making every predecessor callback stale, then
-detaches the predecessor's bus watch and requires it to reach `NULL` within
-five seconds before any controller wait. A teardown failure quarantines the
+detaches the predecessor's bus watch, requests `NULL`, and waits against a
+five-second deadline before any controller wait. Synchronous native calls can
+outlive that deadline as described above. An observed teardown failure quarantines the
 owner and permanently blocks construction of a successor. Terminal shutdown
 can retry the retained owner, while the failure remains visible. The returned
 `TuneRequest` contains only that generation and the URL-free `StreamSelection`.
@@ -320,14 +338,15 @@ foreign pipelines, and every other native condition close to internal.
 
 Teardown cancels the request first, so the device connection begins closing
 while the pipeline moves to `NULL`; the transport is then joined inside the
-same five-second bound, because a flushing `appsrc` is what unblocks a feeder
+same five-second wait deadline, provided synchronous native work returns.
+A flushing `appsrc` is what unblocks a feeder
 waiting on the byte limit. `NULL` alone is no longer sufficient proof: a
 teardown that cannot join both workers fails, quarantines the owner, and
 retains the unjoined transport for the shutdown retry. Cancellation is never
 reported as EOS or as a failure. Every bus error, missing-plugin notice,
 transport rejection, and source-policy rejection is logged to standard error
-with its native detail before it is reduced to a category (`RUST_LOG=balun=debug`
-shows the full event trace); the category is all the state retains. A live
+with closed labels and typed counters; arbitrary native text is discarded.
+`RUST_LOG=balun=debug` adds the filtered event trace; the category is all the state retains. A live
 `appsrc` feed does not post `playbin3`
 buffering messages, so the session's buffering state stays reserved for
 runtimes that publish it and the connecting state covers preroll. The
