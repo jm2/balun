@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent source rejection now cancels a transport that is still being published,
+  zeroizes pending handoffs, and retains all workers for the normal teardown join.
+
 - Native playback logs now discard plugin-supplied error/debug text, arbitrary caps
   values, stream identifiers, and unknown marker names while retaining closed labels
   and typed counters. GStreamer's separately enabled debug output remains outside this filter.

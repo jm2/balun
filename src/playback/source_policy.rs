@@ -50,7 +50,8 @@ struct SourcePolicyState {
 }
 
 /// Admission, handoff consumption, worker startup/publication, and retirement
-/// share one lock. Once retirement returns, no callback can publish new workers.
+/// share one lock, including rejection. Once retirement returns, no callback
+/// can publish new workers; rejection cancels workers while retaining their join.
 struct SourceLifecycle {
     pending: Option<PendingStream>,
     transport: Option<StreamTransport>,
@@ -239,13 +240,18 @@ impl SourcePolicyState {
 
         #[cfg(test)]
         self.at_startup_stage(StartupStage::BeforeAdmission);
-        let Ok(mut lifecycle) = self.lifecycle.lock() else {
-            self.reject(
-                Some(playbin),
-                Some(source),
-                "source lifecycle lock poisoned",
-            );
-            return;
+        let mut lifecycle = match self.lifecycle.lock() {
+            Ok(lifecycle) => lifecycle,
+            Err(poisoned) => {
+                // Drop the recovered guard before rejection reacquires it.
+                drop(poisoned.into_inner());
+                self.reject(
+                    Some(playbin),
+                    Some(source),
+                    "source lifecycle lock poisoned",
+                );
+                return;
+            }
         };
         if lifecycle.retired
             || lifecycle.accepted_source.is_some()
@@ -297,7 +303,21 @@ impl SourcePolicyState {
         source: Option<&gst::Element>,
         reason: &'static str,
     ) {
-        let first_rejection = !self.rejected.swap(true, Ordering::AcqRel);
+        let first_rejection = {
+            let mut lifecycle = self
+                .lifecycle
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let first = !self.rejected.swap(true, Ordering::AcqRel);
+            lifecycle.retired = true;
+            lifecycle.pending.take();
+            // Cancellation closes the reader now. Keep ownership so ordinary
+            // retirement can take and join both workers after pipeline NULL.
+            if let Some(transport) = &lifecycle.transport {
+                transport.cancel();
+            }
+            first
+        };
         tracing::warn!(
             target: "balun::playback",
             reason,
@@ -625,8 +645,8 @@ mod tests {
         assert!(first.is_locked_state());
         assert!(second.is_locked_state());
         assert!(
-            policy.state.lifecycle.lock().unwrap().pending.is_some(),
-            "a rejected foreign source never consumes the handoff"
+            policy.state.lifecycle.lock().unwrap().pending.is_none(),
+            "rejection zeroizes the unconsumed handoff"
         );
         let message = bus
             .timed_pop_filtered(
