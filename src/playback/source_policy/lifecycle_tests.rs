@@ -223,3 +223,88 @@ fn poisoned_lifecycle_still_returns_its_transport_for_join() {
     transport.join(Instant::now() + BOUND).unwrap();
     assert!(server.client_disconnected_within(BOUND));
 }
+
+#[test]
+fn rejection_during_publication_cancels_transport_but_retains_its_join() {
+    for point in [StartupStage::HandoffTaken, StartupStage::TransportStarted] {
+        let server = FixtureStreamServer::start(open_ended_response_head(), StreamBehavior::Hold);
+        let (pipeline, policy, source) = fixture(&server.stream_url());
+        let (pause, entered, resume) = pause();
+        *policy.state.startup_hook.lock().unwrap() = Some(Arc::new(move |stage| {
+            if stage == point {
+                pause();
+            }
+        }));
+        let publishing_pipeline = pipeline.clone();
+        let callback = thread::spawn(move || {
+            publishing_pipeline.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&source]);
+        });
+        entered.recv_timeout(BOUND).unwrap();
+        assert!(matches!(
+            policy.state.lifecycle.try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        ));
+        let requested = point == StartupStage::TransportStarted;
+        if requested {
+            assert!(server.request(BOUND).is_some());
+        }
+        let foreign = gst::ElementFactory::make("fakesrc").build().unwrap();
+        let (started, starting) = mpsc::channel();
+        let rejection = thread::spawn(move || {
+            started.send(()).unwrap();
+            pipeline.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&foreign]);
+        });
+        starting.recv_timeout(BOUND).unwrap();
+        resume.send(()).unwrap();
+        callback.join().unwrap();
+        rejection.join().unwrap();
+        assert!(policy.is_rejected());
+        {
+            let lifecycle = policy.state.lifecycle.lock().unwrap();
+            assert!(lifecycle.retired && lifecycle.pending.is_none());
+            assert!(
+                lifecycle.transport.is_some(),
+                "rejection must retain join ownership"
+            );
+        }
+        if requested {
+            // This observation precedes retire/join, so their cancellation
+            // cannot accidentally make a missing rejection cancellation pass.
+            assert!(server.client_disconnected_within(BOUND));
+        }
+        let mut transport = policy.retire().expect("retained transport");
+        transport.join(Instant::now() + BOUND).unwrap();
+        assert!(policy.retire().is_none());
+    }
+}
+
+#[test]
+fn poisoned_admission_rejects_without_deadlocking_or_discarding_workers() {
+    let server = FixtureStreamServer::start(open_ended_response_head(), StreamBehavior::Hold);
+    let (pipeline, policy, source) = fixture(&server.stream_url());
+    pipeline.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&source]);
+    assert!(server.request(BOUND).is_some());
+    let state = Arc::clone(&policy.state);
+    assert!(
+        thread::spawn(move || {
+            let _guard = state.lifecycle.lock().unwrap();
+            panic!("injected lifecycle poison");
+        })
+        .join()
+        .is_err()
+    );
+    let (finished, observed) = mpsc::channel();
+    let callback = thread::spawn(move || {
+        pipeline.emit_by_name::<()>(SOURCE_SETUP_SIGNAL, &[&source]);
+        finished.send(()).unwrap();
+    });
+    observed
+        .recv_timeout(BOUND)
+        .expect("poisoned admission must not deadlock in rejection");
+    callback.join().unwrap();
+    assert!(policy.is_rejected());
+    assert!(server.client_disconnected_within(BOUND));
+    let mut transport = policy.retire().expect("poison must retain the transport");
+    transport.join(Instant::now() + BOUND).unwrap();
+    assert!(policy.retire().is_none());
+}
