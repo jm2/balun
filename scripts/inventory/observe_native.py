@@ -67,7 +67,9 @@ def scan(root, deadline):
                 name = member_path(prefix + child.name)
                 require(name.casefold() not in folded, "package member paths collide")
                 folded.add(name.casefold())
-                metadata = child.stat(follow_symlinks=False)
+                # Windows DirEntry.stat omits inode/device/link-count fields.
+                # A fresh no-follow stat is required for the identity contract.
+                metadata = os.stat(child.path, follow_symlinks=False)
                 is_directory = stat.S_ISDIR(metadata.st_mode)
                 ordinary(metadata, directory=is_directory)
                 entries[name] = metadata
