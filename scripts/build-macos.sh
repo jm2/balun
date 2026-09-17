@@ -118,7 +118,8 @@ require_desktop_dependencies()
     info 'GTK 4.16, libadwaita 1.6, and GStreamer 1.20 development-library checks passed.'
 }
 
-# 22-element macOS GStreamer plugin closure defined and enforced by Balun
+# macOS GStreamer plugin closure defined and enforced by Balun. AAC remains
+# available through libav, faad, and applemedia; Homebrew no longer ships fdkaac.
 readonly GSTREAMER_MACOS_PLUGIN_CLOSURE=(
     libgstcoreelements
     libgstplayback
@@ -133,7 +134,6 @@ readonly GSTREAMER_MACOS_PLUGIN_CLOSURE=(
     libgstapplemedia
     libgstmpg123
     libgstfaad
-    libgstfdkaac
     libgstvideoconvertscale
     libgstvideofilter
     libgstaudioconvert
@@ -226,7 +226,7 @@ require_packaging_runtime()
         fi
     done
     if [ -n "$missing" ]; then
-        fail "Required 22-element GStreamer plugin closure is incomplete in $plugin_directory:$missing"$'\n'"Install missing GStreamer plugin formulas via Homebrew and retry."
+        fail "Required ${#GSTREAMER_MACOS_PLUGIN_CLOSURE[@]}-element GStreamer plugin closure is incomplete in $plugin_directory:$missing"$'\n'"Install missing GStreamer plugin formulas via Homebrew and retry."
     fi
 }
 
@@ -760,9 +760,9 @@ fi
 cp "$pixbuf_query_src" "$PIXBUF_QUERY_DEST"
 chmod u+w "$PIXBUF_QUERY_DEST"
 
-# ── 22-element GStreamer Plugin Closure ───────────────────────────────────────
+# ── GStreamer Plugin Closure ─────────────────────────────────────────────────
 plugin_directory=$(pkg-config --variable=pluginsdir gstreamer-1.0 2>/dev/null)
-info "Staging 22 GStreamer plugins into ${GST_PLUGIN_DEST}..."
+info "Staging ${#GSTREAMER_MACOS_PLUGIN_CLOSURE[@]} GStreamer plugins into ${GST_PLUGIN_DEST}..."
 for plugin in "${GSTREAMER_MACOS_PLUGIN_CLOSURE[@]}"; do
     src_plugin="${plugin_directory}/${plugin}.dylib"
     [ -f "$src_plugin" ] || fail "Required GStreamer plugin is missing: $src_plugin"
@@ -770,7 +770,8 @@ for plugin in "${GSTREAMER_MACOS_PLUGIN_CLOSURE[@]}"; do
     chmod u+w "${GST_PLUGIN_DEST}/${plugin}.dylib"
 done
 bundled_plugin_count=$(ls -1 "${GST_PLUGIN_DEST}"/*.dylib 2>/dev/null | wc -l | tr -d ' ')
-[ "$bundled_plugin_count" -eq 22 ] || fail "Expected 22 bundled GStreamer plugins, found $bundled_plugin_count"
+[ "$bundled_plugin_count" -eq "${#GSTREAMER_MACOS_PLUGIN_CLOSURE[@]}" ] || \
+    fail "Expected ${#GSTREAMER_MACOS_PLUGIN_CLOSURE[@]} bundled GStreamer plugins, found $bundled_plugin_count"
 info "Bundled $bundled_plugin_count GStreamer plugins."
 
 cp "$gst_scanner_src" "$GST_SCANNER_DEST"

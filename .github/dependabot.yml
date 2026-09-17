@@ -24,6 +24,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 1
+    # This manifest proposes an X.Y compiler floor, tested at X.Y.0.
+    # Build jobs track stable independently and receive compiler patch fixes.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-patch
 
   - package-ecosystem: github-actions
     directory: /
