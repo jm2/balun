@@ -3248,6 +3248,15 @@ function New-WindowsZip {
 }
 
 function Find-InnoSetupCompiler {
+    # CI selects its pinned compiler explicitly; an invalid override must never
+    # silently fall back to a different preinstalled compiler on the runner.
+    if (-not [string]::IsNullOrWhiteSpace($env:BALUN_ISCC)) {
+        if (-not [System.IO.Path]::IsPathFullyQualified($env:BALUN_ISCC) -or
+            $null -eq (Get-RegularFilePath @($env:BALUN_ISCC))) {
+            Exit-WithError 'BALUN_ISCC must name an absolute, regular compiler executable.'
+        }
+        return $env:BALUN_ISCC
+    }
     # Tributary's machine-wide locations plus the per-user location that the
     # Inno Setup installer and winget use when installing for one user.
     foreach ($candidate in @(
