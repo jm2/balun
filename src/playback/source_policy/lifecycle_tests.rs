@@ -230,9 +230,21 @@ fn rejection_during_publication_cancels_transport_but_retains_its_join() {
         let server = FixtureStreamServer::start(open_ended_response_head(), StreamBehavior::Hold);
         let (pipeline, policy, source) = fixture(&server.stream_url());
         let (pause, entered, resume) = pause();
+        let (request_seen, wait_for_request) = mpsc::sync_channel(0);
+        let wait_for_request = Mutex::new(wait_for_request);
         *policy.state.startup_hook.lock().unwrap() = Some(Arc::new(move |stage| {
             if stage == point {
                 pause();
+            }
+            if stage == StartupStage::TransportStarted {
+                // Keep publication's lock until the reader really connected,
+                // including the earlier HandoffTaken schedule. Rejection may
+                // already be waiting for this lock; it must cancel that reader.
+                wait_for_request
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(BOUND)
+                    .unwrap();
             }
         }));
         let publishing_pipeline = pipeline.clone();
@@ -256,6 +268,10 @@ fn rejection_during_publication_cancels_transport_but_retains_its_join() {
         });
         starting.recv_timeout(BOUND).unwrap();
         resume.send(()).unwrap();
+        if !requested {
+            assert!(server.request(BOUND).is_some());
+        }
+        request_seen.send(()).unwrap();
         callback.join().unwrap();
         rejection.join().unwrap();
         assert!(policy.is_rejected());
@@ -267,11 +283,9 @@ fn rejection_during_publication_cancels_transport_but_retains_its_join() {
                 "rejection must retain join ownership"
             );
         }
-        if requested {
-            // This observation precedes retire/join, so their cancellation
-            // cannot accidentally make a missing rejection cancellation pass.
-            assert!(server.client_disconnected_within(BOUND));
-        }
+        // This observation precedes retire/join, so their cancellation cannot
+        // accidentally make a missing rejection cancellation pass in either schedule.
+        assert!(server.client_disconnected_within(BOUND));
         let mut transport = policy.retire().expect("retained transport");
         transport.join(Instant::now() + BOUND).unwrap();
         assert!(policy.retire().is_none());
