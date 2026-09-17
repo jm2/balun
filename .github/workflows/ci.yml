@@ -60,7 +60,9 @@ jobs:
         run: python3 -B scripts/test_macos_native_closure.py
 
       - name: Test native inventory membership and SBOM generation
-        run: python3 -B scripts/inventory/test_native_inventory.py
+        run: |
+          python3 -B scripts/inventory/test_native_inventory.py
+          python3 -B scripts/inventory/test_observe_native.py
 
       - name: Adversarial package metadata smoke
         run: |
@@ -487,6 +489,10 @@ jobs:
         if: runner.os == 'macOS'
         run: python3 -B scripts/test_macos_native_closure.py
 
+      - name: Test native package observation on macOS
+        if: runner.os == 'macOS'
+        run: python3 -B scripts/inventory/test_observe_native.py
+
       - name: Test packaged-hardware output privacy with system Bash
         if: runner.os == 'macOS'
         run: /bin/bash scripts/test-hardware-validation-privacy.sh
@@ -495,6 +501,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test-build-windows-routing.ps1
+
+      - name: Test native package observation on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python -B scripts/inventory/test_observe_native.py
 
       - name: Test complete-tree Windows probe receipts
         if: runner.os == 'Windows'
