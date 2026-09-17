@@ -585,6 +585,41 @@ mod tests {
 
     #[test]
     fn adversarial_packet_mutations_preserve_bounds_and_iterator_progress() {
+        fn assert_tlv_progress(payload: &[u8]) {
+            let mut iterator = TlvIter::new(payload);
+            let mut consumed = 0;
+            for _ in 0..=payload.len() {
+                match iterator.next() {
+                    Some(Ok(item)) => {
+                        let header = if payload[consumed + 1] & 0x80 == 0 {
+                            2
+                        } else {
+                            3
+                        };
+                        assert_eq!(item.tag, payload[consumed]);
+                        assert_eq!(item.value, &payload[consumed + header..iterator.offset]);
+                        consumed += item.value.len() + header;
+                        assert_eq!(consumed, iterator.offset);
+                        assert!(consumed <= payload.len());
+                    }
+                    Some(Err(_)) => {
+                        assert!(iterator.failed);
+                        break;
+                    }
+                    None => {
+                        assert!(
+                            !iterator.failed,
+                            "successful exhaustion cannot hide an error"
+                        );
+                        assert_eq!(consumed, payload.len());
+                        break;
+                    }
+                }
+            }
+            assert_eq!(iterator.next(), None);
+            assert_eq!(iterator.next(), None);
+        }
+
         crate::adversarial::run("packets", |random| {
             let mutated = random.mutate(&GOLDEN_DISCOVER_REPLY, MAX_PACKET_SIZE + 1);
             // Half the cases repair the outer frame so malformed TLVs reach the
@@ -601,19 +636,7 @@ mod tests {
             if let Ok(frame) = parse_frame(&packet) {
                 assert!(packet.len() <= MAX_PACKET_SIZE);
                 assert_eq!(frame.payload.len() + FRAME_OVERHEAD, packet.len());
-                let mut iterator = frame.tlvs();
-                let mut consumed = 0;
-                for _ in 0..=frame.payload.len() {
-                    match iterator.next() {
-                        Some(Ok(item)) => {
-                            consumed += item.value.len() + 2;
-                            assert!(consumed <= frame.payload.len());
-                        }
-                        Some(Err(_)) | None => break,
-                    }
-                }
-                assert_eq!(iterator.next(), None);
-                assert_eq!(iterator.next(), None);
+                assert_tlv_progress(frame.payload);
             }
             if let Ok(reply) = parse_tuner_discover_response(&packet) {
                 assert!(is_concrete_device_id(reply.device_id));
@@ -637,6 +660,7 @@ mod tests {
             }
             payload.extend(extension);
             let packet = encode_frame(TYPE_DISCOVER_REPLY, &payload).unwrap();
+            assert_tlv_progress(parse_frame(&packet).unwrap().payload);
             assert_eq!(
                 parse_tuner_discover_response(&packet).unwrap().device_id,
                 0x105A_1232
