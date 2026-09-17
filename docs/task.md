@@ -135,8 +135,8 @@ and paused. Independent correctness and package-inspection fixes may continue.
   under concurrent replacement and slow I/O on each supported platform.
 
 - [ ] **H3.3 — Disposition the older low findings.** Recheck pacing/jitter,
-  CLI admission budgets, approval-key limits, and schema errors; fix each or
-  record a bounded acceptance with owner, reason, and review trigger.
+  CLI admission, and schema fixes are [recorded](discovery-low-findings-2026-09.md);
+  library-loopback and fingerprint-key dispositions await maintainer approval.
 
 - [ ] **H3.4 — Refresh the security evidence.** After relevant H0/H1/H3 fixes,
   consolidate current guarantees, threat boundaries, exceptions, and test links

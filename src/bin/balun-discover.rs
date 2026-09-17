@@ -619,7 +619,7 @@ mod tests {
 
     #[test]
     fn complete_cli_is_admitted_before_any_action_can_run() {
-        let mut arguments = vec!["--target", "192.0.2.1"].repeat(MAX_CLI_ACTIONS);
+        let mut arguments = ["--target", "192.0.2.1"].repeat(MAX_CLI_ACTIONS);
         assert_eq!(
             parse(&arguments).unwrap().unwrap().actions.len(),
             MAX_CLI_ACTIONS
