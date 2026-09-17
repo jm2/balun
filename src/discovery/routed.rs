@@ -380,6 +380,38 @@ where
     F: Fn(Ipv4Addr, CancellationToken) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<DiscoveryReport, DiscoveryError>> + Send + 'static,
 {
+    scan_with_pacing(
+        targets,
+        scan_config,
+        attempts_per_target,
+        cancellation,
+        overall_deadline,
+        probe,
+        || getrandom::u64().unwrap_or(u64::MAX),
+    )
+    .await
+}
+
+// Only add delay: jitter must never shorten the established rate spacing.
+// If OS entropy is unavailable, use the maximum extra delay.
+fn jittered_spacing(spacing: Duration, entropy: u64) -> Duration {
+    let extra = spacing.as_nanos() / 4 * u128::from(entropy) / u128::from(u64::MAX);
+    spacing + Duration::from_nanos(u64::try_from(extra).expect("bounded scan spacing"))
+}
+
+async fn scan_with_pacing<F, Fut>(
+    targets: &ApprovedIpv4Targets,
+    scan_config: RoutedScanConfig,
+    attempts_per_target: u8,
+    cancellation: &CancellationToken,
+    overall_deadline: Instant,
+    probe: Arc<F>,
+    mut entropy: impl FnMut() -> u64,
+) -> Result<DiscoveryReport, DiscoveryError>
+where
+    F: Fn(Ipv4Addr, CancellationToken) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<DiscoveryReport, DiscoveryError>> + Send + 'static,
+{
     let spacing = scan_config.target_start_spacing(attempts_per_target);
     let mut candidates = targets.candidates();
     let mut tasks = JoinSet::new();
@@ -414,7 +446,7 @@ where
                         tasks.abort_all();
                         return Err(routed_deadline_error(scan_config));
                     }
-                    () = sleep(spacing) => {}
+                    () = sleep(jittered_spacing(spacing, entropy())) => {}
                 }
             }
 
@@ -602,6 +634,83 @@ mod tests {
             config.target_start_spacing(2),
             Duration::from_micros(31_250)
         );
+    }
+
+    #[test]
+    fn positive_jitter_never_exceeds_the_nominal_rate_or_its_delay_budget() {
+        for rate in 1..=MAX_ROUTED_WIRE_DATAGRAMS_PER_SECOND {
+            for attempts in 1..=4 {
+                let spacing = RoutedScanConfig::new(rate, 1)
+                    .unwrap()
+                    .target_start_spacing(attempts);
+                assert_eq!(jittered_spacing(spacing, 0), spacing);
+                assert_eq!(jittered_spacing(spacing, u64::MAX), spacing + spacing / 4);
+                for entropy in [1, u64::MAX / 4, u64::MAX / 2, u64::MAX - 1] {
+                    assert!(
+                        (spacing..=spacing + spacing / 4)
+                            .contains(&jittered_spacing(spacing, entropy))
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn jittered_scheduler_spaces_starts_and_cancels_or_expires_during_delay() {
+        use std::sync::Mutex;
+        for stop in [0, 1, 2] {
+            let targets =
+                ApprovedIpv4Targets::new([Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2)])
+                    .unwrap();
+            let config = RoutedScanConfig::default();
+            let spacing = config.target_start_spacing(2);
+            let starts = Arc::new(Mutex::new(Vec::new()));
+            let observed = Arc::clone(&starts);
+            let cancellation = CancellationToken::new();
+            let probe_cancellation = cancellation.clone();
+            let start = Instant::now();
+            let deadline = start
+                + if stop == 2 {
+                    spacing
+                } else {
+                    config.overall_deadline()
+                };
+            let result = scan_with_pacing(
+                &targets,
+                config,
+                2,
+                &cancellation,
+                deadline,
+                Arc::new(move |_, _| {
+                    observed.lock().unwrap().push(Instant::now());
+                    if stop == 1 {
+                        probe_cancellation.cancel();
+                    }
+                    async { Ok(DiscoveryReport::default()) }
+                }),
+                || u64::MAX,
+            )
+            .await;
+            let starts = starts.lock().unwrap();
+            assert_eq!(starts[0], start);
+            if stop == 0 {
+                assert!(result.is_ok());
+                assert_eq!(starts.len(), 2);
+                assert!(starts[1] - starts[0] >= spacing + spacing / 4);
+                assert!(starts[1] - starts[0] < spacing + spacing / 4 + Duration::from_millis(2));
+            } else {
+                assert_eq!(
+                    starts.len(),
+                    1,
+                    "no second probe after cancellation/deadline"
+                );
+                assert!(if stop == 1 {
+                    matches!(result, Err(DiscoveryError::Cancelled))
+                } else {
+                    matches!(result, Err(DiscoveryError::RoutedScanDeadline { .. }))
+                });
+            }
+        }
     }
 
     #[test]
