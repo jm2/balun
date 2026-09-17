@@ -70,6 +70,11 @@ before polling the controller, proving the former cannot starve shutdown, and
 join a worker twice with the second deadline already expired. The ratchet keeps
 its original ceilings; the tests make these ownership outcomes explicit.
 
+The source-rejection follow-up serializes cancellation with transport publication.
+Forced request/disconnection schedules and poisoned-admission tests measure
+402/440 regions (91.36%) in source policy, up from 378/421. Its uncovered ceiling
+tightens from 43 to 38, and the denominator floor now includes the added lock path.
+
 Remaining gaps are preserved in the reports rather than excluded to raise
 percentages. Examples include native diagnostic bus paths, rare OS/thread
 creation failures, some filesystem error outcomes, and cycle/limit branches in
