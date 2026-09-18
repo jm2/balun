@@ -32,7 +32,8 @@ fn fixture(url: &str) -> (gst::Pipeline, Arc<SourcePolicy>, gst::Element) {
         OperationGeneration::new(9),
         url,
     );
-    let policy = SourcePolicy::install(&pipeline, handoff, TransportConfig::PRODUCTION).unwrap();
+    let policy =
+        SourcePolicy::install(&pipeline, handoff, TransportConfig::PRODUCTION, None).unwrap();
     let source = gst::ElementFactory::make("appsrc").build().unwrap();
     (pipeline, Arc::new(policy), source)
 }

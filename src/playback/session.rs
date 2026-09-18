@@ -884,8 +884,13 @@ impl PipelineBackend for GstreamerBackend {
         // ever receives the constant endpoint-free URI; the authorized handoff
         // moves into the source policy's private state and is consumed by the
         // transport when playbin3 delivers its exact appsrc during start.
-        let source_policy = SourcePolicy::install(&pipeline, handoff, TransportConfig::PRODUCTION)
-            .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
+        let source_policy = SourcePolicy::install(
+            &pipeline,
+            handoff,
+            TransportConfig::PRODUCTION,
+            Some(timing.transport()),
+        )
+        .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
         pipeline.set_property("uri", PIPELINE_URI);
         if pipeline.property::<Option<String>>("uri").as_deref() != Some(PIPELINE_URI) {
             return Err(PipelineStartError::Clean(
