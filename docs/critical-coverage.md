@@ -17,7 +17,7 @@ measurements help find omissions in that evidence.
 | Surface | Measurement | Recorded baseline |
 | --- | --- | --- |
 | Discovery admission and approval | Rust source regions in six modules | 79.77%–97.69%, with per-file counts rather than one project percentage |
-| Resolver, controller, source retirement and transport | Rust source regions in four modules | 88.96%–94.52% |
+| Resolver, controller, source retirement and transport | Rust source regions in four modules | 88.96%–94.97% |
 | Identity registry, device identity, protocol, metadata and lineup | Rust source regions in five modules | 84.62%–96.69% |
 | JSON failure conversion and logging setup | Rust source regions | 30/30 and 11/11 respectively |
 | Native playback failure classification and diagnostics | Rust source regions | 420/495 (84.85%); display-backed diagnostics remain a visible gap |
@@ -77,6 +77,8 @@ closed labels and typed fields. Actual tracing-capture regressions raise that
 module from 199/450 regions to 420/495 (84.85%); the uncovered ceiling tightens
 from 251 to 75. A fresh full desktop coverage run verifies the updated count
 and every other existing Rust threshold.
+The later closed native error-code check brings this to 420/495 (84.85%),
+retaining the 75-region uncovered ceiling.
 
 H3.2 adds four settings surfaces to the ratchet without weakening the existing
 18 Rust ceilings. The full measured run passes 665 library, 65 desktop, and
@@ -88,6 +90,14 @@ The source-rejection follow-up serializes cancellation with transport publicatio
 Forced request/disconnection schedules and poisoned-admission tests measure
 402/440 regions (91.36%) in source policy, up from 378/421. Its uncovered ceiling
 tightens from 43 to 38, and the denominator floor now includes the added lock path.
+
+Worker-captured tune observations raise source policy to 404/442 (91.40%) and
+transport to 434/457 (94.97%), retaining their 38- and 23-region uncovered ceilings.
+Real HTTP/appsrc tests cover populated timing slots, empty and rejected responses,
+and cancellation before request polling. The full instrumented run passes 676
+library, 65 desktop, and 12 CLI tests, with the same 21 ignored display/hardware/child
+entries, and all 22 Rust ratchets pass. These timing observations do not establish
+decoded or rendered media progress.
 
 Remaining gaps are preserved in the reports rather than excluded to raise
 percentages. Examples include native diagnostic bus paths, rare OS/thread
