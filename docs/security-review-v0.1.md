@@ -12,6 +12,26 @@ Contracts audited: [`plan-v0.1.md`](plan-v0.1.md) §5-§8,
 checked in. The default and `desktop` test suites, strict Clippy, and
 `cargo audit` pass with the fixes applied; the live-hardware tests were not run.
 
+## 2026-09-17 playback description correction
+
+The interface review found a rendering-boundary gap in
+`src/ui/player_view.rs`. Device and channel names admit printable punctuation,
+but [AdwStatusPage descriptions](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/class.StatusPage.html)
+interpret markup. Unescaped names such as `News & Weather` could make a status
+description invalid; tag-like names could alter its formatting. This affects
+the connecting message and device-specific playback failures.
+
+Playback descriptions now compose ordinary text and escape it exactly once at
+the widget boundary, including initial/idle/failure copy. Titles and ordinary
+labels keep their plain-text API. Parsed names and diagnostic text are unchanged.
+Pango regressions cover ampersands, formatting tags, link-like text, existing
+entities, quotes, and Unicode across every pipeline-failure category. They
+require the original rendered text and no formatting attributes. The native
+player smoke also exercises the production connecting and failure setters.
+
+This targeted fix does not complete H3.4's broader refreshed audit or H4.3's
+platform accessibility review.
+
 ## 2026-09-17 routed-send correction (H0.1)
 
 The historical pre-send proof below did not cover an asynchronous send waiting

@@ -53,6 +53,7 @@ address so you know which tuner failed.
 | macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
 | Windows package validation | ✅ Pinned policy and full-tree probe receipt; completed installer payload independently extracted, compared, checked, and runtime-probed |
 | Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
+| Native runtime inventory tooling | 🛠️ Independent final-tree hashing, exact membership/content validation, and native-scope SBOM generation; [platform collection and release attachment remain pending](docs/native-inventory.md) |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
@@ -450,6 +451,11 @@ tools. Archive-member preflight and extraction containment remain pending; only 
 produced packages are accepted by the release workflow.
 
 ### Testing & Code Quality
+
+The [adversarial regression suites](docs/adversarial-regressions.md) run short,
+replayable parser and policy corpora in PR CI and longer generated corpora daily.
+CI also enforces [critical-path coverage baselines](docs/critical-coverage.md),
+with separate Rust, Python, and PowerShell measurements and explicit gaps.
 
 ```bash
 # Core checks (GTK- and GStreamer-free), as run by CI:

@@ -12,7 +12,7 @@ foreach ($function in $ast.FindAll({
         $node.Name -in @('Read-WindowsComponentPolicySnapshot', 'ConvertFrom-WindowsComponentPolicyText',
                         'Import-ForbiddenBundledComponentPolicy', 'Test-ForbiddenBundledComponentName')
 }, $false)) {
-    . ([scriptblock]::Create($function.Extent.Text))
+    Set-Item -LiteralPath "Function:$($function.Name)" -Value ($function.Body.GetScriptBlock())
 }
 function Exit-WithError { param([string]$Message) throw $Message }
 function Assert-Rejected {

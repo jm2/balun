@@ -1,5 +1,8 @@
 //! GTK-free core services for Balun.
 
+#[cfg(test)]
+mod adversarial;
+
 pub mod controller;
 pub mod discovery;
 pub mod domain;

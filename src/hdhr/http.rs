@@ -844,6 +844,68 @@ mod tests {
         DeviceId::new(0x105A_1232).unwrap()
     }
 
+    #[test]
+    fn adversarial_metadata_and_url_admission() {
+        use crate::hdhr::test_support::{JSON_SECRET_MARKER, assert_value_free_error};
+        const SEED: &[u8] = include_bytes!("../../tests/fixtures/hdhr/discover-hdhr4-2us.json");
+        crate::adversarial::run("metadata-urls", |random| {
+            let body = random.mutate(SEED, MAX_DEVICE_JSON_BYTES);
+            if let Ok(info) = parse_device_info(&body, expected_id()) {
+                assert_eq!(info.device_id(), expected_id());
+                assert!(
+                    info.tuner_count()
+                        .is_none_or(|value| (1..=32).contains(&value))
+                );
+            }
+            let mut structured: serde_json::Value = serde_json::from_slice(SEED).unwrap();
+            let count = 1 + random.index(32);
+            structured["TunerCount"] = count.into();
+            structured["IgnoredPrivateField"] = JSON_SECRET_MARKER.into();
+            let info = parse_device_info(&serde_json::to_vec(&structured).unwrap(), expected_id())
+                .unwrap();
+            assert_eq!(usize::from(info.tuner_count().unwrap()), count);
+            assert!(!format!("{info:?}").contains(JSON_SECRET_MARKER));
+            let fields = [
+                "TunerCount",
+                "ModelNumber",
+                "FirmwareVersion",
+                "FriendlyName",
+            ];
+            let field = fields[random.index(fields.len())];
+            structured[field] = serde_json::json!({"private": JSON_SECRET_MARKER});
+            let error = parse_device_info(&serde_json::to_vec(&structured).unwrap(), expected_id())
+                .unwrap_err();
+            assert!(matches!(error, DeviceHttpError::Json(_)));
+            assert_value_free_error(&error);
+
+            let source: IpAddr = "192.0.2.10".parse().unwrap();
+            let url_seeds = [
+                "http://fixture.invalid/",
+                "http://192.0.2.10/lineup.json",
+                "http://192.0.2.10:5004/auto/v1",
+                "http://[2001:db8::1]/",
+                "http://private:secret@fixture.invalid/?token=secret#fragment",
+                "https://fixture.invalid/",
+                "http://fixture.invalid/%2e%2e/",
+            ];
+            let seed = url_seeds[random.index(url_seeds.len())];
+            let mutation = random.mutate(seed.as_bytes(), MAX_ADVERTISED_URL_BYTES + 1);
+            let input = String::from_utf8_lossy(&mutation);
+            for role in [UrlRole::Base, UrlRole::Lineup, UrlRole::Stream] {
+                if let Ok(url) = normalize_url(&input, source, role) {
+                    assert_eq!(url.scheme(), "http");
+                    assert_eq!(url.host_str(), Some("192.0.2.10"));
+                    assert!(url.username().is_empty() && url.password().is_none());
+                    assert!(url.query().is_none() && url.fragment().is_none());
+                    assert_ne!(url.port(), Some(0));
+                }
+            }
+            let hostname = format!("http://fixture-{}.invalid/", random.next());
+            let pinned = normalize_url(&hostname, source, UrlRole::Base).unwrap();
+            assert_eq!(pinned.as_str(), "http://192.0.2.10/");
+        });
+    }
+
     fn endpoint_for(server: &ScriptedHttpServer) -> DeviceEndpoint {
         DeviceEndpoint::from_discovery(
             SocketAddr::new(server.address().ip(), 65_001),

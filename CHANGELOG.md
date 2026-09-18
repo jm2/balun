@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Native inventory tooling independently hashes reopened package trees and completed
+  artifacts, validates exact native membership/content against component metadata, and
+  emits a native-scope CycloneDX SBOM. Platform ownership collection and release attachment
+  remain pending; current packages do not yet include these reports.
+- Critical admission, cancellation, identity, privacy, and package gates have measured
+  coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
+- Reproducible adversarial parser, approval, route-budget, and package-manifest
+  properties run in PR checks and scheduled extended corpora, with failure replay records.
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
@@ -19,8 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Linux Debian, RPM, and Arch inspectors now share one bounded private archive
   snapshot, preventing input replacement between metadata and payload checks.
   Archive-member preflight and extraction containment remain pending.
+- Playback status and error descriptions now show tuner/channel names as literal
+  text, so ampersands and markup-like names cannot break or reformat the message.
 - Concurrent source rejection now cancels a transport that is still being published,
   zeroizes pending handoffs, and retains all workers for the normal teardown join.
+
 - Completed Windows installers now undergo bounded static payload extraction and exact
   manifest comparison, followed by repeated native/resource checks and a runtime probe
   on the extracted tree for both x86_64 and ARM64 before upload.
