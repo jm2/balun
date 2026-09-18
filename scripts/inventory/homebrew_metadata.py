@@ -3,7 +3,7 @@
 
 This is a trusted build-input collector. Homebrew evaluates installed Ruby
 recipes; neither this tool nor brew info is an untrusted-package sandbox.
-The result is intermediate input to a future packaging copy ledger, not an SBOM.
+The result feeds catalog assembly and can consume a frozen copy ledger. It is not an SBOM.
 """
 
 import argparse
