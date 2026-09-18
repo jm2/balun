@@ -360,8 +360,10 @@ caps fields, structure names, or stream identifiers. No actual credential leak
 was observed; synthetic secret-shaped values demonstrate the logging path.
 
 Balun's native playback reports now discard error/debug text and details, map
-domains and factory names to closed labels, and retain only typed numeric codes
-and counters. Caps reports accept a closed media/format vocabulary and bounded
+domains and factory names to closed labels, and retain only known GStreamer error
+codes and typed counters. Unknown domains or out-of-table codes omit the code
+field, including codes the Rust bindings would otherwise map to `Failed`.
+Caps reports accept a closed media/format vocabulary and bounded
 integer dimensions/rates; familiar field names do not authorize arbitrary text,
 lists, or nested values. Stream collection summaries include at most 16 entries.
 Application markers report only known categories. Unknown labels become fixed
@@ -371,7 +373,7 @@ or `other`, never an arbitrary native enum nickname.
 `emitted_native_logs_discard_plugin_text_and_stream_values` captures the actual
 tracing output for errors, warnings, missing plugins, stream collections,
 selection, application markers, and pipeline diagnostics. Fixtures poison the
-error domain, source name, error/debug/details, caps name and fields, stream ID,
+error domain and numeric code, source name, error/debug/details, caps name and fields, stream ID,
 and collection ID; known event categories remain visible and none of the markers
 appear. `diagnostic_caps_require_typed_bounded_fields_and_known_labels` rejects
 mistyped/list/oversized fields and retains known audio/video formats.
