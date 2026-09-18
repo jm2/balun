@@ -139,6 +139,22 @@ class SnapshotTests(unittest.TestCase):
                 self.assertEqual(len(closed), 2)
                 self.assertNotEqual(closed[0], closed[1])
 
+    def test_output_identity_failure_removes_the_created_name_and_allows_retry(self):
+        fstat = os.fstat
+        calls = 0
+
+        def fail_output_identity(fd):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("identity unavailable")
+            return fstat(fd)
+
+        with mock.patch.object(snapshot.os, "fstat", side_effect=fail_output_identity):
+            self.rejected()
+        snapshot.copy_snapshot(self.source, self.output)
+        self.assertEqual(self.output.read_bytes(), self.source.read_bytes())
+
     def test_cli_failure_is_fixed_and_leaves_no_output(self):
         self.source.unlink()
         result = subprocess.run([sys.executable, "-B", str(Path(snapshot.__file__)),

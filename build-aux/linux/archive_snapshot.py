@@ -42,6 +42,7 @@ def copy_snapshot(source, destination, *, limit=MAX_ARCHIVE_BYTES, seconds=COPY_
         raise SnapshotError("invalid archive input")
     source_fd = os.open(source, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK)
     output_fd = None
+    output_created = False
     output_identity = None
     completed = False
     try:
@@ -49,6 +50,7 @@ def copy_snapshot(source, destination, *, limit=MAX_ARCHIVE_BYTES, seconds=COPY_
             raise SnapshotError("archive changed before snapshot")
         output_fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
                             os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+        output_created = True
         output_identity = os.fstat(output_fd)
         total = 0
         while True:
@@ -89,12 +91,13 @@ def copy_snapshot(source, destination, *, limit=MAX_ARCHIVE_BYTES, seconds=COPY_
                 if source_fd is not None:
                     os.close(source_fd)
             finally:
-                if output_identity is not None and not completed:
-                    # Do not delete another file if the caller violated the
-                    # private, serialized destination-directory contract.
+                if output_created and not completed:
+                    # The private, serialized parent makes this newly created
+                    # name ours even if its initial fstat failed. When identity
+                    # is known, also avoid deleting an unexpected replacement.
                     try:
                         current = destination.lstat()
-                        if ((current.st_dev, current.st_ino) ==
+                        if (output_identity is None or (current.st_dev, current.st_ino) ==
                                 (output_identity.st_dev, output_identity.st_ino)):
                             destination.unlink()
                     except FileNotFoundError:
