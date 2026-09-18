@@ -56,7 +56,7 @@ address so you know which tuner failed.
 | Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
 | Native playback log privacy | ✅ Closed error and media labels retain useful diagnostics without plugin error text, arbitrary caps values, or stream identifiers |
 | Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved |
-| Native runtime inventory tooling | 🛠️ Final-tree hashing, macOS native copy ownership, installed Homebrew metadata, and native-scope SBOM generation; [catalog assembly, embedded-resource representation, final-artifact comparison, and release attachment remain pending](docs/native-inventory.md) |
+| Native runtime inventory tooling | 🛠️ Reopened DMG content binding, macOS native copy ownership, installed Homebrew metadata, and native-scope SBOM generation; [catalog assembly, embedded-resource representation, remaining artifact adapters, and release attachment remain pending](docs/native-inventory.md) |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
