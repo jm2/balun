@@ -17,6 +17,7 @@ use gstreamer as gst;
 
 use super::PlaybackFactory;
 use super::transport::{StreamTransport, TransportConfig};
+use super::transport_timing::TransportTiming;
 use crate::controller::StreamHandoff;
 
 #[cfg(test)]
@@ -39,6 +40,7 @@ pub(super) struct SourcePolicyError;
 struct PendingStream {
     handoff: StreamHandoff,
     config: TransportConfig,
+    timing: Option<Arc<TransportTiming>>,
 }
 
 struct SourcePolicyState {
@@ -83,6 +85,7 @@ impl SourcePolicy {
         playbin: &gst::Pipeline,
         handoff: StreamHandoff,
         config: TransportConfig,
+        timing: Option<Arc<TransportTiming>>,
     ) -> Result<Self, SourcePolicyError> {
         let expected_factory = gst::ElementFactory::find(PlaybackFactory::AppSource.name())
             .ok_or(SourcePolicyError)?;
@@ -100,7 +103,11 @@ impl SourcePolicy {
         let state = Arc::new(SourcePolicyState {
             expected_factory,
             lifecycle: Mutex::new(SourceLifecycle {
-                pending: Some(PendingStream { handoff, config }),
+                pending: Some(PendingStream {
+                    handoff,
+                    config,
+                    timing,
+                }),
                 transport: None,
                 accepted_source: None,
                 retired: false,
@@ -273,7 +280,13 @@ impl SourcePolicyState {
         };
         #[cfg(test)]
         self.at_startup_stage(StartupStage::HandoffTaken);
-        match StreamTransport::start(pending.handoff, source.clone(), playbin, pending.config) {
+        match StreamTransport::start(
+            pending.handoff,
+            source.clone(),
+            playbin,
+            pending.config,
+            pending.timing,
+        ) {
             Ok(transport) => {
                 lifecycle.accepted_source = Some(source.clone().upcast::<gst::Object>());
                 lifecycle.transport = Some(transport);
@@ -596,7 +609,7 @@ mod tests {
         let Some(playbin) = pipeline() else {
             return;
         };
-        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK) else {
+        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK, None) else {
             return;
         };
         assert!(validated_source_setup_signal(&playbin).is_ok());
@@ -630,7 +643,7 @@ mod tests {
         let Some(playbin) = pipeline() else {
             return;
         };
-        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK) else {
+        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK, None) else {
             return;
         };
         let bus = playbin.bus().unwrap();
@@ -672,7 +685,7 @@ mod tests {
         let Some(playbin) = pipeline() else {
             return;
         };
-        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK) else {
+        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK, None) else {
             return;
         };
         let worker_playbin = playbin.clone();
@@ -697,7 +710,7 @@ mod tests {
         let Some(playbin) = pipeline() else {
             return;
         };
-        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK) else {
+        let Ok(policy) = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK, None) else {
             return;
         };
         assert!(policy.retire().is_none());
@@ -731,7 +744,7 @@ mod tests {
         let audio_sink = gst::ElementFactory::make("fakesink").build().unwrap();
         playbin.set_property("video-sink", &video_sink);
         playbin.set_property("audio-sink", &audio_sink);
-        let policy = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK)
+        let policy = SourcePolicy::install(&playbin, unreachable_handoff(), QUICK, None)
             .expect("install the appsrc policy on the installed runtime");
         playbin.set_property("uri", PIPELINE_URI);
         assert_eq!(
@@ -781,8 +794,14 @@ mod tests {
         let audio_sink = gst::ElementFactory::make("fakesink").build().unwrap();
         crate::playback::session::configure_playbin_video(&playbin, &video_sink).unwrap();
         playbin.set_property("audio-sink", &audio_sink);
-        let policy = SourcePolicy::install(&playbin, handoff(&server.stream_url()), QUICK)
-            .expect("install the appsrc policy");
+        let timing = Arc::new(TransportTiming::new(Instant::now()));
+        let policy = SourcePolicy::install(
+            &playbin,
+            handoff(&server.stream_url()),
+            QUICK,
+            Some(Arc::clone(&timing)),
+        )
+        .expect("install the appsrc policy");
         playbin.set_property("uri", PIPELINE_URI);
         assert_eq!(
             playbin.property::<Option<String>>("uri").as_deref(),
@@ -843,6 +862,11 @@ mod tests {
                 .is_ok_and(|rendered| rendered >= 2)
         );
         assert!(!policy.is_rejected());
+
+        assert!(
+            timing.snapshot().iter().all(|(_, value)| value.is_some()),
+            "the admitted source must publish the exact tune's transport observations"
+        );
 
         let deinterlacing = crate::playback::deinterlace::describe(playbin.upcast_ref());
 

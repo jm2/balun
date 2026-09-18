@@ -206,8 +206,9 @@ pub(super) fn run(plugin_dir: &Path) -> Result<(), PackagedProbeError> {
         None
     });
 
-    let source_policy = SourcePolicy::install(&pipeline, handoff, TransportConfig::PRODUCTION)
-        .map_err(|_| PackagedProbeError::PipelineConstruction)?;
+    let source_policy =
+        SourcePolicy::install(&pipeline, handoff, TransportConfig::PRODUCTION, None)
+            .map_err(|_| PackagedProbeError::PipelineConstruction)?;
     pipeline.set_property("uri", PIPELINE_URI);
     if pipeline.property::<Option<String>>("uri").as_deref() != Some(PIPELINE_URI) {
         return Err(PackagedProbeError::PipelineConstruction);

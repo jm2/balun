@@ -50,13 +50,19 @@ where
     let application = adw::Application::builder()
         .application_id(APPLICATION_ID)
         .build();
+    let starting = Rc::new(Cell::new(false));
+    let cancel_startup = tokio_util::sync::CancellationToken::new();
+    let quit_starting = Rc::clone(&starting);
+    let quit_cancel = cancel_startup.clone();
     application.add_action_entries([
         gtk::gio::ActionEntry::builder("quit")
-            .activate(|application: &adw::Application, _, _| {
-                // Closing the window joins playback/controller teardown and
-                // drains settings writes before the application exits.
+            .activate(move |application: &adw::Application, _, _| {
+                // Closing joins playback/controller teardown and bounds the
+                // settings wait. Startup cancellation also joins the controller.
                 if let Some(window) = existing_window(application) {
                     window.close();
+                } else if quit_starting.get() {
+                    quit_cancel.cancel();
                 } else {
                     application.quit();
                 }
@@ -77,31 +83,54 @@ where
     let shutdown_failed = Rc::new(Cell::new(false));
     let window_shutdown_failed = Rc::clone(&shutdown_failed);
 
+    let window_ready = Rc::new(window_ready);
     application.connect_activate(move |application| {
         if let Some(window) = existing_window(application) {
             window.present();
             return;
         }
 
+        if starting.replace(true) {
+            return;
+        }
         let Some(controller) = controller.borrow_mut().take() else {
             eprintln!("Balun cannot create another window after controller shutdown");
             application.quit();
             return;
         };
-        // `activate` runs while the default GLib main context is owned. A
-        // fixed initialization failure remains a player-pane state so device
-        // discovery and lineup inspection stay available.
-        let playback = PlaybackRuntime::initialize();
-        let settings = SettingsSession::open(SettingsStore::at_default_location());
-        let window = ui::window::build(
-            application,
-            controller,
-            playback,
-            settings,
-            Rc::clone(&window_shutdown_failed),
-        );
-        window_ready(&window);
-        window.present();
+        // Keep the application alive while settings load without blocking GTK.
+        let hold = application.hold();
+        let application = application.clone();
+        let starting = Rc::clone(&starting);
+        let cancelled = cancel_startup.clone();
+        let window_ready = Rc::clone(&window_ready);
+        let shutdown_failed = Rc::clone(&window_shutdown_failed);
+        gtk::glib::MainContext::default().spawn_local(async move {
+            let settings = tokio::select! {
+                biased;
+                () = cancelled.cancelled() => None,
+                settings = SettingsSession::open_async(SettingsStore::at_default_location()) => Some(settings),
+            };
+            if let Some(settings) = settings {
+                // Native initialization retains the separately accepted H3.5
+                // limits. Settings I/O has already completed or timed out.
+                let playback = PlaybackRuntime::initialize();
+                let window = ui::window::build(
+                    &application, controller, playback, settings, shutdown_failed,
+                );
+                window_ready(&window);
+                window.present();
+            } else {
+                controller.begin_shutdown();
+                if !matches!(gtk::gio::spawn_blocking(move || controller.join()).await, Ok(Ok(()))) {
+                    shutdown_failed.set(true);
+                    eprintln!("Balun controller shutdown failed during startup");
+                }
+                application.quit();
+            }
+            starting.set(false);
+            drop(hold);
+        });
     });
 
     (application, shutdown_failed)
@@ -188,6 +217,42 @@ mod tests {
     #[ignore = "requires the isolated display and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
     fn headless_about_and_quit_join_controller_after_launch_discovery() {
         run_lifecycle_smoke(true);
+    }
+
+    #[test]
+    #[ignore = "requires the isolated display and D-Bus session supplied by scripts/test-desktop-lifecycle.sh"]
+    fn headless_quit_during_settings_startup_joins_controller() {
+        let local = Arc::new(AtomicUsize::new(0));
+        let exact = Arc::new(AtomicUsize::new(0));
+        let controller = ControllerRuntime::start(CountingDiscovery {
+            local: Arc::clone(&local),
+            exact: Arc::clone(&exact),
+        })
+        .unwrap();
+        let snapshots = controller.handle().subscribe();
+        let (application, shutdown_failed) = application_with_controller(controller, |_| {
+            panic!("cancelled startup must not build a window");
+        });
+        let repeated = Cell::new(false);
+        application.connect_activate(move |application| {
+            if !repeated.replace(true) {
+                // Repeated activation while loading must not consume another
+                // controller or start another settings worker.
+                application.activate();
+                gtk::gio::prelude::ActionGroupExt::activate_action(application, "quit", None);
+            }
+        });
+        assert_eq!(
+            application.run_with_args(&["balun-startup-quit-smoke"]),
+            gtk::glib::ExitCode::SUCCESS
+        );
+        assert!(!shutdown_failed.get());
+        assert!(
+            snapshots.has_changed().is_err(),
+            "controller actor must be joined"
+        );
+        assert_eq!(local.load(Ordering::SeqCst), 0);
+        assert_eq!(exact.load(Ordering::SeqCst), 0);
     }
 
     fn run_lifecycle_smoke(quit_action: bool) {

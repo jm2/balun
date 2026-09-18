@@ -69,6 +69,29 @@ pub(super) fn install(pipeline: &gst::Pipeline) -> Result<(), PlaybackSessionFai
     Ok(())
 }
 
+fn framerate_label(rate: gst::Fraction) -> &'static str {
+    // Negotiated caps are plugin-controlled. Keep useful standard frame-rate
+    // categories without formatting arbitrary numerator/denominator values.
+    match (rate.numer(), rate.denom()) {
+        (24_000, 1_001) => "24000/1001",
+        (24, 1) => "24/1",
+        (25, 1) => "25/1",
+        (30_000, 1_001) => "30000/1001",
+        (30, 1) => "30/1",
+        (48, 1) => "48/1",
+        (50, 1) => "50/1",
+        (60_000, 1_001) => "60000/1001",
+        (60, 1) => "60/1",
+        (100, 1) => "100/1",
+        (120_000, 1_001) => "120000/1001",
+        (120, 1) => "120/1",
+        (200, 1) => "200/1",
+        (240_000, 1_001) => "240000/1001",
+        (240, 1) => "240/1",
+        _ => "other",
+    }
+}
+
 /// Inspect the actual filter and its negotiated output, without arbitrary
 /// caps text or element names entering diagnostics.
 pub(super) fn describe(pipeline: &gst::Element) -> String {
@@ -85,12 +108,16 @@ pub(super) fn describe(pipeline: &gst::Element) -> String {
                 .is_some_and(|factory| factory.name() == "deinterlace")
         })
         .map(|element| {
-            let method = enum_nick(&element, "method").unwrap_or_else(|| "unknown".into());
+            let method = if enum_nick(&element, "method").as_deref() == Some("yadif") {
+                "yadif"
+            } else {
+                "other"
+            };
             let rate = element
                 .static_pad("src")
                 .and_then(|pad| pad.current_caps())
                 .and_then(|caps| caps.structure(0)?.get::<gst::Fraction>("framerate").ok())
-                .map_or_else(|| "not negotiated".into(), |rate| rate.to_string());
+                .map_or("not negotiated", framerate_label);
             format!("deinterlace method={method} output-framerate={rate}")
         })
         .collect::<Vec<_>>();
@@ -109,15 +136,53 @@ mod tests {
     #[derive(Default)]
     struct Observation {
         frames: Vec<Vec<u8>>,
+        timings: Vec<(Option<gst::ClockTime>, Option<gst::ClockTime>)>,
         rate: Option<gst::Fraction>,
         interlace_mode: Option<String>,
     }
 
     fn render(width: i32, height: i32, mode: &str, method: &str) -> Observation {
+        let stride = usize::try_from(width).unwrap();
+        let rows = usize::try_from(height).unwrap();
+        let inputs = (0..12)
+            .map(|_| {
+                let mut pixels = vec![128_u8; stride * rows * 3 / 2];
+                for row in 0..rows {
+                    pixels[row * stride..(row + 1) * stride].fill(if row % 4 < 2 {
+                        32
+                    } else {
+                        224
+                    });
+                }
+                let flags = if mode == "progressive" {
+                    gst::BufferFlags::empty()
+                } else {
+                    interlaced_flags(true)
+                };
+                (pixels, flags)
+            })
+            .collect();
+        render_inputs(width, height, mode, method, inputs)
+    }
+
+    fn interlaced_flags(top_first: bool) -> gst::BufferFlags {
+        // GstVideoBufferFlags extend GstBufferFlags at FLAG_LAST:
+        // INTERLACED = 1<<20 and TFF = 1<<21 (video-frame.h).
+        gst::BufferFlags::from_bits_retain((1 << 20) | if top_first { 1 << 21 } else { 0 })
+    }
+
+    fn render_inputs(
+        width: i32,
+        height: i32,
+        mode: &str,
+        method: &str,
+        inputs: Vec<(Vec<u8>, gst::BufferFlags)>,
+    ) -> Observation {
         gst::init().unwrap();
         let pipeline = gst::Pipeline::new();
         let source = gst::ElementFactory::make("appsrc")
             .property("format", gst::Format::Time)
+            .property("is-live", true)
             .build()
             .unwrap();
         let filter = gst::ElementFactory::make("deinterlace").build().unwrap();
@@ -138,11 +203,7 @@ mod tests {
         source.set_property("caps", &caps);
         pipeline.add_many([&source, &filter, &sink]).unwrap();
         gst::Element::link_many([&source, &filter, &sink]).unwrap();
-        let output = Arc::new(Mutex::new(Observation {
-            frames: Vec::new(),
-            rate: None,
-            interlace_mode: None,
-        }));
+        let output = Arc::new(Mutex::new(Observation::default()));
         let recorded = Arc::clone(&output);
         sink.connect("handoff", false, move |args| {
             let buffer = args[1].get::<gst::Buffer>().unwrap();
@@ -152,28 +213,20 @@ mod tests {
             let mut recorded = recorded.lock().unwrap();
             recorded.rate = caps.get("framerate").ok();
             recorded.interlace_mode = caps.get::<String>("interlace-mode").ok();
+            recorded.timings.push((buffer.pts(), buffer.duration()));
             recorded
                 .frames
                 .push(buffer.map_readable().unwrap().to_vec());
             None
         });
         pipeline.set_state(gst::State::Playing).unwrap();
-        let width = usize::try_from(width).unwrap();
-        let height = usize::try_from(height).unwrap();
-        for index in 0..12_u64 {
-            let mut pixels = vec![128_u8; width * height * 3 / 2];
-            for row in 0..height {
-                pixels[row * width..(row + 1) * width].fill(if row % 4 < 2 { 32 } else { 224 });
-            }
+        for (index, (pixels, flags)) in inputs.into_iter().enumerate() {
+            let index = u64::try_from(index).unwrap();
             let mut buffer = gst::Buffer::from_mut_slice(pixels);
             let data = buffer.get_mut().unwrap();
             data.set_pts(gst::ClockTime::from_nseconds(index * 1_001_000_000 / 30));
             data.set_duration(gst::ClockTime::from_nseconds(1_001_000_000 / 30));
-            if mode != "progressive" {
-                // GstVideoBufferFlags extend GstBufferFlags at FLAG_LAST:
-                // INTERLACED = 1<<20 and TFF = 1<<21 (video-frame.h).
-                data.set_flags(gst::BufferFlags::from_bits_retain((1 << 20) | (1 << 21)));
-            }
+            data.set_flags(flags);
             assert_eq!(
                 source.emit_by_name::<gst::FlowReturn>("push-buffer", &[&buffer]),
                 gst::FlowReturn::Ok
@@ -233,6 +286,152 @@ mod tests {
                     frame[row * 1280..(row + 1) * 1280]
                         .iter()
                         .all(|pixel| *pixel == if row % 4 < 2 { 32 } else { 224 })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_caps_respect_progressive_buffer_flags() {
+        let inputs: Vec<_> = (0..12_u8)
+            .map(|index| {
+                let mut pixels = vec![128; 528 * 480 * 3 / 2];
+                for row in 0..480 {
+                    pixels[row * 528..(row + 1) * 528].fill(if row % 2 == 0 {
+                        32 + index
+                    } else {
+                        224 - index
+                    });
+                }
+                (pixels, gst::BufferFlags::empty())
+            })
+            .collect();
+        let output = render_inputs(528, 480, "mixed", "yadif", inputs.clone());
+        assert_eq!(output.frames.len(), inputs.len());
+        for (index, (frame, (expected, _))) in output.frames.iter().zip(&inputs).enumerate() {
+            assert!(
+                frame == expected,
+                "progressive content changed at frame {index}"
+            );
+            assert_eq!(
+                output.timings[index],
+                (
+                    Some(gst::ClockTime::from_nseconds(
+                        u64::try_from(index).unwrap() * 1_001_000_000 / 30
+                    )),
+                    Some(gst::ClockTime::from_nseconds(1_001_000_000 / 30)),
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_interlaced_fields_follow_top_and_bottom_first_flags() {
+        for top_first in [true, false] {
+            let inputs = (0..12_u8)
+                .map(|index| {
+                    let mut pixels = vec![128; 528 * 480 * 3 / 2];
+                    for row in 0..480 {
+                        let first = (row % 2 == 0) == top_first;
+                        pixels[row * 528..(row + 1) * 528]
+                            .fill(32 + index * 8 + if first { 0 } else { 4 });
+                    }
+                    (pixels, interlaced_flags(top_first))
+                })
+                .collect();
+            let output = render_inputs(528, 480, "mixed", "yadif", inputs);
+            let levels: Vec<_> = output
+                .frames
+                .iter()
+                .map(|frame| frame[528 * 20 + 264])
+                .collect();
+            // YADIF synthesizes history at startup and drains it at EOS. This
+            // checks the eight fully surrounded input frames, not those edges.
+            assert_eq!(
+                levels[4..20],
+                (4..20_u8).map(|field| 32 + field * 4).collect::<Vec<_>>()
+            );
+            for field in 4..20_u64 {
+                assert_eq!(
+                    output.timings[usize::try_from(field).unwrap()],
+                    (
+                        Some(gst::ClockTime::from_nseconds(
+                            (field / 2) * 1_001_000_000 / 30 + (field % 2) * (1_001_000_000 / 60)
+                        )),
+                        Some(gst::ClockTime::from_nseconds(1_001_000_000 / 60)),
+                    ),
+                    "incorrect timing for field {field}, top_first={top_first}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "V2.5/#78 transition acceptance reproducer; fails on GStreamer 1.28.7"]
+    fn mixed_stream_switches_between_progressive_and_interlaced_buffers() {
+        let layouts = [
+            None,
+            None,
+            Some(true),
+            Some(true),
+            None,
+            None,
+            Some(false),
+            Some(false),
+            None,
+            None,
+            None,
+            None,
+        ];
+        let inputs: Vec<_> = layouts
+            .iter()
+            .enumerate()
+            .map(|(index, layout)| {
+                let index = u8::try_from(index).unwrap();
+                let mut pixels = vec![128; 528 * 480 * 3 / 2];
+                for row in 0..480 {
+                    let second = layout.is_some_and(|top_first| (row % 2 == 0) != top_first);
+                    pixels[row * 528..(row + 1) * 528]
+                        .fill(32 + index * 8 + if second { 4 } else { 0 });
+                }
+                (
+                    pixels,
+                    layout.map_or_else(gst::BufferFlags::empty, interlaced_flags),
+                )
+            })
+            .collect();
+        let output = render_inputs(528, 480, "mixed", "yadif", inputs.clone());
+        let levels: Vec<_> = output
+            .frames
+            .iter()
+            .map(|frame| frame[528 * 20 + 264])
+            .collect();
+        eprintln!(
+            "runtime={} levels={levels:?} timings={:?}",
+            gst::version_string(),
+            output.timings
+        );
+        for (index, layout) in layouts.iter().enumerate() {
+            if layout.is_none() {
+                let matching: Vec<_> = output
+                    .frames
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, frame)| **frame == inputs[index].0)
+                    .collect();
+                assert_eq!(
+                    matching.len(),
+                    1,
+                    "progressive frame {index} must pass once"
+                );
+                assert_eq!(
+                    output.timings[matching[0].0],
+                    (
+                        Some(gst::ClockTime::from_nseconds(
+                            u64::try_from(index).unwrap() * 1_001_000_000 / 30
+                        )),
+                        Some(gst::ClockTime::from_nseconds(1_001_000_000 / 30)),
+                    )
                 );
             }
         }

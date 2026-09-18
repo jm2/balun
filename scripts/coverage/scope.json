@@ -18,13 +18,19 @@
     "src/hdhr/lineup.rs": "identity",
     "src/hdhr/json_error.rs": "privacy",
     "src/logging.rs": "privacy",
-    "src/playback/pipeline_failure.rs": "privacy"
+    "src/playback/pipeline_failure.rs": "privacy",
+    "src/settings/mod.rs": "admission",
+    "src/settings/store.rs": "admission",
+    "src/ui/settings_session.rs": "cancellation",
+    "src/ui/settings_session/worker.rs": "cancellation"
   },
   "rust_excluded_names": [
     "::(?:tests|test_support|lifecycle_tests|timing_tests)::",
     "::(?:accepted_factory_name|at_startup_stage|into_test_persisted_parts|debug_redaction_fixture|stream_handoff_test_fixture|with_lookup)(?:$|::)"
   ],
-  "python": ["scripts/macos_native_closure.py"],
+  "python": [
+    "scripts/macos_native_closure.py"
+  ],
   "powershell": {
     "scripts/build-windows.ps1": [
       "Read-WindowsComponentPolicySnapshot",

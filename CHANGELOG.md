@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bounded per-generation startup timing records separate predecessor retirement,
+  handoff validation, graph setup, worker-captured HTTP/appsrc observations, and
+  received stream/PLAYING notifications.
+  Decoded/rendered media timings and useful-media deadlines remain pending.
+- Isolated native-call stall regressions document the limits of playback teardown
+  timeouts; Windows CI now executes the desktop tests as well as compiling them.
 - Native inventory tooling independently hashes reopened package trees and completed
   artifacts, validates exact native membership/content against component metadata, and
   emits a native-scope CycloneDX SBOM. The macOS helper records each native copy's
@@ -27,13 +33,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
 
+### Changed
+
+- Deinterlacing evidence now distinguishes verified steady field order and progressive
+  passthrough from unresolved mixed-stream transition and boundary timing behavior.
+- Playback and shutdown claims now reflect the accepted in-process native boundary:
+  native hangs can block the UI or close before timed waits, and network bytes do not
+  establish useful-media progress. Review is owned before beta and after a reproduced hang.
+
 ### Fixed
 
+- RPM payload inspection now bounds decoding and validates member paths, types,
+  links, sizes, and directory budgets before invoking the native extractor.
+  Native parser isolation and Debian/Arch preflight remain pending.
+- Linux Debian, RPM, and Arch inspectors now share one bounded private archive
+  snapshot, preventing input replacement between metadata and payload checks.
+  Complete extraction containment remains pending.
 - Playback status and error descriptions now show tuner/channel names as literal
   text, so ampersands and markup-like names cannot break or reformat the message.
 - Concurrent source rejection now cancels a transport that is still being published,
   zeroizes pending handoffs, and retains all workers for the normal teardown join.
 
+- Settings now use a pinned private profile, no-follow file admission, a cooperative
+  transaction lock, and schema revalidation before replacement. Loading and close-time
+  saving wait at most two seconds on one worker with a bounded latest-save queue;
+  timeouts disable persistence and may leave the newest preferences unsaved.
+  Transaction completion explicitly releases its lock even when a concurrent
+  process spawn briefly retains an inherited descriptor.
+
+- Native playback logs now discard plugin-supplied error/debug text, arbitrary caps
+  values, stream identifiers, and unknown marker names while retaining closed labels
+  and typed counters. GStreamer's separately enabled debug output remains outside this filter.
 - Completed Windows installers now undergo bounded static payload extraction and exact
   manifest comparison, followed by repeated native/resource checks and a runtime probe
   on the extracted tree for both x86_64 and ARM64 before upload.

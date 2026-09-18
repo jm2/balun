@@ -207,6 +207,20 @@ wrong field types, arbitrary strings, malformed/truncated JSON, trailing data, i
 authorization fields, and an I/O source carrying the marker. No real credential is used.
 This closes the prior JSON diagnostic exception; it is not the broader H3.4 audit.
 
+### 2026-09-17 accepted native media failure boundary (H3.5)
+
+The maintainer accepted [in-process native decoding with explicit limits](native-media-failure-boundary.md).
+A native call can block the UI and close path before any timed wait is reached;
+the five-second teardown deadline is not a universal release guarantee. Native
+code shares application memory and is not confined by Rust's unsafe-code ban.
+Network progress and first body bytes do not establish useful-media progress.
+No independent useful-media deadline is currently enforced.
+
+Owner: `jm2`; review before beta and after any reproduced native hang. The
+isolated startup/teardown stall fixture records why later timed waits cannot
+supply recovery. This accepted boundary supersedes unconditional teardown-bound
+wording in the historical review below. H3.4's consolidated review remains open.
+
 ### Historical review summary
 
 H3.3 corrections and maintainer-approved bounded acceptances are recorded in the
@@ -305,7 +319,13 @@ review's pull request.
 
 ### Verified
 
-- `settings.json` (`src/settings/mod.rs`): platform configuration directory,
+- `settings.json` (`src/settings/mod.rs`, `src/settings/store.rs`): pinned private
+  profile and cooperative transaction lock, no-follow opens, regular single-link
+  files, checked owner/modes on Unix and trusted inherited DACL on Windows;
+  every save preserves a newer or malformed current document. The accepted
+  [settings boundary](settings-file-trust.md) excludes shared/network profiles
+  and hostile same-account writers; one worker and two-second load/close waits
+  bound UI waiting without claiming cancellation of OS I/O. The schema uses
   `SCHEMA_VERSION` 2, `deny_unknown_fields` on every stored struct;
   `StoredSettingsV2` can hold only window state, remembered addresses or
   hostnames, and DeviceID-to-name pairs; `load` refuses symlinks, non-regular
@@ -352,12 +372,45 @@ review's pull request.
 
 ## 3. Logs and diagnostics
 
+### 2026-09-17 native diagnostic correction (H3.4 slice)
+
+The earlier claim that a constant pipeline URI made native error text safe was
+incorrect. A plugin can put stream-derived values into errors, debug strings,
+caps fields, structure names, or stream identifiers. No actual credential leak
+was observed; synthetic secret-shaped values demonstrate the logging path.
+
+Balun's native playback reports now discard error/debug text and details, map
+domains and factory names to closed labels, and retain only known GStreamer error
+codes and typed counters. Unknown domains or out-of-table codes omit the code
+field, including codes the Rust bindings would otherwise map to `Failed`.
+Caps reports accept a closed media/format vocabulary and bounded
+integer dimensions/rates; familiar field names do not authorize arbitrary text,
+lists, or nested values. Stream collection summaries include at most 16 entries.
+Application markers report only known categories. Unknown labels become fixed
+`unknown`/`other` values. Deinterlacer reports expose the configured YADIF label
+or `other`, never an arbitrary native enum nickname.
+Their negotiated output rate uses a fixed vocabulary of standard frame-rate
+fractions; other fractions become `other`, without printing either integer.
+This changes diagnostics only, not which frame rates the pipeline can play.
+
+`emitted_native_logs_discard_plugin_text_and_stream_values` captures the actual
+tracing output for errors, warnings, missing plugins, stream collections,
+selection, application markers, and pipeline diagnostics. Fixtures poison the
+error domain and numeric code, source name, error/debug/details, caps name and fields, stream ID,
+and collection ID; known event categories remain visible and none of the markers
+appear. `diagnostic_caps_require_typed_bounded_fields_and_known_labels` rejects
+mistyped/list/oversized fields and retains known audio/video formats.
+
+This applies to Balun's tracing subscriber. Separately enabled `GST_DEBUG` and
+other native libraries' own output bypass it; it is not a native-code sandbox.
+It does not finish H3.4's consolidated review or decide H3.5's recovery policy.
+
 ### Verified
 
 - Logging arrived on 2026-09-03: `tracing` with a standard-error subscriber
   (`src/logging.rs`, `RUST_LOG`, default `balun=info`). Log lines carry closed
-  categories, GStreamer's native error domain, code, and text (GStreamer never
-  receives an address or URL), HTTP status codes, the `Debug` of value-free
+  categories, the corrected native labels and numeric fields described above,
+  HTTP status codes, the `Debug` of value-free
   error enums, and the device identity ADR-0002 allows; no logged type carries
   `DeviceAuth`, a query value, or a stream URL, and the redacted `Debug`
   implementations above were re-checked when the sites were added. The 17
@@ -546,7 +599,7 @@ Re-verified in place:
   parser (`src/discovery/manual.rs`) and skipped in interface enumeration
   (`local.rs`); `DiscoveryClient::invalid_target` still accepts them, so the
   diagnostic's `--target` follow-up stays open.
-- `settings.json` is created with mode `0o600` (`src/settings/mod.rs`).
+- `settings.json` is created with mode `0o600` (`src/settings/store.rs`).
 - The routed runner re-checks authority, the deadline, and the interface pin
   before every datagram (`src/discovery/approval/controller/runner.rs`).
 - The Windows console feature exists only for the developer `-Run` build;
