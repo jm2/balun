@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Native inventory tooling validates exact observed file membership and content against
+  component metadata and emits a native-scope CycloneDX SBOM. Platform collection and
+  release attachment remain pending; current packages do not yet include these reports.
 - Critical admission, cancellation, identity, privacy, and package gates have measured
   coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
 - Reproducible adversarial parser, approval, route-budget, and package-manifest
