@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **41/58 (70.7%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **12/21**, and roadmap V2 **0/7**. This is a
+Current status: **42/58 (72.4%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **13/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -130,9 +130,9 @@ and paused. Independent correctness and package-inspection fixes may continue.
   value echoes with safe categories across metadata, lineup, inspection, and
   CLI errors; prove secret-shaped markers cannot reach diagnostic output.
 
-- [ ] **H3.2 — Define and enforce settings file trust.** Specify parent-path,
-  no-follow, replacement, permission, and newer-schema guarantees; test them
-  under concurrent replacement and slow I/O on each supported platform.
+- [x] **H3.2 — Define and enforce settings file trust.** Enforce the accepted
+  [private-profile boundary](settings-file-trust.md) with pinned transactions,
+  schema preservation, forced replacement tests, and two-second load/close waits.
 
 - [x] **H3.3 — Disposition the older low findings.** Pacing/jitter, CLI admission,
   and schema fixes are [recorded](discovery-low-findings-2026-09.md), together with
