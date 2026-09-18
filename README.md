@@ -358,6 +358,11 @@ build the desktop and launch it in the same terminal. On Windows,
 release-profile developer build, so those logs remain visible in the invoking PowerShell session.
 The distributed ZIP and installer remain GUI-subsystem applications and do not attach a console.
 
+For bounded per-generation tune startup records, use
+`RUST_LOG=off,balun::playback::timing=debug`. The [phase definitions](docs/tune-timing.md)
+distinguish retirement, handoff, graph setup, and received pipeline notifications;
+decoded/rendered media timing and usable-media deadlines remain V2.1 work.
+
 ### Discovery diagnostic
 
 `balun-discover` is the GTK-free command-line tool behind the desktop's discovery. It never opens
