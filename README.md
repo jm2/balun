@@ -466,8 +466,9 @@ ledger.
 
 Linux native package inspection also requires Python 3 and freezes one
 [bounded private input snapshot](docs/linux-archive-snapshots.md) for all metadata and payload
-tools. Archive-member preflight and extraction containment remain pending; only locally
-produced packages are accepted by the release workflow.
+tools. RPM payloads also receive bounded decoding and member preflight before extraction.
+Native parser isolation and Debian/Arch preflight remain pending; the release workflow
+continues to accept only locally produced packages.
 
 ### Testing & Code Quality
 

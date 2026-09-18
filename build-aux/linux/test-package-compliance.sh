@@ -398,9 +398,24 @@ printf '%s\n' \
     '  *) echo none ;;' \
     'esac' \
     > "$temp_dir/archive-tools/rpm"
-printf '%s\n' '#!/bin/sh' 'exit 0' > "$temp_dir/archive-tools/rpm2cpio"
+python3 -B - "$script_dir" "$temp_dir/archive-tools" <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1])
+from test_rpm_payload import archive, member
+root = Path(sys.argv[2])
+(root / "valid.cpio").write_bytes(archive(member("usr/lib/libgstlibav.so")))
+(root / "oversize-member.cpio").write_bytes(archive(member("file", size=268435457)))
+(root / "invalid.cpio").write_bytes(b"invalid payload")
+PY
+cat > "$temp_dir/archive-tools/rpm2cpio" <<'EOF'
+#!/bin/sh
+directory=$(dirname -- "$0")
+cat "${TEST_RPM_PAYLOAD:-$directory/valid.cpio}"
+EOF
 printf '%s\n' \
     '#!/bin/sh' \
+    '[ -z "${TEST_CPIO_REACHED_PATH:-}" ] || touch "$TEST_CPIO_REACHED_PATH"' \
     'mkdir -p usr/lib' \
     'if [ "${TEST_ARCHIVE_MODE:-allowed}" = forbidden-payload ]; then' \
     '  touch "usr/lib/${TEST_FORBIDDEN_TOKEN}.so"' \
@@ -515,6 +530,25 @@ for package_mode in deb rpm arch; do
         exit 1
     }
     : > "$package"
+done
+
+# Rejected payload bytes must never reach the native extractor. The producer
+# has already exited successfully; this specifically exercises the preflight.
+mkdir "$temp_dir/rpm-rejection-tmp"
+for fixture in invalid oversize-member; do
+    expect_status 1 env PATH="$temp_dir/archive-tools:$PATH" \
+        TMPDIR="$temp_dir/rpm-rejection-tmp" \
+        TEST_RPM_PAYLOAD="$temp_dir/archive-tools/$fixture.cpio" \
+        TEST_CPIO_REACHED_PATH="$temp_dir/cpio-reached" \
+        "$validator" --rpm "$temp_dir/fixture.rpm"
+    [ ! -e "$temp_dir/cpio-reached" ] || {
+        echo "Rejected RPM payload reached the native extractor" >&2
+        exit 1
+    }
+    if find "$temp_dir/rpm-rejection-tmp" -mindepth 1 -print -quit | grep -q .; then
+        echo "Rejected RPM payload leaked its private inspection files" >&2
+        exit 1
+    fi
 done
 
 # Exercise the complete Flatpak app-commit boundary without requiring

@@ -1,4 +1,4 @@
-# Linux archive input snapshots
+# Linux archive input snapshots and RPM preflight
 
 H2.4 input-consistency slice, September 17, 2026. Debian, RPM, and Arch package
 inspection now copies the completed local artifact once into its private scratch
@@ -37,6 +37,38 @@ component, native-import, and final tree checks still run on the completed
 artifact as before. Python 3 is now an explicit prerequisite of the three Linux
 native packaging modes, checked before Cargo or a native packager runs.
 
+## RPM payload preflight
+
+The RPM gate now runs `rpm2cpio` as one owned process group and captures at most
+1 GiB of expanded output in a new private `0600` file. A 60-second elapsed-time
+budget covers producer output, producer exit, and preflight. Failure kills and
+reaps the producer, kills descendants remaining in its process group, and
+removes the partial output. The leader remains waitable until group cleanup, so
+its process ID cannot be reused before cleanup signals the group. Synchronous
+filesystem stalls and uninterruptible kernel waits remain outside this timeout.
+
+Before `cpio` runs, `build-aux/linux/rpm_payload.py` validates the whole decoded
+`newc` or CRC archive. It admits regular files, directories, and confined relative
+symlinks pointing directly to included regular files, including RPM build-ID
+links. It rejects special files, hard links, privileged or unknown mode bits,
+absolute/traversing/ambiguous member paths, duplicate names, file or symlink
+ancestors, link chains, directory links, and dangling links. Header lengths,
+hex fields, NUL termination, padding, CRC checksums, and the final trailer are
+checked before any member is extracted. Paths and link text must be printable
+ASCII without backslashes; an optional single leading `./` on a member is allowed.
+
+The limits are 8,192 entries including implicit parent directories, 64 directory
+levels, 2,048 bytes per path or link target, 256 MiB per file, and 1 GiB for the
+entire decoded archive including headers. At most 64 KiB of zero padding may
+follow the trailer. These bounds constrain preflight's storage and traversal as
+well as the admitted tree. The existing native extractor then runs without
+preserving archived ownership, and the final tree/component checks still apply.
+
+The decoded archive and its parent stay private to the same serialized local
+validation job. No hostile same-account writer or concurrent mutation is
+admitted. This is a format-specific correctness gate, not an RPM parser sandbox
+or a proof that arbitrary hostile input is safe for native code.
+
 ## Validation and remaining boundary
 
 Unit tests force source replacement between stat/open and during copying,
@@ -54,12 +86,21 @@ python3 -B build-aux/linux/test_archive_snapshot.py
 build-aux/linux/test-package-compliance.sh
 scripts/test-build-linux-policy.sh
 build-aux/packaging/test-release-component-policy.sh
+python3 -B build-aux/linux/test_rpm_payload.py
 ```
 
-H2.4 remains unchecked. Native archive-member path/type/link preflight,
-decompression and extraction budgets, extractor containment, and malicious
-archive fixtures are still required before accepting artifacts from outside
-the trusted local build boundary. The 1 GiB input cap does not bound expanded
-payload size. Existing post-extraction tree limits cannot prevent an unsafe
-extractor from writing elsewhere first. This change does not alter Flatpak,
-Windows, or DMG inspection or establish signing/provenance guarantees.
+RPM tests cover malformed members, parent/link interpretation in either member
+order, implicit-directory budgets, CRC and truncation, producer failure/stall,
+private output, and partial cleanup. Integration fixtures prove invalid or
+oversized declared members never invoke `cpio`. CI installs RPM/CPIO tools and
+builds an inert real RPM, preflights and extracts it, verifies its data and
+relative build-ID-style link, and runs the complete package validator.
+
+H2.4 remains unchecked. RPM header queries and native extraction still need
+time/output containment; the decoder itself is native code without an OS sandbox.
+Debian and Arch still lack member preflight and expanded-payload budgets.
+Extractor isolation and broader format-specific negative fixtures remain
+required before accepting artifacts outside the trusted local build boundary.
+Existing post-extraction checks cannot contain a compromised native parser.
+This change does not alter Flatpak, Windows, or DMG inspection or establish
+signing/provenance guarantees.

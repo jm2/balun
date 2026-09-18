@@ -7,9 +7,9 @@
 # This v0.1 port is a trusted-build-output gate with deterministic synthetic
 # coverage. Extracted trees are bounded and must produce matching metadata-and-
 # content snapshots around inspection. All metadata/payload tools consume one
-# bounded private snapshot of the input archive. Native package extractors still
-# own archive-path interpretation: member preflight, resource amplification, and
-# extraction containment remain pending. Release jobs must accept only locally
+# bounded private snapshot of the input archive. RPM payload decoding and newc
+# members are preflighted before extraction; the native parsers are not sandboxed.
+# Debian/Arch preflight and extraction containment remain pending. Accept only locally
 # produced artifacts until those extractor-specific guarantees land separately.
 
 set -euo pipefail
@@ -625,9 +625,10 @@ extract_rpm()
             fail "could not read RPM header metadata ($query)"
     done
     check_dependency_text "$temp_dir/header-metadata"
-    rpm2cpio "$package" > "$temp_dir/payload.cpio" || fail "could not decode RPM payload"
+    python3 -B "$script_dir/rpm_payload.py" --input "$package" --output "$temp_dir/payload.cpio" || \
+        fail "could not decode and preflight RPM payload"
     mkdir "$temp_dir/payload"
-    (cd "$temp_dir/payload" && cpio -idm --quiet < "$temp_dir/payload.cpio") || \
+    (cd "$temp_dir/payload" && cpio -idm --quiet --no-preserve-owner < "$temp_dir/payload.cpio") || \
         fail "could not extract RPM payload"
     check_tree "$temp_dir/payload"
 )

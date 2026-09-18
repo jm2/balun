@@ -41,6 +41,7 @@ jobs:
       - name: Test Linux package compliance scaffolding
         run: |
           python3 -B build-aux/linux/test_archive_snapshot.py
+          python3 -B build-aux/linux/test_rpm_payload.py
           build-aux/linux/test-package-compliance.sh
 
       - name: Test Linux build helper policy
@@ -152,7 +153,10 @@ jobs:
       - name: Install validators
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends appstream desktop-file-utils
+          sudo apt-get install -y --no-install-recommends appstream desktop-file-utils rpm cpio
+
+      - name: Test native RPM payload preflight and extraction
+        run: python3 -B build-aux/linux/test_rpm_payload.py NativeToolsTests
 
       - name: Validate the desktop entry
         run: |
