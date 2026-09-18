@@ -671,7 +671,9 @@ mod tests {
         let path = store.path();
         hook(&store, TestStage::ReadOpen, move || {
             fs::remove_file(&path).unwrap();
-            rustix::fs::mkfifoat(rustix::fs::CWD, path, rustix::fs::Mode::RUSR).unwrap();
+            // rustix's mkfifoat is unavailable on Apple targets. nix exposes
+            // the same safe fixture operation on both macOS and Linux.
+            nix::unistd::mkfifo(&path, nix::sys::stat::Mode::S_IRUSR).unwrap();
         });
         assert_eq!(store.load(), Err(SettingsError::NotRegularFile));
     }
