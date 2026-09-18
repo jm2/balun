@@ -752,6 +752,35 @@ mod tests {
             pipeline.add(&sink).unwrap();
             log_playing_diagnostics(pipeline.upcast_ref());
             log_teardown_diagnostics(pipeline.upcast_ref());
+            let filter = gst::ElementFactory::make("deinterlace").build().unwrap();
+            pipeline.add(&filter).unwrap();
+            let pad = filter.static_pad("src").unwrap();
+            pad.set_active(true).unwrap();
+            for rate in [
+                gst::Fraction::new(SECRET_CODE, 1),
+                gst::Fraction::new(1, SECRET_CODE),
+                gst::Fraction::new(-1, 1),
+                gst::Fraction::new(0, 1),
+                gst::Fraction::new(17, 2),
+                gst::Fraction::new(60_000, 1_001),
+            ] {
+                let caps = gst::Caps::builder("video/x-raw")
+                    .field("framerate", rate)
+                    .build();
+                pad.store_sticky_event(&gst::event::Caps::new(&caps))
+                    .unwrap();
+                assert_eq!(
+                    pad.current_caps()
+                        .unwrap()
+                        .structure(0)
+                        .unwrap()
+                        .get::<gst::Fraction>("framerate")
+                        .unwrap(),
+                    rate
+                );
+                log_playing_diagnostics(pipeline.upcast_ref());
+            }
+            pad.set_active(false).unwrap();
         });
         let output = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         for expected in [
@@ -765,6 +794,7 @@ mod tests {
             "pipeline playing",
             "pipeline sink statistics at teardown",
             "uridecodebin3",
+            "output-framerate=60000/1001",
             "unknown",
             "stream",
             "resource",
@@ -788,6 +818,7 @@ mod tests {
             );
         }
         assert!(!output.contains(&SECRET_CODE.to_string()));
+        assert_eq!(output.matches("output-framerate=other").count(), 5);
         for line in output.lines().filter(|line| line.contains("code=")) {
             assert!(
                 line.ends_with("code=1"),

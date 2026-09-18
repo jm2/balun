@@ -389,6 +389,9 @@ lists, or nested values. Stream collection summaries include at most 16 entries.
 Application markers report only known categories. Unknown labels become fixed
 `unknown`/`other` values. Deinterlacer reports expose the configured YADIF label
 or `other`, never an arbitrary native enum nickname.
+Their negotiated output rate uses a fixed vocabulary of standard frame-rate
+fractions; other fractions become `other`, without printing either integer.
+This changes diagnostics only, not which frame rates the pipeline can play.
 
 `emitted_native_logs_discard_plugin_text_and_stream_values` captures the actual
 tracing output for errors, warnings, missing plugins, stream collections,
