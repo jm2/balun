@@ -74,7 +74,7 @@ its original ceilings; the tests make these ownership outcomes explicit.
 
 The native diagnostic privacy correction replaces arbitrary plugin text with
 closed labels and typed fields. Actual tracing-capture regressions raise that
-module from 199/450 regions to 399/474 (84.18%); the uncovered ceiling tightens
+module from 199/450 regions to 420/495 (84.85%); the uncovered ceiling tightens
 from 251 to 75. A fresh full desktop coverage run verifies the updated count
 and every other existing Rust threshold.
 The later closed native error-code check brings this to 420/495 (84.85%),
