@@ -174,11 +174,15 @@ metadata for every copied Homebrew input as internal evidence for 14 days.
 `homebrew_metadata.py` collects the installed recipe, declared source identity,
 license metadata, receipt hash, and source-file hashes for selected native inputs.
 It resolves expected Homebrew prefix/opt links into an explicitly supplied Cellar,
-then derives ownership from that installed keg. It invokes `brew info --json=v2`
-with the **exact installed `.brew/<name>.rb` path**, requiring the returned recipe
-checksum to match its bytes and the recipe/receipt/keg versions to agree. Asking
+then derives ownership from that installed keg. A `brew ruby` helper selects the
+**exact installed `.brew/<name>.rb` file loader**, requiring the returned recipe
+checksum to match its bytes. The receipt and recipe must agree on the upstream
+version; the recipe revision must match the versioned keg directory. Homebrew
+receipts do not provide a separate `source.revision` field. Asking
 Homebrew for a formula by name or accepting its current online metadata cannot
-substitute for this check.
+substitute for this check. `brew info` may resolve a path-loaded formula again
+through its installed tap; direct file loading avoids that substitution and
+retains the independent recipe-byte checksum gate.
 
 ```bash
 python3 -B scripts/inventory/homebrew_metadata.py --cellar "$(brew --cellar)" \
@@ -212,9 +216,11 @@ and [installed receipt](https://github.com/Homebrew/brew/blob/main/Library/Homeb
 contracts. Linux fixtures exercise stale metadata, installed revision mismatches,
 immutable source identities, substitutions, resource bounds and child cleanup.
 Native macOS CI also collects real GTK sink, libav plugin, and pixbuf-query inputs,
-then the full set selected by the copy ledger. These intermediate records still
-need catalog assembly, embedded-resource representation, and final-artifact
-integration below before they establish H1.3.
+then the full set selected by the copy ledger. Collector failures expose only a
+closed set of validation reasons or a generic missing/invalid-input category;
+raw exceptions, paths, and recipe output remain hidden. These intermediate
+records still need catalog assembly, embedded-resource representation, and
+final-artifact integration below before they establish H1.3.
 
 ### Final-artifact integration
 
