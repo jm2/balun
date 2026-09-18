@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Localization foundation with thirteen embedded catalogs, automatic locale
+  selection and English fallback, translated application-menu accessibility copy,
+  and an About description. The remaining interface and CLI are still English.
 - Bounded per-generation startup timing records separate predecessor retirement,
   handoff validation, graph setup, worker-captured HTTP/appsrc observations, and
   received stream/PLAYING notifications.
