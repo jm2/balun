@@ -175,7 +175,7 @@ and paused. Independent correctness and package-inspection fixes may continue.
   speculative extra-tuner allocation requires a separate approved design.
 
 - [ ] **V2.4 — Add explicitly approved subnet discovery ([#71]).** After
-  H0.1, approve one consistent candidate/datagram/deadline contract before
+  H0.1, approve the [candidate/datagram/deadline proposal](typed-subnet-discovery-proposal.md) before
   implementation; preserve explicit consent and cross-platform cancellation.
 
 - [ ] **V2.5 — Complete deinterlacing quality evidence ([#78]).** Retain the
