@@ -373,7 +373,7 @@ pub(crate) fn build() -> DeviceSidebar {
     // window controls. Keep this short title's full minimum width so the
     // split view allocates enough space for "Devices" and the buttons.
     let title = gtk::Label::builder()
-        .label("Devices")
+        .label(balun::localization::controls::NavigationLabels::current().devices)
         .css_classes(["title"])
         .build();
     header.set_title_widget(Some(&title));

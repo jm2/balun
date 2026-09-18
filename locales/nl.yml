@@ -4,3 +4,20 @@ app:
   quit: "_Afsluiten"
   main_menu: "Hoofdmenu"
   description: "Een lichte, platformonafhankelijke speler voor live-tv via HDHomeRun"
+
+navigation:
+  devices: "Apparaten"
+  channels: "Kanalen"
+  live_tv: "Live-tv"
+  channels_and_live_tv: "Kanalen en live-tv"
+
+controls:
+  volume: "Volume van live-tv"
+  mute: "Live-tv dempen"
+  unmute: "Geluid van live-tv inschakelen"
+  stop: "Live-tv stoppen"
+  enter_fullscreen: "Volledig scherm openen"
+  exit_fullscreen: "Volledig scherm verlaten"
+  video: "Beeld van live-tv"
+  status: "Afspeelstatus van live-tv"
+  watching: "Live-tv kijken"

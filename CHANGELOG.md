@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Translated navigation titles and live-TV control names/tooltips in all thirteen
+  catalogs, including mute and fullscreen transitions and the desktop idle reason.
 - Localization foundation with thirteen embedded catalogs, automatic locale
   selection and English fallback, translated application-menu accessibility copy,
   and an About description. The remaining interface and CLI are still English.

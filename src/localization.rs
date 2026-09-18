@@ -7,6 +7,8 @@
 use std::borrow::Cow;
 use std::sync::OnceLock;
 
+pub mod controls;
+
 // Keep the generated initializer isolated as the catalogs grow. Like Tributary,
 // desktop startup forces it on one joined thread with an explicit stack size.
 #[allow(clippy::large_stack_frames)]

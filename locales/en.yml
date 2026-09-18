@@ -4,3 +4,20 @@ app:
   quit: "_Quit"
   main_menu: "Main menu"
   description: "A lightweight cross-platform HDHomeRun live TV viewer"
+
+navigation:
+  devices: "Devices"
+  channels: "Channels"
+  live_tv: "Live TV"
+  channels_and_live_tv: "Channels and live TV"
+
+controls:
+  volume: "Live TV volume"
+  mute: "Mute live TV"
+  unmute: "Unmute live TV"
+  stop: "Stop live TV"
+  enter_fullscreen: "Enter fullscreen"
+  exit_fullscreen: "Exit fullscreen"
+  video: "Live TV video"
+  status: "Live TV playback status"
+  watching: "Watching live TV"

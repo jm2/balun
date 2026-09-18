@@ -4,3 +4,20 @@ app:
   quit: "_Esci"
   main_menu: "Menu principale"
   description: "Un lettore leggero e multipiattaforma per la TV in diretta con HDHomeRun"
+
+navigation:
+  devices: "Dispositivi"
+  channels: "Canali"
+  live_tv: "TV in diretta"
+  channels_and_live_tv: "Canali e TV in diretta"
+
+controls:
+  volume: "Volume della TV in diretta"
+  mute: "Disattiva audio della TV in diretta"
+  unmute: "Attiva audio della TV in diretta"
+  stop: "Interrompi la TV in diretta"
+  enter_fullscreen: "Attiva schermo intero"
+  exit_fullscreen: "Esci da schermo intero"
+  video: "Video della TV in diretta"
+  status: "Stato di riproduzione della TV in diretta"
+  watching: "Visione della TV in diretta"
