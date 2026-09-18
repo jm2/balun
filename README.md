@@ -500,6 +500,10 @@ CI automatically runs on every push/PR:
   x86_64 packages; an Apple Silicon DMG; and x86_64 and ARM64 Windows ZIPs and installers. Every
   action it runs is pinned to an immutable commit
 
+CI and Linux release job containers use reviewed image-index digests, checked against an
+[explicit inventory](docs/build-input-pins.md). Packages installed afterward and other mutable
+build inputs remain tracked under H2.2.
+
 ### Rust toolchain policy
 
 `build-aux/toolchain/rust-toolchain.toml` is the Dependabot proposal source for the compiler

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Reviewed digest pins for all six CI/release job containers, with a workflow
+  inventory check that rejects changed, missing, or unrecorded image references.
+
 - Critical admission, cancellation, identity, privacy, and package gates have measured
   coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
 - Reproducible adversarial parser, approval, route-budget, and package-manifest

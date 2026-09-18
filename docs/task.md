@@ -112,8 +112,8 @@ and paused. Independent correctness and package-inspection fixes may continue.
   reviewed-source ancestry, enforce the chosen tag policy before building,
   and test rejection paths while retaining the initial alpha exception.
 
-- [ ] **H2.2 — Pin release build inputs.** Inventory and pin builder images,
-  native package inputs, tools, and transitive installer dependencies; record
+- [ ] **H2.2 — Pin release build inputs.** Extend the [container pins](build-input-pins.md)
+  to native packages, tools, and transitive installer dependencies; record
   reviewed exceptions and prove unapproved input drift is detected.
 
 - [ ] **H2.3 — Attach build provenance.** After H2.1/H2.2, bind source and

@@ -245,7 +245,8 @@ jobs:
     name: Flatpak (x86_64)
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      # yamllint disable-line rule:line-length
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50@sha256:78bf5fcf1faca196ce6cdf34a317560e533e870861bbb752bdd3ad66d22ba0e9
       options: --privileged
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -334,6 +335,11 @@ jobs:
           "$RUNNER_TEMP/yamllint/bin/pip" install yamllint==1.37.1
           "$RUNNER_TEMP/yamllint/bin/yamllint" --strict .
 
+      - name: Check reviewed builder image pins
+        run: |
+          "$RUNNER_TEMP/yamllint/bin/python" -B scripts/check_builder_images.py
+          "$RUNNER_TEMP/yamllint/bin/python" -B scripts/test_builder_images.py
+
       - name: Lint GitHub Actions workflows
         run: |
           archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
@@ -348,7 +354,7 @@ jobs:
     name: MSRV
     runs-on: ubuntu-24.04
     container:
-      image: fedora:44
+      image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
     steps:
       - name: Install desktop build dependencies (Fedora)
         run: >-
@@ -371,7 +377,7 @@ jobs:
     name: Linux desktop
     runs-on: ubuntu-24.04
     container:
-      image: fedora:44
+      image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
     steps:
       - name: Install desktop build dependencies (Fedora)
         run: >-

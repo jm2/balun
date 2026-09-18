@@ -444,7 +444,7 @@ jobs:
     permissions:
       contents: read
     container:
-      image: debian:sid
+      image: debian:sid@sha256:c1acdb109bacb5adf0f2078892ac177ee2e2ce6f88e96c5b743998b5489d36a9
     strategy:
       fail-fast: false
       matrix:
@@ -495,7 +495,7 @@ jobs:
     permissions:
       contents: read
     container:
-      image: fedora:44
+      image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
     strategy:
       fail-fast: false
       matrix:
@@ -544,7 +544,7 @@ jobs:
     permissions:
       contents: read
     container:
-      image: archlinux:base-devel
+      image: archlinux:base-devel@sha256:4894f5a268c696fad671966f383175a13faf433c9d9c88cdd4e32eaa2d18838b
     steps:
       - name: Install Arch build and playback dependencies
         run: >-
