@@ -111,6 +111,12 @@ distinction above.
 
 ## Mandatory package gates
 
+Linux Debian/RPM/Arch inspection first freezes a
+[bounded private archive snapshot](linux-archive-snapshots.md), so separate
+metadata and payload tools cannot observe different versions of the input path.
+This remains a trusted-local-output gate: member preflight, expansion budgets,
+and native extractor containment are still pending H2.4 work.
+
 Adding any self-contained GTK/GStreamer package also adds all of these
 platform-specific fail-closed gates in the same change; source/input validation
 alone is not sufficient:
@@ -153,3 +159,13 @@ Every new build-system input, executable helper family, dependency source, or
 package recipe must extend the repository classifier and add a negative fixture
 in the same change. Every new package format must also add its staging,
 native-import, completed-tree, and reopened-artifact gates in that change.
+
+## Native runtime failure scope
+
+A successful native closure, component scan, or packaged runtime probe does not
+establish decoder memory safety, confinement, useful-media progress, or recovery
+from an indefinitely blocked native call. The maintainer-approved
+[H3.5 boundary](native-media-failure-boundary.md) retains in-process decoding:
+UI/close can block, and network bytes alone do not prove useful playback.
+Owner: `jm2`; review before beta and after any reproduced native hang. These
+limits apply to release claims as well as development builds.
