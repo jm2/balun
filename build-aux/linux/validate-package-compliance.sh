@@ -6,11 +6,11 @@
 #
 # This v0.1 port is a trusted-build-output gate with deterministic synthetic
 # coverage. Extracted trees are bounded and must produce matching metadata-and-
-# content snapshots around inspection. Native package extractors still own
-# archive-path interpretation, however: archive source replacement, resource
-# amplification, and extraction containment are not bounded before this tree
-# gate runs. Release jobs must accept only locally produced artifacts until
-# archive-member preflight and extractor-specific containment land separately.
+# content snapshots around inspection. All metadata/payload tools consume one
+# bounded private snapshot of the input archive. Native package extractors still
+# own archive-path interpretation: member preflight, resource amplification, and
+# extraction containment remain pending. Release jobs must accept only locally
+# produced artifacts until those extractor-specific guarantees land separately.
 
 set -euo pipefail
 set -f
@@ -590,8 +590,12 @@ extract_deb()
 (
     package=$1
     require_command dpkg-deb
+    require_command python3
     temp_dir=$(mktemp -d)
     trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
+    python3 -B "$script_dir/archive_snapshot.py" --input "$package" --output "$temp_dir/archive" || \
+        fail "could not snapshot Debian package"
+    package="$temp_dir/archive"
     dpkg-deb --control "$package" "$temp_dir/control" || \
         fail "could not extract Debian control metadata"
     check_text_metadata_tree "$temp_dir/control"
@@ -605,8 +609,12 @@ extract_rpm()
     require_command rpm
     require_command rpm2cpio
     require_command cpio
+    require_command python3
     temp_dir=$(mktemp -d)
     trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
+    python3 -B "$script_dir/archive_snapshot.py" --input "$package" --output "$temp_dir/archive" || \
+        fail "could not snapshot RPM package"
+    package="$temp_dir/archive"
     : > "$temp_dir/header-metadata"
     for query in \
         --requires --recommends --suggests --supplements --enhances \
@@ -628,8 +636,12 @@ extract_arch()
 (
     package=$1
     require_command bsdtar
+    require_command python3
     temp_dir=$(mktemp -d)
     trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
+    python3 -B "$script_dir/archive_snapshot.py" --input "$package" --output "$temp_dir/archive" || \
+        fail "could not snapshot Arch package"
+    package="$temp_dir/archive"
     bsdtar -xOf "$package" .PKGINFO > "$temp_dir/pkginfo" || \
         fail "could not read Arch package metadata"
     check_dependency_text "$temp_dir/pkginfo"

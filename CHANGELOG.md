@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux Debian, RPM, and Arch inspectors now share one bounded private archive
+  snapshot, preventing input replacement between metadata and payload checks.
+  Archive-member preflight and extraction containment remain pending.
 - Concurrent source rejection now cancels a transport that is still being published,
   zeroizes pending handoffs, and retains all workers for the normal teardown join.
 - Completed Windows installers now undergo bounded static payload extraction and exact

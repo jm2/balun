@@ -111,6 +111,12 @@ distinction above.
 
 ## Mandatory package gates
 
+Linux Debian/RPM/Arch inspection first freezes a
+[bounded private archive snapshot](linux-archive-snapshots.md), so separate
+metadata and payload tools cannot observe different versions of the input path.
+This remains a trusted-local-output gate: member preflight, expansion budgets,
+and native extractor containment are still pending H2.4 work.
+
 Adding any self-contained GTK/GStreamer package also adds all of these
 platform-specific fail-closed gates in the same change; source/input validation
 alone is not sufficient:
