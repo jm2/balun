@@ -1234,6 +1234,229 @@ mod tests {
         )
     }
 
+    #[test]
+    fn adversarial_approval_sequences_preserve_authority_and_run_identity() {
+        #[derive(Debug, Eq, PartialEq)]
+        enum ExpectedBegin {
+            Pending,
+            Busy,
+            CoolingDown(Duration),
+            InvalidRunId,
+        }
+
+        crate::adversarial::run("approval-sequences", |random| {
+            let original = proposal_for(&test_snapshot());
+            let changed = proposal_for(&snapshot_with(
+                8,
+                "changed-test-tunnel",
+                &["10.250.0.3/32"],
+                "172.31.90.8/30",
+                RouteScope::OnLink,
+            ));
+            assert_ne!(original.fingerprint(), changed.fingerprint());
+            let proposals = [original, changed];
+            let mut selected = 0;
+            let mut state = RoutedApprovalState::from_user_approval(
+                &proposals[selected],
+                RoutedPolicyTime::ZERO,
+                None,
+            );
+            let mut issued = BTreeSet::new();
+            let mut high_water = 0_u128;
+            let mut clock = 0_u64;
+            for step in 0..64 {
+                // Include rollback, lease expiry, and saturation without sleeping.
+                clock = if step == 63 && random.index(2) == 0 {
+                    u64::MAX - random.next() % 60
+                } else {
+                    match random.index(8) {
+                        0 => clock.saturating_sub(random.next() % 3600),
+                        1 => clock,
+                        2 => clock.saturating_add(random.next() % 3600),
+                        _ => clock.saturating_add(random.next() % 10),
+                    }
+                };
+                let now = RoutedPolicyTime::from_seconds(clock);
+                let before = state.clone();
+                match random.index(5) {
+                    0 | 1 => {
+                        let counter = if random.index(4) == 0 && high_water > 0 {
+                            high_water
+                        } else {
+                            high_water + 1
+                        };
+                        let run_id = RoutedRunId::from_counter(counter);
+                        let trigger = if random.index(2) == 0 {
+                            RoutedScanTrigger::Automatic
+                        } else {
+                            RoutedScanTrigger::ExplicitRefresh
+                        };
+                        let effective_now = now.max(before.last_observed_time());
+                        let expected =
+                            if before.active.is_some_and(|a| effective_now < a.expires_at) {
+                                ExpectedBegin::Busy
+                            } else if trigger == RoutedScanTrigger::Automatic
+                                && effective_now < before.automatic_not_before()
+                            {
+                                ExpectedBegin::CoolingDown(Duration::from_secs(
+                                    before.automatic_not_before().as_seconds()
+                                        - effective_now.as_seconds(),
+                                ))
+                            } else if before.last_issued_run_id.is_some_and(|last| run_id <= last) {
+                                ExpectedBegin::InvalidRunId
+                            } else {
+                                ExpectedBegin::Pending
+                            };
+                        let decision =
+                            state.plan_begin(proposals[selected].clone(), trigger, now, run_id);
+                        let actual = match &decision {
+                            RoutedBeginDecision::Pending(_) => ExpectedBegin::Pending,
+                            RoutedBeginDecision::Busy => ExpectedBegin::Busy,
+                            RoutedBeginDecision::CoolingDown { remaining } => {
+                                ExpectedBegin::CoolingDown(*remaining)
+                            }
+                            RoutedBeginDecision::InvalidRunId => ExpectedBegin::InvalidRunId,
+                            RoutedBeginDecision::NeedsApproval(_) => {
+                                panic!("matching proposal lost its approval")
+                            }
+                        };
+                        assert_eq!(
+                            actual, expected,
+                            "generated begin returned the wrong decision"
+                        );
+                        assert_eq!(state, before, "planning alone cannot publish authority");
+                        if let RoutedBeginDecision::Pending(pending) = decision {
+                            assert!(counter > high_water);
+                            assert!(issued.insert(run_id), "a run identity was reused");
+                            let effective_now = now.max(before.last_observed_time());
+                            assert!(
+                                before
+                                    .active
+                                    .is_none_or(|active| effective_now >= active.expires_at)
+                            );
+                            if trigger == RoutedScanTrigger::Automatic {
+                                assert!(effective_now >= before.automatic_not_before());
+                            }
+                            let persisted = pending.state_after_reservation().clone();
+                            let (next, permit) = pending.into_test_persisted_parts();
+                            assert_eq!(persisted, next);
+                            assert_eq!(permit.fingerprint, proposals[selected].fingerprint());
+                            assert_eq!(permit.run_id, run_id);
+                            assert_eq!(next.active_run_id(), Some(run_id));
+                            state = next;
+                            high_water = counter;
+                        }
+                    }
+                    2 => {
+                        let run_id = if random.index(2) == 0 {
+                            state
+                                .active_run_id()
+                                .unwrap_or(RoutedRunId::from_counter(high_water + 1))
+                        } else {
+                            RoutedRunId::from_counter(high_water + 1)
+                        };
+                        let outcomes = [
+                            RoutedScanOutcome::Found,
+                            RoutedScanOutcome::CompleteEmpty,
+                            RoutedScanOutcome::Indeterminate,
+                        ];
+                        let outcome = outcomes[random.index(3)];
+                        let effective_now = now.max(before.last_observed_time());
+                        let expected = match before.active.filter(|a| a.run_id == run_id) {
+                            None => RoutedCompletionDecision::Stale,
+                            Some(active) if effective_now >= active.expires_at => {
+                                RoutedCompletionDecision::Expired
+                            }
+                            Some(active) => {
+                                let streak = match (outcome, active.trigger) {
+                                    (RoutedScanOutcome::Found, _) => 0,
+                                    (
+                                        RoutedScanOutcome::CompleteEmpty,
+                                        RoutedScanTrigger::Automatic,
+                                    ) => (before.empty_run_streak() + 1).min(MAX_EMPTY_RUN_STREAK),
+                                    _ => before.empty_run_streak(),
+                                };
+                                let cooldown = if outcome == RoutedScanOutcome::CompleteEmpty
+                                    && active.trigger == RoutedScanTrigger::Automatic
+                                    && streak == MAX_EMPTY_RUN_STREAK
+                                {
+                                    MAX_AUTOMATIC_COOLDOWN
+                                } else {
+                                    BASE_AUTOMATIC_COOLDOWN
+                                };
+                                let next = RoutedPolicyTime::from_seconds(
+                                    effective_now
+                                        .as_seconds()
+                                        .saturating_add(cooldown.as_secs()),
+                                );
+                                RoutedCompletionDecision::Applied {
+                                    automatic_not_before: if outcome == RoutedScanOutcome::Found {
+                                        next
+                                    } else {
+                                        next.max(active.previous_automatic_not_before)
+                                    },
+                                    empty_run_streak: streak,
+                                }
+                            }
+                        };
+                        let decision = state.complete(run_id, outcome, now);
+                        assert_eq!(
+                            decision, expected,
+                            "generated completion returned the wrong decision"
+                        );
+                        if before.active_run_id() != Some(run_id) {
+                            assert_eq!(decision, RoutedCompletionDecision::Stale);
+                            assert_eq!(state, before, "stale work changed current authority");
+                        } else {
+                            assert_eq!(state.active_run_id(), None);
+                            let completed = state.clone();
+                            assert_eq!(
+                                state.complete(run_id, RoutedScanOutcome::Found, now),
+                                RoutedCompletionDecision::Stale
+                            );
+                            assert_eq!(state, completed, "duplicate completion changed policy");
+                        }
+                    }
+                    3 => {
+                        assert!(matches!(
+                            state.plan_begin(
+                                proposals[1 - selected].clone(),
+                                RoutedScanTrigger::ExplicitRefresh,
+                                now,
+                                RoutedRunId::from_counter(high_water + 1)
+                            ),
+                            RoutedBeginDecision::NeedsApproval(_)
+                        ));
+                        assert_eq!(state, before);
+                    }
+                    _ => {
+                        // Explicit reapproval carries the store-global high-water;
+                        // an old completion must never attach to the new topology.
+                        selected = 1 - selected;
+                        state = RoutedApprovalState::from_user_approval(
+                            &proposals[selected],
+                            now.max(before.last_observed_time()),
+                            Some(RoutedRunId::from_counter(high_water)),
+                        );
+                        let reapproved = state.clone();
+                        assert_eq!(
+                            state.complete(
+                                RoutedRunId::from_counter(high_water),
+                                RoutedScanOutcome::Found,
+                                now
+                            ),
+                            RoutedCompletionDecision::Stale
+                        );
+                        assert_eq!(state, reapproved);
+                    }
+                }
+                assert!(state.last_observed_time() >= before.last_observed_time());
+                assert_eq!(state.fingerprint(), proposals[selected].fingerprint());
+                assert!(state.empty_run_streak() <= MAX_EMPTY_RUN_STREAK);
+            }
+        });
+    }
+
     fn key(byte: u8) -> RouteFingerprintKey {
         RouteFingerprintKey::from_bytes([byte; 32])
     }

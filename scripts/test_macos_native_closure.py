@@ -80,6 +80,36 @@ class BundleFixture(unittest.TestCase):
 
 
 class ClosureTests(BundleFixture):
+    def test_cli_rejects_wrong_linker_and_malformed_strings_without_a_traceback(self):
+        def invoke(mode, path):
+            output, error = io.StringIO(), io.StringIO()
+            with mock.patch.object(sys, "argv", ["closure", mode, str(path)]), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
+                status = closure.main()
+            return status, output.getvalue(), error.getvalue()
+
+        # LC_LOAD_DYLINKER must identify Apple's loader, never a bundled or external substitute.
+        for linker in ("/usr/lib/dyld", "/unapproved/dyld"):
+            data = bytearray(macho([linker], kind=2))
+            struct.pack_into("<I", data, 56, 0xE)
+            self.exe.write_bytes(data)
+            status, _, error = invoke("bundle", self.app)
+            self.assertEqual(status, int(linker != "/usr/lib/dyld"))
+            self.assertNotIn("Traceback", error)
+        self.exe.write_bytes(macho(["/usr/lib/libSystem.B.dylib"],
+                                   ["@executable_path/../Frameworks"], kind=2))
+        for mode, expected in (("kind", "2"), ("imports", "/usr/lib/libSystem.B.dylib"),
+                               ("rpaths", "@executable_path/../Frameworks")):
+            self.assertEqual(invoke(mode, self.exe), (0, expected + "\n", ""))
+        data = bytearray(macho(["/usr/lib/libSystem.B.dylib"], kind=2))
+        data[80] = 0xff
+        self.exe.write_bytes(data)
+        status, output, error = invoke("imports", self.exe)
+        self.assertEqual(status, 1)
+        self.assertEqual(output, "")
+        self.assertIn("macOS native closure rejected:", error)
+        self.assertNotIn("Traceback", error)
+
     def test_process_subtype_survives_generic_intermediate_and_context_cache(self):
         for cpu, generic, specialized in ((0x100000C, 0, 2), (0x1000007, 3, 8)):
             with self.subTest(cpu=cpu):

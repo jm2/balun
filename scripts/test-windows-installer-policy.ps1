@@ -14,8 +14,8 @@ foreach ($function in $ast.FindAll({
         $node.Name -in @('Get-WindowsProbeSha256', 'Get-WindowsProbeTreeDigest',
             'Get-PeMachine', 'Assert-PeMachine', 'Invoke-BoundedInspector',
             'Stop-BoundedProcessTree', 'Get-BoundedProbeDiagnostic', 'Test-IsWindowsHost',
-            'Find-InnoSetupCompiler', 'Get-RegularFilePath')
-}, $false)) { . ([scriptblock]::Create($function.Extent.Text)) }
+            'Assert-WindowsBundleRootIsNotReparsePoint', 'Find-InnoSetupCompiler', 'Get-RegularFilePath')
+}, $false)) { Set-Item -LiteralPath "Function:$($function.Name)" -Value ($function.Body.GetScriptBlock()) }
 function Exit-WithError { param([string]$Message) throw $Message }
 function Assert-Rejected {
     param([scriptblock]$Action, [string]$Label, [string]$ExpectedMessage)
@@ -71,6 +71,36 @@ try {
     if ((Get-WindowsProbeTreeDigest $root) -cne $expected.Digest) { throw 'Manifest API changed digest identity.' }
     $listing = @(Get-FixtureListing $expected)
     Assert-InnoPayloadManifest $expected.Records (ConvertFrom-InnoPayloadListing $listing)
+
+    # Exercise the uncovered build-tool admission boundary with synthetic pins.
+    # The files are inert; validation must succeed before a tool could execute.
+    $toolRoot = Join-Path $temporary 'Pinned Inspector'
+    $null = New-Item -ItemType Directory -Path $toolRoot
+    foreach ($name in @('innoextract.exe', 'libbz2-1.dll')) {
+        [System.IO.File]::WriteAllText((Join-Path $toolRoot $name), "synthetic $name")
+    }
+    $originalPins = (Get-Item Function:Get-InnoInspectorPins).ScriptBlock
+    $script:FixtureToolPins = @{ Files = @{} }
+    foreach ($name in @('innoextract.exe', 'libbz2-1.dll')) {
+        $script:FixtureToolPins.Files[$name] = Get-WindowsProbeSha256 (Join-Path $toolRoot $name)
+    }
+    function Get-InnoInspectorPins { return $script:FixtureToolPins }
+    if ((Get-ValidatedInnoInspector $toolRoot) -cne (Join-Path $toolRoot 'innoextract.exe')) {
+        throw 'Validated tool path does not match its pinned directory.'
+    }
+    Assert-Rejected { Get-ValidatedInnoInspector 'relative-inspector' } 'relative tool directory'
+    [System.IO.File]::WriteAllText((Join-Path $toolRoot 'extra.dll'), 'unexpected native library')
+    Assert-Rejected { Get-ValidatedInnoInspector $toolRoot } 'extra tool member'
+    Remove-Item -LiteralPath (Join-Path $toolRoot 'extra.dll')
+    [System.IO.File]::AppendAllText((Join-Path $toolRoot 'libbz2-1.dll'), 'changed')
+    Assert-Rejected { Get-ValidatedInnoInspector $toolRoot } 'modified inspector dependency'
+    Remove-Item -LiteralPath (Join-Path $toolRoot 'libbz2-1.dll')
+    Assert-Rejected { Get-ValidatedInnoInspector $toolRoot } 'missing inspector dependency'
+    Set-Item Function:Get-InnoInspectorPins $originalPins
+
+    Assert-Rejected { Invoke-InnoPayloadInspector 'relative-inspector' $application } 'relative inspector invocation'
+    Assert-Rejected { Invoke-InnoPayloadInspector $application ($application + '"') } 'quote-bearing installer path'
+    Assert-Rejected { Invoke-InnoPayloadInspector $application $application -Extract } 'extraction without an output directory'
 
     Assert-Rejected { Assert-PeMachine $application 'fixture' ([uint16]0xAA64) 'ARM64' 'aarch64' } 'wrong native architecture'
     $hash = '0' * 64
@@ -192,6 +222,25 @@ try {
             -TokenPrefix 'inno-test' -ClosureClock $null -ClosureDeadlineMs 10000 `
             -ProcessDeadlineMs 10000 -OutputByteLimit 1024 -RejectStandardError
     } 'successful process with unsupported-input warnings'
+
+    # A real owned process must be terminated, not merely ignored after a
+    # timeout. Its handle stays local so cleanup can never target another PID.
+    $stalled = [System.Diagnostics.Process]::new()
+    $started = $false
+    try {
+        $stalled.StartInfo.FileName = (Get-Process -Id $PID).Path
+        $stalled.StartInfo.Arguments = '-NoProfile -Command "Start-Sleep -Seconds 60"'
+        $stalled.StartInfo.UseShellExecute = $false
+        $stalled.StartInfo.CreateNoWindow = $true
+        $started = $stalled.Start()
+        if (-not $started) { throw 'Stalled-process fixture could not start.' }
+        Stop-BoundedProcessTree $stalled 'stalled inspector fixture'
+        if (-not $stalled.HasExited) { throw 'Inspector termination left its process alive.' }
+    }
+    finally {
+        if ($started -and -not $stalled.HasExited) { $stalled.Kill(); $null = $stalled.WaitForExit(1000) }
+        $stalled.Dispose()
+    }
 
     if ($SampleRoot) {
         if (-not $Inspector) { throw 'An explicit inspector is required with SampleRoot.' }

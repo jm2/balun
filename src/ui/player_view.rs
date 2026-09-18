@@ -537,8 +537,7 @@ impl PlayerView {
                     .set_label(&format!("Buffering {percent}%"));
                 self.stop_button.set_sensitive(true);
                 self.status.set_title("Buffering");
-                self.status
-                    .set_description(Some(&format!("Live TV is buffering: {percent}%.")));
+                self.set_description_text(&format!("Live TV is buffering: {percent}%."));
                 self.status.set_visible(true);
             }
             PlaybackPresentation::Failed(failure) => {
@@ -676,40 +675,39 @@ impl PlayerView {
     fn show_connecting(&self) {
         let context = self.tune_context();
         self.status.set_title("Connecting");
-        self.status.set_description(Some(&format!(
+        self.set_description_text(&format!(
             "Opening {} on {}.",
             context.channel(),
             context.device()
-        )));
+        ));
         self.status.set_visible(true);
     }
 
     fn show_idle(&self) {
         self.status.set_title(&self.idle_title);
-        self.status.set_description(Some(&self.idle_description));
+        self.set_description_text(&self.idle_description);
         self.status.set_visible(true);
     }
 
     fn show_playback_failure(&self) {
         self.status.set_title("Unable to play channel");
-        self.status
-            .set_description(Some(PLAYBACK_FAILURE_DESCRIPTION));
+        self.set_description_text(PLAYBACK_FAILURE_DESCRIPTION);
         self.status.set_visible(true);
     }
 
     fn show_failure_copy(&self, copy: &PlaybackFailureCopy) {
         self.playback_status.set_label(copy.title);
         self.status.set_title(copy.title);
-        self.status.set_description(Some(&copy.description));
+        self.set_description_text(&copy.description);
         self.status.set_visible(true);
     }
 
     fn show_stop_failure(&self) {
         self.set_audio_controls_sensitive(false);
         self.status.set_title("Unable to stop live TV");
-        self.status.set_description(Some(
+        self.set_description_text(
             "Playback could not be stopped cleanly. Close Balun before selecting another channel.",
-        ));
+        );
         self.status.set_visible(true);
     }
 
@@ -718,6 +716,10 @@ impl PlayerView {
             Some(copy) => self.show_failure_copy(&copy),
             None => self.show_stop_failure(),
         }
+    }
+
+    fn set_description_text(&self, text: &str) {
+        self.status.set_description(Some(&description_markup(text)));
     }
 }
 
@@ -753,7 +755,7 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
     let empty_state = adw::StatusPage::builder()
         .icon_name("video-display-symbolic")
         .title(title)
-        .description(description.as_str())
+        .description(description_markup(&description))
         .accessible_role(gtk::AccessibleRole::Status)
         .vexpand(true)
         .build();
@@ -906,6 +908,13 @@ fn empty_state_copy(capabilities: &PlaybackCapabilities) -> (&'static str, Strin
     )
 }
 
+fn description_markup(text: &str) -> gtk::glib::GString {
+    // AdwStatusPage descriptions always parse markup. Compose ordinary text
+    // first, including any device/channel names, then escape once at this
+    // rendering boundary. Titles and GtkLabel::set_label remain plain text.
+    gtk::glib::markup_escape_text(text)
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -914,6 +923,46 @@ mod tests {
     use balun::playback::TuneGeneration;
 
     use super::*;
+
+    fn assert_literal_markup(markup: &str, expected: &str) {
+        let (attributes, rendered, _) =
+            gtk::pango::parse_markup(markup, '\0').expect("description must be valid markup");
+        assert_eq!(rendered, expected);
+        assert!(attributes.iterator().attrs().is_empty());
+    }
+
+    #[test]
+    fn status_descriptions_preserve_literal_names_without_formatting() {
+        for text in [
+            "News & Weather",
+            "<span foreground='red' size='50000'>Tuner</span>",
+            "<a href='about:blank'>Channel</a>",
+            "&lt;b&gt;already an entity, not a tag&lt;/b&gt;",
+            "\"Channel\" < > ' & 日本語",
+        ] {
+            assert_literal_markup(&description_markup(text), text);
+        }
+    }
+
+    #[test]
+    fn every_failure_description_keeps_device_metadata_literal() {
+        let context = TuneContext {
+            device: "Room & <span weight='bold'>Tuner</span>".into(),
+            channel: "7.1 <i>News & Weather</i>".into(),
+        };
+        for failure in [
+            PlaybackPipelineFailure::TunerBusy,
+            PlaybackPipelineFailure::ChannelMissing,
+            PlaybackPipelineFailure::HttpRejected,
+            PlaybackPipelineFailure::Offline,
+            PlaybackPipelineFailure::MissingCodecOrPlugin(MissingMedia::Unknown),
+            PlaybackPipelineFailure::Protected,
+            PlaybackPipelineFailure::Internal,
+        ] {
+            let copy = pipeline_failure_copy(failure, &context);
+            assert_literal_markup(&description_markup(&copy.description), &copy.description);
+        }
+    }
 
     #[test]
     fn only_playing_and_buffering_hold_idle_inhibition() {
@@ -1083,6 +1132,27 @@ mod tests {
         view.apply_fullscreen_presentation(false);
         assert!(!view.root.is_extend_content_to_top_edge());
         assert!(view.header.shows_back_button());
+
+        // Exercise the production setter with admitted metadata characters,
+        // not only the pure escaping helper. The rendered name stays literal.
+        let context = TuneContext {
+            device: "Room & <span weight='bold'>Tuner</span>".into(),
+            channel: "7.1 <i>News & Weather</i>".into(),
+        };
+        view.tune_context.replace(Some(context.clone()));
+        view.show_connecting();
+        assert_literal_markup(
+            view.status.description().as_deref().unwrap(),
+            &format!("Opening {} on {}.", context.channel(), context.device()),
+        );
+        let failure = pipeline_failure_copy(PlaybackPipelineFailure::Offline, &context);
+        view.show_failure_copy(&failure);
+        assert_literal_markup(
+            view.status.description().as_deref().unwrap(),
+            &failure.description,
+        );
+        view.tune_context.take();
+        view.show_idle();
 
         let bytes = gtk::glib::Bytes::from_static(&[0x18, 0x30, 0x48, 0xff]);
         let paintable =

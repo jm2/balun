@@ -11,7 +11,14 @@ pub(crate) fn assert_value_free_error(error: &(dyn std::error::Error + 'static))
     let mut current = Some(error);
     while let Some(error) = current {
         let rendered = format!("{error}\n{error:?}\n{error:#?}");
-        for marker in [JSON_SECRET_MARKER, "fixture-password", "JSON_SECRET_719"] {
+        for marker in [
+            JSON_SECRET_MARKER,
+            "fixture-user",
+            "fixture-password",
+            "invalid.example",
+            "/stream",
+            "JSON_SECRET_719",
+        ] {
             assert!(
                 !rendered.contains(marker),
                 "device value escaped: {rendered}"

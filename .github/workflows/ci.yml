@@ -21,10 +21,19 @@ jobs:
   quality:
     name: Linux quality
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Prepare adversarial replay environment
+        run: |
+          printf 'TMPDIR=%s\nBALUN_ADVERSARIAL_FAILURE_DIR=%s/adversarial-counterexamples\n' \
+            "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'XDG_CACHE_HOME=%s/tool-cache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          python3 --version
+          pwsh --version
 
       - name: Test pinned release component policy
         run: build-aux/packaging/test-release-component-policy.sh
@@ -51,6 +60,43 @@ jobs:
 
       - name: Test macOS native dependency closure
         run: python3 -B scripts/test_macos_native_closure.py
+
+      - name: Test native inventory membership and SBOM generation
+        run: |
+          python3 -B scripts/inventory/test_native_inventory.py
+          python3 -B scripts/inventory/test_observe_native.py
+
+      - name: Adversarial package metadata smoke
+        run: |
+          python3 -B scripts/test_adversarial_packages.py
+          pwsh -NoProfile -File scripts/test-adversarial-installer.ps1
+
+      - name: Install pinned portable coverage tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/package-coverage-python"
+          "$RUNNER_TEMP/package-coverage-python/bin/pip" install -r scripts/coverage/requirements.txt
+
+      - name: Install pinned PowerShell coverage profiler
+        shell: pwsh
+        run: >-
+          Save-Module -Name Pester -RequiredVersion 6.2.0 -Repository PSGallery
+          -Path "$env:RUNNER_TEMP/coverage-modules" -Force -ErrorAction Stop
+
+      - name: Measure and ratchet portable package gates
+        run: |
+          python3 -B -m unittest discover -s scripts/coverage -p 'test_*.py'
+          "$RUNNER_TEMP/package-coverage-python/bin/python" -B scripts/coverage/run-packages.py \
+            --output "$RUNNER_TEMP/package-coverage" \
+            --pester-module "$RUNNER_TEMP/coverage-modules/Pester/6.2.0/Pester.psd1"
+
+      - name: Retain portable package coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: critical-coverage-packages
+          path: ${{ runner.temp }}/package-coverage/*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Test packaged-hardware output privacy
         run: scripts/test-hardware-validation-privacy.sh
@@ -85,6 +131,15 @@ jobs:
 
       - name: Test (release)
         run: cargo test --release --all-targets --locked
+
+      - name: Retain synthetic counterexample replay records
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: adversarial-smoke-counterexamples
+          path: ${{ runner.temp }}/adversarial-counterexamples/*.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
   desktop-metadata:
     name: Desktop metadata
@@ -330,7 +385,7 @@ jobs:
           dnf install -y binutils dbus-daemon gcc gstreamer1-devel
           gstreamer1-plugin-gtk4 gstreamer1-plugin-libav gstreamer1-plugins-bad-free
           gstreamer1-plugins-base gstreamer1-plugins-good gtk4-devel libadwaita-devel
-          pkgconf-pkg-config git curl wayland-utils weston
+          pkgconf-pkg-config git curl python3 wayland-utils weston
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -350,6 +405,25 @@ jobs:
 
       - name: Test desktop bridge
         run: cargo test --locked --features desktop --all-targets
+
+      - name: Install the fixed coverage compiler and matching LLVM tools
+        run: rustup toolchain install 1.98.0 --profile minimal --component llvm-tools-preview
+
+      - name: Measure and ratchet critical Rust regions
+        env:
+          RUSTUP_TOOLCHAIN: 1.98.0
+        run: |
+          export TMPDIR="$RUNNER_TEMP"
+          python3 -B scripts/coverage/run-rust.py --output "$RUNNER_TEMP/rust-coverage"
+
+      - name: Retain critical Rust coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: critical-coverage-rust
+          path: ${{ runner.temp }}/rust-coverage/*
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Probe installed playback runtime through helper
         run: scripts/build-linux.sh --probe-playback
@@ -417,6 +491,10 @@ jobs:
         if: runner.os == 'macOS'
         run: python3 -B scripts/test_macos_native_closure.py
 
+      - name: Test native package observation on macOS
+        if: runner.os == 'macOS'
+        run: python3 -B scripts/inventory/test_observe_native.py
+
       - name: Test packaged-hardware output privacy with system Bash
         if: runner.os == 'macOS'
         run: /bin/bash scripts/test-hardware-validation-privacy.sh
@@ -425,6 +503,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test-build-windows-routing.ps1
+
+      - name: Test native package observation on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python -B scripts/inventory/test_observe_native.py
 
       - name: Test complete-tree Windows probe receipts
         if: runner.os == 'Windows'
