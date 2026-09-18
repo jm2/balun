@@ -3,10 +3,11 @@
 H1.3 requires an inventory tied to the final artifact's actual native members.
 `scripts/inventory/native_inventory.py` implements the portable join and report
 format. `observe_native.py` independently hashes the native members of an
-already reopened, validated package tree and its completed artifact. Package
-ownership collection, final-artifact integration, and release attachment remain
-pending. H1.3 and issue #91 remain open; existing release assets do not yet carry
-this inventory or SBOM.
+already reopened, validated package tree and its completed artifact. The macOS
+helper records each native copy's input owner and final staged content. Catalog
+assembly, final-artifact integration, and release attachment remain pending.
+H1.3 and issue #91 remain open; existing release assets do not yet carry this
+inventory or SBOM.
 
 ## Input boundary
 
@@ -135,6 +136,39 @@ macOS, and both Windows architectures, including a native Windows junction.
 
 ## Evidence and remaining integration
 
+### macOS native copy ledger
+
+The macOS helper invokes `native_copy_ledger.py` immediately after each native
+copy, before relocation changes its bytes. This includes the project binary,
+GStreamer plugins, scanner/query helpers, pixbuf loaders, and transitive native
+libraries. The copied bytes must equal the selected input. Installed inputs
+resolve through expected prefix links into their actual Cellar keg; project
+ownership requires an explicit selection. Unknown owners reject the build.
+
+After relocation and the existing signing and runtime gates, the helper freezes
+`dist/Balun.native-copies.json`. It independently scans the staged app, rejects
+unknown or missing native members, and retains both the original input and final
+staged size/hash for each destination. This staged snapshot still needs comparison
+with the reopened final artifact before it can complete an inventory. It does
+not authenticate the installed inputs or change signing policy.
+
+The ledger uses the observer's member, byte, traversal, identity, and time limits.
+It lives outside the payload in the trusted build workspace; the helper serializes
+updates. An interrupted write invalidates that build's ledger. Later reads fail
+closed, and the helper must freeze the complete ledger before artifact upload.
+Fixtures exercise changed copies, unknown/missing members, pre/post-relocation
+identities, recursive copies, source links, staged aliases, budgets, and CLI errors.
+
+```bash
+python3 -B scripts/inventory/test_native_copy_ledger.py
+python3 -B scripts/inventory/homebrew_metadata.py --cellar "$(brew --cellar)" \
+  --copy-ledger dist/Balun.native-copies.json > macos-native-owners.json
+```
+
+The ledger-driven metadata collector checks the installed source bytes still
+match those recorded at copy time. Native macOS CI retains the frozen ledger and
+metadata for every copied Homebrew input as internal evidence for 14 days.
+
 ### Installed Homebrew metadata
 
 `homebrew_metadata.py` collects the installed recipe, declared source identity,
@@ -181,12 +215,12 @@ The implementation follows Homebrew's
 and [installed receipt](https://github.com/Homebrew/brew/blob/main/Library/Homebrew/tab/tab.rb)
 contracts. Linux fixtures exercise stale metadata, installed revision mismatches,
 immutable source identities, substitutions, resource bounds and child cleanup.
-Native macOS CI also collects real GTK sink, libav plugin, and pixbuf-query inputs.
-Collector failures expose only a closed set of validation reasons or a generic
-missing/invalid-input category; raw exceptions, paths, and recipe output remain hidden.
-These intermediate records still need the packaging copy ledger, post-relocation
-catalog binding, embedded-resource representation, and final-artifact integration
-below before they establish H1.3.
+Native macOS CI also collects real GTK sink, libav plugin, and pixbuf-query inputs,
+then the full set selected by the copy ledger. Collector failures expose only a
+closed set of validation reasons or a generic missing/invalid-input category;
+raw exceptions, paths, and recipe output remain hidden. These intermediate
+records still need catalog assembly, embedded-resource representation, and
+final-artifact integration below before they establish H1.3.
 
 ### Final-artifact integration
 
