@@ -1,7 +1,7 @@
 //! Pinned private-profile transactions. Native I/O itself is not cancellable.
 
 use std::io::{self, Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -221,11 +221,7 @@ fn open_directory(parent: &Dir, name: &Path) -> Result<Dir, SettingsError> {
 
 impl Profile {
     fn open(path: &Path) -> Result<Self, SettingsError> {
-        if !path.is_absolute()
-            || path
-                .components()
-                .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
-        {
+        if !path.is_absolute() {
             return Err(SettingsError::InvalidDirectory);
         }
         let mut missing = vec![
@@ -236,7 +232,11 @@ impl Profile {
         let mut existing = path.parent().ok_or(SettingsError::InvalidDirectory)?;
         let mut initial = options(false);
         // Aliases in the account-selected existing parent are trusted only at
-        // this initial acquisition. Every descendant open is no-follow.
+        // this initial acquisition. Let the OS resolve parent components too:
+        // lexical removal of `..` would change meaning after a trusted alias.
+        // Missing suffixes must have ordinary file names; `file_name` rejects
+        // a trailing parent component before it can enter capability operations.
+        // Every descendant open is no-follow.
         initial.follow(FollowSymlinks::Yes).maybe_dir(true);
         #[cfg(windows)]
         {
@@ -613,6 +613,54 @@ mod tests {
 
     fn hook(store: &SettingsStore, stage: TestStage, callback: impl FnOnce() + Send + 'static) {
         *store.profile().unwrap().hooks.0.lock().unwrap() = Some((stage, Box::new(callback)));
+    }
+
+    #[test]
+    fn existing_parent_navigation_preserves_the_selected_profile() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("work")).unwrap();
+        let selected = root.path().join("work").join("..").join("config/profile");
+        let store = SettingsStore::new(selected.clone());
+        store.save(&Settings::default()).unwrap();
+        assert!(store.load().unwrap().is_some());
+        assert_eq!(store.directory(), selected);
+        assert!(
+            root.path()
+                .join("config/profile")
+                .join(SETTINGS_FILE_NAME)
+                .is_file()
+        );
+        let other = SettingsStore::new(root.path().join("config/profile"));
+        assert_eq!(store.load().unwrap(), other.load().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unresolved_parent_navigation_cannot_create_a_different_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let store = SettingsStore::new(root.path().join("missing/../profile"));
+        assert!(store.save(&Settings::default()).is_err());
+        assert!(!root.path().join("missing").exists());
+        assert!(!root.path().join("profile").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_navigation_uses_filesystem_alias_semantics_before_pinning() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("actual/nested")).unwrap();
+        std::os::unix::fs::symlink(root.path().join("actual/nested"), root.path().join("alias"))
+            .unwrap();
+        let store = SettingsStore::new(root.path().join("alias/../config/profile"));
+        store.save(&Settings::default()).unwrap();
+        assert!(store.load().unwrap().is_some());
+        assert!(
+            root.path()
+                .join("actual/config/profile")
+                .join(SETTINGS_FILE_NAME)
+                .is_file()
+        );
+        assert!(!root.path().join("config").exists());
     }
 
     #[test]
