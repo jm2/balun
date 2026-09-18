@@ -188,6 +188,7 @@ classified_inputs=(
     .github/actions/package/action.yml
     .githooks/pre-commit
     build-aux/platform/package.conf
+    build-aux/linux/archive_snapshot.py
     packaging/release.conf
     src/native_link.rs
     scripts/build.sh

@@ -638,7 +638,7 @@ mod tests {
         let (handoff, handoff_elapsed) =
             request_live_handoff(&selected.handle, key, generation).await;
 
-        let policy = SourcePolicy::install(&playbin, handoff, QUICK)
+        let policy = SourcePolicy::install(&playbin, handoff, QUICK, None)
             .expect("install the appsrc policy for the live ATSC 1.0 stream");
         playbin.set_property("uri", PIPELINE_URI);
         let started = Instant::now();
@@ -810,7 +810,7 @@ mod tests {
         let handoff_a_started = Instant::now();
         let (handoff_a, handoff_a_elapsed) =
             request_live_handoff(&selected.handle, channel_a, generation).await;
-        let policy_a = SourcePolicy::install(&pipeline_a, handoff_a, QUICK)
+        let policy_a = SourcePolicy::install(&pipeline_a, handoff_a, QUICK, None)
             .expect("install the appsrc policy for the first live channel");
         pipeline_a.set_property("uri", PIPELINE_URI);
         let playing_a = Instant::now();
@@ -829,7 +829,7 @@ mod tests {
 
         let (handoff_b, handoff_b_elapsed) =
             request_live_handoff(&selected.handle, channel_b, generation).await;
-        let policy_b = SourcePolicy::install(&pipeline_b, handoff_b, QUICK)
+        let policy_b = SourcePolicy::install(&pipeline_b, handoff_b, QUICK, None)
             .expect("install the appsrc policy for the second live channel");
         pipeline_b.set_property("uri", PIPELINE_URI);
         let playing_b = Instant::now();
@@ -911,7 +911,7 @@ mod tests {
         let (handoff, handoff_elapsed) =
             request_live_handoff(&selected.handle, key, generation).await;
 
-        let policy = SourcePolicy::install(&playbin, handoff, QUICK)
+        let policy = SourcePolicy::install(&playbin, handoff, QUICK, None)
             .expect("install the appsrc policy for the modern-codec lane");
         playbin.set_property("uri", PIPELINE_URI);
         let started = Instant::now();

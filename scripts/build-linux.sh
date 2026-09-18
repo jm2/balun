@@ -312,6 +312,9 @@ build|deb|rpm|arch-pkg)
     [ -x "$artifact_validator" ] || \
         fail "Required Linux artifact validator is unavailable or not executable: $artifact_validator"
     require_command readelf 'install GNU binutils (Debian/Ubuntu, Fedora, and Arch: binutils); elfutils eu-readelf is not a substitute'
+    if [ "$mode" != build ]; then
+        require_command python3 'install Python 3 explicitly; native archive inspection freezes one bounded input snapshot'
+    fi
     case "$mode" in
         deb)
             require_command cargo-deb 'install the reviewed cargo-deb version explicitly'
