@@ -14,14 +14,18 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+#[cfg(test)]
 use std::fs;
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use crate::discovery::{ExactDiscoveryTarget, HostnameTarget};
 use crate::domain::DeviceId;
+
+mod store;
+pub use store::SettingsStore;
 
 /// Schema version written by this build and the newest version it can read.
 pub const SCHEMA_VERSION: u32 = 2;
@@ -312,6 +316,18 @@ pub enum SettingsError {
     },
     #[error("the settings could not be serialized")]
     Serialization,
+    #[error("the settings profile is not a private local directory")]
+    InvalidDirectory,
+    #[error("the settings owner or permissions are not private")]
+    Permissions,
+    #[error("the settings file has multiple links")]
+    HardLink,
+    #[error("the settings identity changed during the operation")]
+    Changed,
+    #[error("another settings transaction is active")]
+    Busy,
+    #[error("the settings operation was cancelled")]
+    Cancelled,
 }
 
 impl SettingsError {
@@ -363,114 +379,6 @@ fn default_directory_from(env: impl Fn(&str) -> Option<OsString>) -> Option<Path
 #[cfg(not(any(windows, unix)))]
 fn default_directory_from(_env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     None
-}
-
-/// Reads and atomically writes one settings document in a directory.
-#[derive(Clone, Debug)]
-pub struct SettingsStore {
-    directory: PathBuf,
-}
-
-impl SettingsStore {
-    /// Use an explicit directory; it is created on the first save.
-    #[must_use]
-    pub const fn new(directory: PathBuf) -> Self {
-        Self { directory }
-    }
-
-    /// Use the platform default directory, if the environment names one.
-    #[must_use]
-    pub fn at_default_location() -> Option<Self> {
-        default_directory().map(Self::new)
-    }
-
-    /// The directory holding the settings file.
-    #[must_use]
-    pub fn directory(&self) -> &Path {
-        &self.directory
-    }
-
-    fn path(&self) -> PathBuf {
-        self.directory.join(SETTINGS_FILE_NAME)
-    }
-
-    /// Load the settings, or `Ok(None)` when no file has been written yet.
-    ///
-    /// Every failure leaves the file untouched.
-    pub fn load(&self) -> Result<Option<Settings>, SettingsError> {
-        let path = self.path();
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(SettingsError::io(SettingsOperation::Inspect, &error)),
-        };
-        if metadata.file_type().is_symlink() {
-            return Err(SettingsError::Symlink);
-        }
-        if !metadata.is_file() {
-            return Err(SettingsError::NotRegularFile);
-        }
-        if metadata.len() > MAX_SETTINGS_BYTES {
-            return Err(SettingsError::TooLarge);
-        }
-
-        let file = fs::File::open(&path)
-            .map_err(|error| SettingsError::io(SettingsOperation::Read, &error))?;
-        let mut bytes = Vec::new();
-        file.take(MAX_SETTINGS_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| SettingsError::io(SettingsOperation::Read, &error))?;
-        if bytes.len() as u64 > MAX_SETTINGS_BYTES {
-            return Err(SettingsError::TooLarge);
-        }
-
-        parse_document(&bytes).map(Some)
-    }
-
-    /// Atomically replace the settings file, creating the directory first.
-    pub fn save(&self, settings: &Settings) -> Result<(), SettingsError> {
-        let bytes = serialize_document(settings)?;
-        fs::create_dir_all(&self.directory)
-            .map_err(|error| SettingsError::io(SettingsOperation::CreateDirectory, &error))?;
-
-        let mut builder = tempfile::Builder::new();
-        builder.prefix(TEMPORARY_PREFIX).suffix(TEMPORARY_SUFFIX);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            // Remembered addresses and names belong to this user alone; the
-            // published file keeps the mode of the temporary it was renamed from.
-            builder.permissions(fs::Permissions::from_mode(0o600));
-        }
-        let mut temporary = builder
-            .tempfile_in(&self.directory)
-            .map_err(|error| SettingsError::io(SettingsOperation::CreateTemporary, &error))?;
-        temporary
-            .write_all(&bytes)
-            .and_then(|()| temporary.flush())
-            .map_err(|error| SettingsError::io(SettingsOperation::Write, &error))?;
-        temporary
-            .as_file()
-            .sync_all()
-            .map_err(|error| SettingsError::io(SettingsOperation::Sync, &error))?;
-        temporary
-            .persist(self.path())
-            .map_err(|error| SettingsError::io(SettingsOperation::Publish, &error.error))?;
-        sync_directory(&self.directory)
-            .map_err(|error| SettingsError::io(SettingsOperation::Sync, &error))
-    }
-}
-
-#[cfg(unix)]
-fn sync_directory(directory: &Path) -> io::Result<()> {
-    fs::File::open(directory)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_directory(_directory: &Path) -> io::Result<()> {
-    // The standard library exposes no reliable directory flush here; the
-    // renamed file itself has already been flushed.
-    Ok(())
 }
 
 /// Only the version is read before choosing a stored shape, so a document
@@ -724,6 +632,11 @@ mod tests {
     fn write_raw(store: &SettingsStore, bytes: &[u8]) {
         fs::create_dir_all(store.directory()).expect("create directory");
         fs::write(store.path(), bytes).expect("write raw document");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(store.path(), fs::Permissions::from_mode(0o600)).unwrap();
+        }
     }
 
     fn raw_bytes(store: &SettingsStore) -> Vec<u8> {
@@ -780,11 +693,18 @@ mod tests {
         store.save(&Settings::default()).expect("first save");
         store.save(&populated()).expect("second save");
 
-        let entries: Vec<_> = fs::read_dir(store.directory())
+        let mut entries: Vec<_> = fs::read_dir(store.directory())
             .expect("read directory")
             .map(|entry| entry.expect("entry").file_name())
             .collect();
-        assert_eq!(entries, vec![OsString::from(SETTINGS_FILE_NAME)]);
+        entries.sort();
+        assert_eq!(
+            entries,
+            vec![
+                OsString::from(".settings.lock"),
+                OsString::from(SETTINGS_FILE_NAME)
+            ]
+        );
         assert_eq!(store.load(), Ok(Some(populated())));
     }
 

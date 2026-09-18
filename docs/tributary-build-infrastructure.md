@@ -45,6 +45,7 @@ library assumptions.
 | `flatpak/test-permissions.sh` | Adapted synthetic permission fixtures; makes no package claim |
 | `linux/validate-package-compliance.sh` | Adapted gate for ELF files, completed trees, and locally produced deb, RPM, and Arch packages |
 | `linux/test-package-compliance.sh` | Adapted synthetic tests for metadata, trees, and native package formats |
+| `linux/archive_snapshot.py` | New Balun helper freezes one bounded private input for Debian/RPM/Arch metadata and payload tools; hostile-archive containment remains pending |
 | `linux/validate-package-metadata.sh` | Current input list includes Cargo, Flatpak, and Arch package declarations |
 | `flatpak/validate-bundle-compliance.sh` | Adapted completed-bundle importer and app-commit validator |
 | `packaging/forbidden-bundled-components.txt` | Keep Balun's stricter policy; never overwrite |
@@ -56,8 +57,10 @@ successful native build or runtime probe. Linux completed-tree inspection is
 bounded, rejects unsafe links and unsupported entry types, and compares
 hidden-inclusive metadata-and-content snapshots. The v0.1 native and Flatpak
 jobs accept only artifacts they just built locally; archive-member preflight,
-source snapshotting before extraction, extractor-specific containment, and
-hostile-bundle resource budgets remain future hardening.
+extractor-specific containment, and hostile-bundle resource budgets remain
+future hardening. Debian/RPM/Arch inspectors now use a
+[bounded private source snapshot](linux-archive-snapshots.md); Flatpak source
+snapshotting remains separate work.
 
 ## Scripts port ledger
 

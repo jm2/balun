@@ -10,6 +10,7 @@
 //! posted as one field-bounded application message on the pipeline bus.
 
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::sync::mpsc::{self as std_mpsc, RecvTimeoutError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -22,6 +23,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::pipeline_failure::PlaybackPipelineFailure;
+use super::transport_timing::{TransportPhase, TransportTiming};
 use crate::controller::StreamHandoff;
 
 /// The only URI Balun assigns to `playbin3`. It names no endpoint.
@@ -142,6 +144,7 @@ impl StreamTransport {
         source: gst::Element,
         pipeline: &gst::Pipeline,
         config: TransportConfig,
+        timing: Option<Arc<TransportTiming>>,
     ) -> Result<Self, TransportStartFailure> {
         validate_feed_signals(&source)?;
         // The handoff is consumed and zeroized here. Only the parsed URL lives
@@ -155,8 +158,14 @@ impl StreamTransport {
             pipeline: pipeline.downgrade(),
         };
         let started_sink = failure_sink.clone();
+        let feeder_timing = timing.clone();
         let feeder = WorkerHandle::spawn(FEEDER_THREAD_NAME, move || {
-            run_feeder(&source, feed_receiver, &started_sink);
+            run_feeder(
+                &source,
+                feed_receiver,
+                &started_sink,
+                feeder_timing.as_deref(),
+            );
         })?;
         let reader_cancellation = cancellation.clone();
         let reader = WorkerHandle::spawn(READER_THREAD_NAME, move || {
@@ -166,6 +175,7 @@ impl StreamTransport {
                 &reader_cancellation,
                 feed_sender,
                 &failure_sink,
+                timing.as_deref(),
             );
         });
         match reader {
@@ -370,6 +380,7 @@ fn run_reader(
     cancellation: &CancellationToken,
     feed: mpsc::Sender<FeedItem>,
     failure_sink: &FailureSink,
+    timing: Option<&TransportTiming>,
 ) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -380,7 +391,7 @@ fn run_reader(
         failure_sink.post(PlaybackPipelineFailure::Internal);
         return;
     };
-    let outcome = runtime.block_on(stream_body(url, config, cancellation, &feed));
+    let outcome = runtime.block_on(stream_body(url, config, cancellation, &feed, timing));
     // Drop the sender before the runtime so the feeder cannot outlive the
     // response socket when the reader stops for any reason.
     drop(feed);
@@ -396,6 +407,7 @@ async fn stream_body(
     config: TransportConfig,
     cancellation: &CancellationToken,
     feed: &mpsc::Sender<FeedItem>,
+    timing: Option<&TransportTiming>,
 ) -> Result<(), ReaderStop> {
     if cancellation.is_cancelled() {
         return Err(ReaderStop::Cancelled);
@@ -411,7 +423,14 @@ async fn stream_body(
         .http1_only()
         .build()
         .map_err(|_| ReaderStop::Failed(PlaybackPipelineFailure::Internal))?;
-    let request = client.get(url).send();
+    // Capture the first polling boundary, not the time the main context later
+    // handles a bus notice. Biased cancellation still precedes any request poll.
+    let request = async {
+        if let Some(timing) = timing {
+            timing.record(TransportPhase::RequestPolled);
+        }
+        client.get(url).send().await
+    };
     let mut response = tokio::select! {
         biased;
         () = cancellation.cancelled() => return Err(ReaderStop::Cancelled),
@@ -432,6 +451,9 @@ async fn stream_body(
             }
         },
     };
+    if let Some(timing) = timing {
+        timing.record(TransportPhase::ResponseReceived);
+    }
     // Only the numeric status is interpreted; reason phrases, headers, and
     // bodies of rejected responses are dropped with the response.
     let status = response.status().as_u16();
@@ -447,6 +469,7 @@ async fn stream_body(
         return Err(ReaderStop::Failed(failure));
     }
 
+    let mut body_observed = false;
     loop {
         let chunk = tokio::select! {
             () = cancellation.cancelled() => return Err(ReaderStop::Cancelled),
@@ -454,6 +477,12 @@ async fn stream_body(
         };
         match chunk {
             Ok(Some(mut bytes)) => {
+                if !bytes.is_empty() && !body_observed {
+                    body_observed = true;
+                    if let Some(timing) = timing {
+                        timing.record(TransportPhase::BodyReceived);
+                    }
+                }
                 while !bytes.is_empty() {
                     let piece = bytes.split_to(bytes.len().min(MAX_PUSH_BYTES));
                     send_feed(
@@ -493,7 +522,12 @@ async fn send_feed(
     }
 }
 
-fn run_feeder(source: &gst::Element, mut feed: mpsc::Receiver<FeedItem>, started: &FailureSink) {
+fn run_feeder(
+    source: &gst::Element,
+    mut feed: mpsc::Receiver<FeedItem>,
+    started: &FailureSink,
+    timing: Option<&TransportTiming>,
+) {
     let mut announced = false;
     while let Some(item) = feed.blocking_recv() {
         match item {
@@ -504,6 +538,9 @@ fn run_feeder(source: &gst::Element, mut feed: mpsc::Receiver<FeedItem>, started
                 }
                 if !announced {
                     announced = true;
+                    if let Some(timing) = timing {
+                        timing.record(TransportPhase::BufferAccepted);
+                    }
                     started.post_started();
                 }
             }
@@ -517,6 +554,18 @@ fn run_feeder(source: &gst::Element, mut feed: mpsc::Receiver<FeedItem>, started
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn completed_worker_join_is_idempotent_without_waiting_again() {
+        let mut worker = super::WorkerHandle::spawn("balun-join-fixture", || {}).unwrap();
+        worker
+            .join_until(std::time::Instant::now() + std::time::Duration::from_secs(5))
+            .unwrap();
+        // A consumed owner cannot wait on or try to join the old worker again,
+        // even when the next caller's deadline is already expired.
+        worker.join_until(std::time::Instant::now()).unwrap();
+        assert!(worker.thread.is_none());
+    }
+
     use std::cell::Cell;
     use std::env;
     use std::process::Command;
@@ -533,6 +582,9 @@ mod tests {
     const PROXY_TRAP_CHILD_ENV: &str = "BALUN_PLAYBACK_PROXY_TRAP_CHILD";
     const PROXY_TRAP_CHILD_TEST: &str = "playback::transport::tests::proxy_trap_child";
     const SECRET_MARKERS: [&str; 4] = ["127.0.0.1", "/auto/v5.1", "http://", "user-secret"];
+    // Short deadlines belong to deadline/early-rejection tests. Positive HTTP
+    // outcomes use production budgets so scheduler contention cannot turn a
+    // payload/status assertion into an incidental timeout test.
     const QUICK: TransportConfig = TransportConfig::new(
         Duration::from_millis(500),
         Duration::from_millis(1_500),
@@ -569,7 +621,7 @@ mod tests {
         }
 
         fn start(&self, handoff: StreamHandoff, config: TransportConfig) -> StreamTransport {
-            StreamTransport::start(handoff, self.source.clone(), &self.pipeline, config)
+            StreamTransport::start(handoff, self.source.clone(), &self.pipeline, config, None)
                 .expect("start the loopback transport")
         }
 
@@ -707,6 +759,7 @@ mod tests {
                 fixture.source.clone(),
                 &fixture.pipeline,
                 QUICK,
+                None,
             )
             .err()
             .map(|failure| failure.error),
@@ -719,6 +772,7 @@ mod tests {
                 foreign,
                 &fixture.pipeline,
                 QUICK,
+                None,
             )
             .err()
             .map(|failure| failure.error),
@@ -738,10 +792,12 @@ mod tests {
         let cancellation = CancellationToken::new();
         cancellation.cancel();
         let (feed, _receiver) = mpsc::channel(FEED_QUEUE_CAPACITY);
+        let timing = TransportTiming::new(Instant::now());
         assert!(matches!(
-            stream_body(url, QUICK, &cancellation, &feed).await,
+            stream_body(url, QUICK, &cancellation, &feed, Some(&timing)).await,
             Err(ReaderStop::Cancelled)
         ));
+        assert!(timing.snapshot().iter().all(|(_, value)| value.is_none()));
         assert_eq!(
             listener.accept().unwrap_err().kind(),
             std::io::ErrorKind::WouldBlock
@@ -755,7 +811,15 @@ mod tests {
         };
         let server = FixtureStreamServer::start(fixture_response(), StreamBehavior::Close);
         fixture.pipeline.set_state(gst::State::Playing).unwrap();
-        let transport = fixture.start(handoff(&server.stream_url()), QUICK);
+        let timing = Arc::new(TransportTiming::new(Instant::now()));
+        let transport = StreamTransport::start(
+            handoff(&server.stream_url()),
+            fixture.source.clone(),
+            &fixture.pipeline,
+            TransportConfig::PRODUCTION,
+            Some(Arc::clone(&timing)),
+        )
+        .unwrap();
 
         assert_eq!(fixture.wait_terminal(Duration::from_secs(5)), Terminal::Eos);
         assert_eq!(
@@ -775,6 +839,10 @@ mod tests {
             "the sink must have received at least one pushed buffer"
         );
         assert_eq!(fixture.stop(transport), Ok(()));
+        let offsets = timing
+            .snapshot()
+            .map(|(_, value)| value.expect("observed transport phase"));
+        assert!(offsets.windows(2).all(|pair| pair[0] <= pair[1]));
     }
 
     #[test]
@@ -803,7 +871,7 @@ mod tests {
             })
             .unwrap();
         fixture.pipeline.set_state(gst::State::Playing).unwrap();
-        let transport = fixture.start(handoff(&server.stream_url()), QUICK);
+        let transport = fixture.start(handoff(&server.stream_url()), TransportConfig::PRODUCTION);
 
         assert_eq!(fixture.wait_terminal(Duration::from_secs(5)), Terminal::Eos);
         fixture
@@ -814,6 +882,29 @@ mod tests {
         let largest = largest.load(std::sync::atomic::Ordering::Acquire);
         assert!(largest > 0 && largest <= MAX_PUSH_BYTES, "{largest}");
         assert_eq!(fixture.stop(transport), Ok(()));
+    }
+
+    #[test]
+    fn an_empty_success_response_has_no_body_or_buffer_observation() {
+        let fixture = FeedFixture::new().expect("required appsrc and fakesink factories");
+        let server = FixtureStreamServer::start(
+            http_response("200 OK", &[("Content-Length", "0".to_owned())], b""),
+            StreamBehavior::Close,
+        );
+        let timing = Arc::new(TransportTiming::new(Instant::now()));
+        fixture.pipeline.set_state(gst::State::Playing).unwrap();
+        let transport = StreamTransport::start(
+            handoff(&server.stream_url()),
+            fixture.source.clone(),
+            &fixture.pipeline,
+            QUICK,
+            Some(Arc::clone(&timing)),
+        )
+        .unwrap();
+        assert_eq!(fixture.wait_terminal(Duration::from_secs(5)), Terminal::Eos);
+        assert_eq!(fixture.stop(transport), Ok(()));
+        let observed = timing.snapshot().map(|(_, value)| value.is_some());
+        assert_eq!(observed, [true, true, false, false]);
     }
 
     #[test]
@@ -857,13 +948,25 @@ mod tests {
                 StreamBehavior::Close,
             );
             fixture.pipeline.set_state(gst::State::Playing).unwrap();
-            let transport = fixture.start(handoff(&server.stream_url()), QUICK);
+            let timing = Arc::new(TransportTiming::new(Instant::now()));
+            let transport = StreamTransport::start(
+                handoff(&server.stream_url()),
+                fixture.source.clone(),
+                &fixture.pipeline,
+                TransportConfig::PRODUCTION,
+                Some(Arc::clone(&timing)),
+            )
+            .unwrap();
             assert_eq!(
                 fixture.wait_terminal(Duration::from_secs(5)),
                 Terminal::Failure(expected),
                 "{status}"
             );
             assert_eq!(fixture.stop(transport), Ok(()));
+            assert_eq!(
+                timing.snapshot().map(|(_, value)| value.is_some()),
+                [true, true, false, false]
+            );
         }
         assert_eq!(
             trap.connections(),
@@ -1077,7 +1180,7 @@ mod tests {
 
         let server = FixtureStreamServer::start(fixture_response(), StreamBehavior::Close);
         fixture.pipeline.set_state(gst::State::Playing).unwrap();
-        let transport = fixture.start(handoff(&server.stream_url()), QUICK);
+        let transport = fixture.start(handoff(&server.stream_url()), TransportConfig::PRODUCTION);
         assert_eq!(fixture.wait_terminal(Duration::from_secs(5)), Terminal::Eos);
         assert!(server.request(Duration::from_secs(3)).is_some());
         assert_eq!(fixture.stop(transport), Ok(()));

@@ -1547,13 +1547,13 @@ fn connect_joined_shutdown(
         gtk::glib::MainContext::default().spawn_local(async move {
             // Retain GTK and playback ownership on this local future while
             // only the controller join moves to the blocking worker. The
-            // window closes only after the join and every queued settings
-            // write finish, so the process never exits ahead of a write.
+            // window waits at most two seconds for settings, then closes
+            // after the controller join. Latest preferences may be unsaved.
             let _retained_player_view = retained_player_view;
             let worker = gtk::gio::spawn_blocking(move || {
                 controller.map_or(Ok(()), ControllerRuntime::join)
             });
-            settings.drain().await;
+            settings.close().await;
             match worker.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
@@ -1706,11 +1706,11 @@ mod tests {
             }
             store.save(&initial).unwrap();
             gtk::glib::MainContext::new().block_on(async {
-                let settings = Rc::new(SettingsSession::open(Some(store.clone())));
+                let settings = Rc::new(SettingsSession::open_async(Some(store.clone())).await);
                 let (_controller, wiring) =
                     hostname_wiring(settings.clone(), std::slice::from_ref(&name), &addresses);
                 settle_hostname_probes(&wiring, 2);
-                settings.drain().await;
+                settings.close().await;
                 assert_eq!(
                     store.load().unwrap().unwrap().remembered_targets(),
                     &[RememberedTarget::Hostname(name.clone())]

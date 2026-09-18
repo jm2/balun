@@ -518,6 +518,75 @@ mod tests {
         DeviceId::new(0x105A_1232).unwrap()
     }
 
+    #[test]
+    fn adversarial_lineup_bounds_identity_and_private_json_errors() {
+        use crate::hdhr::test_support::{JSON_SECRET_MARKER, assert_value_free_error};
+        const SEED: &[u8] = include_bytes!("../../tests/fixtures/hdhr/lineup-hdhr4-2us.json");
+        crate::adversarial::run("lineups", |random| {
+            let maximum = 1 + random.index(64);
+            let mutated = random.mutate(SEED, 64 * 1024);
+            if let Ok(lineup) = parse_lineup(&mutated, id(), &endpoint(), maximum) {
+                assert!(lineup.channels().len() <= maximum);
+                let mut keys = BTreeSet::new();
+                for channel in lineup.channels() {
+                    assert!(keys.insert(channel.key.clone()));
+                    assert_eq!(channel.stream_url().host_str(), Some("192.0.2.10"));
+                    assert!(channel.stream_url().query().is_none());
+                    assert!(channel.stream_url().fragment().is_none());
+                }
+            }
+            let count = 1 + random.index(32);
+            let mut rows: Vec<_> = (1..=count)
+                .map(|number| {
+                    serde_json::json!({
+                        "GuideNumber": number.to_string(), "GuideName": format!("Fixture {number}"),
+                        "URL": format!("http://fixture.invalid:5004/auto/v{number}"),
+                        "IgnoredPrivateField": JSON_SECRET_MARKER,
+                    })
+                })
+                .collect();
+            // Permutations must preserve channel identity and canonical ordering.
+            for index in (1..rows.len()).rev() {
+                rows.swap(index, random.index(index + 1));
+            }
+            let body = serde_json::to_vec(&rows).unwrap();
+            let lineup = parse_lineup(&body, id(), &endpoint(), count).unwrap();
+            assert_eq!(lineup.channels().len(), count);
+            assert!(
+                lineup
+                    .channels()
+                    .windows(2)
+                    .all(|pair| pair[0].key < pair[1].key)
+            );
+            assert!(!format!("{lineup:?}").contains(JSON_SECRET_MARKER));
+            assert!(matches!(
+                parse_lineup(&body, id(), &endpoint(), count - 1),
+                Err(LineupError::TooManyChannels { .. })
+            ));
+            rows.push(rows[0].clone());
+            assert!(matches!(
+                parse_lineup(
+                    &serde_json::to_vec(&rows).unwrap(),
+                    id(),
+                    &endpoint(),
+                    count + 1
+                ),
+                Err(LineupError::DuplicateGuideNumber { .. })
+            ));
+            rows.pop();
+            rows[random.index(count)]["DRM"] = JSON_SECRET_MARKER.into();
+            let error = parse_lineup(
+                &serde_json::to_vec(&rows).unwrap(),
+                id(),
+                &endpoint(),
+                count,
+            )
+            .unwrap_err();
+            assert!(matches!(error, LineupError::Json(_)));
+            assert_value_free_error(&error);
+        });
+    }
+
     fn endpoint() -> DeviceEndpoint {
         DeviceEndpoint::from_discovery(
             "192.0.2.10:65001".parse().unwrap(),

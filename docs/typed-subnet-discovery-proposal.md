@@ -1,25 +1,26 @@
-# Typed subnet discovery: proposed contract
+# Typed subnet discovery: approved contract
 
-Status: awaiting maintainer approval for V2.4 and [issue #71]. This document
-does not expand current scan authority. Implementation and completion stay
-on hold until the traffic and consent decisions below are accepted.
+Status: approved by jm2 on 2026-09-18 for V2.4 and [issue #71], selecting
+the `/23` traffic limits (1A) and confirmation before every search (2A).
+Implementation may proceed under this contract. This documentation change
+does not expand current scan behavior or complete V2.4.
 
 The existing CLI accepts one explicitly approved private `/24` or narrower
 range. The Linux route-derived proposal has a 256-candidate ceiling and a
 15-second default deadline. Both remain the current implementation baseline.
 
-## Assessment and proposed traffic limits
+## Assessment and approved traffic limits
 
 A `/23` contains 512 addresses, but the existing `Ipv4Net::hosts()` rule excludes
 its network and broadcast addresses. The correct expanded maximum is therefore
 **510 candidates and 1,020 discovery requests** at two attempts per candidate.
-The issue's 512/1,024 values are upper ceilings, not the actual `/23` preview.
+The network and broadcast exclusions account for the difference.
 For `/31`, both addresses are candidates; a `/32` has one candidate.
 
-The proposed typed-subnet contract is shared by the desktop preview, runner,
+The approved typed-subnet contract must be shared by the desktop preview, runner,
 CLI `--approved-range`, persistence, and tests:
 
-| Property | Proposed boundary |
+| Property | Approved boundary |
 | --- | --- |
 | Scope | One canonical IPv4 CIDR, `/23` through `/32`, wholly inside RFC 1918 space |
 | Candidates | Exact usable-host expansion, at most 510; no network/broadcast destinations for `/30` and wider |
@@ -46,7 +47,7 @@ work; it must never be represented as a completed empty search.
 
 The current runner spaces candidate starts using attempts per target. That is a
 nominal request rate, not an independently enforced wire limit for every retry.
-The new lane must enforce the proposed pacing at the actual send boundary and
+The new lane must enforce the approved pacing at the actual send boundary and
 recheck cancellation, scope, remaining budget, and deadline after readiness and
 before each nonblocking send attempt. A successor cannot inherit an old permit.
 Its pacer must not reset into a burst on repeated explicit searches.
@@ -57,9 +58,9 @@ limits. Do not fetch HTTP metadata for nonresponders or infer a device from a
 successful connection alone. Opening a stream or allocating a tuner is outside
 subnet discovery.
 
-## Consent decision
+## Approved consent decision
 
-The proposed default remembers the typed prefix as a convenience but requires
+The application remembers the typed prefix as a convenience but requires
 confirmation of the exact scope and packet budget for **every** search. There
 are no automatic scans on startup, timers, network changes, or profile loading.
 The CLI's explicit `--approved-range` argument is that invocation's consent;
@@ -71,27 +72,24 @@ that a tunnel terminates on this host or that the addresses identify the same
 physical network as an earlier run. Cancel and incomplete-result status remain
 visible throughout the scan.
 
-Issue #71 originally proposed remembering approval once per prefix. A maintainer
-may instead choose that behavior: persist authorization for this exact canonical
-prefix and policy version, while still requiring an explicit Search action for
-every run. That alternative intentionally carries the approval across restarts
-and changes of the connected network. A policy/budget change or Forget action
-invalidates it. A detected network change still cancels an active scan.
-This broader remembered-authority boundary requires a separate explicit choice;
-remembering the text alone does not grant it.
+Each confirmation authorizes only that search. Remembering approval once per
+prefix, as originally proposed in issue #71, was not selected. A later search
+requires fresh confirmation, including after restarts or network changes.
+A detected network change still cancels an active scan. Forget removes the
+stored prefix preference; remembering or restoring that text grants no authority.
 
-Store only user-entered prefix preferences and, if approved, the exact bounded
-authorization in the accepted private profile. Use a separate typed-scope policy
+Store only user-entered prefix preferences in the accepted private profile;
+do not persist typed-subnet authorization. Use a separate typed-scope policy
 identity so neither route-derived nor exact-address approvals can authorize it.
 Unknown/newer state remains preserved and grants no new authority. Persistence
-failure must not silently create remembered approval.
+failure must not bypass confirmation for the current or a later search.
 
 ## Integration and acceptance
 
 Keep Linux route-derived admission at its current limits and retain interface
 pinning, topology fingerprints, durable reservation ownership, and the H0.1
 post-readiness checks. Increasing a shared global constant would weaken that
-separate contract and is not the proposed implementation.
+separate contract and is not permitted by this approval.
 
 The ordinary cross-platform socket path is appropriate only for the explicit
 typed range. Results retain their typed-search origin, and the registry's device
@@ -115,8 +113,8 @@ Required evidence before V2.4 can be completed:
 - Exercise preview, confirmation, progress, Cancel, Forget, and error focus with
   keyboard and translated accessibility copy as the UI integration lands.
 
-Approval of this proposal permits implementation, not a completion checkbox.
-The maintainer owns the scope and remembered-authority decision; revisit the
-contract before beta or any increase in scope, rate, retries, or automatic work.
+This approval permits implementation, not a completion checkbox. The maintainer,
+jm2, owns the scope and per-search consent decision; revisit the contract before
+beta or any increase in scope, rate, retries, or automatic work.
 
 [issue #71]: https://github.com/jm2/balun/issues/71

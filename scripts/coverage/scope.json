@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "rust": {
+    "src/discovery/client.rs": "admission",
+    "src/discovery/manual.rs": "admission",
+    "src/discovery/routes.rs": "admission",
+    "src/discovery/approval.rs": "admission",
+    "src/discovery/approval/store.rs": "admission",
+    "src/discovery/routed/linux.rs": "admission",
+    "src/discovery/hostname/resolver.rs": "cancellation",
+    "src/controller/runtime.rs": "cancellation",
+    "src/playback/source_policy.rs": "cancellation",
+    "src/playback/transport.rs": "cancellation",
+    "src/discovery/registry.rs": "identity",
+    "src/domain/device.rs": "identity",
+    "src/hdhr/protocol.rs": "identity",
+    "src/hdhr/http.rs": "identity",
+    "src/hdhr/lineup.rs": "identity",
+    "src/hdhr/json_error.rs": "privacy",
+    "src/logging.rs": "privacy",
+    "src/playback/pipeline_failure.rs": "privacy",
+    "src/settings/mod.rs": "admission",
+    "src/settings/store.rs": "admission",
+    "src/ui/settings_session.rs": "cancellation",
+    "src/ui/settings_session/worker.rs": "cancellation"
+  },
+  "rust_excluded_names": [
+    "::(?:tests|test_support|lifecycle_tests|timing_tests)::",
+    "::(?:accepted_factory_name|at_startup_stage|into_test_persisted_parts|debug_redaction_fixture|stream_handoff_test_fixture|with_lookup)(?:$|::)"
+  ],
+  "python": [
+    "scripts/macos_native_closure.py"
+  ],
+  "powershell": {
+    "scripts/build-windows.ps1": [
+      "Read-WindowsComponentPolicySnapshot",
+      "ConvertFrom-WindowsComponentPolicyText",
+      "Import-ForbiddenBundledComponentPolicy",
+      "Test-ForbiddenBundledComponentName",
+      "Get-WindowsProbeSha256",
+      "Get-WindowsProbeTreeDigest",
+      "Get-WindowsProbeReceiptLines",
+      "Assert-WindowsProbeReceiptLines",
+      "Write-WindowsProbeReceipt",
+      "Assert-WindowsProbeReceipt",
+      "Assert-WindowsBundleRootIsNotReparsePoint",
+      "Get-PeMachine",
+      "Assert-PeMachine",
+      "Invoke-BoundedInspector",
+      "Stop-BoundedProcessTree"
+    ],
+    "scripts/windows-installer-policy.ps1": [
+      "Get-ValidatedInnoInspector",
+      "ConvertTo-InnoPayloadPath",
+      "ConvertFrom-InnoPayloadListing",
+      "Assert-InnoPayloadManifest",
+      "Assert-WindowsInstallerPayload",
+      "Invoke-InnoPayloadInspector"
+    ]
+  }
+}

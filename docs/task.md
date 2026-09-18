@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **38/58 (65.5%)** records complete: historical P0–P4 **29/30**,
-hardening and assurance H0–H4 **9/21**, and roadmap V2 **0/7**. This is a
+Current status: **42/58 (72.4%)** records complete: historical P0–P4 **29/30**,
+hardening and assurance H0–H4 **13/21**, and roadmap V2 **0/7**. This is a
 dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
@@ -130,9 +130,9 @@ and paused. Independent correctness and package-inspection fixes may continue.
   value echoes with safe categories across metadata, lineup, inspection, and
   CLI errors; prove secret-shaped markers cannot reach diagnostic output.
 
-- [ ] **H3.2 — Define and enforce settings file trust.** Specify parent-path,
-  no-follow, replacement, permission, and newer-schema guarantees; test them
-  under concurrent replacement and slow I/O on each supported platform.
+- [x] **H3.2 — Define and enforce settings file trust.** Enforce the accepted
+  [private-profile boundary](settings-file-trust.md) with pinned transactions,
+  schema preservation, forced replacement tests, and two-second load/close waits.
 
 - [x] **H3.3 — Disposition the older low findings.** Pacing/jitter, CLI admission,
   and schema fixes are [recorded](discovery-low-findings-2026-09.md), together with
@@ -142,19 +142,19 @@ and paused. Independent correctness and package-inspection fixes may continue.
   consolidate current guarantees, threat boundaries, exceptions, and test links
   at one commit; reconcile stale security, playback, release, and support prose.
 
-- [ ] **H3.5 — Decide the native media failure boundary.** Document decoder
-  trust, synchronous native-call and useful-media progress limits; use isolated
-  stall fixtures to choose enforced recovery or explicit bounded claims.
+- [x] **H3.5 — Decide the native media failure boundary.** The maintainer accepted
+  [in-process native-call and media-progress limits](native-media-failure-boundary.md);
+  isolated stall tests, reconciled claims, and owned pre-beta/hang review preserve that boundary.
 
 ## H4 — Beta regression and acceptance coverage
 
-- [ ] **H4.1 — Add sustained adversarial regression testing.** Seed fuzz and
-  property suites for packets, JSON/URLs, route/approval transitions, and
-  package manifests; run bounded CI smoke and scheduled extended corpora.
+- [x] **H4.1 — Add sustained adversarial regression testing.** Replayable mutation
+  and property suites cover packets, JSON/URLs, route/approval transitions, and
+  package manifests in bounded PR and [scheduled corpora](adversarial-regressions.md).
 
-- [ ] **H4.2 — Measure critical-path test coverage.** Establish a coverage
-  baseline for admission, cancellation, identity, privacy, and package gates;
-  ratchet meaningful missing branches without treating percentages as proof.
+- [x] **H4.2 — Measure critical-path test coverage.** Separate Rust, Python, and
+  PowerShell [baselines and CI ratchets](critical-coverage.md) cover admission,
+  cancellation, identity, privacy, and package gates; native gaps remain explicit.
 
 - [ ] **H4.3 — Validate packaged accessibility.** Record keyboard and screen
   reader behavior, dynamic status, focus recovery, high contrast, and large
@@ -175,8 +175,8 @@ and paused. Independent correctness and package-inspection fixes may continue.
   speculative extra-tuner allocation requires a separate approved design.
 
 - [ ] **V2.4 — Add explicitly approved subnet discovery ([#71]).** After
-  H0.1, approve the [candidate/datagram/deadline proposal](typed-subnet-discovery-proposal.md) before
-  implementation; preserve explicit consent and cross-platform cancellation.
+  H0.1, implement the [approved traffic and consent contract](typed-subnet-discovery-proposal.md);
+  confirm every search and preserve cross-platform cancellation.
 
 - [ ] **V2.5 — Complete deinterlacing quality evidence ([#78]).** Retain the
   implemented YADIF policy and diagnostics; measure mixed fields and CPU use,
