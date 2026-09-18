@@ -22,7 +22,9 @@ class HomebrewMetadataTests(unittest.TestCase):
     def setUp(self):
         self.work = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR") or "/var/tmp")
         self.addCleanup(self.work.cleanup)
-        self.root = Path(self.work.name)
+        # macOS's temporary root can pass through /var -> /private/var.
+        # The collector deliberately queries canonical installed recipe paths.
+        self.root = Path(self.work.name).resolve(strict=True)
         self.cellar = self.root / "Cellar"
         self.keg = self.cellar / "fixture" / "1.2.3_2"
         self.recipe = self.keg / ".brew" / "fixture.rb"
