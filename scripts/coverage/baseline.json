@@ -254,10 +254,10 @@
       "percent": 95.6
     },
     "rust-regions:src/settings/store.rs": {
-      "covered": 531,
-      "total": 688,
+      "covered": 533,
+      "total": 690,
       "uncovered": 157,
-      "percent": 77.18
+      "percent": 77.25
     },
     "rust-regions:src/ui/settings_session.rs": {
       "covered": 106,
