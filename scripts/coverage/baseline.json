@@ -1,0 +1,255 @@
+{
+  "schema": 1,
+  "metrics": {
+    "rust-regions:src/discovery/client.rs": {
+      "covered": 485,
+      "total": 608,
+      "uncovered": 123,
+      "percent": 79.77
+    },
+    "rust-regions:src/discovery/manual.rs": {
+      "covered": 169,
+      "total": 173,
+      "uncovered": 4,
+      "percent": 97.69
+    },
+    "rust-regions:src/discovery/routes.rs": {
+      "covered": 345,
+      "total": 358,
+      "uncovered": 13,
+      "percent": 96.37
+    },
+    "rust-regions:src/discovery/approval.rs": {
+      "covered": 691,
+      "total": 759,
+      "uncovered": 68,
+      "percent": 91.04
+    },
+    "rust-regions:src/discovery/approval/store.rs": {
+      "covered": 1295,
+      "total": 1557,
+      "uncovered": 262,
+      "percent": 83.17
+    },
+    "rust-regions:src/discovery/routed/linux.rs": {
+      "covered": 186,
+      "total": 223,
+      "uncovered": 37,
+      "percent": 83.41
+    },
+    "rust-regions:src/discovery/hostname/resolver.rs": {
+      "covered": 49,
+      "total": 53,
+      "uncovered": 4,
+      "percent": 92.45
+    },
+    "rust-regions:src/controller/runtime.rs": {
+      "covered": 1974,
+      "total": 2219,
+      "uncovered": 245,
+      "percent": 88.96
+    },
+    "rust-regions:src/playback/source_policy.rs": {
+      "covered": 402,
+      "total": 440,
+      "uncovered": 38,
+      "percent": 91.36
+    },
+    "rust-regions:src/playback/transport.rs": {
+      "covered": 397,
+      "total": 420,
+      "uncovered": 23,
+      "percent": 94.52
+    },
+    "rust-regions:src/discovery/registry.rs": {
+      "covered": 439,
+      "total": 462,
+      "uncovered": 23,
+      "percent": 95.02
+    },
+    "rust-regions:src/domain/device.rs": {
+      "covered": 22,
+      "total": 26,
+      "uncovered": 4,
+      "percent": 84.62
+    },
+    "rust-regions:src/hdhr/protocol.rs": {
+      "covered": 350,
+      "total": 362,
+      "uncovered": 12,
+      "percent": 96.69
+    },
+    "rust-regions:src/hdhr/http.rs": {
+      "covered": 491,
+      "total": 578,
+      "uncovered": 87,
+      "percent": 84.95
+    },
+    "rust-regions:src/hdhr/lineup.rs": {
+      "covered": 292,
+      "total": 314,
+      "uncovered": 22,
+      "percent": 92.99
+    },
+    "rust-regions:src/hdhr/json_error.rs": {
+      "covered": 30,
+      "total": 30,
+      "uncovered": 0,
+      "percent": 100.0
+    },
+    "rust-regions:src/logging.rs": {
+      "covered": 11,
+      "total": 11,
+      "uncovered": 0,
+      "percent": 100.0
+    },
+    "rust-regions:src/playback/pipeline_failure.rs": {
+      "covered": 199,
+      "total": 450,
+      "uncovered": 251,
+      "percent": 44.22
+    },
+    "python-lines:scripts/macos_native_closure.py": {
+      "covered": 202,
+      "total": 205,
+      "uncovered": 3,
+      "percent": 98.54
+    },
+    "python-branches:scripts/macos_native_closure.py": {
+      "covered": 54,
+      "total": 58,
+      "uncovered": 4,
+      "percent": 93.1
+    },
+    "powershell-lines:scripts/build-windows.ps1:Read-WindowsComponentPolicySnapshot": {
+      "covered": 15,
+      "total": 18,
+      "uncovered": 3,
+      "percent": 83.33
+    },
+    "powershell-lines:scripts/build-windows.ps1:ConvertFrom-WindowsComponentPolicyText": {
+      "covered": 20,
+      "total": 20,
+      "uncovered": 0,
+      "percent": 100.0
+    },
+    "powershell-lines:scripts/build-windows.ps1:Import-ForbiddenBundledComponentPolicy": {
+      "covered": 12,
+      "total": 13,
+      "uncovered": 1,
+      "percent": 92.31
+    },
+    "powershell-lines:scripts/build-windows.ps1:Test-ForbiddenBundledComponentName": {
+      "covered": 6,
+      "total": 6,
+      "uncovered": 0,
+      "percent": 100.0
+    },
+    "powershell-lines:scripts/build-windows.ps1:Get-WindowsProbeSha256": {
+      "covered": 22,
+      "total": 28,
+      "uncovered": 6,
+      "percent": 78.57
+    },
+    "powershell-lines:scripts/build-windows.ps1:Get-WindowsProbeTreeDigest": {
+      "covered": 52,
+      "total": 57,
+      "uncovered": 5,
+      "percent": 91.23
+    },
+    "powershell-lines:scripts/build-windows.ps1:Get-WindowsProbeReceiptLines": {
+      "covered": 11,
+      "total": 11,
+      "uncovered": 0,
+      "percent": 100.0
+    },
+    "powershell-lines:scripts/build-windows.ps1:Assert-WindowsProbeReceiptLines": {
+      "covered": 4,
+      "total": 5,
+      "uncovered": 1,
+      "percent": 80.0
+    },
+    "powershell-lines:scripts/build-windows.ps1:Write-WindowsProbeReceipt": {
+      "covered": 7,
+      "total": 7,
+      "uncovered": 0,
+      "percent": 100.0
+    },
+    "powershell-lines:scripts/build-windows.ps1:Assert-WindowsProbeReceipt": {
+      "covered": 20,
+      "total": 21,
+      "uncovered": 1,
+      "percent": 95.24
+    },
+    "powershell-lines:scripts/windows-installer-policy.ps1:Get-ValidatedInnoInspector": {
+      "covered": 12,
+      "total": 12,
+      "uncovered": 0,
+      "percent": 100.0
+    },
+    "powershell-lines:scripts/windows-installer-policy.ps1:ConvertTo-InnoPayloadPath": {
+      "covered": 10,
+      "total": 10,
+      "uncovered": 0,
+      "percent": 100.0
+    },
+    "powershell-lines:scripts/windows-installer-policy.ps1:ConvertFrom-InnoPayloadListing": {
+      "covered": 44,
+      "total": 45,
+      "uncovered": 1,
+      "percent": 97.78
+    },
+    "powershell-lines:scripts/windows-installer-policy.ps1:Assert-InnoPayloadManifest": {
+      "covered": 4,
+      "total": 4,
+      "uncovered": 0,
+      "percent": 100.0
+    },
+    "powershell-lines:scripts/windows-installer-policy.ps1:Assert-WindowsInstallerPayload": {
+      "covered": 31,
+      "total": 33,
+      "uncovered": 2,
+      "percent": 93.94
+    },
+    "powershell-lines:scripts/build-windows.ps1:Assert-WindowsBundleRootIsNotReparsePoint": {
+      "covered": 2,
+      "total": 3,
+      "uncovered": 1,
+      "percent": 66.67
+    },
+    "powershell-lines:scripts/build-windows.ps1:Get-PeMachine": {
+      "covered": 14,
+      "total": 18,
+      "uncovered": 4,
+      "percent": 77.78
+    },
+    "powershell-lines:scripts/build-windows.ps1:Assert-PeMachine": {
+      "covered": 5,
+      "total": 5,
+      "uncovered": 0,
+      "percent": 100.0
+    },
+    "powershell-lines:scripts/build-windows.ps1:Invoke-BoundedInspector": {
+      "covered": 37,
+      "total": 54,
+      "uncovered": 17,
+      "percent": 68.52
+    },
+    "powershell-lines:scripts/build-windows.ps1:Stop-BoundedProcessTree": {
+      "covered": 13,
+      "total": 41,
+      "uncovered": 28,
+      "percent": 31.71
+    },
+    "powershell-lines:scripts/windows-installer-policy.ps1:Invoke-InnoPayloadInspector": {
+      "covered": 7,
+      "total": 11,
+      "uncovered": 4,
+      "percent": 63.64
+    }
+  },
+  "compiler": "rustc 1.98.0 / LLVM 22.1.8",
+  "python_coverage": "7.16.1",
+  "pester": "6.2.0",
+  "scope": "Linux desktop tests and portable package gate suites"
+}

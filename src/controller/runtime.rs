@@ -2763,6 +2763,26 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn disconnected_network_source_cannot_starve_command_channel_shutdown() {
+        struct ClosedChangeSource;
+        impl NetworkChangeSource for ClosedChangeSource {
+            fn subscribe(&self) -> Option<mpsc::Receiver<NetworkChange>> {
+                let (sender, receiver) = mpsc::channel(1);
+                drop(sender);
+                Some(receiver)
+            }
+        }
+        let mut actor = test_actor();
+        actor.network_source = Arc::new(ClosedChangeSource);
+        // Both receivers are already closed. Network events have priority, so
+        // the actor must retire that source before it can observe command EOF.
+        tokio::time::timeout(Duration::from_secs(1), actor.run())
+            .await
+            .expect("a closed change source must not spin or starve shutdown")
+            .unwrap();
+    }
+
     fn ready_stream_actor(
         protected: bool,
         selected_source: &str,
