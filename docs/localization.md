@@ -41,8 +41,9 @@ Selection uses the first OS preference returned by `sys-locale`, normalizes
 underscores and ASCII case, and removes POSIX encoding/modifier suffixes. It
 prefers an exact catalog, maps `zh-Hans[-…]` to `zh-CN` and `zh-Hant[-…]` to
 `zh-TW`, then tries a shipped base language. For example, `de_DE.UTF-8` selects
-`de`; `fr-CA` selects `fr`. Unsupported, missing, malformed, or overlong locale
-identifiers quietly select English. Regional-only catalogs do not imply support
+`de`; `fr-CA` selects `fr`. Unsupported, missing, or overlong identifiers and
+identifiers with empty or non-alphanumeric components quietly select English.
+Regional-only catalogs do not imply support
 for their whole language: `pt-PT` and bare `zh` currently select English.
 
 On Linux, `sys-locale` checks `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, then `LANG`.
