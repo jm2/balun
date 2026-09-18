@@ -585,6 +585,14 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test --lib --locked
 
+      - name: Test desktop and isolated native-failure boundaries on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+          TMPDIR: ${{ runner.temp }}
+        run: ./scripts/build-windows.ps1 -Test
+
       - name: Build and inspect macOS diagnostic through helper
         if: runner.os == 'macOS'
         run: /bin/bash scripts/build-macos.sh --diagnostic

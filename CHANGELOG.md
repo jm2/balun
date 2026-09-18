@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Isolated native-call stall regressions document the limits of playback teardown
+  timeouts; Windows CI now executes the desktop tests as well as compiling them.
 - Native inventory tooling independently hashes reopened package trees and completed
   artifacts, validates exact native membership/content against component metadata, and
   emits a native-scope CycloneDX SBOM. Platform ownership collection and release attachment
@@ -21,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
+
+### Changed
+
+- Playback and shutdown claims now reflect the accepted in-process native boundary:
+  native hangs can block the UI or close before timed waits, and network bytes do not
+  establish useful-media progress. Review is owned before beta and after a reproduced hang.
 
 ### Fixed
 
