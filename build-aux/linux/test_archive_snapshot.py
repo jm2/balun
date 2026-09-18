@@ -122,6 +122,23 @@ class SnapshotTests(unittest.TestCase):
         self.assertTrue(self.output.is_symlink())
         self.assertEqual(self.source.read_bytes(), b"original archive bytes")
 
+    def test_close_errors_still_remove_the_copy_and_close_the_other_descriptor(self):
+        for fail_on in (1, 2):
+            with self.subTest(fail_on=fail_on):
+                close = os.close
+                closed = []
+
+                def close_then_fail(fd):
+                    close(fd)
+                    closed.append(fd)
+                    if len(closed) == fail_on:
+                        raise OSError("close failed")
+
+                with mock.patch.object(snapshot.os, "close", side_effect=close_then_fail):
+                    self.rejected()
+                self.assertEqual(len(closed), 2)
+                self.assertNotEqual(closed[0], closed[1])
+
     def test_cli_failure_is_fixed_and_leaves_no_output(self):
         self.source.unlink()
         result = subprocess.run([sys.executable, "-B", str(Path(snapshot.__file__)),

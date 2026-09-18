@@ -71,24 +71,34 @@ def copy_snapshot(source, destination, *, limit=MAX_ARCHIVE_BYTES, seconds=COPY_
         if (total != before.st_size or signature(os.fstat(source_fd)) != signature(before)
                 or signature(source.lstat()) != signature(before)):
             raise SnapshotError("archive changed during snapshot")
-        os.close(output_fd)
+        closing_fd = output_fd
         output_fd = None
+        os.close(closing_fd)
+        closing_fd = source_fd
+        source_fd = None
+        os.close(closing_fd)
         if time.monotonic() > deadline:
             raise SnapshotError("snapshot copy deadline exceeded")
         completed = True
     finally:
-        if output_fd is not None:
-            os.close(output_fd)
-        os.close(source_fd)
-        if output_identity is not None and not completed:
-            # Do not delete another file if the caller violated the private,
-            # serialized destination-directory contract during the copy.
+        try:
+            if output_fd is not None:
+                os.close(output_fd)
+        finally:
             try:
-                current = destination.lstat()
-                if (current.st_dev, current.st_ino) == (output_identity.st_dev, output_identity.st_ino):
-                    destination.unlink()
-            except FileNotFoundError:
-                pass
+                if source_fd is not None:
+                    os.close(source_fd)
+            finally:
+                if output_identity is not None and not completed:
+                    # Do not delete another file if the caller violated the
+                    # private, serialized destination-directory contract.
+                    try:
+                        current = destination.lstat()
+                        if ((current.st_dev, current.st_ino) ==
+                                (output_identity.st_dev, output_identity.st_ino)):
+                            destination.unlink()
+                    except FileNotFoundError:
+                        pass
 
 
 def main():
