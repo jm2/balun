@@ -35,7 +35,7 @@ address so you know which tuner failed.
 | Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Linux, macOS, and Windows against real tuners |
 | Native media failure boundary | ⚠️ In-process native hangs can block the UI/close path; network bytes do not guarantee useful media. [Accepted limits and review triggers](docs/native-media-failure-boundary.md) |
 | Stop, volume, mute, and fullscreen controls | ✅ Stop and switching account for overlapping startup and partial worker creation before completing teardown |
-| Software deinterlacing | ✅ Adaptive YADIF, automatic field order, full field rate; progressive video passes through |
+| Software deinterlacing | ✅ Adaptive YADIF, automatic field order, full field rate; [mixed-stream transition cadence remains under investigation](docs/deinterlace-evidence.md) |
 | Keep the display and computer awake during playback | ✅ While playing or buffering, where the desktop permits inhibition |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
 | Playback errors that name the device and channel | ✅ |
