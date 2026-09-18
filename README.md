@@ -56,6 +56,7 @@ address so you know which tuner failed.
 | Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
 | Native playback log privacy | ✅ Closed error and media labels retain useful diagnostics without plugin error text, arbitrary caps values, or stream identifiers |
 | Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved |
+| Native runtime inventory tooling | 🛠️ Independent final-tree hashing, exact membership/content validation, and native-scope SBOM generation; [platform collection and release attachment remain pending](docs/native-inventory.md) |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
