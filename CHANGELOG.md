@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bounded per-generation startup timing records separate predecessor retirement,
+  handoff validation, graph setup, and received stream/PLAYING notifications.
+  Decoded/rendered media timings and useful-media deadlines remain pending.
 - Isolated native-call stall regressions document the limits of playback teardown
   timeouts; Windows CI now executes the desktop tests as well as compiling them.
 - Native inventory tooling independently hashes reopened package trees and completed

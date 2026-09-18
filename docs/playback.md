@@ -35,6 +35,11 @@ this correction does not claim process isolation or new hardware timings.
 
 ## Current status
 
+Per-generation [startup timings](tune-timing.md) now separate predecessor
+retirement, handoff validation, graph setup, and main-context stream/PLAYING
+notifications. These bounded debug records do not yet measure usable media or
+establish its deadline; V2.1 and packaged timing acceptance remain open.
+
 Balun has an optional, GTK-free GStreamer initialization and capability layer.
 The desktop owns that layer on the default GLib main context and can report
 whether the structural factories needed for the first playback experiment are
