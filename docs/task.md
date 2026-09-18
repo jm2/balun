@@ -175,8 +175,8 @@ and paused. Independent correctness and package-inspection fixes may continue.
   speculative extra-tuner allocation requires a separate approved design.
 
 - [ ] **V2.4 — Add explicitly approved subnet discovery ([#71]).** After
-  H0.1, settle the [delivery boundary](typed-subnet-discovery-proposal.md#delivery-boundary-decision-pending),
-  then implement the approved scope, per-search consent, and cross-platform cancellation.
+  H0.1, implement the [approved traffic, consent, and delivery contract](typed-subnet-discovery-proposal.md);
+  confirm every search and preserve cross-platform cancellation.
 
 - [ ] **V2.5 — Complete deinterlacing quality evidence ([#78]).** Retain the
   implemented YADIF policy and diagnostics; measure mixed fields and CPU use,

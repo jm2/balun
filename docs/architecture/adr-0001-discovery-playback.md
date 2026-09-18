@@ -73,8 +73,12 @@ most 510 candidates, two requests per candidate, 1,020 requests total,
 The linked contract defines the shared policy and remaining bounds.
 Persist only the entered prefix; each search requires fresh confirmation of
 its scope and request budget. There are no automatic typed-subnet scans, and
-network changes cancel active searches. Scan implementation is held for the
-contract's [delivery-boundary decision](../typed-subnet-discovery-proposal.md#delivery-boundary-decision-pending).
+network changes cancel active searches. The maintainer also accepted the
+[outbound-request boundary](../typed-subnet-discovery-proposal.md#approved-delivery-boundary):
+socket broadcast stays disabled, and the supported deployment requires downstream
+routers to block directed broadcasts. Balun cannot verify that remote setting
+or guarantee single-host delivery if it is changed. This contract permits
+implementation, with the maintainer owning review before beta.
 V2.4 stays open until its implementation and acceptance evidence land.
 
 ### Playback

@@ -2,10 +2,9 @@
 
 Status: approved by jm2 on 2026-09-18 for V2.4 and [issue #71], selecting
 the `/23` traffic limits (1A) and confirmation before every search (2A).
-Those decisions remain approved. Scan implementation and merging this policy
-are held for the [delivery-boundary decision](#delivery-boundary-decision-pending)
-below. This documentation change does not expand current scan behavior or
-complete V2.4.
+The maintainer also accepted the [outbound-request boundary](#approved-delivery-boundary)
+(option A) on 2026-09-18. Implementation may proceed under this contract.
+This documentation change does not expand current scan behavior or complete V2.4.
 
 The [authoritative plan](plan-v0.1.md#5-discovery-policy) and
 [ADR-0001 amendment](architecture/adr-0001-discovery-playback.md#typed-subnet-amendment--2026-09-18)
@@ -31,9 +30,9 @@ CLI `--approved-range`, persistence, and tests:
 | --- | --- |
 | Scope | One canonical IPv4 CIDR, `/23` through `/32`, wholly inside RFC 1918 space |
 | Candidates | Exact usable-host expansion, at most 510; exclude the entered CIDR's network/broadcast endpoints for `/30` and wider |
-| Requests | At most two targeted HDHomeRun UDP discovery requests per candidate, to the fixed discovery port |
-| Request budget | Exact candidate count times two, at most 1,020; retries consume this same budget |
-| Wire pacing | At least 15.625 ms between request attempts, including retries; nonnegative jitter may add at most 25% |
+| Requests | At most two outbound HDHomeRun UDP discovery requests per candidate, to the fixed discovery port |
+| Request budget | Exact candidate count times two, at most 1,020 outbound attempts; retries consume this same budget |
+| Outbound pacing | At least 15.625 ms between request attempts, including retries; nonnegative jitter may add at most 25% |
 | Concurrency | At most 16 targeted probes in flight; one typed or route-derived subnet scan per application process |
 | Reply window | At most 200 ms per request attempt |
 | Receive budget | At most 16 received datagrams and one accepted device identity per candidate |
@@ -65,7 +64,7 @@ limits. Do not fetch HTTP metadata for nonresponders or infer a device from a
 successful connection alone. Opening a stream or allocating a tuner is outside
 subnet discovery.
 
-## Delivery-boundary decision pending
+## Approved delivery boundary
 
 Review identified a distinction between an address inside the entered CIDR
 and a unicast destination under the actual downstream subnetting. An interior
@@ -76,25 +75,21 @@ how another router will deliver every remaining address.
 receipt and forwarding to be disabled by default, but allows operators to enable
 them. Balun cannot infer that configuration from the typed prefix.
 
-The maintainer must choose the delivery boundary before scan implementation:
+On 2026-09-18, jm2 accepted **option A: bound application requests and trust
+downstream broadcast blocking**. Keep the approved scope and numeric limits,
+with the request budget explicitly counting Balun's outbound attempts. Keep
+socket broadcast disabled and reject destinations the local OS classifies as
+broadcasts; never retry a denied send with broadcast enabled.
 
-- **A — Bound application requests and trust downstream broadcast blocking
-  (proposed).** Keep the approved scope and numeric limits, with the request
-  budget explicitly counting Balun's outbound attempts. Keep socket broadcast
-  disabled and reject destinations the local OS classifies as broadcasts; never
-  retry a denied send with broadcast enabled. The supported deployment requires
-  downstream routers to keep directed-broadcast forwarding disabled. Balun
-  cannot verify that remote setting and cannot promise single-host delivery if
-  a router is configured otherwise. The preview must describe an outbound
-  request budget, not a bound on downstream deliveries or recipients.
-- **B — Require a verified single-host delivery guarantee.** Keep scan
-  implementation held until a separate design can establish the necessary
-  downstream subnet and forwarding information. Reducing the entered maximum
-  to `/24` alone does not solve unknown narrower downstream subnetting.
+The supported deployment requires downstream routers to keep directed-broadcast
+forwarding disabled. Balun cannot verify that remote setting and cannot promise
+single-host delivery if a router is configured otherwise. The preview must
+describe an outbound request budget, not a bound on downstream deliveries or
+recipients. The same limit applies to CLI and desktop searches.
 
-Neither option is selected by the existing 1A/2A approval. Policy owner: jm2;
-revisit before beta, changes to routing assumptions, or evidence of unexpected
-broadcast delivery. Both retain the accepted per-search confirmation rule.
+Policy owner: jm2. Revisit before beta, changes to routing assumptions, or
+evidence of unexpected broadcast delivery. Per-search confirmation remains
+required; this disposition grants no automatic or remembered scan authority.
 
 ## Approved consent decision
 
@@ -139,20 +134,22 @@ Required evidence before V2.4 can be completed:
 - One policy value drives `/23`, `/24`, `/31`, and `/32` preview, CLI, requests,
   result accounting, consent identity, and persistence. Reject boundary-crossing,
   noncanonical, oversized, and nonprivate input before side effects.
-- Deterministic scheduler/send fixtures prove exact wire budgets, retry pacing,
+- Deterministic scheduler/send fixtures prove exact outbound budgets, retry pacing,
   jitter bounds, the 16-probe cap, deadline expiry, result limits, and cancellation
   after readiness. Partial results never become a completed empty run.
 - Repeated activation, stale completion, revocation, close, policy changes,
   unavailable persistence, and network changes cannot authorize extra sends or
   leave unjoined workers. Repeated searches share the same pacing boundary.
 - Run the native socket/cancellation fixtures on Linux, macOS, and Windows.
+  Prove that socket broadcast stays disabled and OS-classified broadcast sends
+  are rejected without retrying with broader socket permissions.
   Test fixtures use the already accepted library loopback boundary; shipped
   input validation continues to reject loopback scopes.
 - Exercise preview, confirmation, progress, Cancel, Forget, and error focus with
   keyboard and translated accessibility copy as the UI integration lands.
 
-The scope and consent approval does not complete V2.4. The maintainer, jm2,
-owns those decisions and the pending delivery-boundary disposition; revisit the
-contract before beta or any increase in scope, rate, retries, or automatic work.
+This approval permits implementation, not a completion checkbox. The maintainer,
+jm2, owns the scope, consent, and delivery-boundary decisions; revisit the contract
+before beta or any increase in scope, rate, retries, or automatic work.
 
 [issue #71]: https://github.com/jm2/balun/issues/71
