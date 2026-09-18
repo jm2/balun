@@ -2,9 +2,11 @@
 
 H1.3 requires an inventory tied to the final artifact's actual native members.
 `scripts/inventory/native_inventory.py` implements the portable join and report
-format. Platform collection, final-artifact integration, and release attachment
-are still pending. H1.3 and issue #91 remain open; existing release assets do
-not yet carry this inventory or SBOM.
+format. `observe_native.py` independently hashes the native members of an
+already reopened, validated package tree and its completed artifact. Package
+ownership collection, final-artifact integration, and release attachment remain
+pending. H1.3 and issue #91 remain open; existing release assets do not yet carry
+this inventory or SBOM.
 
 ## Input boundary
 
@@ -80,6 +82,57 @@ the [official CycloneDX 1.6 schema](https://github.com/CycloneDX/specification/b
 No signing, source-authentication policy, builder attestation, or provenance
 statement is generated. H2.1/H2.3 remain paused by maintainer direction.
 
+## Independent observation
+
+The observer consumes a completed artifact file and the payload tree reopened
+by the existing trusted packaging gate. It does not extract an archive or prove
+that an arbitrary supplied tree came from an arbitrary supplied artifact. That
+relationship remains the platform adapter's responsibility. Neither input may
+be actively changed during collection. Existing workspace ancestors are trusted;
+this is not H2.4's containment boundary for hostile archives or local writers.
+
+```bash
+python3 -B scripts/inventory/observe_native.py \
+  --tree reopened/Balun.app --artifact dist/Balun.dmg \
+  --platform macos-aarch64 --version 0.1.1 > observed-native.json
+python3 -B scripts/inventory/test_observe_native.py
+```
+
+The observer examines every ordinary file, including hidden members and
+extensionless helpers. ELF, PE/DOS and Mach-O header prefixes identify candidate
+native members; their structure, architecture, and dependency closure must have
+passed the existing native package gates first. This classifier is not a second
+executable-format validator. A named DLL, executable, dylib or shared object
+without a recognized prefix fails. Script launchers and ordinary resources are
+outside this native-runtime inventory.
+
+The observer refuses member aliases, reparse points, hard links, special files,
+nonportable or case-colliding names, identity changes at open, and observed
+content or membership changes before completion. Opened identities are checked
+before reading, after hashing, and against their names; a final complete tree
+scan checks directory identities and membership too. It writes a report only
+after all observations succeed. CLI rejection text contains no input paths or
+file content.
+
+On Windows, named and open-handle snapshots compare birth time and ignore only
+the synthetic regular-file execute bits that CPython derives from a filename.
+Path `stat` and `fstat` can otherwise disagree for the same unchanged file.
+Device/file identity, type, link count, size, modification time, and file
+attributes still match exactly. Open-handle change time must also remain stable
+across hashing; Unix mode and change-time comparisons remain exact.
+
+Limits are 65,536 files/directories, 64 directory levels, 1 GiB per member,
+4 GiB of native content, 4 GiB for the artifact, and 16 MiB of report JSON.
+Five-minute elapsed-time checks run during traversal and chunked hashing. They
+cannot interrupt a blocked OS operation; the invoking native job must retain
+its process-level timeout. The artifact must be outside its reopened payload.
+
+Fixtures cover all classifier prefixes, extensionless helpers, exact hashes,
+independent catalog joins, changed/unknown final members, alias/special-file
+refusal, substitution before open, changes during observation, resource budgets,
+and fixed CLI rejection without a partial report. CI runs these on Linux,
+macOS, and both Windows architectures, including a native Windows junction.
+
 ## Evidence and remaining integration
 
 Synthetic fixtures exercise exact membership, changed payloads, missing and
@@ -90,8 +143,8 @@ changed rebuild payload whose catalog was not refreshed. This is an inventory
 query regression, not H1.4's approved advisory response or rebuild exercise.
 
 Remaining H1.3 work must establish real package ownership and source/license
-records on macOS and both Windows architectures, emit observations from the
-validated final app/installer/archive, describe externally managed Linux and
+records on macOS and both Windows architectures, invoke the observer from the
+validated final app/installer/archive adapters, describe externally managed Linux and
 Flatpak runtimes, attach reports to every release artifact, and exercise
 unknown/changed native members in native CI. Only that integrated result can
 complete the ledger outcome.
