@@ -37,6 +37,9 @@ unreachable tuner reported only "Device or stream unavailable".
    the existing approval store, observers, and sealed socket are connected to
    a monitored runner with approval and progress UX. macOS and Windows keep
    fail-closed providers and use exact or hostname targets.
+   The [2026-09-18 typed-subnet amendment](adr-0001-discovery-playback.md#typed-subnet-amendment--2026-09-18)
+   separately permits V2.4 implementation across all three platforms with fresh
+   consent before every search; it does not change route-derived provider policy.
 4. **Errors and diagnostics may name the device.** Failure copy, the
    `balun-discover` output, and logs may include a device's friendly name,
    address, and DeviceID suffix. `DeviceAuth`, credentials, and query values

@@ -2,7 +2,7 @@
 
 - Status: v0.1.0 Alpha published 2026-09-05
 - Target: v0.1.0
-- Last updated: 2026-09-05
+- Last updated: 2026-09-18
 
 This is the scope, architecture, and delivery-order contract for the first
 alpha. The countable ledger is [`task.md`](task.md); sanitized hardware
@@ -17,6 +17,11 @@ Post-alpha delivery now follows the adopted H0–H4 and V2 tracks in `task.md`,
 with evidence in the [September review](review-and-backlog-proposal-2026-09.md).
 Those tracks supersede this plan's original sequencing and beta deferrals;
 existing safety contracts remain in force until an explicit design changes them.
+For V2.4, the maintainer-approved
+[typed-subnet contract](typed-subnet-discovery-proposal.md) of 2026-09-18
+supersedes this plan's former treatment of user-entered ranges as routed
+discovery. Its scope, traffic limits, and per-search consent govern typed
+subnets; the Linux route-derived contract below remains unchanged.
 
 ## 1. Product direction
 
@@ -197,7 +202,8 @@ Identity:
 ## 5. Discovery policy
 
 Order of authority, least to most expansive: remembered and explicit targets,
-local broadcast and multicast, then a user-approved bounded routed scan.
+local broadcast and multicast, then a user-approved bounded subnet scan.
+Route-derived and explicitly typed scopes have separate approval contracts.
 
 Local discovery:
 
@@ -220,10 +226,10 @@ Exact and hostname targets:
 - A successful target binds to its first DeviceID; remembered targets are
   probed again at startup and never become scan authority.
 
-Approved routed discovery:
+Approved route-derived discovery (Linux):
 
-- Consider only private IPv4 space behind an active tunnel route or a range
-  the user typed; exclude public, default, loopback, link-local, multicast, and
+- Consider only private IPv4 space behind an active tunnel route;
+  exclude public, default, loopback, link-local, multicast, and
   directly connected LAN routes.
 - Enumerate at most one `/24` and 256 candidates; never enumerate IPv6.
 - Send only HDHomeRun UDP discovery frames at 64 datagrams per second with
@@ -241,6 +247,26 @@ unambiguous tunnel links. macOS and Windows providers stay unavailable with a
 fixed reason until a safe route-table wrapper, a provable routing domain, and a
 stable tunnel identity exist; exact and hostname targets are the supported path
 there.
+
+Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
+
+- The [approved typed-subnet contract](typed-subnet-discovery-proposal.md)
+  governs this separate cross-platform scope, using current system routing
+  without deriving authority from a tunnel provider or remembered route approval.
+- Accept one canonical RFC 1918 IPv4 CIDR, `/23` through `/32`, with at most
+  510 usable-host candidates and two targeted requests per candidate: at most
+  1,020 requests, 64 requests per second, 16 concurrent probes, and a 30-second
+  UDP deadline. Apply the contract's reply, receive, result, and cancellation bounds.
+- Confirm the exact scope and request budget before every search. Remember only
+  the entered prefix; do not persist typed-subnet authorization or reuse
+  route-derived or exact-address approval for this scope.
+- Never scan automatically on startup, timers, profile loading, or network
+  changes. A detected network change cancels the active search; another search
+  requires fresh confirmation. The CLI's explicit `--approved-range` argument
+  grants consent only for its invocation.
+- This policy permits implementation under V2.4; the documentation itself changes
+  no runtime behavior. Existing route-derived limits and provider requirements
+  continue to apply to route-derived scans alone.
 
 Network rules:
 
@@ -314,6 +340,7 @@ Persisted state is atomic, versioned JSON:
 
 - Friendly device names and remembered exact or hostname targets.
 - Approved routed ranges and their fingerprints (Linux).
+- For V2.4, the user-entered subnet preference only; never its scan authorization.
 - Window geometry and UI preferences.
 
 No credentials, stream URLs, or incidental topology are persisted. Lineup

@@ -38,14 +38,14 @@ broadcast elsewhere. Supported non-link-local IPv6 discovery is scoped to the
 eligible interface. Results are deduplicated by DeviceID while retaining each
 independently expiring locator and origin.
 
-Routed discovery proceeds from least to most expansive authority:
+Route-derived discovery proceeds from least to most expansive authority:
 
 1. probe exact cached, manually entered, or explicitly resolved targets;
 2. inspect an active private tunnel route without sending packets;
 3. preview and require remembered user approval for a bounded route run; and
 4. offer exact-address or smaller-range entry when the route is too large.
 
-Automatic IPv4 enumeration is capped at one `/24` and 256 candidates. It sends
+Route-derived IPv4 enumeration is capped at one `/24` and 256 candidates. It sends
 only HDHomeRun UDP discovery frames, initially at 64 datagrams per second with
 bounded concurrency, jitter, deadline, cancellation, cooldown, and backoff.
 IPv6 prefixes are never enumerated. Public, default, loopback, link-local,
@@ -57,6 +57,24 @@ No route-derived sender is enabled on a platform until its provider can bind
 each packet to the approved interface/route and synchronously revoke that
 authority. Exact numeric-address discovery remains the portable routed path in
 the meantime.
+
+#### Typed-subnet amendment — 2026-09-18
+
+Maintainer jm2 approved the separate V2.4
+[typed-subnet contract](../typed-subnet-discovery-proposal.md), selecting `/23`
+limits and confirmation before every search. That contract supersedes any
+application of the route-derived `/24` ceiling, fingerprint approval, or
+network-change reruns to user-entered subnets. Route-derived discovery retains
+the limits and provider requirements above.
+
+Typed scope is one canonical private IPv4 prefix, `/23` through `/32`, with at
+most 510 candidates, two requests per candidate, 1,020 requests total,
+64 requests per second, 16 concurrent probes, and a 30-second UDP deadline.
+The linked contract defines the shared policy and remaining bounds.
+Persist only the entered prefix; each search requires fresh confirmation of
+its scope and request budget. There are no automatic typed-subnet scans, and
+network changes cancel active searches. This approval permits implementation;
+V2.4 stays open until its implementation and acceptance evidence land.
 
 ### Playback
 

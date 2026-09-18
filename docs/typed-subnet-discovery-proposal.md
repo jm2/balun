@@ -5,6 +5,11 @@ the `/23` traffic limits (1A) and confirmation before every search (2A).
 Implementation may proceed under this contract. This documentation change
 does not expand current scan behavior or complete V2.4.
 
+The [authoritative plan](plan-v0.1.md#5-discovery-policy) and
+[ADR-0001 amendment](architecture/adr-0001-discovery-playback.md#typed-subnet-amendment--2026-09-18)
+adopt this separate typed-scope policy. Their former route-derived treatment of
+user-entered ranges is superseded; existing route-derived authority is unchanged.
+
 The existing CLI accepts one explicitly approved private `/24` or narrower
 range. The Linux route-derived proposal has a 256-candidate ceiling and a
 15-second default deadline. Both remain the current implementation baseline.
