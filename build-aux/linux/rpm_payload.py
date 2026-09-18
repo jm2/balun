@@ -28,6 +28,7 @@ class Limits:
     members: int = 8192
     file: int = 268_435_456
     path: int = 2048
+    depth: int = 64
     seconds: float = 60
 
 
@@ -103,7 +104,7 @@ def preflight(stream, *, limits=Limits(), deadline=None):
             break
         kind = stat.S_IFMT(mode)
         require(kind in {stat.S_IFREG, stat.S_IFDIR, stat.S_IFLNK})
-        require(mode & 0o7000 == 0 and rdevmajor == rdevminor == 0)
+        require(mode & ~0o170777 == 0 and rdevmajor == rdevminor == 0)
         require(nlink >= 1 and (kind == stat.S_IFDIR or nlink == 1))
         if raw[:-1] in {b".", b"./"}:
             require(not root_seen and kind == stat.S_IFDIR and size == 0)
@@ -111,6 +112,7 @@ def preflight(stream, *, limits=Limits(), deadline=None):
             name = ""
         else:
             name = member_name(raw[:-1], limits.path)
+            require(len(name.split("/")) <= limits.depth)
             require(name not in members and len(members) < limits.members)
             members[name] = kind
         if kind == stat.S_IFDIR:
@@ -137,7 +139,9 @@ def preflight(stream, *, limits=Limits(), deadline=None):
         require(checksum == (computed & 0xffffffff) if header[:6] == b"070702" else checksum == 0)
         require(not any(exact(stream, -size % 4)))
     directories = {""} | {name for name, kind in members.items() if kind == stat.S_IFDIR}
+    entries = set(members)
     for name in members:
+        checkpoint(deadline)
         parts = name.split("/")
         for index in range(1, len(parts)):
             # No entry can be created through an archive file or symlink,
@@ -145,7 +149,10 @@ def preflight(stream, *, limits=Limits(), deadline=None):
             parent = "/".join(parts[:index])
             require(parent not in members or members[parent] == stat.S_IFDIR)
             directories.add(parent)
+            entries.add(parent)
+            require(len(entries) <= limits.members)
     for name, raw in links.items():
+        checkpoint(deadline)
         target = link_target(name, raw, limits.path, directories)
         # Balun's RPM build-id links point directly to an included regular file.
         # Reject chains, directory links and dangling links in this first slice.
@@ -181,7 +188,16 @@ def decode(package, destination, *, limits=Limits(), command=None):
                     total += len(data)
                     require(total <= limits.expanded)
                     output.write(data)
-                require(process.wait(timeout=max(0, deadline - time.monotonic())) == 0)
+                # Keep the group leader waitable until cleanup has killed the
+                # owned process group. Reaping earlier could allow its PID to
+                # be reused while preflight runs, making a later killpg unsafe.
+                while True:
+                    checkpoint(deadline)
+                    status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                    if status is not None:
+                        require(status.si_code == os.CLD_EXITED and status.si_status == 0)
+                        break
+                    time.sleep(min(0.01, max(0, deadline - time.monotonic())))
             output.flush()
             preflight(output, limits=limits, deadline=deadline)
         checkpoint(deadline)

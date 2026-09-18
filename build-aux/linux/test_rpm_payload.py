@@ -5,6 +5,7 @@ from dataclasses import replace
 import io
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -57,6 +58,7 @@ class PreflightTests(unittest.TestCase):
     def test_special_hardlinked_and_privileged_members_reject(self):
         for mode, nlink in [(stat.S_IFIFO, 1), (stat.S_IFCHR, 1), (stat.S_IFBLK, 1),
                             (stat.S_IFSOCK, 1), (stat.S_IFREG | 0o4644, 1),
+                            (stat.S_IFREG | 0x80000000, 1),
                             (stat.S_IFREG, 2), (stat.S_IFREG, 0)]:
             with self.subTest(mode=mode, nlink=nlink), self.assertRaises(payload.Invalid):
                 self.check(archive(member("entry", mode=mode, nlink=nlink)))
@@ -95,6 +97,16 @@ class PreflightTests(unittest.TestCase):
                              ("path", 3), ("seconds", 0)]:
             with self.subTest(field=field), self.assertRaises(payload.Invalid):
                 self.check(good, replace(payload.Limits(), **{field: limit}))
+
+    def test_implicit_directories_and_depth_consume_the_tree_budget(self):
+        deep = archive(member("a/b/file", b"data"))
+        self.assertEqual(self.check(deep, replace(payload.Limits(), members=3, depth=3)), 1)
+        for limits in [replace(payload.Limits(), members=2), replace(payload.Limits(), depth=2)]:
+            with self.subTest(limits=limits), self.assertRaises(payload.Invalid):
+                self.check(deep, limits)
+        # The directory declared later must not be charged twice.
+        self.assertEqual(self.check(archive(member("a/file"), member("a", mode=stat.S_IFDIR)),
+                                    replace(payload.Limits(), members=2)), 2)
 
 
 class ProducerTests(unittest.TestCase):
@@ -142,6 +154,15 @@ class ProducerTests(unittest.TestCase):
             payload.decode(self.source, self.destination, command=[str(self.root / "missing")])
         self.assertFalse(self.destination.exists())
 
+    def test_closed_stdout_but_running_producer_is_bounded(self):
+        script = "import os,time; os.close(1); time.sleep(60)"
+        start = time.monotonic()
+        with self.assertRaises(payload.Invalid):
+            payload.decode(self.source, self.destination, limits=replace(payload.Limits(), seconds=0.1),
+                           command=[sys.executable, "-B", "-c", script])
+        self.assertLess(time.monotonic() - start, 5)
+        self.assertFalse(self.destination.exists())
+
     def test_child_holding_pipe_after_parent_exit_is_still_bounded(self):
         # The producer's child inherits stdout. Even after its parent exits,
         # the owner must time out, kill the entire group, and discard output.
@@ -152,6 +173,53 @@ class ProducerTests(unittest.TestCase):
                            command=[sys.executable, "-B", "-c", script])
         self.assertLess(time.monotonic() - start, 5)
         self.assertFalse(self.destination.exists())
+
+
+@unittest.skipUnless(all(shutil.which(tool) for tool in ("rpmbuild", "rpm2cpio", "cpio", "rpm")),
+                     "native RPM/CPIO tools unavailable")
+class NativeToolsTests(unittest.TestCase):
+    def test_real_rpm_payload_and_build_id_style_link_roundtrip(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR") or "/var/tmp") as temporary:
+            root = Path(temporary)
+            (root / "tmp").mkdir()
+            spec = root / "fixture.spec"
+            spec.write_text("""Name: balun-preflight-fixture
+Version: 1
+Release: 1
+Summary: Inert local archive inspection fixture
+License: MIT
+BuildArch: noarch
+%description
+Inert data and a confined relative link for package validation tests.
+%install
+mkdir -p %{buildroot}/usr/share/balun %{buildroot}/usr/lib/.build-id/aa
+printf 'fixture data\\n' > %{buildroot}/usr/share/balun/fixture.txt
+ln -s ../../../share/balun/fixture.txt %{buildroot}/usr/lib/.build-id/aa/bb
+%files
+/usr/share/balun/fixture.txt
+/usr/lib/.build-id/aa/bb
+""")
+            result = subprocess.run(["rpmbuild", "--define", f"_topdir {root / 'build'}",
+                                     "--define", f"_tmppath {root / 'tmp'}", "--define",
+                                     "__os_install_post %{nil}", "-bb", str(spec)],
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout.decode(errors="replace"))
+            packages = list((root / "build" / "RPMS").rglob("*.rpm"))
+            self.assertEqual(len(packages), 1)
+            decoded = root / "payload.cpio"
+            payload.decode(packages[0], decoded)
+            extracted = root / "extracted"
+            extracted.mkdir()
+            with decoded.open("rb") as source:
+                subprocess.run(["cpio", "-idm", "--quiet", "--no-preserve-owner"],
+                               stdin=source, cwd=extracted, check=True, timeout=10)
+            self.assertEqual((extracted / "usr/share/balun/fixture.txt").read_bytes(), b"fixture data\n")
+            link = extracted / "usr/lib/.build-id/aa/bb"
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(link.read_bytes(), b"fixture data\n")
+            validator = Path(__file__).with_name("validate-package-compliance.sh")
+            subprocess.run([str(validator.resolve()), "--rpm", str(packages[0])],
+                           check=True, timeout=60)
 
 
 if __name__ == "__main__":

@@ -24,9 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- RPM payload inspection now bounds decoding and validates member paths, types,
+  links, sizes, and directory budgets before invoking the native extractor.
+  Native parser isolation and Debian/Arch preflight remain pending.
 - Linux Debian, RPM, and Arch inspectors now share one bounded private archive
   snapshot, preventing input replacement between metadata and payload checks.
-  Archive-member preflight and extraction containment remain pending.
+  Complete extraction containment remains pending.
 - Playback status and error descriptions now show tuner/channel names as literal
   text, so ampersands and markup-like names cannot break or reformat the message.
 - Concurrent source rejection now cancels a transport that is still being published,
