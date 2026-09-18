@@ -308,7 +308,10 @@ review's pull request.
   (256 datagrams, 64 identities), and its `--approved-range` sends from an
   unpinned socket because it is an explicit user command.
 - Low, accepted: IPv4 link-local and directed-broadcast addresses pass the
-  exact-target parser; `SO_BROADCAST` is unset, so a directed broadcast fails.
+  exact-target parser; `SO_BROADCAST` is unset, so a send the local OS classifies
+  as a broadcast fails. Clarified 2026-09-18: this does not establish downstream
+  delivery behavior. V2.4's [accepted outbound-request boundary](typed-subnet-discovery-proposal.md#approved-delivery-boundary)
+  records its downstream broadcast-blocking requirement and review before beta.
 
 ### Not covered
 
