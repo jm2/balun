@@ -179,7 +179,7 @@ pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
                 target: "balun::playback",
                 source = %source,
                 domain = native_error_domain(&native),
-                code = native.code(),
+                code = native_error_code(&native),
                 "GStreamer reported an error"
             );
         }
@@ -197,7 +197,7 @@ pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
                 target: "balun::playback",
                 source = %source,
                 domain = native_error_domain(&native),
-                code = native.code(),
+                code = native_error_code(&native),
                 "GStreamer reported a warning"
             );
         }
@@ -363,6 +363,20 @@ fn native_error_domain(error: &gst::glib::Error) -> &'static str {
     } else {
         "other"
     }
+}
+
+fn native_error_code(error: &gst::glib::Error) -> Option<i32> {
+    use gst::glib::error::ErrorDomain;
+    // The bindings map unknown numeric codes in these domains to Failed.
+    // Require an exact round trip so neither arbitrary plugin codes nor that
+    // fallback are reported as a known error code.
+    error
+        .kind::<gst::CoreError>()
+        .map(ErrorDomain::code)
+        .or_else(|| error.kind::<gst::StreamError>().map(ErrorDomain::code))
+        .or_else(|| error.kind::<gst::ResourceError>().map(ErrorDomain::code))
+        .or_else(|| error.kind::<gst::LibraryError>().map(ErrorDomain::code))
+        .filter(|code| *code == error.code())
 }
 
 fn closed_label<'a>(value: &str, labels: &[&'a str]) -> &'a str {
@@ -629,7 +643,7 @@ mod tests {
         }
 
         fn code(self) -> i32 {
-            42
+            SECRET_CODE
         }
 
         fn from(_code: i32) -> Option<Self> {
@@ -675,17 +689,30 @@ mod tests {
             let collection = gst::StreamCollection::builder(Some(SECRET_URI))
                 .stream(stream.clone())
                 .build();
-            // The Rust builder accepts only standard domains. A native plugin
-            // can still supply an arbitrary GError in the message structure.
-            let mut unknown_error =
-                error_message(gst::CoreError::Failed, &source, poison_details(503));
-            unknown_error.make_mut().structure_mut().set(
-                "gerror",
+            // Native plugins can supply arbitrary domains and numeric codes,
+            // including out-of-table codes under recognized GStreamer domains.
+            for native in [
                 gst::glib::Error::new(UntrustedErrorDomain, SECRET_URI),
-            );
+                gst::glib::Error::new(gst::CoreError::__Unknown(SECRET_CODE), SECRET_URI),
+                gst::glib::Error::new(gst::StreamError::__Unknown(SECRET_CODE), SECRET_URI),
+                gst::glib::Error::new(gst::ResourceError::__Unknown(SECRET_CODE), SECRET_URI),
+                gst::glib::Error::new(gst::LibraryError::__Unknown(SECRET_CODE), SECRET_URI),
+            ] {
+                for mut message in [
+                    error_message(gst::CoreError::Failed, &source, poison_details(503)),
+                    gst::message::Warning::builder(gst::CoreError::Failed, SECRET_URI)
+                        .src(&source)
+                        .build(),
+                ] {
+                    message
+                        .make_mut()
+                        .structure_mut()
+                        .set("gerror", native.clone());
+                    log_pipeline_message(&message);
+                }
+            }
             let messages = [
                 error_message(gst::StreamError::Failed, &source, poison_details(503)),
-                unknown_error,
                 gst::message::Warning::builder(gst::ResourceError::Failed, SECRET_URI)
                     .debug(SECRET_URI)
                     .details(poison_details(503))
@@ -758,6 +785,52 @@ mod tests {
                 "native diagnostic leaked fixture value"
             );
         }
+        assert!(!output.contains(&SECRET_CODE.to_string()));
+        for line in output.lines().filter(|line| line.contains("code=")) {
+            assert!(
+                line.ends_with("code=1"),
+                "unexpected native numeric code: {line}"
+            );
+        }
+        assert_eq!(
+            output
+                .lines()
+                .filter(|line| line.ends_with("code=1"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn native_error_codes_require_known_domain_and_exact_enum_round_trip() {
+        use gst::glib::error::ErrorDomain;
+        gst::init().unwrap();
+        for native in [
+            gst::glib::Error::new(gst::CoreError::Disabled, SECRET_URI),
+            gst::glib::Error::new(gst::StreamError::DecryptNokey, SECRET_URI),
+            gst::glib::Error::new(gst::ResourceError::NotAuthorized, SECRET_URI),
+            gst::glib::Error::new(gst::LibraryError::Encode, SECRET_URI),
+        ] {
+            assert_eq!(native_error_code(&native), Some(native.code()));
+        }
+        for code in [i32::MIN, -1, 0, 42, i32::MAX] {
+            for native in [
+                gst::glib::Error::new(gst::CoreError::__Unknown(code), SECRET_URI),
+                gst::glib::Error::new(gst::StreamError::__Unknown(code), SECRET_URI),
+                gst::glib::Error::new(gst::ResourceError::__Unknown(code), SECRET_URI),
+                gst::glib::Error::new(gst::LibraryError::__Unknown(code), SECRET_URI),
+            ] {
+                assert_eq!(native_error_code(&native), None);
+            }
+        }
+        assert_eq!(
+            native_error_code(&gst::glib::Error::new(UntrustedErrorDomain, SECRET_URI)),
+            None
+        );
+        assert_eq!(
+            native_error_code(&gst::glib::Error::new(gst::CoreError::Failed, SECRET_URI)),
+            Some(gst::CoreError::Failed.code())
+        );
     }
 
     #[test]
@@ -841,6 +914,7 @@ mod tests {
     use super::*;
 
     const SECRET_TOKEN: &str = "secret-user-password-192-0-2-77";
+    const SECRET_CODE: i32 = 1_234_567_891;
     const SECRET_URI: &str = "http://secret-user-password-192-0-2-77@192.0.2.77:5004/auto/v999";
 
     fn pipeline() -> Option<gst::Pipeline> {
