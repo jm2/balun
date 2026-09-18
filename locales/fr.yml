@@ -21,3 +21,14 @@ controls:
   video: "Vidéo de la télévision en direct"
   status: "État de lecture de la télévision en direct"
   watching: "Visionnage de la télévision en direct"
+
+progress:
+  stopped: "Arrêté"
+  connecting: "Connexion en cours"
+  playing: "Lecture en cours"
+  buffering: "Mise en mémoire tampon"
+  unavailable: "Indisponible"
+  playback_unavailable: "Lecture indisponible"
+  buffering_status: "Mise en mémoire tampon : %{percent} %"
+  buffering_description: "Mise en mémoire tampon de la télévision en direct : %{percent} %."
+  opening: "Ouverture de %{channel} sur %{device}."

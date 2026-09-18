@@ -21,3 +21,14 @@ controls:
   video: "Vídeo da TV ao vivo"
   status: "Estado de reprodução da TV ao vivo"
   watching: "Assistindo TV ao vivo"
+
+progress:
+  stopped: "Parado"
+  connecting: "Conectando"
+  playing: "Reproduzindo"
+  buffering: "Carregando buffer"
+  unavailable: "Indisponível"
+  playback_unavailable: "Reprodução indisponível"
+  buffering_status: "Carregando buffer: %{percent}%"
+  buffering_description: "A TV ao vivo está carregando o buffer: %{percent}%."
+  opening: "Abrindo %{channel} em %{device}."

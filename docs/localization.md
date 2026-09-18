@@ -3,7 +3,7 @@
 V2.6 ([issue #74](https://github.com/jm2/balun/issues/74)) remains open. The first
 slice provides the shared catalog, startup selection, application menu, its
 tooltip/accessibility label, and the About description. A follow-on slice adds
-navigation titles and player-control copy. The remaining interface, CLI, errors,
+navigation titles, player-control copy, and playback progress. The remaining interface, CLI, errors,
 desktop metadata, pluralization, and layout evidence remain pending.
 
 ## Catalog and startup contract
@@ -55,9 +55,9 @@ env -u LANGUAGE -u LC_ALL -u LC_MESSAGES LANG=de_DE.UTF-8 \
   cargo run --locked --features desktop --bin balun
 ```
 
-The application menu, About description, navigation titles, and player controls
-are translated. Status messages, dialogs, and other window copy still contain
-English. The native GTK/libadwaita
+The application menu, About description, navigation titles, player controls, and
+playback progress are translated. Idle/error messages, dialogs, and other window
+copy still contain English. The native GTK/libadwaita
 controls also depend on the platform's own translations and locale setup.
 
 ## Adding presentation text
@@ -71,7 +71,8 @@ trace fields, and domain diagnostics do not become translation keys.
 
 English is the runtime fallback for a missing translation. Tests inspect raw
 catalog keys before fallback and compare each value with the compiled backend;
-missing or extra keys, missing locales, and empty translations fail `cargo test`.
+missing or extra keys, missing locales, empty translations, and placeholder-name
+mismatches fail `cargo test`.
 Locale selection and explicit lookups have portable tests. Linux child-process
 tests verify actual `LANG` startup, absent/unsupported fallback, and repeated
 initialization without changing the parent test process's global locale.
@@ -91,8 +92,8 @@ discovery, playback, settings, and failure copy.
 The device header and navigation page share their title key. Channel, live-TV,
 and combined navigation pages use the same catalog. Player-control labels cover
 volume, mute/unmute, stop, enter/exit fullscreen, the video accessible name,
-playback-status tooltip, and the desktop's idle-inhibition reason. Status values,
-buffering percentages, and playback errors are still pending.
+playback-status tooltip, and the desktop's idle-inhibition reason. Playback errors
+and idle-state descriptions are still pending.
 
 Tooltips and accessible names share translated text. The mute toggle retains a
 stable translated name while its checked state conveys muting; its tooltip
@@ -106,3 +107,18 @@ binding test in an isolated German-locale process, including fullscreen
 transitions and translated tooltip checks. This native CI check supplements the
 English control/session smoke; it does not establish screen-reader output or
 long-string layout quality on every platform.
+
+## Playback progress
+
+Header labels cover stopped, connecting, playing, buffering, and unavailable
+states. Buffering headers and descriptions interpolate the same percentage,
+clamped to 0–100. Connecting descriptions interpolate device/channel display
+names into the selected template; values are never translated or recursively
+expanded as placeholders. The status-page boundary escapes the complete message
+once before markup rendering, preserving ampersands and markup-like names.
+
+Portable tests check percentage bounds and uninterpreted display names in every
+catalog, plus explicit translated templates. The English/German native player
+smoke checks status transitions and parses the widget's actual descriptions back
+to their literal text. Fallback device/channel names, initial/idle descriptions,
+and failure messages remain English until their presentation slice is complete.

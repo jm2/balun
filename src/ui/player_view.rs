@@ -11,6 +11,7 @@ use balun::controller::{
 };
 use balun::domain::ChannelKey;
 use balun::localization::controls::PlayerLabels;
+use balun::localization::playback_status::{self, ProgressLabels};
 use balun::playback::{
     MissingMedia, PlaybackCapabilities, PlaybackInitializationError, PlaybackPipelineFailure,
     PlaybackRuntime, PlaybackSession, PlaybackSessionFailure, PlaybackSessionState, TuneCompletion,
@@ -497,30 +498,31 @@ impl PlayerView {
     }
 
     fn apply_session_state(&self, state: &PlaybackSessionState) {
+        let progress = ProgressLabels::current();
         self.inhibit_idle(PlaybackPresentation::from(state).keeps_awake());
         match PlaybackPresentation::from(state) {
             PlaybackPresentation::Stopped => {
-                self.playback_status.set_label("Stopped");
+                self.playback_status.set_label(&progress.stopped);
                 self.stop_button.set_sensitive(false);
                 self.apply_paintable(None);
                 self.show_idle();
             }
             PlaybackPresentation::Connecting => {
-                self.playback_status.set_label("Connecting");
+                self.playback_status.set_label(&progress.connecting);
                 self.stop_button.set_sensitive(true);
                 self.show_connecting();
             }
             PlaybackPresentation::Playing => {
-                self.playback_status.set_label("Playing");
+                self.playback_status.set_label(&progress.playing);
                 self.stop_button.set_sensitive(true);
                 self.status.set_visible(false);
             }
             PlaybackPresentation::Buffering(percent) => {
-                self.playback_status
-                    .set_label(&format!("Buffering {percent}%"));
+                let text = playback_status::buffering(percent);
+                self.playback_status.set_label(&text.status);
                 self.stop_button.set_sensitive(true);
-                self.status.set_title("Buffering");
-                self.set_description_text(&format!("Live TV is buffering: {percent}%."));
+                self.status.set_title(&progress.buffering);
+                self.set_description_text(&text.description);
                 self.status.set_visible(true);
             }
             PlaybackPresentation::Failed(failure) => {
@@ -530,13 +532,14 @@ impl PlayerView {
                 self.show_session_failure(failure);
             }
             PlaybackPresentation::ShutDown => {
-                self.playback_status.set_label("Stopped");
+                self.playback_status.set_label(&progress.stopped);
                 self.stop_button.set_sensitive(false);
                 self.set_audio_controls_sensitive(false);
                 self.apply_paintable(None);
             }
             PlaybackPresentation::Unknown => {
-                self.playback_status.set_label("Playback unavailable");
+                self.playback_status
+                    .set_label(&progress.playback_unavailable);
                 self.stop_button.set_sensitive(false);
                 self.apply_paintable(None);
                 self.show_playback_failure();
@@ -657,11 +660,10 @@ impl PlayerView {
 
     fn show_connecting(&self) {
         let context = self.tune_context();
-        self.status.set_title("Connecting");
-        self.set_description_text(&format!(
-            "Opening {} on {}.",
+        self.status.set_title(&ProgressLabels::current().connecting);
+        self.set_description_text(&playback_status::opening(
             context.channel(),
-            context.device()
+            context.device(),
         ));
         self.status.set_visible(true);
     }
@@ -804,11 +806,12 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
     controls.append(&volume_scale);
     controls.append(&stop_button);
     controls.append(&fullscreen_button);
+    let progress = ProgressLabels::current();
     let playback_status = gtk::Label::builder()
         .label(if session.is_some() {
-            "Stopped"
+            progress.stopped.as_ref()
         } else {
-            "Unavailable"
+            progress.unavailable.as_ref()
         })
         .accessible_role(gtk::AccessibleRole::Status)
         .tooltip_text(accessibility.status_label.as_ref())
@@ -1040,7 +1043,10 @@ mod tests {
             view.status.upcast_ref::<gtk::Widget>().accessible_role(),
             gtk::AccessibleRole::Status
         );
-        assert_eq!(view.playback_status.label(), "Unavailable");
+        assert_eq!(
+            view.playback_status.label(),
+            ProgressLabels::current().unavailable.as_ref()
+        );
         assert_eq!(
             view.playback_status.accessible_role(),
             gtk::AccessibleRole::Status
@@ -1133,7 +1139,7 @@ mod tests {
         view.show_connecting();
         assert_literal_markup(
             view.status.description().as_deref().unwrap(),
-            &format!("Opening {} on {}.", context.channel(), context.device()),
+            &playback_status::opening(context.channel(), context.device()),
         );
         let failure = pipeline_failure_copy(PlaybackPipelineFailure::Offline, &context);
         view.show_failure_copy(&failure);
@@ -1161,7 +1167,10 @@ mod tests {
             generation,
             channel_key: channel_key.clone(),
         });
-        assert_eq!(view.playback_status.label(), "Connecting");
+        assert_eq!(
+            view.playback_status.label(),
+            ProgressLabels::current().connecting.as_ref()
+        );
         assert!(view.stop_button.is_sensitive());
         assert!(view.status.is_visible());
         assert!(view.picture.paintable().is_some());
@@ -1171,11 +1180,15 @@ mod tests {
             channel_key: channel_key.clone(),
             percent: 42,
         });
-        assert_eq!(view.playback_status.label(), "Buffering 42%");
-        assert_eq!(view.status.title(), "Buffering");
+        let buffering = playback_status::buffering(42);
+        assert_eq!(view.playback_status.label(), buffering.status.as_ref());
         assert_eq!(
-            view.status.description().as_deref(),
-            Some("Live TV is buffering: 42%.")
+            view.status.title(),
+            ProgressLabels::current().buffering.as_ref()
+        );
+        assert_literal_markup(
+            view.status.description().as_deref().unwrap(),
+            &buffering.description,
         );
         assert!(view.picture.paintable().is_some());
 
@@ -1183,7 +1196,10 @@ mod tests {
             generation,
             channel_key: channel_key.clone(),
         });
-        assert_eq!(view.playback_status.label(), "Playing");
+        assert_eq!(
+            view.playback_status.label(),
+            ProgressLabels::current().playing.as_ref()
+        );
         assert!(!view.status.is_visible());
         assert!(view.picture.paintable().is_some());
 
@@ -1213,7 +1229,10 @@ mod tests {
 
         assert!(view.apply_paintable(Some(&paintable)));
         view.apply_session_state(&PlaybackSessionState::Stopped);
-        assert_eq!(view.playback_status.label(), "Stopped");
+        assert_eq!(
+            view.playback_status.label(),
+            ProgressLabels::current().stopped.as_ref()
+        );
         assert!(view.picture.paintable().is_none());
         assert_eq!(view.status.title(), "Playback initialization unavailable");
 
@@ -1285,7 +1304,10 @@ mod tests {
                 .volume(),
             1.0
         );
-        assert_eq!(view.playback_status.label(), "Stopped");
+        assert_eq!(
+            view.playback_status.label(),
+            ProgressLabels::current().stopped.as_ref()
+        );
 
         view.volume_adjustment.set_value(45.0);
         let audio = view.session.as_ref().unwrap().audio_state().unwrap();

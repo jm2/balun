@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Translated playback progress and parameterized connecting/buffering messages in
+  all thirteen catalogs, with placeholder parity and literal display-name rendering.
+
 - Translated navigation titles and live-TV control names/tooltips in all thirteen
   catalogs, including mute and fullscreen transitions and the desktop idle reason.
 - Localization foundation with thirteen embedded catalogs, automatic locale

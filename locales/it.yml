@@ -21,3 +21,14 @@ controls:
   video: "Video della TV in diretta"
   status: "Stato di riproduzione della TV in diretta"
   watching: "Visione della TV in diretta"
+
+progress:
+  stopped: "Interrotto"
+  connecting: "Connessione in corso"
+  playing: "Riproduzione in corso"
+  buffering: "Caricamento buffer"
+  unavailable: "Non disponibile"
+  playback_unavailable: "Riproduzione non disponibile"
+  buffering_status: "Caricamento buffer: %{percent}%"
+  buffering_description: "Caricamento del buffer della TV in diretta: %{percent}%."
+  opening: "Apertura di %{channel} su %{device}."

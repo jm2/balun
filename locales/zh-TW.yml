@@ -21,3 +21,14 @@ controls:
   video: "電視直播畫面"
   status: "電視直播播放狀態"
   watching: "正在觀看電視直播"
+
+progress:
+  stopped: "已停止"
+  connecting: "正在連線"
+  playing: "正在播放"
+  buffering: "正在緩衝"
+  unavailable: "無法使用"
+  playback_unavailable: "無法播放"
+  buffering_status: "正在緩衝 %{percent}%"
+  buffering_description: "電視直播正在緩衝：%{percent}%。"
+  opening: "正在開啟 %{device} 上的 %{channel}。"

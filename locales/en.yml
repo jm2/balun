@@ -21,3 +21,14 @@ controls:
   video: "Live TV video"
   status: "Live TV playback status"
   watching: "Watching live TV"
+
+progress:
+  stopped: "Stopped"
+  connecting: "Connecting"
+  playing: "Playing"
+  buffering: "Buffering"
+  unavailable: "Unavailable"
+  playback_unavailable: "Playback unavailable"
+  buffering_status: "Buffering %{percent}%"
+  buffering_description: "Live TV is buffering: %{percent}%."
+  opening: "Opening %{channel} on %{device}."

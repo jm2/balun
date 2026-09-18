@@ -21,3 +21,14 @@ controls:
   video: "Obraz telewizji na żywo"
   status: "Stan odtwarzania telewizji na żywo"
   watching: "Oglądanie telewizji na żywo"
+
+progress:
+  stopped: "Zatrzymano"
+  connecting: "Łączenie"
+  playing: "Odtwarzanie"
+  buffering: "Buforowanie"
+  unavailable: "Niedostępne"
+  playback_unavailable: "Odtwarzanie niedostępne"
+  buffering_status: "Buforowanie %{percent}%"
+  buffering_description: "Buforowanie telewizji na żywo: %{percent}%."
+  opening: "Otwieranie %{channel} na %{device}."

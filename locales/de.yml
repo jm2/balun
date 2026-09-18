@@ -21,3 +21,14 @@ controls:
   video: "Live-TV-Bild"
   status: "Live-TV-Wiedergabestatus"
   watching: "Live-TV ansehen"
+
+progress:
+  stopped: "Gestoppt"
+  connecting: "Verbindung wird hergestellt"
+  playing: "Wiedergabe läuft"
+  buffering: "Puffern"
+  unavailable: "Nicht verfügbar"
+  playback_unavailable: "Wiedergabe nicht verfügbar"
+  buffering_status: "Puffern %{percent} %"
+  buffering_description: "Live-TV wird gepuffert: %{percent} %."
+  opening: "%{channel} auf %{device} wird geöffnet."
