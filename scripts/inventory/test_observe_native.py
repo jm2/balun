@@ -81,6 +81,47 @@ class ObservationTests(unittest.TestCase):
             with self.assertRaisesRegex(inventory.Invalid, "hard-linked"):
                 self.observe()
 
+    def test_windows_named_and_open_stat_use_comparable_fields(self):
+        self.write("bin/application.exe", b"MZsynthetic executable")
+        self.assertEqual(len(self.observe()["native_files"]), 2)
+        metadata = self.native.stat()
+        values = {key: getattr(metadata, key) for key in dir(metadata) if key.startswith("st_")}
+        named = SimpleNamespace(**values)
+        opened = SimpleNamespace(**values)
+        named.st_birthtime_ns = opened.st_birthtime_ns = metadata.st_ctime_ns
+        named.st_mode |= 0o111
+        opened.st_mode &= ~0o111
+        opened.st_ctime_ns += 100
+        with patch.object(observer, "WINDOWS_STAT", True):
+            self.assertEqual(observer.signature(named), observer.signature(opened))
+            for field in ["st_dev", "st_ino", "st_nlink", "st_size", "st_mtime_ns", "st_birthtime_ns"]:
+                changed = copy.copy(opened)
+                setattr(changed, field, getattr(changed, field) + 1)
+                self.assertNotEqual(observer.signature(named), observer.signature(changed), field)
+        with patch.object(observer, "WINDOWS_STAT", False):
+            self.assertNotEqual(observer.signature(named), observer.signature(opened))
+
+    def test_windows_handle_change_time_is_still_checked_while_hashing(self):
+        original = os.fstat
+        calls = 0
+
+        def windows_handle_stat(fd):
+            nonlocal calls
+            calls += 1
+            value = original(fd)
+            result = SimpleNamespace(**{key: getattr(value, key) for key in dir(value) if key.startswith("st_")})
+            result.st_birthtime_ns = getattr(value, "st_birthtime_ns", value.st_ctime_ns)
+            result.st_ctime_ns += calls * 100
+            return result
+
+        # Comparable path/handle identity succeeds, but a changed handle's
+        # ChangeTime must reject even if its size and modification time match.
+        with patch.object(observer, "WINDOWS_STAT", True), \
+                patch.object(observer.os, "fstat", windows_handle_stat), \
+                self.assertRaisesRegex(inventory.Invalid, "changed during observation"):
+            observer.snapshot_file(self.native, self.native.stat(), time.monotonic() + 10,
+                                   observer.MAX_MEMBER, native_only=True, native_budget=1024)
+
     def test_observed_manifest_joins_real_file_bytes_to_separate_ownership_records(self):
         observed = self.observe()
         _, original = fixtures()

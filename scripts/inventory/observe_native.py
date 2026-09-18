@@ -24,6 +24,7 @@ MAX_ARTIFACT = 4 * 1024**3
 MAX_DEPTH = 64
 TIME_BUDGET = 300
 CHUNK = 1024**2
+WINDOWS_STAT = os.name == "nt"
 MACHO = {bytes.fromhex(value) for value in (
     "feedface", "cefaedfe", "feedfacf", "cffaedfe",
     "cafebabe", "bebafeca", "cafebabf", "bfbafeca")}
@@ -34,8 +35,17 @@ def checkpoint(deadline):
 
 
 def signature(metadata):
-    return (metadata.st_dev, metadata.st_ino, metadata.st_mode, metadata.st_nlink,
-            metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns,
+    mode = metadata.st_mode
+    timestamp = metadata.st_ctime_ns
+    if WINDOWS_STAT:
+        # CPython path stat adds execute bits from .exe/.bat/.cmd/.com names;
+        # fstat has no filename. Its ctime can also be ChangeTime while path
+        # stat preserves CreationTime. Birth time is comparable across both.
+        if stat.S_ISREG(mode):
+            mode &= ~0o111
+        timestamp = getattr(metadata, "st_birthtime_ns", timestamp)
+    return (metadata.st_dev, metadata.st_ino, mode, metadata.st_nlink,
+            metadata.st_size, metadata.st_mtime_ns, timestamp,
             getattr(metadata, "st_file_attributes", 0))
 
 
@@ -123,7 +133,8 @@ def snapshot_file(path, expected, deadline, limit, *, native_only=False, native_
             result = {"size": consumed, "sha256": digest.hexdigest()}
         after = os.fstat(stream.fileno())
         ordinary(after)
-        require(signature(after) == signature(expected), "file changed during observation")
+        require(signature(after) == signature(expected)
+                and after.st_ctime_ns == opened.st_ctime_ns, "file changed during observation")
         require(signature(path.lstat()) == signature(expected), "named file changed during observation")
         checkpoint(deadline)
         return result
