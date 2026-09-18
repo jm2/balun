@@ -2,8 +2,10 @@
 
 Status: approved by jm2 on 2026-09-18 for V2.4 and [issue #71], selecting
 the `/23` traffic limits (1A) and confirmation before every search (2A).
-Implementation may proceed under this contract. This documentation change
-does not expand current scan behavior or complete V2.4.
+Those decisions remain approved. Scan implementation and merging this policy
+are held for the [delivery-boundary decision](#delivery-boundary-decision-pending)
+below. This documentation change does not expand current scan behavior or
+complete V2.4.
 
 The [authoritative plan](plan-v0.1.md#5-discovery-policy) and
 [ADR-0001 amendment](architecture/adr-0001-discovery-playback.md#typed-subnet-amendment--2026-09-18)
@@ -28,7 +30,7 @@ CLI `--approved-range`, persistence, and tests:
 | Property | Approved boundary |
 | --- | --- |
 | Scope | One canonical IPv4 CIDR, `/23` through `/32`, wholly inside RFC 1918 space |
-| Candidates | Exact usable-host expansion, at most 510; no network/broadcast destinations for `/30` and wider |
+| Candidates | Exact usable-host expansion, at most 510; exclude the entered CIDR's network/broadcast endpoints for `/30` and wider |
 | Requests | At most two targeted HDHomeRun UDP discovery requests per candidate, to the fixed discovery port |
 | Request budget | Exact candidate count times two, at most 1,020; retries consume this same budget |
 | Wire pacing | At least 15.625 ms between request attempts, including retries; nonnegative jitter may add at most 25% |
@@ -62,6 +64,37 @@ responders. Retain its existing HTTP origin, address, parser, and concurrency
 limits. Do not fetch HTTP metadata for nonresponders or infer a device from a
 successful connection alone. Opening a stream or allocating a tuner is outside
 subnet discovery.
+
+## Delivery-boundary decision pending
+
+Review identified a distinction between an address inside the entered CIDR
+and a unicast destination under the actual downstream subnetting. An interior
+address can be a directed-broadcast address for a narrower downstream subnet.
+`Ipv4Net::hosts()` excludes the entered CIDR's endpoints; it cannot establish
+how another router will deliver every remaining address.
+[RFC 2644](https://www.rfc-editor.org/rfc/rfc2644.html) requires directed-broadcast
+receipt and forwarding to be disabled by default, but allows operators to enable
+them. Balun cannot infer that configuration from the typed prefix.
+
+The maintainer must choose the delivery boundary before scan implementation:
+
+- **A — Bound application requests and trust downstream broadcast blocking
+  (proposed).** Keep the approved scope and numeric limits, with the request
+  budget explicitly counting Balun's outbound attempts. Keep socket broadcast
+  disabled and reject destinations the local OS classifies as broadcasts; never
+  retry a denied send with broadcast enabled. The supported deployment requires
+  downstream routers to keep directed-broadcast forwarding disabled. Balun
+  cannot verify that remote setting and cannot promise single-host delivery if
+  a router is configured otherwise. The preview must describe an outbound
+  request budget, not a bound on downstream deliveries or recipients.
+- **B — Require a verified single-host delivery guarantee.** Keep scan
+  implementation held until a separate design can establish the necessary
+  downstream subnet and forwarding information. Reducing the entered maximum
+  to `/24` alone does not solve unknown narrower downstream subnetting.
+
+Neither option is selected by the existing 1A/2A approval. Policy owner: jm2;
+revisit before beta, changes to routing assumptions, or evidence of unexpected
+broadcast delivery. Both retain the accepted per-search confirmation rule.
 
 ## Approved consent decision
 
@@ -118,8 +151,8 @@ Required evidence before V2.4 can be completed:
 - Exercise preview, confirmation, progress, Cancel, Forget, and error focus with
   keyboard and translated accessibility copy as the UI integration lands.
 
-This approval permits implementation, not a completion checkbox. The maintainer,
-jm2, owns the scope and per-search consent decision; revisit the contract before
-beta or any increase in scope, rate, retries, or automatic work.
+The scope and consent approval does not complete V2.4. The maintainer, jm2,
+owns those decisions and the pending delivery-boundary disposition; revisit the
+contract before beta or any increase in scope, rate, retries, or automatic work.
 
 [issue #71]: https://github.com/jm2/balun/issues/71

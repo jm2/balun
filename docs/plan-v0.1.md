@@ -264,9 +264,10 @@ Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
   changes. A detected network change cancels the active search; another search
   requires fresh confirmation. The CLI's explicit `--approved-range` argument
   grants consent only for its invocation.
-- This policy permits implementation under V2.4; the documentation itself changes
-  no runtime behavior. Existing route-derived limits and provider requirements
-  continue to apply to route-derived scans alone.
+- Scope and consent are approved; scan implementation remains held for the
+  contract's [delivery-boundary decision](typed-subnet-discovery-proposal.md#delivery-boundary-decision-pending).
+  The documentation changes no runtime behavior. Existing route-derived limits
+  and provider requirements continue to apply to route-derived scans alone.
 
 Network rules:
 
