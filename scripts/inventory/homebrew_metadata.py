@@ -30,6 +30,42 @@ MAX_TOTAL = 4 * 1024**3
 QUERY_SECONDS = 60
 TOTAL_SECONDS = 300
 
+# Only these source-controlled messages may reach the CLI. Never print a raw
+# JSON decoder error, OS exception, recipe output, or caller-supplied value.
+PUBLIC_REJECTIONS = frozenset({
+    "Homebrew could not describe the installed recipe",
+    "Homebrew output exceeds budget",
+    "Homebrew did not return exactly one formula",
+    "Homebrew returned a different package",
+    "Homebrew metadata does not describe the installed recipe bytes",
+    "invalid installed receipt",
+    "only installed stable core recipes are supported",
+    "missing installed source version",
+    "installed receipt and formula versions differ",
+    "installed keg and formula versions differ",
+    "invalid installed package revision",
+    "missing source metadata",
+    "installed recipe has no immutable primary source identity",
+    "missing or invalid license metadata",
+    "reference must be an HTTPS URL without credentials, query or fragment",
+    "selected member is outside the trusted Cellar",
+    "selected member is not a native binary",
+    "hard-linked package files are not admitted",
+    "package aliases and reparse points are not admitted",
+    "installed metadata changed",
+    "installed metadata changed during Homebrew evaluation",
+    "installed metadata changed before collection completed",
+    "installed member changed during collection",
+})
+
+
+def rejection_reason(error):
+    if type(error) is Invalid and str(error) in PUBLIC_REJECTIONS:
+        return str(error)
+    if isinstance(error, FileNotFoundError):
+        return "installed input or Homebrew executable is missing"
+    return "invalid, changed, or unavailable installed input"
+
 
 def json_document(data):
     return json.loads(data.decode("utf-8"), object_pairs_hook=unique_object,
@@ -214,8 +250,8 @@ def main():
         result = collect(args.cellar, args.member)
         encoded = json.dumps(result, sort_keys=True, indent=2) + "\n"
         require(len(encoded.encode()) <= MAX_DOCUMENT, "metadata report exceeds byte budget")
-    except (OSError, ValueError, RecursionError, RuntimeError):
-        print("Homebrew metadata rejected: invalid, changed, or unavailable installed input", file=sys.stderr)
+    except (OSError, ValueError, RecursionError, RuntimeError) as error:
+        print("Homebrew metadata rejected: " + rejection_reason(error), file=sys.stderr)
         return 1
     sys.stdout.write(encoded)
     return 0

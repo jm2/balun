@@ -167,6 +167,22 @@ class HomebrewMetadataTests(unittest.TestCase):
                 collector.query_formula(self.recipe, time.monotonic() + 10)
             self.assertIsNotNone(processes[-1].poll())
 
+    def test_diagnostic_reasons_are_closed_and_never_echo_exception_data(self):
+        reason = "installed receipt and formula versions differ"
+        self.assertEqual(collector.rejection_reason(collector.Invalid(reason)), reason)
+        marker = "private-marker-9321 /host/profile package-content"
+        for error in [collector.Invalid(marker), ValueError(marker), OSError(marker),
+                      RuntimeError(marker), FileNotFoundError(marker),
+                      json.JSONDecodeError(marker, marker, 0)]:
+            with self.subTest(error=type(error).__name__):
+                result = collector.rejection_reason(error)
+                self.assertNotIn(marker, result)
+                self.assertIn(result, {"invalid, changed, or unavailable installed input",
+                                       "installed input or Homebrew executable is missing"})
+        # Even an unrelated exception with an allowlisted-looking string is not
+        # a validator result and must retain the generic diagnostic.
+        self.assertNotEqual(collector.rejection_reason(ValueError(reason)), reason)
+
     def test_cli_rejection_is_fixed_and_has_no_partial_report(self):
         secret = self.root / "private-marker-9321"
         run = subprocess.run([sys.executable, "-B", collector.__file__, "--cellar", str(self.cellar),

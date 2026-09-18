@@ -178,6 +178,8 @@ and [installed receipt](https://github.com/Homebrew/brew/blob/main/Library/Homeb
 contracts. Linux fixtures exercise stale metadata, installed revision mismatches,
 immutable source identities, substitutions, resource bounds and child cleanup.
 Native macOS CI also collects real GTK sink, libav plugin, and pixbuf-query inputs.
+Collector failures expose only a closed set of validation reasons or a generic
+missing/invalid-input category; raw exceptions, paths, and recipe output remain hidden.
 These intermediate records still need the packaging copy ledger, post-relocation
 catalog binding, embedded-resource representation, and final-artifact integration
 below before they establish H1.3.
