@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Playback status and error descriptions now show tuner/channel names as literal
+  text, so ampersands and markup-like names cannot break or reformat the message.
 - Concurrent source rejection now cancels a transport that is still being published,
   zeroizes pending handoffs, and retains all workers for the normal teardown join.
 
