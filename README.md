@@ -53,6 +53,7 @@ address so you know which tuner failed.
 | macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
 | Windows package validation | ✅ Pinned policy and full-tree probe receipt; completed installer payload independently extracted, compared, checked, and runtime-probed |
 | Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
+| Native playback log privacy | ✅ Closed error and media labels retain useful diagnostics without plugin error text, arbitrary caps values, or stream identifiers |
 | Native runtime inventory tooling | 🛠️ Independent final-tree hashing, exact membership/content validation, and native-scope SBOM generation; [platform collection and release attachment remain pending](docs/native-inventory.md) |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
@@ -339,8 +340,11 @@ GST_DEBUG=2 RUST_LOG=balun=debug cargo run --locked --features desktop --bin bal
 ```
 
 Balun logs discovery, lineup, tune, and playback outcomes to standard error at `info` by default;
-`RUST_LOG` selects the level, as in Tributary. A playback failure logs the native GStreamer error
-behind its fixed category. `./scripts/build-linux.sh --run` and `./scripts/build-macos.sh --run`
+`RUST_LOG` selects the level, as in Tributary. Native playback reports retain known error domains,
+numeric codes, closed media/format labels, and typed counters. Plugin error/debug text, stream
+identifiers, arbitrary caps values, and unknown marker names are discarded. GStreamer's own
+opt-in `GST_DEBUG` output bypasses Balun's filtering and can contain stream-derived text.
+`./scripts/build-linux.sh --run` and `./scripts/build-macos.sh --run`
 build the desktop and launch it in the same terminal. On Windows,
 `.\scripts\build-windows.ps1 -Run` uses a console-attached
 release-profile developer build, so those logs remain visible in the invoking PowerShell session.

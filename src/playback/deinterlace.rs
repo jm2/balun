@@ -69,6 +69,29 @@ pub(super) fn install(pipeline: &gst::Pipeline) -> Result<(), PlaybackSessionFai
     Ok(())
 }
 
+fn framerate_label(rate: gst::Fraction) -> &'static str {
+    // Negotiated caps are plugin-controlled. Keep useful standard frame-rate
+    // categories without formatting arbitrary numerator/denominator values.
+    match (rate.numer(), rate.denom()) {
+        (24_000, 1_001) => "24000/1001",
+        (24, 1) => "24/1",
+        (25, 1) => "25/1",
+        (30_000, 1_001) => "30000/1001",
+        (30, 1) => "30/1",
+        (48, 1) => "48/1",
+        (50, 1) => "50/1",
+        (60_000, 1_001) => "60000/1001",
+        (60, 1) => "60/1",
+        (100, 1) => "100/1",
+        (120_000, 1_001) => "120000/1001",
+        (120, 1) => "120/1",
+        (200, 1) => "200/1",
+        (240_000, 1_001) => "240000/1001",
+        (240, 1) => "240/1",
+        _ => "other",
+    }
+}
+
 /// Inspect the actual filter and its negotiated output, without arbitrary
 /// caps text or element names entering diagnostics.
 pub(super) fn describe(pipeline: &gst::Element) -> String {
@@ -85,12 +108,16 @@ pub(super) fn describe(pipeline: &gst::Element) -> String {
                 .is_some_and(|factory| factory.name() == "deinterlace")
         })
         .map(|element| {
-            let method = enum_nick(&element, "method").unwrap_or_else(|| "unknown".into());
+            let method = if enum_nick(&element, "method").as_deref() == Some("yadif") {
+                "yadif"
+            } else {
+                "other"
+            };
             let rate = element
                 .static_pad("src")
                 .and_then(|pad| pad.current_caps())
                 .and_then(|caps| caps.structure(0)?.get::<gst::Fraction>("framerate").ok())
-                .map_or_else(|| "not negotiated".into(), |rate| rate.to_string());
+                .map_or("not negotiated", framerate_label);
             format!("deinterlace method={method} output-framerate={rate}")
         })
         .collect::<Vec<_>>();

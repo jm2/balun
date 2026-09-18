@@ -326,8 +326,8 @@ teardown that cannot join both workers fails, quarantines the owner, and
 retains the unjoined transport for the shutdown retry. Cancellation is never
 reported as EOS or as a failure. Every bus error, missing-plugin notice,
 transport rejection, and source-policy rejection is logged to standard error
-with its native detail before it is reduced to a category (`RUST_LOG=balun=debug`
-shows the full event trace); the category is all the state retains. A live
+with closed labels and typed counters; arbitrary native text is discarded.
+`RUST_LOG=balun=debug` adds the filtered event trace; the category is all the state retains. A live
 `appsrc` feed does not post `playbin3`
 buffering messages, so the session's buffering state stays reserved for
 runtimes that publish it and the connecting state covers preroll. The

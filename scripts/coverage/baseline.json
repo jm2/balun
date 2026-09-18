@@ -104,10 +104,10 @@
       "percent": 100.0
     },
     "rust-regions:src/playback/pipeline_failure.rs": {
-      "covered": 199,
-      "total": 450,
-      "uncovered": 251,
-      "percent": 44.22
+      "covered": 420,
+      "total": 495,
+      "uncovered": 75,
+      "percent": 84.85
     },
     "python-lines:scripts/macos_native_closure.py": {
       "covered": 202,
