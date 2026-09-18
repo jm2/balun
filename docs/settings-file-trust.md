@@ -33,6 +33,11 @@ An existing parent may include administrator/user-managed aliases before the
 initial directory handle is acquired; those aliases are part of that trusted
 configuration. After acquisition, use pinned directory handles and relative
 operations for the Balun directory, lock, document, and temporary siblings.
+Absolute configuration paths may contain parent components within that existing
+parent. The OS resolves them during acquisition, preserving alias semantics;
+they are not collapsed lexically by Balun. A missing suffix must contain ordinary
+names. On Unix, an unresolved `missing/..` parent fails without creating either
+the missing directory or a different profile; Windows retains its native path semantics.
 
 Reject final-component aliases, non-regular documents, hard-linked documents,
 oversized or malformed content, and changed identities during an operation.
