@@ -4,3 +4,20 @@ app:
   quit: "終了(_Q)"
   main_menu: "メインメニュー"
   description: "HDHomeRun のライブテレビを視聴できる軽量なクロスプラットフォームプレーヤー"
+
+navigation:
+  devices: "デバイス"
+  channels: "チャンネル"
+  live_tv: "ライブテレビ"
+  channels_and_live_tv: "チャンネルとライブテレビ"
+
+controls:
+  volume: "ライブテレビの音量"
+  mute: "ライブテレビをミュート"
+  unmute: "ライブテレビのミュートを解除"
+  stop: "ライブテレビを停止"
+  enter_fullscreen: "全画面表示にする"
+  exit_fullscreen: "全画面表示を終了"
+  video: "ライブテレビの映像"
+  status: "ライブテレビの再生状態"
+  watching: "ライブテレビを視聴中"

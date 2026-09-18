@@ -57,7 +57,7 @@ address so you know which tuner failed.
 | Native playback log privacy | ✅ Closed error and media labels retain useful diagnostics without plugin error text, arbitrary caps values, or stream identifiers |
 | Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved |
 | Light & dark mode | ✅ Automatic (libadwaita) |
-| i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Application menu and About description; [remaining scope](docs/localization.md) |
+| i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Application menu, navigation, player controls, and About description; [remaining scope](docs/localization.md) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
 today. Local broadcast and multicast discovery, exact IP or hostname discovery, and remembered

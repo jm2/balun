@@ -10,6 +10,7 @@ use balun::controller::{
     StreamHandoffError, StreamSelection,
 };
 use balun::domain::ChannelKey;
+use balun::localization::controls::PlayerLabels;
 use balun::playback::{
     MissingMedia, PlaybackCapabilities, PlaybackInitializationError, PlaybackPipelineFailure,
     PlaybackRuntime, PlaybackSession, PlaybackSessionFailure, PlaybackSessionState, TuneCompletion,
@@ -76,28 +77,9 @@ impl PlaybackPresentation {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PlayerAccessibilityPlan {
-    volume_label: &'static str,
-    mute_label: &'static str,
-    unmute_label: &'static str,
-    stop_label: &'static str,
-    enter_fullscreen_label: &'static str,
-    exit_fullscreen_label: &'static str,
-    enter_fullscreen_shortcuts: &'static str,
-    exit_fullscreen_shortcuts: &'static str,
-}
-
-const PLAYER_ACCESSIBILITY: PlayerAccessibilityPlan = PlayerAccessibilityPlan {
-    volume_label: "Live TV volume",
-    mute_label: "Mute live TV",
-    unmute_label: "Unmute live TV",
-    stop_label: "Stop live TV",
-    enter_fullscreen_label: "Enter fullscreen",
-    exit_fullscreen_label: "Exit fullscreen",
-    enter_fullscreen_shortcuts: "F11",
-    exit_fullscreen_shortcuts: "F11 Escape",
-};
+// GTK accessibility shortcut syntax is language-independent.
+const ENTER_FULLSCREEN_SHORTCUTS: &str = "F11";
+const EXIT_FULLSCREEN_SHORTCUTS: &str = "F11 Escape";
 
 /// Names the device and channel of the tune in progress so progress and
 /// failure copy can say which tuner and channel they refer to (ADR-0002).
@@ -303,17 +285,18 @@ impl PlayerView {
     /// Reconcile presentation only after the application window reports its
     /// compositor-confirmed fullscreen state.
     pub(crate) fn apply_fullscreen_presentation(&self, fullscreen: bool) {
+        let accessibility = PlayerLabels::current();
         let (icon, label, shortcuts) = if fullscreen {
             (
                 "view-restore-symbolic",
-                PLAYER_ACCESSIBILITY.exit_fullscreen_label,
-                PLAYER_ACCESSIBILITY.exit_fullscreen_shortcuts,
+                accessibility.exit_fullscreen_label.as_ref(),
+                EXIT_FULLSCREEN_SHORTCUTS,
             )
         } else {
             (
                 "view-fullscreen-symbolic",
-                PLAYER_ACCESSIBILITY.enter_fullscreen_label,
-                PLAYER_ACCESSIBILITY.enter_fullscreen_shortcuts,
+                accessibility.enter_fullscreen_label.as_ref(),
+                ENTER_FULLSCREEN_SHORTCUTS,
             )
         };
         self.fullscreen_button.set_icon_name(icon);
@@ -729,6 +712,7 @@ impl Drop for PlayerView {
 
 /// Build the player pane and inert session without creating a media pipeline.
 pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError>) -> PlayerView {
+    let accessibility = PlayerLabels::current();
     let picture = gtk::Picture::builder()
         .can_shrink(true)
         .content_fit(gtk::ContentFit::Contain)
@@ -737,7 +721,7 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         .hexpand(true)
         .vexpand(true)
         .build();
-    picture.update_property(&[gtk::accessible::Property::Label("Live TV video")]);
+    picture.update_property(&[gtk::accessible::Property::Label(&accessibility.video_label)]);
 
     let (title, description, session) = match runtime {
         Ok(runtime) => {
@@ -773,41 +757,41 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         .valign(gtk::Align::Center)
         .focusable(true)
         .sensitive(audio_enabled)
-        .tooltip_text(PLAYER_ACCESSIBILITY.volume_label)
+        .tooltip_text(accessibility.volume_label.as_ref())
         .adjustment(&volume_adjustment)
         .build();
     volume_scale.update_property(&[
-        gtk::accessible::Property::Label(PLAYER_ACCESSIBILITY.volume_label),
+        gtk::accessible::Property::Label(accessibility.volume_label.as_ref()),
         gtk::accessible::Property::Orientation(gtk::Orientation::Horizontal),
     ]);
 
     let mute_button = gtk::ToggleButton::builder()
         .icon_name("audio-volume-high-symbolic")
-        .tooltip_text(PLAYER_ACCESSIBILITY.mute_label)
+        .tooltip_text(accessibility.mute_label.as_ref())
         .focusable(true)
         .sensitive(audio_enabled)
         .build();
     mute_button.update_property(&[gtk::accessible::Property::Label(
-        PLAYER_ACCESSIBILITY.mute_label,
+        accessibility.mute_label.as_ref(),
     )]);
 
     let stop_button = gtk::Button::builder()
         .icon_name("media-playback-stop-symbolic")
-        .tooltip_text("Stop live TV")
+        .tooltip_text(accessibility.stop_label.as_ref())
         .focusable(true)
         .sensitive(false)
         .build();
     stop_button.update_property(&[gtk::accessible::Property::Label(
-        PLAYER_ACCESSIBILITY.stop_label,
+        accessibility.stop_label.as_ref(),
     )]);
     let fullscreen_button = gtk::Button::builder()
         .icon_name("view-fullscreen-symbolic")
-        .tooltip_text(PLAYER_ACCESSIBILITY.enter_fullscreen_label)
+        .tooltip_text(accessibility.enter_fullscreen_label.as_ref())
         .focusable(true)
         .build();
     fullscreen_button.update_property(&[
-        gtk::accessible::Property::Label(PLAYER_ACCESSIBILITY.enter_fullscreen_label),
-        gtk::accessible::Property::KeyShortcuts(PLAYER_ACCESSIBILITY.enter_fullscreen_shortcuts),
+        gtk::accessible::Property::Label(accessibility.enter_fullscreen_label.as_ref()),
+        gtk::accessible::Property::KeyShortcuts(ENTER_FULLSCREEN_SHORTCUTS),
     ]);
     let controls = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -825,7 +809,7 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
             "Unavailable"
         })
         .accessible_role(gtk::AccessibleRole::Status)
-        .tooltip_text("Live TV playback status")
+        .tooltip_text(accessibility.status_label.as_ref())
         .build();
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&playback_status));
@@ -862,10 +846,11 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
 }
 
 fn update_mute_presentation(button: &gtk::ToggleButton, volume: f64, muted: bool) {
+    let accessibility = PlayerLabels::current();
     let (icon, tooltip) = if muted {
         (
             "audio-volume-muted-symbolic",
-            PLAYER_ACCESSIBILITY.unmute_label,
+            accessibility.unmute_label.as_ref(),
         )
     } else {
         let icon = if volume > 0.66 {
@@ -875,12 +860,12 @@ fn update_mute_presentation(button: &gtk::ToggleButton, volume: f64, muted: bool
         } else {
             "audio-volume-low-symbolic"
         };
-        (icon, PLAYER_ACCESSIBILITY.mute_label)
+        (icon, accessibility.mute_label.as_ref())
     };
     button.set_icon_name(icon);
     button.set_tooltip_text(Some(tooltip));
     button.update_property(&[gtk::accessible::Property::Label(
-        PLAYER_ACCESSIBILITY.mute_label,
+        accessibility.mute_label.as_ref(),
     )]);
 }
 
@@ -980,6 +965,11 @@ mod tests {
     #[test]
     #[ignore = "requires the isolated display supplied by scripts/test-desktop-lifecycle.sh"]
     fn opaque_paintable_binding_tracks_status_and_shutdown() {
+        let locale = balun::localization::initialize().expect("initialize startup locale");
+        if let Ok(expected) = std::env::var("BALUN_TEST_EXPECTED_LOCALE") {
+            assert_eq!(locale, expected);
+        }
+        let accessibility = PlayerLabels::current();
         adw::init().expect("initialize libadwaita for player-view presentation smoke");
         let main_context = gtk::glib::MainContext::default();
         let _owner = main_context
@@ -1008,7 +998,7 @@ mod tests {
         );
         assert_eq!(
             view.playback_status.tooltip_text().as_deref(),
-            Some("Live TV playback status")
+            Some(accessibility.status_label.as_ref())
         );
         assert_eq!(
             view.stop_button.icon_name().as_deref(),
@@ -1016,7 +1006,7 @@ mod tests {
         );
         assert_eq!(
             view.stop_button.tooltip_text().as_deref(),
-            Some("Stop live TV")
+            Some(accessibility.stop_label.as_ref())
         );
         assert_eq!(
             view.stop_button.accessible_role(),
@@ -1040,7 +1030,7 @@ mod tests {
         assert_eq!(view.volume_adjustment.page_increment(), 10.0);
         assert_eq!(
             view.volume_scale.tooltip_text().as_deref(),
-            Some(PLAYER_ACCESSIBILITY.volume_label)
+            Some(accessibility.volume_label.as_ref())
         );
         assert_eq!(
             view.mute_button.accessible_role(),
@@ -1051,7 +1041,7 @@ mod tests {
         assert!(!view.mute_button.is_active());
         assert_eq!(
             view.mute_button.tooltip_text().as_deref(),
-            Some(PLAYER_ACCESSIBILITY.mute_label)
+            Some(accessibility.mute_label.as_ref())
         );
         assert_eq!(
             view.fullscreen_button.accessible_role(),
@@ -1065,7 +1055,7 @@ mod tests {
         );
         assert_eq!(
             view.fullscreen_button.tooltip_text().as_deref(),
-            Some(PLAYER_ACCESSIBILITY.enter_fullscreen_label)
+            Some(accessibility.enter_fullscreen_label.as_ref())
         );
         assert!(!view.root.is_extend_content_to_top_edge());
 
@@ -1076,7 +1066,7 @@ mod tests {
         );
         assert_eq!(
             view.fullscreen_button.tooltip_text().as_deref(),
-            Some(PLAYER_ACCESSIBILITY.exit_fullscreen_label)
+            Some(accessibility.exit_fullscreen_label.as_ref())
         );
         assert!(view.root.is_extend_content_to_top_edge());
         assert!(!view.header.shows_back_button());
@@ -1201,6 +1191,7 @@ mod tests {
     #[test]
     #[ignore = "requires the isolated display and playback runtime supplied by scripts/test-desktop-lifecycle.sh"]
     fn accessible_audio_controls_update_the_session() {
+        let accessibility = PlayerLabels::current();
         adw::init().expect("initialize libadwaita for player audio-control smoke");
         let main_context = gtk::glib::MainContext::default();
         let _owner = main_context
@@ -1240,7 +1231,7 @@ mod tests {
         assert!(audio.is_muted());
         assert_eq!(
             view.mute_button.tooltip_text().as_deref(),
-            Some(PLAYER_ACCESSIBILITY.unmute_label)
+            Some(accessibility.unmute_label.as_ref())
         );
         assert_eq!(
             view.mute_button.icon_name().as_deref(),
@@ -1271,32 +1262,16 @@ mod tests {
     }
 
     #[test]
-    fn accessibility_copy_plan_is_stable_and_unambiguous() {
-        assert_eq!(
-            PLAYER_ACCESSIBILITY,
-            PlayerAccessibilityPlan {
-                volume_label: "Live TV volume",
-                mute_label: "Mute live TV",
-                unmute_label: "Unmute live TV",
-                stop_label: "Stop live TV",
-                enter_fullscreen_label: "Enter fullscreen",
-                exit_fullscreen_label: "Exit fullscreen",
-                enter_fullscreen_shortcuts: "F11",
-                exit_fullscreen_shortcuts: "F11 Escape",
-            }
-        );
-        assert_ne!(
-            PLAYER_ACCESSIBILITY.volume_label,
-            PLAYER_ACCESSIBILITY.stop_label
-        );
-        assert_ne!(
-            PLAYER_ACCESSIBILITY.mute_label,
-            PLAYER_ACCESSIBILITY.unmute_label
-        );
-        assert_ne!(
-            PLAYER_ACCESSIBILITY.enter_fullscreen_label,
-            PLAYER_ACCESSIBILITY.exit_fullscreen_label
-        );
+    fn accessibility_copy_preserves_english_defaults_and_shortcut_syntax() {
+        let labels = PlayerLabels::current();
+        assert_eq!(labels.volume_label, "Live TV volume");
+        assert_eq!(labels.mute_label, "Mute live TV");
+        assert_eq!(labels.unmute_label, "Unmute live TV");
+        assert_eq!(labels.stop_label, "Stop live TV");
+        assert_eq!(labels.enter_fullscreen_label, "Enter fullscreen");
+        assert_eq!(labels.exit_fullscreen_label, "Exit fullscreen");
+        assert_eq!(ENTER_FULLSCREEN_SHORTCUTS, "F11");
+        assert_eq!(EXIT_FULLSCREEN_SHORTCUTS, "F11 Escape");
     }
 
     #[test]

@@ -4,3 +4,20 @@ app:
   quit: "退出(_Q)"
   main_menu: "主菜单"
   description: "轻量级跨平台 HDHomeRun 电视直播播放器"
+
+navigation:
+  devices: "设备"
+  channels: "频道"
+  live_tv: "电视直播"
+  channels_and_live_tv: "频道和电视直播"
+
+controls:
+  volume: "电视直播音量"
+  mute: "静音电视直播"
+  unmute: "取消电视直播静音"
+  stop: "停止电视直播"
+  enter_fullscreen: "进入全屏"
+  exit_fullscreen: "退出全屏"
+  video: "电视直播画面"
+  status: "电视直播播放状态"
+  watching: "正在观看电视直播"

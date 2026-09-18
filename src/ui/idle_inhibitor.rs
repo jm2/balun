@@ -54,7 +54,7 @@ impl NativeGuard {
         let cookie = application.inhibit(
             Some(&window),
             gtk::ApplicationInhibitFlags::IDLE | gtk::ApplicationInhibitFlags::SUSPEND,
-            Some("Watching live TV"),
+            Some(&balun::localization::controls::PlayerLabels::current().watching_reason),
         );
         if cookie == 0 {
             tracing::debug!("The desktop did not grant playback idle inhibition");

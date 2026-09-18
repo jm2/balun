@@ -4,3 +4,20 @@ app:
   quit: "Sa_ir"
   main_menu: "Menu principal"
   description: "Um reprodutor leve e multiplataforma de TV ao vivo para HDHomeRun"
+
+navigation:
+  devices: "Dispositivos"
+  channels: "Canais"
+  live_tv: "TV ao vivo"
+  channels_and_live_tv: "Canais e TV ao vivo"
+
+controls:
+  volume: "Volume da TV ao vivo"
+  mute: "Silenciar TV ao vivo"
+  unmute: "Ativar som da TV ao vivo"
+  stop: "Parar TV ao vivo"
+  enter_fullscreen: "Entrar em tela cheia"
+  exit_fullscreen: "Sair da tela cheia"
+  video: "Vídeo da TV ao vivo"
+  status: "Estado de reprodução da TV ao vivo"
+  watching: "Assistindo TV ao vivo"

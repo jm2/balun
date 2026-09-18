@@ -4,3 +4,20 @@ app:
   quit: "結束(_Q)"
   main_menu: "主選單"
   description: "輕量級跨平台 HDHomeRun 電視直播播放器"
+
+navigation:
+  devices: "裝置"
+  channels: "頻道"
+  live_tv: "電視直播"
+  channels_and_live_tv: "頻道與電視直播"
+
+controls:
+  volume: "電視直播音量"
+  mute: "將電視直播靜音"
+  unmute: "取消電視直播靜音"
+  stop: "停止電視直播"
+  enter_fullscreen: "進入全螢幕"
+  exit_fullscreen: "結束全螢幕"
+  video: "電視直播畫面"
+  status: "電視直播播放狀態"
+  watching: "正在觀看電視直播"

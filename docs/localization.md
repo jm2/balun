@@ -2,8 +2,9 @@
 
 V2.6 ([issue #74](https://github.com/jm2/balun/issues/74)) remains open. The first
 slice provides the shared catalog, startup selection, application menu, its
-tooltip/accessibility label, and the About description. The rest of the interface,
-CLI, errors, desktop metadata, pluralization, and layout evidence remain pending.
+tooltip/accessibility label, and the About description. A follow-on slice adds
+navigation titles and player-control copy. The remaining interface, CLI, errors,
+desktop metadata, pluralization, and layout evidence remain pending.
 
 ## Catalog and startup contract
 
@@ -54,8 +55,9 @@ env -u LANGUAGE -u LC_ALL -u LC_MESSAGES LANG=de_DE.UTF-8 \
   cargo run --locked --features desktop --bin balun
 ```
 
-This first slice translates only the application menu and About description.
-The rest of the window still contains English copy. The native GTK/libadwaita
+The application menu, About description, navigation titles, and player controls
+are translated. Status messages, dialogs, and other window copy still contain
+English. The native GTK/libadwaita
 controls also depend on the platform's own translations and locale setup.
 
 ## Adding presentation text
@@ -83,3 +85,24 @@ announcements, and native menus still need review across the platform matrix.
 Catalog parity alone does not establish those outcomes. Complete V2.6 alongside
 the H4.3 accessibility evidence, including plural/count rules and the remaining
 discovery, playback, settings, and failure copy.
+
+## Navigation and player controls
+
+The device header and navigation page share their title key. Channel, live-TV,
+and combined navigation pages use the same catalog. Player-control labels cover
+volume, mute/unmute, stop, enter/exit fullscreen, the video accessible name,
+playback-status tooltip, and the desktop's idle-inhibition reason. Status values,
+buffering percentages, and playback errors are still pending.
+
+Tooltips and accessible names share translated text. The mute toggle retains a
+stable translated name while its checked state conveys muting; its tooltip
+switches to the translated unmute action. Fullscreen label/tooltip updates still
+follow the compositor-confirmed state. `F11`, `Escape`, and GTK shortcut syntax
+remain language-independent.
+
+Portable tests check distinct action names and navigation titles in all thirteen
+catalogs. The display-backed lifecycle script repeats its production player
+binding test in an isolated German-locale process, including fullscreen
+transitions and translated tooltip checks. This native CI check supplements the
+English control/session smoke; it does not establish screen-reader output or
+long-string layout quality on every platform.
