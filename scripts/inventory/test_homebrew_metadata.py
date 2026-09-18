@@ -157,7 +157,9 @@ class HomebrewMetadataTests(unittest.TestCase):
                    ('raise SystemExit(7)', "QUERY_SECONDS", 5)]
         for script, option, limit in scripts:
             def child(args, **kwargs):
-                self.assertEqual(args, ["brew", "info", "--json=v2", "--formula", str(self.recipe)])
+                self.assertEqual(args, ["brew", "ruby",
+                                       str(Path(collector.__file__).resolve().with_name("homebrew_recipe.rb")),
+                                       str(self.recipe)])
                 self.assertEqual(kwargs["env"]["HOMEBREW_NO_AUTO_UPDATE"], "1")
                 process = original_popen([sys.executable, "-B", "-c", script], **kwargs)
                 processes.append(process)
@@ -166,6 +168,41 @@ class HomebrewMetadataTests(unittest.TestCase):
                     patch.object(collector, option, limit), self.assertRaises(collector.Invalid):
                 collector.query_formula(self.recipe, time.monotonic() + 10)
             self.assertIsNotNone(processes[-1].poll())
+
+    @unittest.skipUnless(shutil.which("ruby"), "requires Ruby for the installed-file loader contract")
+    def test_ruby_helper_selects_the_exact_file_loader(self):
+        # Model the two distinct Homebrew entry points: generic resolution must
+        # not be used when inspecting a recipe selected by its installed path.
+        stub = self.root / "ruby-stub"
+        stub.mkdir()
+        (stub / "formulary.rb").write_text("""require "digest"
+module Formulary
+  def self.factory(*)
+    raise "generic formula resolution is forbidden in this fixture"
+  end
+  class FromPathLoader
+    def initialize(path)
+      @path = path
+    end
+    def get_formula(spec)
+      raise "expected stable" unless spec == :stable
+      self
+    end
+    attr_reader :path
+    def to_hash
+      { "name" => path.basename(".rb").to_s,
+        "ruby_source_checksum" => { "sha256" => Digest::SHA256.file(path).hexdigest } }
+    end
+  end
+end
+""")
+        helper = Path(collector.__file__).with_name("homebrew_recipe.rb")
+        result = subprocess.run(["ruby", "-I", str(stub), str(helper), str(self.recipe)],
+                                capture_output=True, text=True, timeout=10, check=True)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(json.loads(result.stdout), {"casks": [], "formulae": [{
+            "name": "fixture", "ruby_source_checksum": {
+                "sha256": hashlib.sha256(self.recipe.read_bytes()).hexdigest()}}]})
 
     def test_diagnostic_reasons_are_closed_and_never_echo_exception_data(self):
         reason = "installed receipt and formula versions differ"

@@ -2,7 +2,7 @@
 """Collect metadata from the installed Homebrew recipes owning selected files.
 
 This is a trusted build-input collector. Homebrew evaluates installed Ruby
-recipes; neither this tool nor brew info is an untrusted-package sandbox.
+recipes; neither this tool nor brew ruby is an untrusted-package sandbox.
 The result is intermediate input to a future packaging copy ledger, not an SBOM.
 """
 
@@ -87,11 +87,12 @@ def read_metadata(path):
 
 
 def query_formula(recipe, deadline):
-    """Ask for the exact installed .rb path, never a current formula by name."""
+    """Evaluate the exact installed file without brew info resolving its tap again."""
     env = dict(os.environ, HOMEBREW_NO_AUTO_UPDATE="1", HOMEBREW_NO_ANALYTICS="1")
+    helper = Path(__file__).resolve().with_name("homebrew_recipe.rb")
     # Spool to owned scratch rather than buffering unbounded child output.
     with tempfile.TemporaryFile(dir=os.environ.get("TMPDIR") or "/var/tmp") as output:
-        process = subprocess.Popen(["brew", "info", "--json=v2", "--formula", str(recipe)],
+        process = subprocess.Popen(["brew", "ruby", str(helper), str(recipe)],
                                    stdout=output, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
                                    env=env, start_new_session=True)
         try:
