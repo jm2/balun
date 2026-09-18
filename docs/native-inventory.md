@@ -115,6 +115,13 @@ scan checks directory identities and membership too. It writes a report only
 after all observations succeed. CLI rejection text contains no input paths or
 file content.
 
+On Windows, named and open-handle snapshots compare birth time and ignore only
+the synthetic regular-file execute bits that CPython derives from a filename.
+Path `stat` and `fstat` can otherwise disagree for the same unchanged file.
+Device/file identity, type, link count, size, modification time, and file
+attributes still match exactly. Open-handle change time must also remain stable
+across hashing; Unix mode and change-time comparisons remain exact.
+
 Limits are 65,536 files/directories, 64 directory levels, 1 GiB per member,
 4 GiB of native content, 4 GiB for the artifact, and 16 MiB of report JSON.
 Five-minute elapsed-time checks run during traversal and chunked hashing. They
