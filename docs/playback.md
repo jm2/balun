@@ -35,6 +35,12 @@ this correction does not claim process isolation or new hardware timings.
 
 ## Current status
 
+Per-generation [startup timings](tune-timing.md) now separate predecessor
+retirement, handoff validation, graph setup, private-worker HTTP/appsrc observations,
+and main-context stream/PLAYING notifications. These bounded debug records do not
+yet measure usable media or establish its deadline; V2.1 and packaged timing
+acceptance remain open.
+
 Balun has an optional, GTK-free GStreamer initialization and capability layer.
 The desktop owns that layer on the default GLib main context and can report
 whether the structural factories needed for the first playback experiment are
@@ -413,14 +419,17 @@ Balun configures playsink's inserted software `deinterlace` element with `method
 `mode=auto`, `fields=all`, and `tff=auto`. YADIF uses temporal and spatial information instead of
 the default linear interpolation. Both fields are retained: 480i/1080i at 30000/1001 frames/s
 produce 60000/1001 progressive frames/s, while progressive caps bypass deinterlacing. Automatic
-mode also honors the per-buffer interlace flags in mixed streams. The existing format conversion
+mode uses the per-buffer interlace flags in mixed streams; transition cadence is still under
+investigation. The existing format conversion
 and decoder selection remain playbin-owned. See the upstream
 [deinterlace properties](https://gstreamer.freedesktop.org/documentation/deinterlace/index.html).
 
 The required enum values are checked before opening a stream and applied through `element-setup`
 to every inserted deinterlacer. Playback debug diagnostics report its method and negotiated output
 frame rate. Synthetic tests compare static two-line detail with linear interpolation at SD and HD
-resolutions, check full field rate, and verify unchanged progressive frames. These do not substitute
+resolutions, check full field rate and steady field order, and verify unchanged progressive frames.
+The [mixed-stream evidence](deinterlace-evidence.md) records an unresolved native transition
+reproducer with duplicate content and timestamp anomalies. These tests do not substitute
 for motion-quality and CPU measurements on real broadcasts across platforms. GPU deinterlacing,
 hardware-specific tuning, and inverse telecine remain deferred under
 [#78](https://github.com/jm2/balun/issues/78); pattern locking remains disabled.

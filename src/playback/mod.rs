@@ -28,6 +28,8 @@ mod source_policy;
 mod test_support;
 #[cfg(feature = "desktop")]
 mod transport;
+#[cfg(feature = "desktop")]
+mod transport_timing;
 
 #[cfg(feature = "desktop")]
 pub use pipeline_failure::{MissingMedia, PlaybackPipelineFailure};

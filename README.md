@@ -35,7 +35,7 @@ address so you know which tuner failed.
 | Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Linux, macOS, and Windows against real tuners |
 | Native media failure boundary | ⚠️ In-process native hangs can block the UI/close path; network bytes do not guarantee useful media. [Accepted limits and review triggers](docs/native-media-failure-boundary.md) |
 | Stop, volume, mute, and fullscreen controls | ✅ Stop and switching account for overlapping startup and partial worker creation before completing teardown |
-| Software deinterlacing | ✅ Adaptive YADIF, automatic field order, full field rate; progressive video passes through |
+| Software deinterlacing | ✅ Adaptive YADIF, automatic field order, full field rate; [mixed-stream transition cadence remains under investigation](docs/deinterlace-evidence.md) |
 | Keep the display and computer awake during playback | ✅ While playing or buffering, where the desktop permits inhibition |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
 | Playback errors that name the device and channel | ✅ |
@@ -360,6 +360,12 @@ build the desktop and launch it in the same terminal. On Windows,
 release-profile developer build, so those logs remain visible in the invoking PowerShell session.
 The distributed ZIP and installer remain GUI-subsystem applications and do not attach a console.
 
+For bounded per-generation tune startup records, use
+`RUST_LOG=off,balun::playback::timing=debug`. The [phase definitions](docs/tune-timing.md)
+distinguish retirement, handoff, graph setup, worker-captured HTTP/appsrc observations,
+and received pipeline notifications;
+decoded/rendered media timing and usable-media deadlines remain V2.1 work.
+
 ### Discovery diagnostic
 
 `balun-discover` is the GTK-free command-line tool behind the desktop's discovery. It never opens
@@ -458,6 +464,12 @@ archive the package as described under [Windows](#windows). None of the helpers 
 packagers or dependencies. The helpers keep Tributary's filenames and flags;
 [`docs/tributary-build-infrastructure.md`](docs/tributary-build-infrastructure.md) is the port
 ledger.
+
+Linux native package inspection also requires Python 3 and freezes one
+[bounded private input snapshot](docs/linux-archive-snapshots.md) for all metadata and payload
+tools. RPM payloads also receive bounded decoding and member preflight before extraction.
+Native parser isolation and Debian/Arch preflight remain pending; the release workflow
+continues to accept only locally produced packages.
 
 ### Testing & Code Quality
 

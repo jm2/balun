@@ -50,16 +50,16 @@
       "percent": 88.96
     },
     "rust-regions:src/playback/source_policy.rs": {
-      "covered": 402,
-      "total": 440,
+      "covered": 404,
+      "total": 442,
       "uncovered": 38,
-      "percent": 91.36
+      "percent": 91.4
     },
     "rust-regions:src/playback/transport.rs": {
-      "covered": 397,
-      "total": 420,
+      "covered": 434,
+      "total": 457,
       "uncovered": 23,
-      "percent": 94.52
+      "percent": 94.97
     },
     "rust-regions:src/discovery/registry.rs": {
       "covered": 439,
