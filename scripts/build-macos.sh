@@ -1177,6 +1177,12 @@ if $make_dmg; then
         fail "DMG app failed macOS icon policy: $MACOS_ICON_POLICY_REASON"
     fi
     codesign --verify --deep --strict --verbose=2 "$MOUNTED_APP"
+    python3 -B "$script_dir/inventory/bind_final_native.py" \
+        --tree "$MOUNTED_APP" --artifact "$DMG_PATH" \
+        --copy-ledger "$NATIVE_COPY_LEDGER" \
+        --platform "macos-${native_target%-apple-darwin}" --version "$CARGO_VERSION" \
+        > "${DMG_PATH}.native-observed.json" \
+        || fail 'Reopened DMG native content differs from the frozen copy ledger.'
     hdiutil detach "$DMG_MOUNT" >/dev/null \
         || fail "hdiutil could not detach the verified DMG"
     DMG_ATTACHED=false

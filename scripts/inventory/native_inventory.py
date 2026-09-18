@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 MAX_DOCUMENT = 16 * 1024 * 1024
 MAX_FILES = 65536
 MAX_COMPONENTS = 4096
-PLATFORMS = {"macos-aarch64", "windows-x86_64", "windows-aarch64",
+PLATFORMS = {"macos-aarch64", "macos-x86_64", "windows-x86_64", "windows-aarch64",
              "linux-x86_64", "linux-aarch64"}
 
 

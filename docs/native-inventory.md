@@ -4,8 +4,9 @@ H1.3 requires an inventory tied to the final artifact's actual native members.
 `scripts/inventory/native_inventory.py` implements the portable join and report
 format. `observe_native.py` independently hashes the native members of an
 already reopened, validated package tree and its completed artifact. The macOS
-helper records each native copy's input owner and final staged content. Catalog
-assembly, final-artifact integration, and release attachment remain pending.
+helper records each native copy's input owner and final staged content, then
+compares the reopened DMG payload against that ledger. Catalog assembly,
+other final-artifact adapters, and release attachment remain pending.
 H1.3 and issue #91 remain open; existing release assets do not yet carry this
 inventory or SBOM.
 
@@ -141,9 +142,9 @@ ownership requires an explicit selection. Unknown owners reject the build.
 After relocation and the existing signing and runtime gates, the helper freezes
 `dist/Balun.native-copies.json`. It independently scans the staged app, rejects
 unknown or missing native members, and retains both the original input and final
-staged size/hash for each destination. This staged snapshot still needs comparison
-with the reopened final artifact before it can complete an inventory. It does
-not authenticate the installed inputs or change signing policy.
+staged size/hash for each destination. The DMG path compares this snapshot with
+the reopened artifact as described below. It does not authenticate the installed
+inputs or change signing policy.
 
 The ledger uses the observer's member, byte, traversal, identity, and time limits.
 It lives outside the payload in the trusted build workspace; the helper serializes
@@ -211,6 +212,25 @@ integration below before they establish H1.3.
 
 ### Final-artifact integration
 
+The macOS `--dmg` path invokes `bind_final_native.py` while the completed image is
+mounted read-only, after its native closure, icon, and existing signature checks.
+The tool independently hashes the mounted app and disk image, then requires exact
+native membership, sizes, and hashes from the frozen staged ledger. Unknown,
+missing, or changed native members reject the build. It checks the ledger again
+after observation and only then emits `dist/Balun.dmg.native-observed.json`.
+
+```bash
+python3 -B scripts/inventory/test_bind_final_native.py
+```
+
+Native macOS PR CI now builds and reopens the DMG and retains this observation
+beside its copy ledger and installed-owner metadata. The record identifies the
+helper's `Balun.dmg` output. Release assembly still needs to join the catalog,
+bind the release asset's final name, and attach the resulting inventory/SBOM.
+This comparison covers native content, not an exact resource-tree comparison;
+existing resource and package gates remain necessary. It also retains the
+trusted-local-output boundary: the observer does not extract or mount input.
+
 Synthetic fixtures exercise exact membership, changed payloads, missing and
 unknown components, file aliases/collisions, malformed metadata, allocation
 budgets, and CLI failures without input echoes. An affected-version fixture
@@ -219,8 +239,8 @@ changed rebuild payload whose catalog was not refreshed. This is an inventory
 query regression, not H1.4's approved advisory response or rebuild exercise.
 
 Remaining H1.3 work must establish real package ownership and source/license
-records on macOS and both Windows architectures, invoke the observer from the
-validated final app/installer/archive adapters, describe externally managed Linux and
+records on macOS and both Windows architectures, integrate the remaining
+validated final installer/archive adapters, describe externally managed Linux and
 Flatpak runtimes, attach reports to every release artifact, and exercise
 unknown/changed native members in native CI. Only that integrated result can
 complete the ledger outcome.

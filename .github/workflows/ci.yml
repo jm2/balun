@@ -65,6 +65,7 @@ jobs:
           python3 -B scripts/inventory/test_observe_native.py
           python3 -B scripts/inventory/test_homebrew_metadata.py
           python3 -B scripts/inventory/test_native_copy_ledger.py
+          python3 -B scripts/inventory/test_bind_final_native.py
 
       - name: Adversarial package metadata smoke
         run: |
@@ -496,6 +497,7 @@ jobs:
         run: |
           python3 -B scripts/inventory/test_observe_native.py
           python3 -B scripts/inventory/test_native_copy_ledger.py
+          python3 -B scripts/inventory/test_bind_final_native.py
 
       - name: Test packaged-hardware output privacy with system Bash
         if: runner.os == 'macOS'
@@ -530,7 +532,7 @@ jobs:
         if: runner.os == 'macOS'
         env:
           HOMEBREW_NO_AUTO_UPDATE: '1'
-        run: brew install gstreamer gtk4 libadwaita adwaita-icon-theme pkgconf
+        run: brew install create-dmg gstreamer gtk4 libadwaita adwaita-icon-theme pkgconf
 
       - name: Verify metadata from actual installed Homebrew recipes
         if: runner.os == 'macOS'
@@ -621,9 +623,9 @@ jobs:
           RUST_TARGET: ''
         run: ./scripts/build-windows.ps1 -Diagnostic
 
-      - name: Stage, sign, and probe the macOS app through helper
+      - name: Build, probe, and compare the reopened macOS disk image
         if: runner.os == 'macOS'
-        run: /bin/bash scripts/build-macos.sh --app
+        run: /bin/bash scripts/build-macos.sh --dmg
 
       - name: Bind installed metadata to every copied macOS native input
         if: runner.os == 'macOS'
@@ -638,6 +640,7 @@ jobs:
           name: macos-native-copy-ownership
           path: |
             dist/Balun.native-copies.json
+            dist/Balun.dmg.native-observed.json
             ${{ runner.temp }}/macos-native-owners.json
           if-no-files-found: error
           retention-days: 14
