@@ -1,0 +1,6 @@
+# GTK action labels use _ for a mnemonic; tooltip/accessibility text does not.
+app:
+  about: "_Acerca de Balun"
+  quit: "_Salir"
+  main_menu: "Menú principal"
+  description: "Un reproductor ligero y multiplataforma de televisión en directo para HDHomeRun"

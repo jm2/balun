@@ -184,7 +184,10 @@ and paused. Independent correctness and package-inspection fixes may continue.
 
 - [ ] **V2.6 — Localize the interface ([#74]).** Add catalogs, pluralization,
   locale fallback, and translated accessibility copy; verify missing keys and
-  long-string layouts across the supported locales.
+  long-string layouts across the supported locales. The
+  [foundation](localization.md) covers thirteen catalogs, startup selection,
+  and application-menu/About copy; full translation and native layout evidence
+  remain open.
 
 - [ ] **V2.7 — Prove mobile/TV prerequisites ([#64]).** After H0 and V2.1,
   validate GTK-free playback, sink/network boundaries, and each platform's

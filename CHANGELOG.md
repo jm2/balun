@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Localization foundation with thirteen embedded catalogs, automatic locale
+  selection and English fallback, translated application-menu accessibility copy,
+  and an About description. The remaining interface and CLI are still English.
 - Isolated native-call stall regressions document the limits of playback teardown
   timeouts; Windows CI now executes the desktop tests as well as compiling them.
 - Critical admission, cancellation, identity, privacy, and package gates have measured
