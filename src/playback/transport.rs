@@ -582,6 +582,9 @@ mod tests {
     const PROXY_TRAP_CHILD_ENV: &str = "BALUN_PLAYBACK_PROXY_TRAP_CHILD";
     const PROXY_TRAP_CHILD_TEST: &str = "playback::transport::tests::proxy_trap_child";
     const SECRET_MARKERS: [&str; 4] = ["127.0.0.1", "/auto/v5.1", "http://", "user-secret"];
+    // Short deadlines belong to deadline/early-rejection tests. Positive HTTP
+    // outcomes use production budgets so scheduler contention cannot turn a
+    // payload/status assertion into an incidental timeout test.
     const QUICK: TransportConfig = TransportConfig::new(
         Duration::from_millis(500),
         Duration::from_millis(1_500),
@@ -813,7 +816,7 @@ mod tests {
             handoff(&server.stream_url()),
             fixture.source.clone(),
             &fixture.pipeline,
-            QUICK,
+            TransportConfig::PRODUCTION,
             Some(Arc::clone(&timing)),
         )
         .unwrap();
@@ -868,7 +871,7 @@ mod tests {
             })
             .unwrap();
         fixture.pipeline.set_state(gst::State::Playing).unwrap();
-        let transport = fixture.start(handoff(&server.stream_url()), QUICK);
+        let transport = fixture.start(handoff(&server.stream_url()), TransportConfig::PRODUCTION);
 
         assert_eq!(fixture.wait_terminal(Duration::from_secs(5)), Terminal::Eos);
         fixture
@@ -950,7 +953,7 @@ mod tests {
                 handoff(&server.stream_url()),
                 fixture.source.clone(),
                 &fixture.pipeline,
-                QUICK,
+                TransportConfig::PRODUCTION,
                 Some(Arc::clone(&timing)),
             )
             .unwrap();
@@ -1177,7 +1180,7 @@ mod tests {
 
         let server = FixtureStreamServer::start(fixture_response(), StreamBehavior::Close);
         fixture.pipeline.set_state(gst::State::Playing).unwrap();
-        let transport = fixture.start(handoff(&server.stream_url()), QUICK);
+        let transport = fixture.start(handoff(&server.stream_url()), TransportConfig::PRODUCTION);
         assert_eq!(fixture.wait_terminal(Duration::from_secs(5)), Terminal::Eos);
         assert!(server.request(Duration::from_secs(3)).is_some());
         assert_eq!(fixture.stop(transport), Ok(()));
