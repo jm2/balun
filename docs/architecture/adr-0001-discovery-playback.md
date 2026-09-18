@@ -81,6 +81,8 @@ or guarantee single-host delivery if it is changed. This contract permits
 implementation, with the maintainer owning review before beta.
 Every typed scan also requires a live, healthy network-change source; missing
 observation prevents admission, and changes or observation loss revoke the scan.
+Establish that observation before displaying desktop confirmation or consuming
+CLI consent, and bind consent and admission to the same observed generation.
 Platform enablement requires native evidence under the
 [network-change admission contract](../typed-subnet-discovery-proposal.md#network-change-admission).
 V2.4 stays open until its implementation and acceptance evidence land.

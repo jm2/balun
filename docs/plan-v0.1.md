@@ -265,7 +265,9 @@ Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
   requires fresh confirmation. The CLI's explicit `--approved-range` argument
   grants consent only for its invocation.
 - Require [live network-change observation](typed-subnet-discovery-proposal.md#network-change-admission)
-  for both desktop and CLI admission. An unavailable or unready observer prevents
+  before desktop confirmation and before CLI consent is consumed; carry that
+  observed generation through admission and sends. Stale confirmations require
+  fresh confirmation. An unavailable or unready observer prevents
   sends; detected changes or observation loss cancel the active scan. Each
   platform needs native evidence before enabling typed searches.
 - The accepted [delivery boundary](typed-subnet-discovery-proposal.md#approved-delivery-boundary)

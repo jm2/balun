@@ -121,11 +121,28 @@ failure must not bypass confirmation for the current or a later search.
 ## Network-change admission
 
 Every typed-scan entry point, including the CLI, must establish a working
-network-change source before admitting probes. The source must observe relevant
+network-change source before accepting consent or admitting probes. The source must observe relevant
 adapter, address, and route changes and expose readiness and loss of observation.
 An unavailable source, a failed subscription, or an unready observer makes the
 typed search unavailable and permits no sends. A channel handle alone does not
 prove that observation has started or remains healthy.
+
+For the desktop, establish observation and its current baseline **before showing
+the confirmation**. Subscribe before taking the baseline and reconcile intervening
+events before declaring it ready. Bind the displayed scope and request budget
+to that observation generation, and keep observation active throughout the dialog,
+consent acceptance, admission, and scan. A generation change or observation loss
+while the dialog is open, or between acceptance and admission, invalidates that
+confirmation and permits no sends. Present a fresh confirmation only after a new
+healthy baseline is ready; never attach an old confirmation to a new generation,
+even if the topology later appears unchanged. Changing the scope or budget also
+invalidates the displayed confirmation.
+
+The CLI first validates its explicit argument without granting scan authority,
+then consumes that invocation's consent once against its initial healthy observed
+baseline. Carry the same generation through admission and every send. Any later
+generation change or observation loss ends that invocation's scan authority;
+retrying requires a new explicit invocation, not automatic replay of the argument.
 
 A detected change or loss of observation invalidates the scan's authority,
 cancels and joins admitted probes, and reports any partial work as incomplete.
@@ -170,6 +187,11 @@ Required evidence before V2.4 can be completed:
   or cancels an active scan. Prove revocation before pending sends resume, even
   while presentation notifications are debounced, and require fresh confirmation
   after observation is restored.
+- Change the network while confirmation is open and between acceptance and
+  admission; prove old dialogs and queued acceptance callbacks cannot authorize
+  sends, including after the original topology returns. Reject changed scope or
+  budget under an old confirmation. Prove CLI consent is consumed only once and
+  cannot be replayed after its observed generation changes.
 - Run the native socket/cancellation fixtures on Linux, macOS, and Windows.
   Prove that socket broadcast stays disabled and OS-classified broadcast sends
   are rejected without retrying with broader socket permissions.
