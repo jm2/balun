@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Deinterlacing evidence now distinguishes verified steady field order and progressive
+  passthrough from unresolved mixed-stream transition and boundary timing behavior.
 - Playback and shutdown claims now reflect the accepted in-process native boundary:
   native hangs can block the UI or close before timed waits, and network bytes do not
   establish useful-media progress. Review is owned before beta and after a reproduced hang.
