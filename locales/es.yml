@@ -21,3 +21,14 @@ controls:
   video: "Vídeo de TV en directo"
   status: "Estado de reproducción de TV en directo"
   watching: "Viendo TV en directo"
+
+progress:
+  stopped: "Detenido"
+  connecting: "Conectando"
+  playing: "Reproduciendo"
+  buffering: "Almacenando en búfer"
+  unavailable: "No disponible"
+  playback_unavailable: "Reproducción no disponible"
+  buffering_status: "Almacenando en búfer: %{percent} %"
+  buffering_description: "La TV en directo se está almacenando en búfer: %{percent} %."
+  opening: "Abriendo %{channel} en %{device}."

@@ -21,3 +21,14 @@ controls:
   video: "Beeld van live-tv"
   status: "Afspeelstatus van live-tv"
   watching: "Live-tv kijken"
+
+progress:
+  stopped: "Gestopt"
+  connecting: "Verbinden"
+  playing: "Afspelen"
+  buffering: "Bufferen"
+  unavailable: "Niet beschikbaar"
+  playback_unavailable: "Afspelen niet beschikbaar"
+  buffering_status: "Bufferen %{percent}%"
+  buffering_description: "Live-tv wordt gebufferd: %{percent}%."
+  opening: "%{channel} openen op %{device}."

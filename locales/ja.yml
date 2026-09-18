@@ -21,3 +21,14 @@ controls:
   video: "ライブテレビの映像"
   status: "ライブテレビの再生状態"
   watching: "ライブテレビを視聴中"
+
+progress:
+  stopped: "停止中"
+  connecting: "接続中"
+  playing: "再生中"
+  buffering: "バッファリング中"
+  unavailable: "利用不可"
+  playback_unavailable: "再生できません"
+  buffering_status: "バッファリング中 %{percent}%"
+  buffering_description: "ライブテレビをバッファリングしています: %{percent}%。"
+  opening: "%{device} の %{channel} を開いています。"

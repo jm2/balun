@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use std::sync::OnceLock;
 
 pub mod controls;
+pub mod playback_status;
 
 // Keep the generated initializer isolated as the catalogs grow. Like Tributary,
 // desktop startup forces it on one joined thread with an explicit stack size.
@@ -118,6 +119,22 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    fn placeholders(text: &str) -> BTreeSet<&str> {
+        text.split("%{")
+            .skip(1)
+            .map(|part| {
+                let (name, _) = part.split_once('}').expect("close catalog placeholder");
+                assert!(
+                    !name.is_empty()
+                        && name
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                );
+                name
+            })
+            .collect()
+    }
+
     #[test]
     fn locale_selection_normalizes_supported_os_forms() {
         for locale in SUPPORTED_LOCALES {
@@ -173,6 +190,11 @@ mod tests {
             );
             for (key, text) in messages {
                 assert!(!text.trim().is_empty(), "{locale}: {key}");
+                assert_eq!(
+                    placeholders(text),
+                    placeholders(&english[key]),
+                    "{locale}: {key}"
+                );
                 assert_eq!(
                     catalog::_rust_i18n_backend()
                         .translate(locale, key)
