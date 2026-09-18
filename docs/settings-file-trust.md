@@ -11,7 +11,11 @@ completion takes effect only when CI and bot review are clean and the PR merges.
 clones. `cap-std`/`cap-fs-ext` provide relative, no-follow operations without
 unsafe code in Balun. The cooperative `.settings.lock` covers admission,
 reading, schema validation, and atomic replacement. The actual locked handle
-stays open for the entire transaction. Every save re-reads the current document,
+stays open for the entire transaction and is explicitly unlocked before closing.
+On Unix, a concurrent process spawn can briefly inherit the same open file
+description; closing only the parent descriptor would retain the lock until the
+child closes its inherited descriptor. A guard releases it on every transaction
+exit, including validation failures. Every save re-reads the current document,
 so a newer or malformed file introduced after startup is preserved.
 
 The desktop uses one named thread for loading and every subsequent save. One
