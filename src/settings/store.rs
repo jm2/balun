@@ -44,6 +44,18 @@ struct Profile {
     hooks: TestHooks,
 }
 
+/// Unlock explicitly before closing the acquiring handle. On Unix a child
+/// spawned by another thread may temporarily inherit the open file description;
+/// closing only our descriptor would otherwise leave its lock held until exec.
+struct TransactionLock(std::fs::File);
+
+impl Drop for TransactionLock {
+    fn drop(&mut self) {
+        // Closing remains the fallback if the OS reports an unlock error.
+        let _ = self.0.unlock();
+    }
+}
+
 impl SettingsStore {
     /// Use an absolute directory, created privately on the first access.
     #[must_use]
@@ -308,7 +320,7 @@ impl Profile {
         }
     }
 
-    fn lock(&self) -> Result<File, SettingsError> {
+    fn lock(&self) -> Result<TransactionLock, SettingsError> {
         check_directory(
             &self
                 .directory
@@ -355,14 +367,13 @@ impl Profile {
             }
         })?;
         // Retain the exact handle that acquired the lock for the transaction.
-        let file = File::from_std(locking);
-        self.check_lock(&file)?;
-        Ok(file)
+        let lock = TransactionLock(locking);
+        self.check_lock(&lock)?;
+        Ok(lock)
     }
 
-    fn check_lock(&self, file: &File) -> Result<(), SettingsError> {
-        let expected = file
-            .metadata()
+    fn check_lock(&self, lock: &TransactionLock) -> Result<(), SettingsError> {
+        let expected = Metadata::from_file(&lock.0)
             .map_err(|e| SettingsError::io(SettingsOperation::Inspect, &e))?;
         let actual = self.inspect(LOCK_NAME)?.ok_or(SettingsError::Changed)?;
         if same_identity(&expected, &actual) {
@@ -629,6 +640,23 @@ mod tests {
         other.save(&Settings::default()).unwrap();
         store.save(&Settings::default()).unwrap();
         assert!(store.directory().join(LOCK_NAME).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn releasing_a_transaction_unlocks_even_with_an_inherited_descriptor() {
+        let (_root, store) = store();
+        let profile = store.profile().unwrap();
+        let lock = profile.lock().unwrap();
+        // A concurrent process spawn can briefly inherit the open file
+        // description until exec closes CLOEXEC descriptors. A clone models
+        // that lifetime deterministically, without spawning another process.
+        let inherited = lock.0.try_clone().unwrap();
+        let other = SettingsStore::new(store.directory().to_owned());
+        assert_eq!(other.save(&Settings::default()), Err(SettingsError::Busy));
+        drop(lock);
+        other.save(&Settings::default()).unwrap();
+        drop(inherited);
     }
 
     #[test]
