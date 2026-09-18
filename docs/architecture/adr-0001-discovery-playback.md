@@ -79,6 +79,10 @@ socket broadcast stays disabled, and the supported deployment requires downstrea
 routers to block directed broadcasts. Balun cannot verify that remote setting
 or guarantee single-host delivery if it is changed. This contract permits
 implementation, with the maintainer owning review before beta.
+Every typed scan also requires a live, healthy network-change source; missing
+observation prevents admission, and changes or observation loss revoke the scan.
+Platform enablement requires native evidence under the
+[network-change admission contract](../typed-subnet-discovery-proposal.md#network-change-admission).
 V2.4 stays open until its implementation and acceptance evidence land.
 
 ### Playback

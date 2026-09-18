@@ -264,6 +264,10 @@ Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
   changes. A detected network change cancels the active search; another search
   requires fresh confirmation. The CLI's explicit `--approved-range` argument
   grants consent only for its invocation.
+- Require [live network-change observation](typed-subnet-discovery-proposal.md#network-change-admission)
+  for both desktop and CLI admission. An unavailable or unready observer prevents
+  sends; detected changes or observation loss cancel the active scan. Each
+  platform needs native evidence before enabling typed searches.
 - The accepted [delivery boundary](typed-subnet-discovery-proposal.md#approved-delivery-boundary)
   limits Balun's outbound requests. Keep socket broadcast disabled and require
   downstream routers to block directed broadcasts; Balun cannot verify that

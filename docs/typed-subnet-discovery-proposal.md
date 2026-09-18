@@ -38,6 +38,7 @@ CLI `--approved-range`, persistence, and tests:
 | Receive budget | At most 16 received datagrams and one accepted device identity per candidate |
 | Result budget | At most 64 distinct accepted devices; reaching the limit reports an incomplete result |
 | Scan deadline | 30 seconds for the UDP scan, including pacing and reply waits; no new request after expiry |
+| Network observation | A healthy, live network-change source is required before admission and throughout the scan |
 | Cancellation | Cancel on the user's request, close, or a detected network change; cancel and join all admitted probes |
 
 Reject host bits in a typed network rather than silently changing its scope.
@@ -117,6 +118,31 @@ identity so neither route-derived nor exact-address approvals can authorize it.
 Unknown/newer state remains preserved and grants no new authority. Persistence
 failure must not bypass confirmation for the current or a later search.
 
+## Network-change admission
+
+Every typed-scan entry point, including the CLI, must establish a working
+network-change source before admitting probes. The source must observe relevant
+adapter, address, and route changes and expose readiness and loss of observation.
+An unavailable source, a failed subscription, or an unready observer makes the
+typed search unavailable and permits no sends. A channel handle alone does not
+prove that observation has started or remains healthy.
+
+A detected change or loss of observation invalidates the scan's authority,
+cancels and joins admitted probes, and reports any partial work as incomplete.
+Loss includes a closed stream, observation errors or overflow, and gaps while
+resubscribing. Restoration never resumes an old scan: another search requires
+fresh confirmation. Check the live observation generation after write readiness
+and immediately before every nonblocking send attempt, including retries.
+Revoke on detection; UI notification debounce must not delay that revocation.
+
+The current `default_network_change_source()` in `src/controller/runtime.rs`
+uses `UnavailableNetworkChangeSource` on macOS and Windows. Those platforms
+need working native change sources and cancellation evidence before typed scans
+can be enabled. The existing Linux source and its debounced controller stream
+also need the readiness, health, and immediate-invalidation evidence above;
+their mere presence is not sufficient admission proof. This requirement is
+separate from route-derived provider availability and interface pinning.
+
 ## Integration and acceptance
 
 Keep Linux route-derived admission at its current limits and retain interface
@@ -140,6 +166,10 @@ Required evidence before V2.4 can be completed:
 - Repeated activation, stale completion, revocation, close, policy changes,
   unavailable persistence, and network changes cannot authorize extra sends or
   leave unjoined workers. Repeated searches share the same pacing boundary.
+- Missing, unready, failed, or interrupted network observation prevents admission
+  or cancels an active scan. Prove revocation before pending sends resume, even
+  while presentation notifications are debounced, and require fresh confirmation
+  after observation is restored.
 - Run the native socket/cancellation fixtures on Linux, macOS, and Windows.
   Prove that socket broadcast stays disabled and OS-classified broadcast sends
   are rejected without retrying with broader socket permissions.
