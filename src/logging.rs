@@ -2,10 +2,10 @@
 //!
 //! Both binaries call [`init`] first thing. `RUST_LOG` selects what is
 //! written, as in Tributary; without it Balun logs its own crate at `info`.
-//! Log lines carry only closed categories, GStreamer's native error domain,
-//! code, and text, HTTP status codes, and the device names and addresses
-//! ADR-0002 allows. Stream URLs, `DeviceAuth`, and query values never reach a
-//! log line because no logged type carries them.
+//! Native playback diagnostics retain closed labels and typed counters;
+//! plugin error text, debug strings, and arbitrary caps values are discarded.
+//! Other Balun logs retain the device names and addresses ADR-0002 allows.
+//! GStreamer's own opt-in `GST_DEBUG` output bypasses this subscriber.
 
 use tracing_subscriber::EnvFilter;
 

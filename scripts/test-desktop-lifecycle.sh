@@ -273,7 +273,8 @@ unset \
 
 for smoke in \
     headless_window_close_joins_controller_after_launch_discovery \
-    headless_about_and_quit_join_controller_after_launch_discovery
+    headless_about_and_quit_join_controller_after_launch_discovery \
+    headless_quit_during_settings_startup_joins_controller
 do
     dbus-run-session -- \
         timeout --signal=TERM --kill-after=5s 30s \

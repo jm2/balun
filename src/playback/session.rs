@@ -1,4 +1,7 @@
-//! Generation-owned playback session and deterministic pipeline teardown.
+//! Generation-owned playback session and serialized native pipeline teardown.
+//!
+//! Native calls run in-process and may block before timed waits are reached.
+//! The teardown deadline cannot interrupt such a call or guarantee UI shutdown.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -18,7 +21,15 @@ use super::transport::{PIPELINE_URI, STREAM_STARTED_MESSAGE, StreamTransport, Tr
 use crate::controller::{OperationGeneration, StreamHandoff, StreamHandoffError, StreamSelection};
 use crate::domain::ChannelKey;
 
+mod tune_timing;
+use tune_timing::{Outcome as TimingOutcome, Phase as TimingPhase, TuneTiming};
+
+// Bounds later settlement/join waits after synchronous native calls return.
 const PIPELINE_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[cfg(test)]
+#[path = "native_failure_study.rs"]
+mod native_failure_study;
 const DEINTERLACE_PLAY_FLAG: &str = "deinterlace";
 const PAINTABLE_ASPECT_PROPERTY: &str = "force-aspect-ratio";
 const PLAYBIN_VOLUME_PROPERTY: &str = "volume";
@@ -241,6 +252,7 @@ trait PipelineBackend {
         handoff: StreamHandoff,
         audio: PlaybackAudioState,
         events: EventSink,
+        timing: &mut TuneTiming,
     ) -> Result<Self::Active, PipelineStartError<Self::Active>>;
 
     fn set_audio(
@@ -275,6 +287,7 @@ struct SessionCore<B: PipelineBackend> {
     generation: TuneGeneration,
     pending: Option<PendingTune>,
     active: Option<ActiveTune<B::Active>>,
+    timing: Option<TuneTiming>,
     state: PlaybackSessionState,
     state_sender: watch::Sender<PlaybackSessionState>,
     exhausted: bool,
@@ -292,6 +305,7 @@ impl<B: PipelineBackend> SessionCore<B> {
             generation: TuneGeneration::INITIAL,
             pending: None,
             active: None,
+            timing: None,
             state,
             state_sender,
             exhausted: false,
@@ -309,11 +323,29 @@ impl<B: PipelineBackend> SessionCore<B> {
     }
 
     fn publish_state(&mut self, state: PlaybackSessionState) {
+        match &state {
+            PlaybackSessionState::Failed { .. } => self.finish_timing(TimingOutcome::Failed),
+            PlaybackSessionState::Stopped => self.finish_timing(TimingOutcome::Stopped),
+            PlaybackSessionState::ShutDown => self.finish_timing(TimingOutcome::ShutDown),
+            _ => {}
+        }
         if self.state == state {
             return;
         }
         self.state = state.clone();
         self.state_sender.send_replace(state);
+    }
+
+    fn record_timing(&mut self, phase: TimingPhase) {
+        if let Some(timing) = self.timing.as_mut() {
+            timing.record(phase);
+        }
+    }
+
+    fn finish_timing(&mut self, outcome: TimingOutcome) {
+        if let Some(timing) = self.timing.take() {
+            timing.finish(outcome);
+        }
     }
 
     fn audio_state(&self) -> PlaybackAudioState {
@@ -390,6 +422,8 @@ impl<B: PipelineBackend> SessionCore<B> {
         };
         // Publish the successor generation before touching the predecessor so
         // every callback from it is stale even during bounded teardown.
+        self.finish_timing(TimingOutcome::Superseded);
+        self.timing = Some(TuneTiming::new(generation));
         self.generation = generation;
         self.pending = None;
         if let Err(failure) = self.retire_active() {
@@ -401,6 +435,7 @@ impl<B: PipelineBackend> SessionCore<B> {
             return Err(failure);
         }
 
+        self.record_timing(TimingPhase::PredecessorRetired);
         let selection_generation = selection.selection_generation();
         self.pending = Some(PendingTune {
             generation,
@@ -450,7 +485,15 @@ impl<B: PipelineBackend> SessionCore<B> {
 
         let generation = pending.generation;
         let channel_key = pending.channel_key;
-        let pipeline = match self.backend.start(generation, handoff, self.audio, events) {
+        self.record_timing(TimingPhase::HandoffAccepted);
+        let timing = self
+            .timing
+            .as_mut()
+            .expect("a current tune retains its timing");
+        let pipeline = match self
+            .backend
+            .start(generation, handoff, self.audio, events, timing)
+        {
             Ok(pipeline) => pipeline,
             Err(PipelineStartError::Clean(failure)) => {
                 self.publish_state(PlaybackSessionState::Failed {
@@ -493,6 +536,7 @@ impl<B: PipelineBackend> SessionCore<B> {
             return false;
         }
         self.pending = None;
+        self.finish_timing(TimingOutcome::Cancelled);
         self.publish_state(PlaybackSessionState::Stopped);
         true
     }
@@ -540,6 +584,9 @@ impl<B: PipelineBackend> SessionCore<B> {
         self.pending = None;
         let prior_teardown_failure = self.teardown_failed;
         let result = self.retire_active();
+        if result.is_err() || prior_teardown_failure {
+            self.finish_timing(TimingOutcome::Failed);
+        }
         self.publish_state(PlaybackSessionState::ShutDown);
         if prior_teardown_failure && result.is_ok() {
             Err(PlaybackSessionFailure::PipelineTeardown)
@@ -563,6 +610,7 @@ impl<B: PipelineBackend> SessionCore<B> {
         tracing::debug!(target: "balun::playback", ?event, generation = generation.get(), "pipeline event");
         match event {
             PipelineEvent::StreamStarted => {
+                self.record_timing(TimingPhase::StreamNoticeReceived);
                 let Some(active) = self.active.as_mut() else {
                     return;
                 };
@@ -580,6 +628,8 @@ impl<B: PipelineBackend> SessionCore<B> {
                 }
             }
             PipelineEvent::Playing => {
+                self.record_timing(TimingPhase::PlayingNoticeReceived);
+                self.finish_timing(TimingOutcome::PlayingNotice);
                 self.publish_state(PlaybackSessionState::Playing {
                     generation,
                     channel_key,
@@ -654,6 +704,7 @@ impl<B: PipelineBackend> SessionCore<B> {
 
 impl<B: PipelineBackend> Drop for SessionCore<B> {
     fn drop(&mut self) {
+        self.finish_timing(TimingOutcome::Dropped);
         self.pending = None;
         if let Some(mut active) = self.active.take() {
             let _ = self.backend.stop(&mut active.pipeline);
@@ -746,6 +797,7 @@ impl PipelineBackend for GstreamerBackend {
         handoff: StreamHandoff,
         audio: PlaybackAudioState,
         events: EventSink,
+        timing: &mut TuneTiming,
     ) -> Result<Self::Active, PipelineStartError<Self::Active>> {
         let video_sink = gst::ElementFactory::make("gtk4paintablesink")
             .build()
@@ -832,8 +884,13 @@ impl PipelineBackend for GstreamerBackend {
         // ever receives the constant endpoint-free URI; the authorized handoff
         // moves into the source policy's private state and is consumed by the
         // transport when playbin3 delivers its exact appsrc during start.
-        let source_policy = SourcePolicy::install(&pipeline, handoff, TransportConfig::PRODUCTION)
-            .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
+        let source_policy = SourcePolicy::install(
+            &pipeline,
+            handoff,
+            TransportConfig::PRODUCTION,
+            Some(timing.transport()),
+        )
+        .map_err(|_| PipelineStartError::Clean(PlaybackSessionFailure::PipelineConstruction))?;
         pipeline.set_property("uri", PIPELINE_URI);
         if pipeline.property::<Option<String>>("uri").as_deref() != Some(PIPELINE_URI) {
             return Err(PipelineStartError::Clean(
@@ -848,6 +905,7 @@ impl PipelineBackend for GstreamerBackend {
             bus_watch: Some(bus_watch),
             armed: true,
         };
+        timing.record(TimingPhase::GraphPrepared);
         // Hold at PAUSED: a live source reaches it without preroll, the
         // transport starts fetching, and PLAYING (which fixes the running
         // clock's base time) waits for the first stream bytes. Otherwise the
@@ -855,6 +913,7 @@ impl PipelineBackend for GstreamerBackend {
         // and every later buffer arrives late, which the audio sink renders as
         // clipped, stuttering sound until the next tune.
         let start_result = active.pipeline.set_state(gst::State::Paused);
+        timing.record(TimingPhase::PausedRequestReturned);
         let source_rejected = active.source_policy.is_rejected();
         let start_failure = if source_rejected {
             PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Internal)
@@ -1002,7 +1061,8 @@ fn queue_main_context_work(
 /// The session is deliberately neither `Send` nor `Sync`. It owns the runtime,
 /// exact active pipeline, and generation-tagged local bus watch. Dropping the
 /// session performs a final fail-safe `NULL` request; normal window shutdown
-/// should call [`Self::shut_down`] so bounded settlement is observable.
+/// should call [`Self::shut_down`] so settlement or failure is observable.
+/// Synchronous native calls can block before its timed settlement waits.
 pub struct PlaybackSession {
     inner: Rc<RefCell<SessionCore<GstreamerBackend>>>,
     main_context: gst::glib::MainContext,
@@ -1284,6 +1344,7 @@ mod tests {
             handoff: StreamHandoff,
             audio: PlaybackAudioState,
             events: EventSink,
+            _timing: &mut TuneTiming,
         ) -> Result<Self::Active, PipelineStartError<Self::Active>> {
             let mut shared = self.0.0.borrow_mut();
             if matches!(shared.fail_start, Some(FakeStartFailure::Clean)) {
@@ -1354,6 +1415,161 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[test]
+    fn startup_timings_exclude_stale_events_and_end_once_at_playing_notice() {
+        let output = tune_timing::tests::capture(|| {
+            let control = FakeControl::default();
+            let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+            let first = core
+                .borrow_mut()
+                .begin_tune(selection(&first_key(), 11))
+                .unwrap();
+            let first_generation = first.generation();
+            core.borrow_mut()
+                .complete_tune(first, Ok(handoff(&first_key(), 11)), events_for(&core))
+                .unwrap();
+            let second = core
+                .borrow_mut()
+                .begin_tune(selection(&second_key(), 11))
+                .unwrap();
+            let second_generation = second.generation();
+            control.emit(first_generation, PipelineEvent::StreamStarted);
+            control.emit(first_generation, PipelineEvent::Playing);
+            core.borrow_mut()
+                .complete_tune(second, Ok(handoff(&second_key(), 11)), events_for(&core))
+                .unwrap();
+            for _ in 0..2 {
+                control.emit(second_generation, PipelineEvent::StreamStarted);
+                control.emit(second_generation, PipelineEvent::Buffering(25));
+                control.emit(second_generation, PipelineEvent::Playing);
+            }
+            core.borrow_mut().stop().unwrap();
+            control.emit(second_generation, PipelineEvent::Playing);
+            assert!(core.borrow().timing.is_none());
+        });
+        let lines: Vec<_> = output.lines().collect();
+        // FakeBackend does not claim the two native-only phases.
+        assert_eq!(lines.len(), 10, "{output}");
+        assert_eq!(output.matches("outcome=\"superseded\"").count(), 1);
+        assert_eq!(output.matches("outcome=\"playing_notice\"").count(), 1);
+        assert_eq!(
+            output.matches("phase=\"stream_notice_received\"").count(),
+            1
+        );
+        for line in &lines[..4] {
+            assert!(line.contains("generation=1"), "{line}");
+            assert!(!line.contains("notice_received"), "{line}");
+        }
+        for line in &lines[4..] {
+            assert!(line.contains("generation=2"), "{line}");
+        }
+        for private_value in ["192.0.2.10", "105A1232", "http:", "5.1", "7.1", "auto/v"] {
+            assert!(!output.contains(private_value), "{output}");
+        }
+    }
+
+    #[test]
+    fn stale_handoffs_do_not_end_the_current_startup_measurement() {
+        let output = tune_timing::tests::capture(|| {
+            let control = FakeControl::default();
+            let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+            let first = core
+                .borrow_mut()
+                .begin_tune(selection(&first_key(), 11))
+                .unwrap();
+            let second = core
+                .borrow_mut()
+                .begin_tune(selection(&second_key(), 11))
+                .unwrap();
+            assert_eq!(
+                core.borrow_mut().complete_tune(
+                    first,
+                    Ok(handoff(&first_key(), 11)),
+                    events_for(&core)
+                ),
+                Ok(TuneCompletion::Stale)
+            );
+            assert!(core.borrow().timing.is_some());
+            assert!(core.borrow_mut().cancel_tune(second));
+            core.borrow_mut().shut_down().unwrap();
+            assert!(core.borrow().timing.is_none());
+        });
+        assert_eq!(output.lines().count(), 6, "{output}");
+        assert!(!output.contains("handoff_accepted"));
+        assert_eq!(output.matches("outcome=\"superseded\"").count(), 1);
+        assert_eq!(output.matches("outcome=\"cancelled\"").count(), 1);
+    }
+
+    #[test]
+    fn teardown_failure_ends_successor_timing_without_claiming_retirement() {
+        let output = tune_timing::tests::capture(|| {
+            let control = FakeControl::default();
+            let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+            let request = core
+                .borrow_mut()
+                .begin_tune(selection(&first_key(), 11))
+                .unwrap();
+            core.borrow_mut()
+                .complete_tune(request, Ok(handoff(&first_key(), 11)), events_for(&core))
+                .unwrap();
+            control.0.borrow_mut().fail_stop = true;
+            assert!(
+                core.borrow_mut()
+                    .begin_tune(selection(&second_key(), 11))
+                    .is_err()
+            );
+            assert!(core.borrow().timing.is_none());
+            assert!(core.borrow_mut().shut_down().is_err());
+        });
+        let successor: Vec<_> = output
+            .lines()
+            .filter(|line| line.contains("generation=2"))
+            .collect();
+        assert_eq!(successor.len(), 2, "{output}");
+        assert!(successor[0].contains("phase=\"requested\""));
+        assert!(successor[1].contains("outcome=\"failed\""));
+        assert!(
+            !successor
+                .iter()
+                .any(|line| line.contains("predecessor_retired"))
+        );
+    }
+
+    #[test]
+    fn failed_or_abandoned_tunes_end_their_startup_measurements() {
+        let output = tune_timing::tests::capture(|| {
+            for failure in [FakeStartFailure::Clean, FakeStartFailure::Quarantined] {
+                let control = FakeControl::default();
+                control.0.borrow_mut().fail_start = Some(failure);
+                let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+                let request = core
+                    .borrow_mut()
+                    .begin_tune(selection(&first_key(), 11))
+                    .unwrap();
+                assert!(
+                    core.borrow_mut()
+                        .complete_tune(request, Ok(handoff(&first_key(), 11)), events_for(&core))
+                        .is_err()
+                );
+                assert!(core.borrow().timing.is_none());
+            }
+            for action in 0..3 {
+                let mut core = SessionCore::new(FakeControl::default().backend());
+                let _request = core.begin_tune(selection(&first_key(), 11)).unwrap();
+                match action {
+                    0 => core.stop().unwrap(),
+                    1 => core.shut_down().unwrap(),
+                    _ => {} // Drop must end the remaining pending measurement.
+                }
+            }
+        });
+        assert_eq!(output.matches("outcome=\"failed\"").count(), 2, "{output}");
+        for outcome in ["stopped", "shut_down", "dropped"] {
+            assert_eq!(output.matches(&format!("outcome=\"{outcome}\"")).count(), 1);
+        }
+        assert!(!output.contains("playing_notice"));
     }
 
     fn first_key() -> ChannelKey {

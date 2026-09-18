@@ -181,7 +181,9 @@ Runtime and concurrency:
 - One named Tokio worker owns UDP, HTTP, route inspection, and timers.
 - Bounded typed channels carry commands and coalesced immutable snapshots.
 - Shutdown cancels network work, moves the pipeline to `NULL`, joins the
-  transport and controller within a fixed bound, and exits.
+  transport and controller against deadlines, and exits. In-process native calls
+  can block before those waits; the accepted [H3.5 limits](native-media-failure-boundary.md)
+  exclude a universal shutdown bound under a native hang.
 - Device selection and tune requests use monotonically increasing generations.
 
 Identity:
@@ -276,8 +278,10 @@ Every channel change:
 
 1. Invalidate the previous tune generation.
 2. Cancel the previous transport, then move its pipeline to `NULL`.
-3. Join the transport workers and pipeline within five seconds; a failure
-   quarantines the owner instead of starting a successor.
+3. Wait for transport workers and pipeline settlement against a five-second
+   deadline after synchronous native calls return; an observed failure
+   quarantines the owner instead of starting a successor. A native hang can
+   prevent reaching that wait and is outside the accepted deadline guarantee.
 4. Construct the new pipeline for the authorized handoff.
 5. Publish connecting, playing, or a failure category.
 

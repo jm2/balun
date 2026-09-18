@@ -163,32 +163,23 @@ impl PlaybackPipelineFailure {
     }
 }
 
-/// Reduce one bus message from the exact owned pipeline to a fixed category.
+/// Log closed native categories and typed counters, never native message text.
 ///
-/// Log what a bus message says before it is reduced to a closed category.
-///
-/// This is the only place native GStreamer error text reaches anything, and
-/// it reaches only the process's standard error. GStreamer never receives a
-/// device address or stream URL, so the text cannot contain one.
+/// The constant pipeline URI does not make plugin-supplied strings safe:
+/// errors, caps and marker names can contain arbitrary stream-derived data.
 pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
     let source = message
         .src()
-        .and_then(|source| source.downcast_ref::<gst::Element>().cloned())
-        .and_then(|element| element.factory())
-        .map_or_else(
-            || String::from("<none>"),
-            |factory| factory.name().to_string(),
-        );
+        .and_then(|source| source.downcast_ref::<gst::Element>())
+        .map_or("<none>", factory_name);
     match message.view() {
         gst::MessageView::Error(error) => {
             let native = error.error();
             tracing::warn!(
                 target: "balun::playback",
                 source = %source,
-                domain = %native.domain().as_str(),
-                code = native.code(),
-                message = %native.message(),
-                debug = %error.debug().map(|text| text.to_string()).unwrap_or_default(),
+                domain = native_error_domain(&native),
+                code = native_error_code(&native),
                 "GStreamer reported an error"
             );
         }
@@ -205,10 +196,8 @@ pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
             tracing::warn!(
                 target: "balun::playback",
                 source = %source,
-                domain = %native.domain().as_str(),
-                code = native.code(),
-                message = %native.message(),
-                debug = %warning.debug().map(|text| text.to_string()).unwrap_or_default(),
+                domain = native_error_domain(&native),
+                code = native_error_code(&native),
                 "GStreamer reported a warning"
             );
         }
@@ -225,6 +214,7 @@ pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
         gst::MessageView::StreamsSelected(selected) => {
             let streams = selected
                 .streams()
+                .take(16)
                 .map(|stream| describe_stream(&stream))
                 .collect::<Vec<_>>()
                 .join("; ");
@@ -253,10 +243,15 @@ pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
             );
         }
         gst::MessageView::Application(application) => {
-            let name = application.structure().map_or_else(
-                || String::from("<none>"),
-                |structure| structure.name().to_string(),
-            );
+            let name = application.structure().map_or("unknown", |structure| {
+                if source_policy::is_rejection_marker(structure) {
+                    "source-policy-rejected"
+                } else if structure.name() == TRANSPORT_FAILURE_MESSAGE {
+                    "transport-failure"
+                } else {
+                    "other"
+                }
+            });
             tracing::debug!(target: "balun::playback", marker = %name, "application marker");
         }
         _ => {}
@@ -265,7 +260,7 @@ pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
 
 /// Log what the running pipeline actually renders audio with: every audio
 /// sink element, its negotiated raw caps, and the pipeline's live latency.
-/// Caps carry codec and format fields only, never an address or URL.
+/// Only known caps labels and typed numeric fields enter the report.
 pub(super) fn log_playing_diagnostics(pipeline: &gst::Element) {
     let mut query = gst::query::Latency::new();
     let latency = if pipeline.query(&mut query) {
@@ -354,11 +349,78 @@ fn sink_elements(pipeline: &gst::Element, klass_word: &str) -> Vec<gst::Element>
         })
 }
 
-fn factory_name(element: &gst::Element) -> String {
-    element.factory().map_or_else(
-        || String::from("<none>"),
-        |factory| factory.name().to_string(),
-    )
+fn native_error_domain(error: &gst::glib::Error) -> &'static str {
+    use gst::glib::error::ErrorDomain;
+    let domain = error.domain();
+    if domain == gst::CoreError::domain() {
+        "core"
+    } else if domain == gst::StreamError::domain() {
+        "stream"
+    } else if domain == gst::ResourceError::domain() {
+        "resource"
+    } else if domain == gst::LibraryError::domain() {
+        "library"
+    } else {
+        "other"
+    }
+}
+
+fn native_error_code(error: &gst::glib::Error) -> Option<i32> {
+    use gst::glib::error::ErrorDomain;
+    // The bindings map unknown numeric codes in these domains to Failed.
+    // Require an exact round trip so neither arbitrary plugin codes nor that
+    // fallback are reported as a known error code.
+    error
+        .kind::<gst::CoreError>()
+        .map(ErrorDomain::code)
+        .or_else(|| error.kind::<gst::StreamError>().map(ErrorDomain::code))
+        .or_else(|| error.kind::<gst::ResourceError>().map(ErrorDomain::code))
+        .or_else(|| error.kind::<gst::LibraryError>().map(ErrorDomain::code))
+        .filter(|code| *code == error.code())
+}
+
+fn closed_label<'a>(value: &str, labels: &[&'a str]) -> &'a str {
+    labels
+        .iter()
+        .copied()
+        .find(|label| *label == value)
+        .unwrap_or("unknown")
+}
+
+fn factory_name(element: &gst::Element) -> &'static str {
+    element.factory().map_or("<none>", |factory| {
+        closed_label(
+            factory.name().as_str(),
+            &[
+                "playbin3",
+                "playsink",
+                "uridecodebin3",
+                "decodebin3",
+                "appsrc",
+                "queue",
+                "multiqueue",
+                "tsdemux",
+                "mpegtsparse",
+                "deinterlace",
+                "audioconvert",
+                "audioresample",
+                "videoconvert",
+                "autovideosink",
+                "autoaudiosink",
+                "gtk4paintablesink",
+                "glsinkbin",
+                "glimagesink",
+                "pulsesink",
+                "pipewiresink",
+                "alsasink",
+                "osxaudiosink",
+                "wasapisink",
+                "wasapi2sink",
+                "directsoundsink",
+                "fakesink",
+            ],
+        )
+    })
 }
 
 fn join_or_none(parts: Vec<String>) -> String {
@@ -372,6 +434,7 @@ fn join_or_none(parts: Vec<String>) -> String {
 fn describe_stream_collection(collection: &gst::StreamCollection) -> String {
     let streams = collection
         .iter()
+        .take(16)
         .map(|stream| describe_stream(&stream))
         .collect::<Vec<_>>();
     if streams.is_empty() {
@@ -406,27 +469,94 @@ fn describe_stream(stream: &gst::Stream) -> String {
     text
 }
 
-/// The first structure's name plus the few fields that identify a stream's
-/// format; other fields (and every other structure) are omitted.
+/// Closed labels and typed integers from the first caps structure only.
+/// Even a familiar field name can hold arbitrary text, lists or nested values.
 fn describe_caps(caps: &gst::CapsRef) -> String {
     let Some(structure) = caps.structure(0) else {
         return String::from("empty caps");
     };
-    let mut text = structure.name().to_string();
-    for field in [
-        "mpegversion",
-        "profile",
-        "channels",
-        "rate",
-        "width",
-        "height",
-        "interlace-mode",
-        "format",
-    ] {
-        if let Ok(value) = structure.value(field)
-            && let Ok(rendered) = value.serialize()
+    let mut text = closed_label(
+        structure.name().as_str(),
+        &[
+            "audio/x-raw",
+            "audio/mpeg",
+            "audio/x-ac3",
+            "audio/x-eac3",
+            "audio/x-ac4",
+            "video/x-raw",
+            "video/mpeg",
+            "video/x-h264",
+            "video/x-h265",
+            "video/x-av1",
+            "video/x-vp8",
+            "video/x-vp9",
+            "video/mpegts",
+            "text/x-raw",
+            "subpicture/x-dvb",
+        ],
+    )
+    .to_owned();
+    for field in ["mpegversion", "channels", "rate", "width", "height"] {
+        if let Ok(value) = structure.get::<i32>(field)
+            && (1..=1_000_000).contains(&value)
         {
-            text.push_str(&format!(" {field}={rendered}"));
+            text.push_str(&format!(" {field}={value}"));
+        }
+    }
+    for (field, labels) in [
+        (
+            "profile",
+            &[
+                "main",
+                "high",
+                "baseline",
+                "constrained-baseline",
+                "main-10",
+                "lc",
+                "he-aac-v1",
+                "he-aac-v2",
+                "simple",
+                "advanced-simple",
+            ][..],
+        ),
+        (
+            "interlace-mode",
+            &["progressive", "interleaved", "mixed", "fields", "alternate"][..],
+        ),
+        (
+            "format",
+            &[
+                "S8",
+                "U8",
+                "S16LE",
+                "S16BE",
+                "S24LE",
+                "S24BE",
+                "S24_32LE",
+                "S24_32BE",
+                "S32LE",
+                "S32BE",
+                "F32LE",
+                "F32BE",
+                "F64LE",
+                "F64BE",
+                "I420",
+                "YV12",
+                "NV12",
+                "NV21",
+                "YUY2",
+                "UYVY",
+                "RGBA",
+                "BGRA",
+                "RGBx",
+                "BGRx",
+                "P010_10LE",
+                "P010_10BE",
+            ][..],
+        ),
+    ] {
+        if let Ok(value) = structure.get::<&str>(field) {
+            text.push_str(&format!(" {field}={}", closed_label(value, labels)));
         }
     }
     text
@@ -491,6 +621,288 @@ fn decode_transport_failure(structure: &gst::StructureRef) -> PlaybackPipelineFa
 
 #[cfg(test)]
 mod tests {
+    #[derive(Clone, Default)]
+    struct CapturedLog(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedLog {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct UntrustedErrorDomain;
+
+    impl gst::glib::error::ErrorDomain for UntrustedErrorDomain {
+        fn domain() -> gst::glib::Quark {
+            gst::glib::Quark::from_str(SECRET_TOKEN)
+        }
+
+        fn code(self) -> i32 {
+            SECRET_CODE
+        }
+
+        fn from(_code: i32) -> Option<Self> {
+            Some(Self)
+        }
+    }
+
+    #[test]
+    fn emitted_native_logs_discard_plugin_text_and_stream_values() {
+        gst::init().unwrap();
+        let capture = CapturedLog::default();
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .without_time()
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let source = gst::ElementFactory::make("uridecodebin3")
+                .name(SECRET_TOKEN)
+                .build()
+                .unwrap();
+            let pipeline = gst::Pipeline::builder().name(SECRET_TOKEN).build();
+            pipeline.add(&source).unwrap();
+            let caps = gst::Caps::builder("application/x-secret-user-password-192-0-2-77")
+                .field("mpegversion", SECRET_URI)
+                .field("channels", SECRET_URI)
+                .field("rate", SECRET_URI)
+                .field("width", SECRET_URI)
+                .field("height", SECRET_URI)
+                .field("profile", SECRET_URI)
+                .field("interlace-mode", SECRET_URI)
+                .field("format", SECRET_URI)
+                .field("unrelated-secret", SECRET_TOKEN)
+                .build();
+            let stream = gst::Stream::new(
+                Some(SECRET_URI),
+                Some(&caps),
+                gst::StreamType::AUDIO,
+                gst::StreamFlags::SELECT,
+            );
+            let collection = gst::StreamCollection::builder(Some(SECRET_URI))
+                .stream(stream.clone())
+                .build();
+            // Native plugins can supply arbitrary domains and numeric codes,
+            // including out-of-table codes under recognized GStreamer domains.
+            for native in [
+                gst::glib::Error::new(UntrustedErrorDomain, SECRET_URI),
+                gst::glib::Error::new(gst::CoreError::__Unknown(SECRET_CODE), SECRET_URI),
+                gst::glib::Error::new(gst::StreamError::__Unknown(SECRET_CODE), SECRET_URI),
+                gst::glib::Error::new(gst::ResourceError::__Unknown(SECRET_CODE), SECRET_URI),
+                gst::glib::Error::new(gst::LibraryError::__Unknown(SECRET_CODE), SECRET_URI),
+            ] {
+                for mut message in [
+                    error_message(gst::CoreError::Failed, &source, poison_details(503)),
+                    gst::message::Warning::builder(gst::CoreError::Failed, SECRET_URI)
+                        .src(&source)
+                        .build(),
+                ] {
+                    message
+                        .make_mut()
+                        .structure_mut()
+                        .set("gerror", native.clone());
+                    log_pipeline_message(&message);
+                }
+            }
+            let messages = [
+                error_message(gst::StreamError::Failed, &source, poison_details(503)),
+                gst::message::Warning::builder(gst::ResourceError::Failed, SECRET_URI)
+                    .debug(SECRET_URI)
+                    .details(poison_details(503))
+                    .src(&source)
+                    .build(),
+                gst::message::Element::builder(
+                    gst::Structure::builder(MISSING_PLUGIN_MESSAGE)
+                        .field(MISSING_PLUGIN_DETAIL_FIELD, caps)
+                        .field("name", SECRET_URI)
+                        .build(),
+                )
+                .src(&source)
+                .build(),
+                gst::message::StreamCollection::builder(&collection)
+                    .src(&source)
+                    .build(),
+                gst::message::StreamsSelected::builder(&collection)
+                    .streams([&stream])
+                    .src(&source)
+                    .build(),
+                application_message(
+                    &pipeline,
+                    gst::Structure::builder(SECRET_TOKEN)
+                        .field("message", SECRET_URI)
+                        .build(),
+                ),
+                gst::message::Latency::builder().src(&source).build(),
+            ];
+            for message in messages {
+                log_pipeline_message(&message);
+            }
+            let sink = gst::ElementFactory::make("fakesink")
+                .name(format!("{SECRET_TOKEN}-sink"))
+                .build()
+                .unwrap();
+            pipeline.add(&sink).unwrap();
+            log_playing_diagnostics(pipeline.upcast_ref());
+            log_teardown_diagnostics(pipeline.upcast_ref());
+            let filter = gst::ElementFactory::make("deinterlace").build().unwrap();
+            pipeline.add(&filter).unwrap();
+            let pad = filter.static_pad("src").unwrap();
+            pad.set_active(true).unwrap();
+            for rate in [
+                gst::Fraction::new(SECRET_CODE, 1),
+                gst::Fraction::new(1, SECRET_CODE),
+                gst::Fraction::new(-1, 1),
+                gst::Fraction::new(0, 1),
+                gst::Fraction::new(17, 2),
+                gst::Fraction::new(60_000, 1_001),
+            ] {
+                let caps = gst::Caps::builder("video/x-raw")
+                    .field("framerate", rate)
+                    .build();
+                pad.store_sticky_event(&gst::event::Caps::new(&caps))
+                    .unwrap();
+                assert_eq!(
+                    pad.current_caps()
+                        .unwrap()
+                        .structure(0)
+                        .unwrap()
+                        .get::<gst::Fraction>("framerate")
+                        .unwrap(),
+                    rate
+                );
+                log_playing_diagnostics(pipeline.upcast_ref());
+            }
+            pad.set_active(false).unwrap();
+        });
+        let output = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+        for expected in [
+            "GStreamer reported an error",
+            "GStreamer reported a warning",
+            "GStreamer reported a missing plugin",
+            "stream collection",
+            "streams selected",
+            "application marker",
+            "latency changed",
+            "pipeline playing",
+            "pipeline sink statistics at teardown",
+            "uridecodebin3",
+            "output-framerate=60000/1001",
+            "unknown",
+            "stream",
+            "resource",
+            "other",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing diagnostic category: {expected}"
+            );
+        }
+        for forbidden in [
+            SECRET_TOKEN,
+            SECRET_URI,
+            "192.0.2.77",
+            "/auto/v999",
+            "unrelated-secret",
+        ] {
+            assert!(
+                !output.contains(forbidden),
+                "native diagnostic leaked fixture value"
+            );
+        }
+        assert!(!output.contains(&SECRET_CODE.to_string()));
+        assert_eq!(output.matches("output-framerate=other").count(), 5);
+        for line in output.lines().filter(|line| line.contains("code=")) {
+            assert!(
+                line.ends_with("code=1"),
+                "unexpected native numeric code: {line}"
+            );
+        }
+        assert_eq!(
+            output
+                .lines()
+                .filter(|line| line.ends_with("code=1"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn native_error_codes_require_known_domain_and_exact_enum_round_trip() {
+        use gst::glib::error::ErrorDomain;
+        gst::init().unwrap();
+        for native in [
+            gst::glib::Error::new(gst::CoreError::Disabled, SECRET_URI),
+            gst::glib::Error::new(gst::StreamError::DecryptNokey, SECRET_URI),
+            gst::glib::Error::new(gst::ResourceError::NotAuthorized, SECRET_URI),
+            gst::glib::Error::new(gst::LibraryError::Encode, SECRET_URI),
+        ] {
+            assert_eq!(native_error_code(&native), Some(native.code()));
+        }
+        for code in [i32::MIN, -1, 0, 42, i32::MAX] {
+            for native in [
+                gst::glib::Error::new(gst::CoreError::__Unknown(code), SECRET_URI),
+                gst::glib::Error::new(gst::StreamError::__Unknown(code), SECRET_URI),
+                gst::glib::Error::new(gst::ResourceError::__Unknown(code), SECRET_URI),
+                gst::glib::Error::new(gst::LibraryError::__Unknown(code), SECRET_URI),
+            ] {
+                assert_eq!(native_error_code(&native), None);
+            }
+        }
+        assert_eq!(
+            native_error_code(&gst::glib::Error::new(UntrustedErrorDomain, SECRET_URI)),
+            None
+        );
+        assert_eq!(
+            native_error_code(&gst::glib::Error::new(gst::CoreError::Failed, SECRET_URI)),
+            Some(gst::CoreError::Failed.code())
+        );
+    }
+
+    #[test]
+    fn diagnostic_caps_require_typed_bounded_fields_and_known_labels() {
+        gst::init().unwrap();
+        let caps = gst::Caps::builder("video/x-raw")
+            .field("width", gst::List::new([SECRET_URI]))
+            .field("height", -1i32)
+            .field("rate", i32::MAX)
+            .field("profile", SECRET_TOKEN)
+            .field("format", "I420")
+            .field("interlace-mode", "mixed")
+            .build();
+        assert_eq!(
+            describe_caps(&caps),
+            "video/x-raw profile=unknown interlace-mode=mixed format=I420"
+        );
+        let caps = gst::Caps::builder("audio/x-raw")
+            .field("channels", 2i32)
+            .field("rate", 48_000i32)
+            .field("format", "F32LE")
+            .build();
+        assert_eq!(
+            describe_caps(&caps),
+            "audio/x-raw channels=2 rate=48000 format=F32LE"
+        );
+        assert_eq!(
+            native_error_domain(&gst::glib::Error::new(gst::CoreError::Failed, SECRET_URI)),
+            "core"
+        );
+        assert_eq!(
+            native_error_domain(&gst::glib::Error::new(
+                gst::LibraryError::Failed,
+                SECRET_URI
+            )),
+            "library"
+        );
+    }
+
     #[test]
     fn caps_and_stream_descriptions_name_the_format_only() {
         gst::init().unwrap();
@@ -535,6 +947,7 @@ mod tests {
     use super::*;
 
     const SECRET_TOKEN: &str = "secret-user-password-192-0-2-77";
+    const SECRET_CODE: i32 = 1_234_567_891;
     const SECRET_URI: &str = "http://secret-user-password-192-0-2-77@192.0.2.77:5004/auto/v999";
 
     fn pipeline() -> Option<gst::Pipeline> {
