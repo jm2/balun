@@ -39,7 +39,9 @@ jobs:
         run: build-aux/packaging/test-release-component-policy.sh
 
       - name: Test Linux package compliance scaffolding
-        run: build-aux/linux/test-package-compliance.sh
+        run: |
+          python3 -B build-aux/linux/test_archive_snapshot.py
+          build-aux/linux/test-package-compliance.sh
 
       - name: Test Linux build helper policy
         run: scripts/test-build-linux-policy.sh

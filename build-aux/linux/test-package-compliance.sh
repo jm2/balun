@@ -439,6 +439,31 @@ chmod +x \
     "$temp_dir/archive-tools/rpm2cpio" \
     "$temp_dir/archive-tools/cpio" \
     "$temp_dir/archive-tools/bsdtar"
+
+# Every native metadata/payload read must use the same frozen input. These
+# wrappers replace the original path after the first read; later reads still
+# have to see the initial bytes through one private path, not the replacement.
+for tool in dpkg-deb rpm rpm2cpio bsdtar; do
+    mv "$temp_dir/archive-tools/$tool" "$temp_dir/archive-tools/$tool.real"
+    cat > "$temp_dir/archive-tools/$tool" <<'EOF'
+#!/bin/sh
+set -eu
+if [ -n "${TEST_SNAPSHOT_EXPECTED:-}" ]; then
+    case "${0##*/}" in
+        rpm) input=$3 ;;
+        rpm2cpio) input=$1 ;;
+        *) input=$2 ;;
+    esac
+    [ "$input" != "$TEST_SNAPSHOT_ORIGINAL" ] || exit 91
+    cmp -s "$input" "$TEST_SNAPSHOT_EXPECTED" || exit 92
+    printf '%s\n' "$input" >> "$TEST_SNAPSHOT_PATHS"
+    printf 'replacement archive\n' > "$TEST_SNAPSHOT_ORIGINAL"
+fi
+exec "$0.real" "$@"
+EOF
+    chmod +x "$temp_dir/archive-tools/$tool"
+done
+
 touch "$temp_dir/fixture.deb" "$temp_dir/fixture.rpm" "$temp_dir/fixture.pkg.tar.zst"
 for package_mode in deb rpm arch; do
     package="$temp_dir/fixture.$package_mode"
@@ -456,6 +481,40 @@ for package_mode in deb rpm arch; do
             TEST_FORBIDDEN_TOKEN="$first_token" TEST_ARCHIVE_MODE="$archive_mode" \
             "$validator" "--$package_mode" "$package"
     done
+
+    printf 'initial archive\n' > "$package"
+    cp "$package" "$temp_dir/expected-archive"
+    : > "$temp_dir/snapshot-paths"
+    PATH="$temp_dir/archive-tools:$PATH" TEST_FORBIDDEN_TOKEN="$first_token" \
+        TEST_SNAPSHOT_ORIGINAL="$package" TEST_SNAPSHOT_EXPECTED="$temp_dir/expected-archive" \
+        TEST_SNAPSHOT_PATHS="$temp_dir/snapshot-paths" \
+        "$validator" "--$package_mode" "$package"
+    [ "$(sort -u "$temp_dir/snapshot-paths" | wc -l)" -eq 1 ] || {
+        echo "Archive inspectors did not share one snapshot" >&2
+        exit 1
+    }
+    [ "$(wc -l < "$temp_dir/snapshot-paths")" -ge 2 ] || {
+        echo "Archive snapshot fixture did not exercise separate metadata/payload reads" >&2
+        exit 1
+    }
+    snapshot_path=$(head -n 1 "$temp_dir/snapshot-paths")
+    [ ! -e "$snapshot_path" ] || {
+        echo "Archive validation leaked its private snapshot" >&2
+        exit 1
+    }
+
+    # Oversize input is rejected before even the first native metadata query.
+    truncate -s 1073741825 "$package"
+    : > "$temp_dir/snapshot-paths"
+    expect_status 1 env PATH="$temp_dir/archive-tools:$PATH" \
+        TEST_SNAPSHOT_ORIGINAL="$package" TEST_SNAPSHOT_EXPECTED="$temp_dir/expected-archive" \
+        TEST_SNAPSHOT_PATHS="$temp_dir/snapshot-paths" \
+        "$validator" "--$package_mode" "$package"
+    [ ! -s "$temp_dir/snapshot-paths" ] || {
+        echo "An oversize archive reached a native inspector" >&2
+        exit 1
+    }
+    : > "$package"
 done
 
 # Exercise the complete Flatpak app-commit boundary without requiring

@@ -142,7 +142,7 @@ case "$tool" in
 esac
 EOF
 done
-for inspector in bsdtar dpkg-deb rpm rpm2cpio cpio; do
+for inspector in bsdtar dpkg-deb rpm rpm2cpio cpio python3; do
     cat > "$fake_bin/$inspector" <<'EOF'
 #!/usr/bin/env bash
 exit 0
@@ -228,6 +228,7 @@ chmod +x \
     "$fake_bin/rpm" \
     "$fake_bin/rpm2cpio" \
     "$fake_bin/cpio" \
+    "$fake_bin/python3" \
     "$fake_bin/rustc" \
     "$fake_bin/pkg-config" \
     "$fake_bin/readelf" \
@@ -483,6 +484,9 @@ expect_empty_log
 mv "$fake_bin/readelf.saved" "$fake_bin/readelf"
 
 for tool_and_mode in \
+    'python3 --deb' \
+    'python3 --rpm' \
+    'python3 --arch-pkg' \
     'cargo-deb --deb' \
     'dpkg-deb --deb' \
     'cargo-generate-rpm --rpm' \
