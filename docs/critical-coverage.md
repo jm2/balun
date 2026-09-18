@@ -20,7 +20,7 @@ measurements help find omissions in that evidence.
 | Resolver, controller, source retirement and transport | Rust source regions in four modules | 88.96%–94.52% |
 | Identity registry, device identity, protocol, metadata and lineup | Rust source regions in five modules | 84.62%–96.69% |
 | JSON failure conversion and logging setup | Rust source regions | 30/30 and 11/11 respectively |
-| Native playback failure classification and diagnostics | Rust source regions | 399/474 (84.18%); display-backed diagnostics remain a visible gap |
+| Native playback failure classification and diagnostics | Rust source regions | 420/495 (84.85%); display-backed diagnostics remain a visible gap |
 | Mach-O closure parser and CLI | Python executable lines and branch edges | 202/205 lines (98.54%); 54/58 branches (93.10%) |
 | Windows policy snapshots and whole-tree receipts | PowerShell executable lines in ten selected gate functions | 78.57%–100%, reported independently per function |
 | Installer tool admission, paths, manifests and final gate | PowerShell executable lines in five selected gate functions | 93.94%–100%, reported independently per function |
@@ -72,7 +72,7 @@ its original ceilings; the tests make these ownership outcomes explicit.
 
 The native diagnostic privacy correction replaces arbitrary plugin text with
 closed labels and typed fields. Actual tracing-capture regressions raise that
-module from 199/450 regions to 399/474 (84.18%); the uncovered ceiling tightens
+module from 199/450 regions to 420/495 (84.85%); the uncovered ceiling tightens
 from 251 to 75. A fresh full desktop coverage run verifies the updated count
 and every other existing Rust threshold.
 
