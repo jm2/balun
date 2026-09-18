@@ -411,7 +411,7 @@ mod tests {
         playbin.set_property("video-sink", &video_sink);
         playbin.set_property("audio-sink", &audio_sink);
         let _software_decoders = prefer_software_mpeg2_decoders();
-        let policy = SourcePolicy::install(&playbin, handoff, QUICK)
+        let policy = SourcePolicy::install(&playbin, handoff, QUICK, None)
             .expect("install the appsrc policy with the real handoff");
         playbin.set_property("uri", PIPELINE_URI);
         assert_eq!(

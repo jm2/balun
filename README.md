@@ -360,7 +360,8 @@ The distributed ZIP and installer remain GUI-subsystem applications and do not a
 
 For bounded per-generation tune startup records, use
 `RUST_LOG=off,balun::playback::timing=debug`. The [phase definitions](docs/tune-timing.md)
-distinguish retirement, handoff, graph setup, and received pipeline notifications;
+distinguish retirement, handoff, graph setup, worker-captured HTTP/appsrc observations,
+and received pipeline notifications;
 decoded/rendered media timing and usable-media deadlines remain V2.1 work.
 
 ### Discovery diagnostic

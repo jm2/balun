@@ -1,7 +1,9 @@
 //! Bounded, endpoint-free startup observations on the session's main context.
 
+use std::sync::Arc;
 use std::time::Instant;
 
+use super::super::transport_timing::{TransportPhase, TransportTiming};
 use super::TuneGeneration;
 
 #[derive(Clone, Copy)]
@@ -13,6 +15,10 @@ pub(super) enum Phase {
     PausedRequestReturned,
     StreamNoticeReceived,
     PlayingNoticeReceived,
+    HttpRequestPolled,
+    HttpResponseReceived,
+    HttpBodyReceived,
+    AppsrcBufferAccepted,
 }
 
 impl Phase {
@@ -25,6 +31,10 @@ impl Phase {
             Self::PausedRequestReturned => "paused_request_returned",
             Self::StreamNoticeReceived => "stream_notice_received",
             Self::PlayingNoticeReceived => "playing_notice_received",
+            Self::HttpRequestPolled => "http_request_polled",
+            Self::HttpResponseReceived => "http_response_received",
+            Self::HttpBodyReceived => "http_body_received",
+            Self::AppsrcBufferAccepted => "appsrc_buffer_accepted",
         }
     }
 }
@@ -59,7 +69,8 @@ impl Outcome {
 pub(super) struct TuneTiming {
     generation: TuneGeneration,
     started: Instant,
-    seen: u8,
+    seen: u16,
+    transport: Arc<TransportTiming>,
 }
 
 impl TuneTiming {
@@ -72,16 +83,22 @@ impl TuneTiming {
             generation,
             started,
             seen: 0,
+            transport: Arc::new(TransportTiming::new(started)),
         };
         timing.record_at(Phase::Requested, started);
         timing
     }
 
     pub(super) fn record(&mut self, phase: Phase) {
+        self.flush_transport();
         self.record_at(phase, Instant::now());
     }
 
     fn record_at(&mut self, phase: Phase, observed: Instant) {
+        self.record_offset(phase, self.elapsed_us(observed));
+    }
+
+    fn record_offset(&mut self, phase: Phase, elapsed_us: u64) {
         let bit = 1 << phase as u8;
         if self.seen & bit != 0 {
             return;
@@ -91,12 +108,31 @@ impl TuneTiming {
             target: "balun::playback::timing",
             generation = self.generation.get(),
             phase = phase.label(),
-            elapsed_us = self.elapsed_us(observed),
+            elapsed_us,
             "tune startup phase"
         );
     }
 
-    pub(super) fn finish(self, outcome: Outcome) {
+    pub(super) fn transport(&self) -> Arc<TransportTiming> {
+        Arc::clone(&self.transport)
+    }
+
+    fn flush_transport(&mut self) {
+        for (phase, value) in self.transport.snapshot() {
+            let phase = match phase {
+                TransportPhase::RequestPolled => Phase::HttpRequestPolled,
+                TransportPhase::ResponseReceived => Phase::HttpResponseReceived,
+                TransportPhase::BodyReceived => Phase::HttpBodyReceived,
+                TransportPhase::BufferAccepted => Phase::AppsrcBufferAccepted,
+            };
+            if let Some(offset) = value {
+                self.record_offset(phase, offset);
+            }
+        }
+    }
+
+    pub(super) fn finish(mut self, outcome: Outcome) {
+        self.flush_transport();
         self.finish_at(outcome, Instant::now());
     }
 
@@ -173,6 +209,10 @@ pub(super) mod tests {
                 Phase::HandoffAccepted,
                 Phase::GraphPrepared,
                 Phase::PausedRequestReturned,
+                Phase::HttpRequestPolled,
+                Phase::HttpResponseReceived,
+                Phase::HttpBodyReceived,
+                Phase::AppsrcBufferAccepted,
                 Phase::StreamNoticeReceived,
                 Phase::PlayingNoticeReceived,
             ]
@@ -183,21 +223,67 @@ pub(super) mod tests {
                 timing.record_at(phase, time);
                 timing.record_at(phase, time + Duration::from_micros(7));
             }
-            timing.finish_at(Outcome::PlayingNotice, start + Duration::from_micros(800));
+            timing.finish_at(Outcome::PlayingNotice, start + Duration::from_micros(1500));
         });
         let lines: Vec<_> = output.lines().collect();
-        assert_eq!(lines.len(), 8);
-        for (index, line) in lines[..7].iter().enumerate() {
+        assert_eq!(lines.len(), 12);
+        for (index, line) in lines[..11].iter().enumerate() {
             assert!(line.contains("generation=27"), "{line}");
             assert!(
                 line.ends_with(&format!("elapsed_us={}", index * 125)),
                 "{line}"
             );
         }
-        assert!(lines[7].ends_with("outcome=\"playing_notice\" elapsed_us=800"));
+        assert!(lines[11].ends_with("outcome=\"playing_notice\" elapsed_us=1500"));
         assert!(lines[0].contains("phase=\"requested\""));
-        assert!(lines[5].contains("phase=\"stream_notice_received\""));
-        assert!(lines[6].contains("phase=\"playing_notice_received\""));
+        assert!(lines[9].contains("phase=\"stream_notice_received\""));
+        assert!(lines[10].contains("phase=\"playing_notice_received\""));
+    }
+
+    #[test]
+    fn worker_offsets_survive_delayed_reduction_and_are_emitted_once() {
+        let mut expected = [None; 4];
+        let output = capture(|| {
+            let mut timing = TuneTiming::new(TuneGeneration(28));
+            let worker = timing.transport();
+            std::thread::spawn(move || {
+                worker.record(TransportPhase::RequestPolled);
+                worker.record(TransportPhase::ResponseReceived);
+                worker.record(TransportPhase::BodyReceived);
+                worker.record(TransportPhase::BufferAccepted);
+            })
+            .join()
+            .unwrap();
+            let original = timing.transport.snapshot();
+            expected = original.map(|(_, offset)| offset);
+            timing.record(Phase::StreamNoticeReceived);
+            timing.record(Phase::StreamNoticeReceived);
+            for ((_, original), (_, still_first)) in
+                original.into_iter().zip(timing.transport.snapshot())
+            {
+                assert_eq!(original, still_first);
+            }
+            timing.finish(Outcome::Failed);
+        });
+        assert_eq!(output.lines().count(), 7, "{output}");
+        for (index, label) in [
+            "http_request_polled",
+            "http_response_received",
+            "http_body_received",
+            "appsrc_buffer_accepted",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(output.matches(label).count(), 1, "{output}");
+            assert!(
+                output.contains(&format!(
+                    "phase=\"{label}\" elapsed_us={}",
+                    expected[index].unwrap()
+                )),
+                "{output}"
+            );
+        }
     }
 
     #[test]
@@ -228,5 +314,22 @@ pub(super) mod tests {
             assert_eq!(output.matches(&format!("outcome=\"{label}\"")).count(), 1);
         }
         assert_eq!(output.lines().count(), 12);
+    }
+
+    #[test]
+    fn late_worker_observations_do_not_reopen_or_relabel_a_finished_generation() {
+        let output = capture(|| {
+            let old = TuneTiming::new(TuneGeneration(1));
+            let late_worker = old.transport();
+            old.finish(Outcome::Cancelled);
+            let mut successor = TuneTiming::new(TuneGeneration(2));
+            late_worker.record(TransportPhase::RequestPolled);
+            successor.record(Phase::PredecessorRetired);
+            successor.finish(Outcome::Stopped);
+        });
+        assert_eq!(output.lines().count(), 5, "{output}");
+        assert!(!output.contains("http_request_polled"));
+        assert_eq!(output.matches("generation=1").count(), 2);
+        assert_eq!(output.matches("generation=2").count(), 3);
     }
 }
