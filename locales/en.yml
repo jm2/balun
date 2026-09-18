@@ -32,3 +32,18 @@ progress:
   buffering_status: "Buffering %{percent}%"
   buffering_description: "Live TV is buffering: %{percent}%."
   opening: "Opening %{channel} on %{device}."
+
+startup:
+  ready_title: "Select a channel"
+  ready_description: "The GStreamer %{version} playback foundation is available; activate a channel to start live TV."
+  missing_title: "Playback components unavailable"
+  missing_description: "Required GStreamer factories are missing: %{missing}."
+  failed_title: "Playback initialization unavailable"
+  main_context_description: >-
+    Balun playback initialization requires ownership of the default GLib main context. Device discovery and
+    lineup inspection remain available.
+  initialization_failed_description: >-
+    GStreamer could not be initialized. Device discovery and lineup inspection remain available.
+  old_runtime_description: >-
+    GStreamer %{found} is too old; Balun requires GStreamer %{minimum} or newer. Device discovery and lineup
+    inspection remain available.

@@ -56,8 +56,8 @@ env -u LANGUAGE -u LC_ALL -u LC_MESSAGES LANG=de_DE.UTF-8 \
 ```
 
 The application menu, About description, navigation titles, player controls, and
-playback progress are translated. Idle/error messages, dialogs, and other window
-copy still contain English. The native GTK/libadwaita
+playback progress and startup status are translated. Playback session errors,
+dialogs, and other window copy still contain English. The native GTK/libadwaita
 controls also depend on the platform's own translations and locale setup.
 
 ## Adding presentation text
@@ -92,8 +92,8 @@ discovery, playback, settings, and failure copy.
 The device header and navigation page share their title key. Channel, live-TV,
 and combined navigation pages use the same catalog. Player-control labels cover
 volume, mute/unmute, stop, enter/exit fullscreen, the video accessible name,
-playback-status tooltip, and the desktop's idle-inhibition reason. Playback errors
-and idle-state descriptions are still pending.
+playback-status tooltip, and the desktop's idle-inhibition reason. Playback session
+errors are still pending; startup/idle copy is described below.
 
 Tooltips and accessible names share translated text. The mute toggle retains a
 stable translated name while its checked state conveys muting; its tooltip
@@ -120,5 +120,20 @@ once before markup rendering, preserving ampersands and markup-like names.
 Portable tests check percentage bounds and uninterpreted display names in every
 catalog, plus explicit translated templates. The English/German native player
 smoke checks status transitions and parses the widget's actual descriptions back
-to their literal text. Fallback device/channel names, initial/idle descriptions,
-and failure messages remain English until their presentation slice is complete.
+to their literal text. Fallback device/channel names and session failure messages
+remain English until their presentation slice is complete.
+
+## Playback startup
+
+The initial status page and the same page restored after Stop use translated
+ready, missing-component, and initialization-failure messages. The presentation
+helper matches the typed initialization error exhaustively; it never translates
+or interpolates native error text. Version numbers and required factory names
+remain literal values. Domain errors and tracing retain their English diagnostics.
+
+All thirteen catalogs carry these messages and their recovery hint that discovery
+and lineup inspection remain available. Portable playback tests exercise every
+initialization category, preserved runtime versions, literal component values,
+and selected German/French results. The English/German native player smoke checks
+the initial message and its restoration after Stop, including literal markup
+round trips. Native layout and translation-quality review remain outstanding.

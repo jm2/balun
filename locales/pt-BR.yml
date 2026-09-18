@@ -32,3 +32,19 @@ progress:
   buffering_status: "Carregando buffer: %{percent}%"
   buffering_description: "A TV ao vivo está carregando o buffer: %{percent}%."
   opening: "Abrindo %{channel} em %{device}."
+
+startup:
+  ready_title: "Selecione um canal"
+  ready_description: "A reprodução com GStreamer %{version} está disponível; ative um canal para iniciar a TV ao vivo."
+  missing_title: "Componentes de reprodução indisponíveis"
+  missing_description: "Faltam componentes obrigatórios do GStreamer: %{missing}."
+  failed_title: "Inicialização da reprodução indisponível"
+  main_context_description: >-
+    A inicialização da reprodução do Balun exige o controle do contexto principal padrão do GLib. A busca de
+    dispositivos e a consulta à lista de canais continuam disponíveis.
+  initialization_failed_description: >-
+    Não foi possível inicializar o GStreamer. A busca de dispositivos e a consulta à lista de canais continuam
+    disponíveis.
+  old_runtime_description: >-
+    GStreamer %{found} é antigo demais; o Balun exige GStreamer %{minimum} ou mais recente. A busca de
+    dispositivos e a consulta à lista de canais continuam disponíveis.

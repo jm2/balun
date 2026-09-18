@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Playback startup and idle status now translate ready, missing-component, and
+  initialization-failure messages in all thirteen supported locales. Runtime
+  versions and component names stay literal; session failure copy remains pending.
+
 - Translated playback progress and parameterized connecting/buffering messages in
   all thirteen catalogs, with placeholder parity and literal display-name rendering.
 
