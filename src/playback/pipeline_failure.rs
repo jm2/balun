@@ -394,6 +394,7 @@ fn factory_name(element: &gst::Element) -> &'static str {
             &[
                 "playbin3",
                 "playsink",
+                "uridecodebin3",
                 "decodebin3",
                 "appsrc",
                 "queue",
@@ -663,7 +664,7 @@ mod tests {
             .with_ansi(false)
             .finish();
         tracing::subscriber::with_default(subscriber, || {
-            let source = gst::ElementFactory::make("identity")
+            let source = gst::ElementFactory::make("uridecodebin3")
                 .name(SECRET_TOKEN)
                 .build()
                 .unwrap();
@@ -763,6 +764,7 @@ mod tests {
             "latency changed",
             "pipeline playing",
             "pipeline sink statistics at teardown",
+            "uridecodebin3",
             "unknown",
             "stream",
             "resource",
