@@ -135,6 +135,61 @@ macOS, and both Windows architectures, including a native Windows junction.
 
 ## Evidence and remaining integration
 
+### Installed Homebrew metadata
+
+`homebrew_metadata.py` collects the installed recipe, declared source identity,
+license metadata, receipt hash, and source-file hashes for selected native inputs.
+It resolves expected Homebrew prefix/opt links into an explicitly supplied Cellar,
+then derives ownership from that installed keg. A `brew ruby` helper selects the
+**exact installed `.brew/<name>.rb` file loader**, requiring the returned recipe
+checksum to match its bytes. The receipt and recipe must agree on the upstream
+version; the recipe revision must match the versioned keg directory. Homebrew
+receipts do not provide a separate `source.revision` field. Asking
+Homebrew for a formula by name or accepting its current online metadata cannot
+substitute for this check. `brew info` may resolve a path-loaded formula again
+through its installed tap; direct file loading avoids that substitution and
+retains the independent recipe-byte checksum gate.
+
+```bash
+python3 -B scripts/inventory/homebrew_metadata.py --cellar "$(brew --cellar)" \
+  --member "$(pkg-config --variable=pluginsdir gstreamer-1.0)/libgstgtk4.dylib" \
+  > homebrew-native-inputs.json
+python3 -B scripts/inventory/test_homebrew_metadata.py
+```
+
+This collector supports stable `homebrew/core` installations with a complete
+receipt, a SHA-256 or immutable Git revision for the primary source, and declared
+license metadata. HEAD, custom taps, mismatched revisions, current-formula
+substitution, unknown owners, aliases in metadata, special files, duplicate
+members, and observed input changes reject the entire report. Source member
+paths are relative to the Cellar; host paths and raw receipts are not exported.
+The installed recipe text is retained with its hash, including its declarations
+of additional resources and patches. The primary source version is the package's
+version: it does not assert that every embedded resource shares that version or
+that the declared primary archive alone supplies every source-delivery obligation.
+
+Homebrew evaluates trusted installed Ruby recipes. Automatic updates and analytics
+are disabled for the query; this is a build-input tool, not a sandbox for untrusted
+recipes. Each query has a 60-second process deadline and 4 MiB output limit. The
+collector limits metadata files to 1 MiB, selected inputs to 4,096 members and
+256 packages, each member to 1 GiB, total native bytes to 4 GiB, the final report
+to 16 MiB, and overall checkpoints to five minutes. OS reads remain subject to
+the invoking CI job's timeout. Query processes are killed and reaped on failure.
+
+The implementation follows Homebrew's
+[formula JSON and recipe checksum](https://github.com/Homebrew/brew/blob/main/Library/Homebrew/formula.rb)
+and [installed receipt](https://github.com/Homebrew/brew/blob/main/Library/Homebrew/tab/tab.rb)
+contracts. Linux fixtures exercise stale metadata, installed revision mismatches,
+immutable source identities, substitutions, resource bounds and child cleanup.
+Native macOS CI also collects real GTK sink, libav plugin, and pixbuf-query inputs.
+Collector failures expose only a closed set of validation reasons or a generic
+missing/invalid-input category; raw exceptions, paths, and recipe output remain hidden.
+These intermediate records still need the packaging copy ledger, post-relocation
+catalog binding, embedded-resource representation, and final-artifact integration
+below before they establish H1.3.
+
+### Final-artifact integration
+
 Synthetic fixtures exercise exact membership, changed payloads, missing and
 unknown components, file aliases/collisions, malformed metadata, allocation
 budgets, and CLI failures without input echoes. An affected-version fixture

@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeouts; Windows CI now executes the desktop tests as well as compiling them.
 - Native inventory tooling independently hashes reopened package trees and completed
   artifacts, validates exact native membership/content against component metadata, and
-  emits a native-scope CycloneDX SBOM. Platform ownership collection and release attachment
+  emits a native-scope CycloneDX SBOM. An installed Homebrew recipe collector preserves
+  actual package/source/license metadata. Final ownership binding and release attachment
   remain pending; current packages do not yet include these reports.
 - Critical admission, cancellation, identity, privacy, and package gates have measured
   coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
