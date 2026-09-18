@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Reproducible adversarial parser, approval, route-budget, and package-manifest
+  properties run in PR checks and scheduled extended corpora, with failure replay records.
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
@@ -18,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Concurrent source rejection now cancels a transport that is still being published,
   zeroizes pending handoffs, and retains all workers for the normal teardown join.
+
 - Completed Windows installers now undergo bounded static payload extraction and exact
   manifest comparison, followed by repeated native/resource checks and a runtime probe
   on the extracted tree for both x86_64 and ARM64 before upload.
