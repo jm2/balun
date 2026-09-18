@@ -83,6 +83,12 @@ nothing.
 
 ## Limitations
 
+- Native decoders and sinks run in-process. A stuck native call can block the UI or close
+  path, despite later five-second waits. Network bytes do not prove useful media and no
+  independent useful-media deadline is enforced yet. The maintainer accepted these
+  [H3.5 limits](native-media-failure-boundary.md), owned by `jm2`, for review before beta
+  and after any reproduced native hang.
+
 - Protected (DRM) channels are listed with a badge but cannot be played.
 - No program guide. The tested CONNECT's per-channel streams carry no PSIP tables, so a guide
   needs a full-multiplex crawl or XMLTV; both are v0.2 candidates.

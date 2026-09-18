@@ -33,8 +33,9 @@ address so you know which tuner failed.
 | Adaptive three-pane GTK 4 / libadwaita window | ✅ |
 | Window size and maximized state remembered across launches | ✅ |
 | Live playback of unprotected channels (`playbin3` + `gtk4paintablesink`) | ✅ Verified on Linux, macOS, and Windows against real tuners |
+| Native media failure boundary | ⚠️ In-process native hangs can block the UI/close path; network bytes do not guarantee useful media. [Accepted limits and review triggers](docs/native-media-failure-boundary.md) |
 | Stop, volume, mute, and fullscreen controls | ✅ Stop and switching account for overlapping startup and partial worker creation before completing teardown |
-| Software deinterlacing | ✅ Adaptive YADIF, automatic field order, full field rate; progressive video passes through |
+| Software deinterlacing | ✅ Adaptive YADIF, automatic field order, full field rate; [mixed-stream transition cadence remains under investigation](docs/deinterlace-evidence.md) |
 | Keep the display and computer awake during playback | ✅ While playing or buffering, where the desktop permits inhibition |
 | Favorite, HD, and protected channel badges | ✅ Protected channels are listed but disabled |
 | Playback errors that name the device and channel | ✅ |
@@ -53,12 +54,21 @@ address so you know which tuner failed.
 | macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
 | Windows package validation | ✅ Pinned policy and full-tree probe receipt; completed installer payload independently extracted, compared, checked, and runtime-probed |
 | Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
+| Native playback log privacy | ✅ Closed error and media labels retain useful diagnostics without plugin error text, arbitrary caps values, or stream identifiers |
+| Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved |
 | Native runtime inventory tooling | 🛠️ Final-tree hashing, installed Homebrew metadata, membership/content validation, and native-scope SBOM generation; [final ownership binding and release attachment remain pending](docs/native-inventory.md) |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
 today. Local broadcast and multicast discovery, exact IP or hostname discovery, and remembered
 targets work on Linux, macOS, and Windows.
+
+Settings support a private local profile under the account's existing configuration parent.
+Windows retains that parent's inherited permissions; shared or network profiles are outside the
+contract. A load timeout uses defaults with persistence disabled for that session. A save timeout
+allows closing with the newest preferences potentially unsaved; an OS publication already in
+progress may finish later. See the [settings boundary](docs/settings-file-trust.md) for the accepted
+limits and review triggers.
 
 The product plan is [`docs/plan-v0.1.md`](docs/plan-v0.1.md), the countable ledger is
 [`docs/task.md`](docs/task.md), sanitized hardware observations are in
@@ -339,12 +349,21 @@ GST_DEBUG=2 RUST_LOG=balun=debug cargo run --locked --features desktop --bin bal
 ```
 
 Balun logs discovery, lineup, tune, and playback outcomes to standard error at `info` by default;
-`RUST_LOG` selects the level, as in Tributary. A playback failure logs the native GStreamer error
-behind its fixed category. `./scripts/build-linux.sh --run` and `./scripts/build-macos.sh --run`
+`RUST_LOG` selects the level, as in Tributary. Native playback reports retain known error domains,
+numeric codes, closed media/format labels, and typed counters. Plugin error/debug text, stream
+identifiers, arbitrary caps values, and unknown marker names are discarded. GStreamer's own
+opt-in `GST_DEBUG` output bypasses Balun's filtering and can contain stream-derived text.
+`./scripts/build-linux.sh --run` and `./scripts/build-macos.sh --run`
 build the desktop and launch it in the same terminal. On Windows,
 `.\scripts\build-windows.ps1 -Run` uses a console-attached
 release-profile developer build, so those logs remain visible in the invoking PowerShell session.
 The distributed ZIP and installer remain GUI-subsystem applications and do not attach a console.
+
+For bounded per-generation tune startup records, use
+`RUST_LOG=off,balun::playback::timing=debug`. The [phase definitions](docs/tune-timing.md)
+distinguish retirement, handoff, graph setup, worker-captured HTTP/appsrc observations,
+and received pipeline notifications;
+decoded/rendered media timing and usable-media deadlines remain V2.1 work.
 
 ### Discovery diagnostic
 
@@ -445,8 +464,16 @@ packagers or dependencies. The helpers keep Tributary's filenames and flags;
 [`docs/tributary-build-infrastructure.md`](docs/tributary-build-infrastructure.md) is the port
 ledger.
 
+Linux native package inspection also requires Python 3 and freezes one
+[bounded private input snapshot](docs/linux-archive-snapshots.md) for all metadata and payload
+tools. RPM payloads also receive bounded decoding and member preflight before extraction.
+Native parser isolation and Debian/Arch preflight remain pending; the release workflow
+continues to accept only locally produced packages.
+
 ### Testing & Code Quality
 
+The [native-failure study](docs/native-media-failure-boundary.md) uses owned child
+processes to exercise stuck GStreamer calls without hanging the test runner.
 The [adversarial regression suites](docs/adversarial-regressions.md) run short,
 replayable parser and policy corpora in PR CI and longer generated corpora daily.
 CI also enforces [critical-path coverage baselines](docs/critical-coverage.md),
@@ -581,7 +608,8 @@ src/
 │   ├── network.rs          # Network-change source boundary and Linux watcher thread
 │   └── handoff.rs          # One-shot, URL-redacted stream handoff
 ├── settings/
-│   └── mod.rs              # Versioned, atomic settings.json store
+│   ├── mod.rs              # Versioned settings schema and validation
+│   └── store.rs            # Pinned private-profile transactions
 ├── playback/
 │   ├── runtime.rs          # GStreamer initialization and factory snapshot
 │   ├── session.rs          # Generation-owned playbin3 session and teardown
@@ -595,7 +623,8 @@ src/
     ├── channel_sidebar.rs  # Selected device's channel list and badges
     ├── exact_discovery_dialog.rs # Find device by address dialog
     ├── player_view.rs      # Live-TV picture, status, and playback controls
-    ├── settings_session.rs # Loads settings once and saves window state on close
+    ├── settings_session.rs # Bounded asynchronous settings load and close
+    ├── settings_session/   # One worker and the latest queued settings snapshot
     └── objects.rs          # GObject wrappers for the sidebar models
 
 scripts/
