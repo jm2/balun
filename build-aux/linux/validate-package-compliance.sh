@@ -7,9 +7,9 @@
 # This v0.1 port is a trusted-build-output gate with deterministic synthetic
 # coverage. Extracted trees are bounded and must produce matching metadata-and-
 # content snapshots around inspection. All metadata/payload tools consume one
-# bounded private snapshot of the input archive. RPM payload decoding and newc
-# members are preflighted before extraction; the native parsers are not sandboxed.
-# Debian/Arch preflight and extraction containment remain pending. Accept only locally
+# bounded private snapshot of the input archive. RPM, Debian and Arch payload
+# decoding and members are preflighted before extraction. Native parser sandboxing
+# and extraction containment remain pending. Accept only locally
 # produced artifacts until those extractor-specific guarantees land separately.
 
 set -euo pipefail
@@ -591,15 +591,22 @@ extract_deb()
     package=$1
     require_command dpkg-deb
     require_command python3
+    require_command tar
     temp_dir=$(mktemp -d)
     trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
     python3 -B "$script_dir/archive_snapshot.py" --input "$package" --output "$temp_dir/archive" || \
         fail "could not snapshot Debian package"
     package="$temp_dir/archive"
-    dpkg-deb --control "$package" "$temp_dir/control" || \
-        fail "could not extract Debian control metadata"
+    # Both complete member lists pass before either native extraction begins.
+    python3 -B "$script_dir/tar_payload.py" --kind deb-control \
+        --input "$package" --output "$temp_dir/control.tar" || \
+        fail "could not decode and preflight Debian control metadata"
+    python3 -B "$script_dir/tar_payload.py" --kind deb-data \
+        --input "$package" --output "$temp_dir/payload.tar" || \
+        fail "could not decode and preflight Debian payload"
+    extract_validated_tar "$temp_dir/control.tar" "$temp_dir/control"
     check_text_metadata_tree "$temp_dir/control"
-    dpkg-deb --extract "$package" "$temp_dir/payload" || fail "could not extract Debian package"
+    extract_validated_tar "$temp_dir/payload.tar" "$temp_dir/payload"
     check_tree "$temp_dir/payload"
 )
 
@@ -636,24 +643,33 @@ extract_rpm()
 extract_arch()
 (
     package=$1
-    require_command bsdtar
+    require_command zstd
+    require_command tar
     require_command python3
     temp_dir=$(mktemp -d)
     trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
     python3 -B "$script_dir/archive_snapshot.py" --input "$package" --output "$temp_dir/archive" || \
         fail "could not snapshot Arch package"
     package="$temp_dir/archive"
-    bsdtar -xOf "$package" .PKGINFO > "$temp_dir/pkginfo" || \
-        fail "could not read Arch package metadata"
-    check_dependency_text "$temp_dir/pkginfo"
-    mkdir "$temp_dir/payload"
-    bsdtar -xf "$package" -C "$temp_dir/payload" || fail "could not extract Arch package"
+    python3 -B "$script_dir/tar_payload.py" --kind arch \
+        --input "$package" --output "$temp_dir/payload.tar" || \
+        fail "could not decode and preflight Arch payload"
+    extract_validated_tar "$temp_dir/payload.tar" "$temp_dir/payload"
     check_tree "$temp_dir/payload"
+    check_text_metadata_file "$temp_dir/payload/.PKGINFO"
     install_script="$temp_dir/payload/.INSTALL"
     if [ -e "$install_script" ] || [ -L "$install_script" ]; then
         check_text_metadata_file "$install_script"
     fi
 )
+
+extract_validated_tar()
+{
+    mkdir "$2"
+    TAR_OPTIONS= tar --extract --file "$1" --directory "$2" \
+        --no-same-owner --no-same-permissions --no-acls --no-xattrs --no-selinux || \
+        fail "could not extract preflighted tar payload"
+}
 
 for required_command in cmp cp find head mktemp perl readlink rm sed sha256sum sort stat wc; do
     require_command "$required_command"

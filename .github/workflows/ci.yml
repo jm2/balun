@@ -42,6 +42,7 @@ jobs:
         run: |
           python3 -B build-aux/linux/test_archive_snapshot.py
           python3 -B build-aux/linux/test_rpm_payload.py
+          python3 -B build-aux/linux/test_tar_payload.py
           build-aux/linux/test-package-compliance.sh
 
       - name: Test Linux build helper policy
@@ -156,10 +157,16 @@ jobs:
       - name: Install validators
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends appstream desktop-file-utils rpm cpio
+          sudo apt-get install -y --no-install-recommends \
+            appstream desktop-file-utils rpm cpio dpkg libarchive-tools zstd
 
       - name: Test native RPM payload preflight and extraction
         run: python3 -B build-aux/linux/test_rpm_payload.py NativeToolsTests
+
+      - name: Test native Debian and Arch payload preflight and extraction
+        run: |
+          for tool in dpkg-deb bsdtar zstd tar; do command -v "$tool"; done
+          python3 -B build-aux/linux/test_tar_payload.py NativeToolsTests
 
       - name: Validate the desktop entry
         run: |

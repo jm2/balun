@@ -1,6 +1,6 @@
-# Linux archive input snapshots and RPM preflight
+# Linux archive input snapshots and payload preflight
 
-H2.4 input-consistency slice, September 17, 2026. Debian, RPM, and Arch package
+H2.4 input-consistency and preflight slices, September 2026. Debian, RPM, and Arch package
 inspection now copies the completed local artifact once into its private scratch
 directory. Every metadata query and payload extraction reads that same snapshot.
 Replacing the original package between tools cannot combine metadata from one
@@ -69,6 +69,45 @@ validation job. No hostile same-account writer or concurrent mutation is
 admitted. This is a format-specific correctness gate, not an RPM parser sandbox
 or a proof that arbitrary hostile input is safe for native code.
 
+## Debian and Arch tar preflight
+
+`build-aux/linux/tar_payload.py` uses the same bounded producer and tree contract
+as RPM. Debian's `dpkg-deb --ctrl-tarfile` and `--fsys-tarfile` each write a private
+decoded tar; both pass preflight before either control or data extraction starts.
+Arch's `.pkg.tar.zst` is decoded once with `zstd --decompress --stdout`. Its
+`.PKGINFO` and optional `.INSTALL` are checked as ordinary text files in the same
+admitted payload. Reopening the original package for extraction is unnecessary:
+GNU tar receives the exact private decoded file already checked by preflight.
+
+Each decoded archive has its own 1 GiB/60-second producer-plus-preflight budget.
+The 8,192-entry, 64-level, 2,048-byte path/link, and 256 MiB file limits also apply.
+The whole file must consist of 512-byte blocks, conventional octal fields,
+valid header checksums, bounded member extents, zero block padding, and two end
+blocks followed by at most 64 KiB of zeros. The complete path/link graph passes
+before extraction, including parent conflicts regardless of member order.
+
+The supported subset includes V7, USTAR, and basic GNU headers for regular files,
+directories, and confined relative symlinks directly to included regular files.
+V7 covers the short-path headers emitted by pinned cargo-deb 3.7.0; its unused
+extension bytes must be zero.
+One per-member PAX header may supply `path`, `linkpath`, `mtime`, `atime`, and
+`ctime`; it is limited to 16 KiB with unique keys, exact record lengths, and
+bounded nonnegative timestamps. PAX metadata headers consume a separate bounded
+header count. PAX paths and links receive the same checks as ordinary headers.
+Global/repeated PAX headers, unknown keys, xattrs/ACLs, sparse files, GNU long-name
+extensions, hard links, special files, privileged modes, binary numeric fields,
+duplicates, concatenated archives, and unsupported formats fail closed. This
+deliberately supports Balun's package layout rather than arbitrary tar archives.
+
+Extraction disables archived ownership, privileged permissions, ACLs, xattrs,
+and SELinux labels; inherited `TAR_OPTIONS` is cleared. Final tree, metadata,
+component, and native-import checks still run. The build helper checks GNU tar
+availability for Debian and GNU tar/zstd for Arch before starting build work.
+These gates do not execute installer scripts. The native producer and extractor
+are still outside an OS sandbox, and extraction itself has no owned-process
+timeout yet. Debian control and data budgets are separate, not one shared
+package-wide allocation. All existing private-job trust assumptions remain.
+
 ## Validation and remaining boundary
 
 Unit tests force source replacement between stat/open and during copying,
@@ -87,6 +126,7 @@ build-aux/linux/test-package-compliance.sh
 scripts/test-build-linux-policy.sh
 build-aux/packaging/test-release-component-policy.sh
 python3 -B build-aux/linux/test_rpm_payload.py
+python3 -B build-aux/linux/test_tar_payload.py
 ```
 
 RPM tests cover malformed members, parent/link interpretation in either member
@@ -96,9 +136,18 @@ oversized declared members never invoke `cpio`. CI installs RPM/CPIO tools and
 builds an inert real RPM, preflights and extracts it, verifies its data and
 relative build-ID-style link, and runs the complete package validator.
 
+Tar tests cover valid V7/USTAR/GNU/PAX layouts, malformed headers and PAX records,
+path overrides, duplicate/parent/link conflicts, unsupported member types,
+physical extents, zero padding, trailer framing, and resource limits. Rejected
+synthetic tar bytes are only passed to preflight, never a native extractor.
+Integration fixtures prove a rejected Debian control or data archive blocks
+both extractions and that rejected Arch output never reaches tar. CI requires
+native tools, builds inert Debian and Arch-style packages, verifies their
+extracted data and relative links, and runs the complete validator. The Arch
+fixture excludes host ACLs/xattrs while retaining ordinary PAX timestamps.
+
 H2.4 remains unchecked. RPM header queries and native extraction still need
 time/output containment; the decoder itself is native code without an OS sandbox.
-Debian and Arch still lack member preflight and expanded-payload budgets.
 Extractor isolation and broader format-specific negative fixtures remain
 required before accepting artifacts outside the trusted local build boundary.
 Existing post-extraction checks cannot contain a compromised native parser.
