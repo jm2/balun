@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python package-gate coverage installs now require reviewed wheel hashes and
+  reject source-build fallback for the existing coverage.py 7.16.1 tool.
 - Reviewed digest pins for all six CI/release job containers, with a workflow
   inventory check that rejects changed, missing, or unrecorded image references.
 - Playback startup and idle status now translate ready, missing-component, and

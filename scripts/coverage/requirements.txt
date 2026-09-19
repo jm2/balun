@@ -1,1 +1,16 @@
-coverage==7.16.1
+# Complete default runtime dependency closure for Linux CPython 3.12-3.14,
+# x86_64/aarch64. No extras; coverage has no dependencies on these interpreters.
+# Reviewed wheel SHA-256 values; no source-distribution fallback.
+# coverage-7.16.1-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+# coverage-7.16.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+# coverage-7.16.1-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+# coverage-7.16.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+# coverage-7.16.1-cp314-cp314-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+# coverage-7.16.1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+coverage==7.16.1 \
+    --hash=sha256:e82e10b9d290f60b63459cfb245a841aec347603997206296b93881463a93dcf \
+    --hash=sha256:3d73bb1f85c4150ac208fb0755beb04b2e44897bad81414de9380f98dd74729f \
+    --hash=sha256:6b3fd0f3435ebb7a7183b32a6062a8b755f08242ced1f3f22761d30b56b3c2a5 \
+    --hash=sha256:e5eb1762e7eb5fad34ef913e8107c7788a66f19d328e598ce95bf7217f9e5c8f \
+    --hash=sha256:bc5354a124799f1f87b7637bbe6f18cd4bc66a1f37f6aa2b5db40f9adad531dc \
+    --hash=sha256:34bafe9f4094315248573e6223e11af0ec1b25f9cbca43bf0e9a26a189ba2751
