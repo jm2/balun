@@ -1,6 +1,18 @@
 version: 2
 
 updates:
+  - package-ecosystem: npm
+    directory: /build-aux/toolchain/node-lint
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    cooldown:
+      default-days: 5
+    groups:
+      node-lint-tools:
+        patterns:
+          - "*"
+
   - package-ecosystem: cargo
     directory: /
     schedule:
