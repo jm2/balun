@@ -523,9 +523,10 @@ It does not finish H3.4's consolidated review or decide H3.5's recovery policy.
 - Low, fixed here: `actions/checkout@v7` and `actions/upload-artifact@v7` were
   floating tags; every use in both workflows, including the Flatpak jobs, is
   pinned to the v7.0.1 commit.
-- Low, open: `flatpak/flatpak-github-actions/flatpak-builder@v6` and the
-  `gnome-50` builder image are tag-pinned; it is the only action in either
-  workflow not pinned by commit.
+- Low, subsequently fixed: the Flatpak builder action is pinned by commit
+  (see the September 4 delta below). The `gnome-50` container and all other
+  job containers now use [reviewed image-index digests](build-input-pins.md);
+  packages installed afterward remain mutable H2.2 inputs.
 - Low, accepted: `cargo install cargo-audit --locked` takes the latest release;
   the advisory database is fetched live in any case.
 - Low, accepted: the release workflow installs Inno Setup with an unpinned
@@ -644,8 +645,8 @@ Still open:
   and positions replace value-bearing serde errors across diagnostic paths.
 - Approval store: document the key threat model and add an unsupported-version
   quarantine reason.
-- The CI Flatpak job's `gnome-50` builder image is still a moving tag; pin it
-  by digest when the next runtime bump lands.
+- The CI Flatpak image now has an enforced digest pin; complete the remaining
+  [H2.2 input inventory](build-input-pins.md#remaining-h22-scope).
 - Re-audit new log sites against the `Debug` list at the next review.
 
 Closed by the 2026-09-04 delta check: the URL-stripped
