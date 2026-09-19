@@ -132,6 +132,46 @@ class HomebrewMetadataTests(unittest.TestCase):
         with patch.object(collector, "MAX_RESOURCES", 0), self.assertRaises(collector.Invalid):
             collector.source_inputs(dict(empty, resources=[resource]))
 
+    def test_local_patch_uses_installed_receipt_commit_without_current_tap_lookup(self):
+        local = {"kind": "local", "strip": "p1", "directory": None,
+                 "file": "Patches/fixture/fix space.diff"}
+        self.metadata["formulae"][0]["balun_source_inputs"]["patches"] = [local]
+        receipt = json.loads(self.receipt.read_text())
+        receipt["source"]["tap_git_head"] = "a" * 40
+        self.receipt.write_text(json.dumps(receipt))
+        # A current formula's tap revision must not replace the installed one.
+        self.metadata["formulae"][0]["tap_git_head"] = "b" * 40
+        result = self.collect()["packages"][0]["source_inputs"]["patches"][0]
+        self.assertEqual(result["file"], local["file"])
+        self.assertEqual(result["source"], {
+            "reference": "https://github.com/Homebrew/homebrew-core/blob/" + "a" * 40 + "/Patches/fixture/fix%20space.diff",
+            "identity": "git:" + "a" * 40})
+        for commit in [None, "", "main", "short", "b" * 39, "B" * 40, True]:
+            receipt["source"]["tap_git_head"] = commit
+            self.receipt.write_text(json.dumps(receipt))
+            with self.subTest(commit=commit), self.assertRaisesRegex(collector.Invalid, "immutable tap identity"):
+                self.collect()
+        for path in ["../outside", "/absolute", "Patches/../outside", "Patches\\outside"]:
+            with self.subTest(path=path), self.assertRaises(collector.Invalid):
+                collector.source_inputs({"schema": 1, "resources": [], "patches": [dict(local, file=path)]},
+                                        tap_commit="a" * 40)
+
+    def test_public_github_patch_selector_is_preserved_without_admitting_other_queries(self):
+        base = "https://github.com/example/project/commit/" + "a" * 40 + ".patch"
+        source = {"url": base + "?full_index=1", "checksum": "e" * 64, "revision": None, "git": False}
+        self.assertEqual(collector.download_source(source)["reference"], source["url"])
+        invalid = [base + "?full_index=0", base + "?full_index=1&token=private",
+                   base + "?full_index=1#private", base + "?FULL_INDEX=1",
+                   base.replace("github.com", "example.com") + "?full_index=1",
+                   base.replace("https://", "https://user:private@") + "?full_index=1",
+                   base.replace("a" * 40, "main") + "?full_index=1"]
+        for url in invalid:
+            with self.subTest(url=url), self.assertRaises(collector.Invalid):
+                collector.download_source(dict(source, url=url))
+        # The general catalog/source-delivery URL policy is unchanged.
+        with self.assertRaises(collector.Invalid):
+            collector.reference(source["url"])
+
     def test_current_formula_cannot_replace_installed_recipe(self):
         mutations = [lambda f: f.update(name="other"),
                      lambda f: f.update(versions={"stable": "1.2.4"}),
@@ -338,21 +378,41 @@ end
         self.assertEqual(result["patches"][2]["directory"], "codec")
         self.assertEqual(result["patches"][2], result["resources"][0]["patches"][0])
 
-    @unittest.skipUnless(shutil.which("ruby"), "requires Ruby for unsupported patch rejection")
-    def test_ruby_helper_rejects_unbound_local_patches_without_reading_them(self):
+    @unittest.skipUnless(shutil.which("ruby"), "requires Ruby for local patch declarations")
+    def test_ruby_helper_records_local_patch_path_without_reading_current_tap(self):
         result = self.ruby_fixture('''
 class LocalPatch
   def strip = :p1
+  def file = "Patches/fixture/fix.diff"
   def contents = raise("must not read a separate local patch")
 end
 class Formulary::FromPathLoader
   def stable = Struct.new(:resources, :patches).new({}, [LocalPatch.new])
 end
 ''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        raw = json.loads(result.stdout)["formulae"][0]["balun_source_inputs"]
+        self.assertEqual(raw["patches"], [{"kind": "local", "strip": "p1", "directory": None,
+                                           "file": "Patches/fixture/fix.diff"}])
+        self.assertEqual(collector.source_inputs(raw, tap_commit="a" * 40)["patches"][0]["source"]["identity"],
+                         "git:" + "a" * 40)
+        self.assertNotIn("must not read a separate local patch", result.stderr)
+
+    @unittest.skipUnless(shutil.which("ruby"), "requires Ruby for unsupported patch rejection")
+    def test_ruby_helper_rejects_unknown_patch_kinds(self):
+        result = self.ruby_fixture('''
+class UnknownPatch
+  def strip = :p1
+  def contents = raise("must not read an unknown patch")
+end
+class Formulary::FromPathLoader
+  def stable = Struct.new(:resources, :patches).new({}, [UnknownPatch.new])
+end
+''')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
         self.assertIn("unsupported installed patch declaration", result.stderr)
-        self.assertNotIn("must not read a separate local patch", result.stderr)
+        self.assertNotIn("must not read an unknown patch", result.stderr)
 
     @unittest.skipUnless(shutil.which("brew"), "requires native Homebrew recipe evaluation")
     def test_real_homebrew_evaluates_resource_and_patch_declarations(self):
@@ -374,6 +434,9 @@ end
     end
   end
   patch :DATA
+  patch do
+    file "Patches/fixture/historical.diff"
+  end
   def install
     raise "fixture must not be installed"
   end
@@ -385,6 +448,9 @@ __END__
 -before
 +after
 ''')
+        receipt = json.loads(self.receipt.read_text())
+        receipt["source"]["tap_git_head"] = "a" * 40
+        self.receipt.write_text(json.dumps(receipt))
         result = collector.collect(self.cellar, [self.member])["packages"][0]["source_inputs"]
         self.assertEqual(result["resources"][0]["name"], "codec")
         self.assertEqual(result["resources"][0]["version_hint"], "9.0")
@@ -394,6 +460,9 @@ __END__
         self.assertEqual(result["patches"][0]["kind"], "data")
         self.assertEqual(result["patches"][0]["size"], len(content))
         self.assertEqual(result["patches"][0]["sha256"], hashlib.sha256(content).hexdigest())
+        self.assertEqual(result["patches"][1]["kind"], "local")
+        self.assertEqual(result["patches"][1]["source"]["identity"], "git:" + "a" * 40)
+        self.assertTrue(result["patches"][1]["source"]["reference"].endswith("/Patches/fixture/historical.diff"))
 
     def test_diagnostic_reasons_are_closed_and_never_echo_exception_data(self):
         reason = "installed receipt and formula versions differ"

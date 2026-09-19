@@ -210,9 +210,16 @@ Primary-source and resource-specific patches retain their declared order, strip
 level, subdirectory, and selected archive members. External patches require an
 immutable source identity. Embedded DATA/string patches record the size and
 SHA-256 of the evaluated patch template, before Homebrew prefix substitution.
-Separate local patch files and unsupported patch forms reject the report because
-the installed recipe hash does not bind their contents. The collector does not
-download resources, unpack patches, or execute installation steps.
+For a tap-local patch, the declared relative path is paired with the immutable
+`source.tap_git_head` from the installed receipt and an exact Homebrew/core blob
+reference. The current tap revision and current tap/cache file cannot substitute
+for that identity; the collector never opens that file. A missing or mutable
+receipt commit, unsafe path, or unsupported patch form rejects the report. This
+records a historical Git source identity, not a newly measured patch-byte hash.
+The collector does not download resources, unpack patches, or execute installation
+steps. Download references remain query-free except the literal `full_index=1`
+selector on an immutable GitHub commit `.patch` URL, which is preserved because
+it changes the downloaded patch bytes. Other query parameters remain rejected.
 
 These are declarations evaluated on the collection host. They do not prove which
 resources or conditional installation steps produced a particular binary, or
@@ -240,8 +247,9 @@ The source-input adapter follows Homebrew's
 [stable specification](https://github.com/Homebrew/brew/blob/main/Library/Homebrew/software_spec.rb)
 and [resource patch declarations](https://github.com/Homebrew/brew/blob/main/Library/Homebrew/resource.rb).
 Portable fixtures cover additional source identities, ordered patches, schema
-rejection, and closed errors. Native macOS CI evaluates an authored resource/DATA
-patch fixture through the real installed Homebrew loader without installing it.
+rejection, historical tap binding, public patch selectors, and closed errors.
+Native macOS CI evaluates an authored resource/DATA/local-patch fixture through
+the real installed Homebrew loader without installing it or opening a tap patch.
 Native macOS CI also collects real GTK sink, libav plugin, and pixbuf-query inputs,
 then the full set selected by the copy ledger. Collector failures expose only a
 closed set of validation reasons or a generic missing/invalid-input category;

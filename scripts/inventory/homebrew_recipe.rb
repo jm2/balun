@@ -52,9 +52,14 @@ def patch_record(patch, recipe)
       "size" => contents.bytesize, "sha256" => Digest::SHA256.hexdigest(contents)
     )
   else
-    # LocalPatch reads a separate tap/cache file that the installed-recipe
-    # checksum does not bind. Do not silently omit it or open that path.
-    raise ArgumentError, "unsupported installed patch declaration"
+    if defined?(LocalPatch) && patch.is_a?(LocalPatch)
+      # Never read the current tap/cache file. Python binds this declared path
+      # to the immutable tap commit recorded in the installed receipt instead.
+      result.merge("kind" => "local", "file" => patch.file.to_s,
+                   "directory" => patch_directory(patch))
+    else
+      raise ArgumentError, "unsupported installed patch declaration"
+    end
   end
 end
 

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from native_inventory import (MAX_DOCUMENT, Invalid, digest, fields, member_path, reference,
                               require, text, unique_object)
@@ -50,6 +51,7 @@ PUBLIC_REJECTIONS = frozenset({
     "invalid installed package revision",
     "missing source metadata",
     "installed recipe has no immutable primary source identity",
+    "installed local patch has no immutable tap identity",
     "missing or invalid license metadata",
     "reference must be an HTTPS URL without credentials, query or fragment",
     "selected member is outside the trusted Cellar",
@@ -139,9 +141,23 @@ def license_record(value, depth=0):
     return result
 
 
+def download_reference(value):
+    """Keep one public GitHub patch selector; never admit arbitrary URL queries."""
+    text(value, 2048)
+    parsed = urlsplit(value)
+    if parsed.query == "full_index=1":
+        base = urlunsplit(parsed._replace(query=""))
+        reference(base)
+        require(re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/commit/"
+                             r"[0-9a-f]{40}\.patch", base) is not None,
+                "unsupported patch download selector")
+        return value
+    return reference(value)
+
+
 def download_source(value):
     fields(value, "url checksum revision git")
-    source_url = reference(value["url"])
+    source_url = download_reference(value["url"])
     require(type(value["git"]) is bool, "invalid source download strategy")
     checksum, revision = value["checksum"], value["revision"]
     if checksum is not None:
@@ -154,7 +170,7 @@ def download_source(value):
     return {"reference": source_url, "identity": identity}
 
 
-def source_inputs(value):
+def source_inputs(value, *, tap_commit=None):
     """Normalize evaluated declarations without asserting use in a final member."""
     fields(value, "schema resources patches")
     require(type(value["schema"]) is int and value["schema"] == 1,
@@ -173,9 +189,10 @@ def source_inputs(value):
         for item in items:
             require(isinstance(item, dict), "invalid patch declaration")
             kind = item.get("kind")
-            require(isinstance(kind, str) and kind in {"external", "data", "string"},
+            require(isinstance(kind, str) and kind in {"external", "data", "string", "local"},
                     "unsupported patch declaration")
-            fields(item, "kind strip directory " + ("source files" if kind == "external" else "size sha256"))
+            extra_fields = {"external": "source files", "local": "file"}.get(kind, "size sha256")
+            fields(item, "kind strip directory " + extra_fields)
             strip = text(item["strip"], 5)
             require(re.fullmatch(r"p(?:0|[1-9][0-9]{0,2})", strip), "invalid patch strip level")
             directory = item["directory"]
@@ -190,6 +207,16 @@ def source_inputs(value):
                 require(len(set(path.casefold() for path in selected)) == len(selected),
                         "duplicate patch member")
                 record.update(source=download_source(item["source"]), files=selected)
+            elif kind == "local":
+                require(isinstance(tap_commit, str) and re.fullmatch(r"[0-9a-f]{40}", tap_commit),
+                        "installed local patch has no immutable tap identity")
+                selected = member_path(item["file"])
+                # The trusted installed receipt names the tap revision. Current
+                # tap/cache contents and the currently published formula cannot
+                # substitute for that historical source identity.
+                source_url = "https://github.com/Homebrew/homebrew-core/blob/" + tap_commit + "/" + quote(selected, safe="/-._~")
+                record.update(file=selected, source={"reference": reference(source_url),
+                                                     "identity": "git:" + tap_commit})
             else:
                 require(type(item["size"]) is int and 0 < item["size"] <= MAX_METADATA,
                         "embedded patch size exceeds budget")
@@ -257,7 +284,8 @@ def package_metadata(keg, name, package_version, deadline, query):
                 "installed recipe has no immutable primary source identity")
         source_identity = "git:" + source_revision
     license_value = license_record(formula.get("license"))
-    additional_inputs = source_inputs(formula.get("balun_source_inputs"))
+    additional_inputs = source_inputs(formula.get("balun_source_inputs"),
+                                      tap_commit=source.get("tap_git_head"))
     require(read_metadata(recipe) == recipe_bytes and read_metadata(receipt_path) == receipt_bytes,
             "installed metadata changed during Homebrew evaluation")
     checkpoint(deadline)
