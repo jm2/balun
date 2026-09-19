@@ -198,10 +198,30 @@ license metadata. HEAD, custom taps, mismatched revisions, current-formula
 substitution, unknown owners, aliases in metadata, special files, duplicate
 members, and observed input changes reject the entire report. Source member
 paths are relative to the Cellar; host paths and raw receipts are not exported.
-The installed recipe text is retained with its hash, including its declarations
-of additional resources and patches. The primary source version is the package's
-version: it does not assert that every embedded resource shares that version or
-that the declared primary archive alone supplies every source-delivery obligation.
+The installed recipe text is retained with its hash. Schema 2 of the collector
+report also records the stable recipe's evaluated resource and patch declarations
+under each package's `source_inputs`. Empty lists are explicit; a missing source
+section fails collection. Resources carry their own HTTPS reference and archive
+SHA-256 or immutable Git identity. A resource's `version_hint` is Homebrew's
+inferred, declared, or inherited label, not a verified component version. It is
+never replaced with the parent package's version by the collector.
+
+Primary-source and resource-specific patches retain their declared order, strip
+level, subdirectory, and selected archive members. External patches require an
+immutable source identity. Embedded DATA/string patches record the size and
+SHA-256 of the evaluated patch template, before Homebrew prefix substitution.
+Separate local patch files and unsupported patch forms reject the report because
+the installed recipe hash does not bind their contents. The collector does not
+download resources, unpack patches, or execute installation steps.
+
+These are declarations evaluated on the collection host. They do not prove which
+resources or conditional installation steps produced a particular binary, or
+supply per-resource license conclusions. Final component mapping and source
+delivery still require that evidence; a primary archive alone does not establish
+complete source delivery. Resource names are sorted for deterministic output,
+while patch application order is preserved. Limits are 256 resources and 1,024
+patch declarations per package, with embedded patch templates bounded to 1 MiB
+and all declarations subject to the query/report byte limits below.
 
 Homebrew evaluates trusted installed Ruby recipes. Automatic updates and analytics
 are disabled for the query; this is a build-input tool, not a sandbox for untrusted
@@ -216,11 +236,17 @@ The implementation follows Homebrew's
 and [installed receipt](https://github.com/Homebrew/brew/blob/main/Library/Homebrew/tab/tab.rb)
 contracts. Linux fixtures exercise stale metadata, installed revision mismatches,
 immutable source identities, substitutions, resource bounds and child cleanup.
+The source-input adapter follows Homebrew's
+[stable specification](https://github.com/Homebrew/brew/blob/main/Library/Homebrew/software_spec.rb)
+and [resource patch declarations](https://github.com/Homebrew/brew/blob/main/Library/Homebrew/resource.rb).
+Portable fixtures cover additional source identities, ordered patches, schema
+rejection, and closed errors. Native macOS CI evaluates an authored resource/DATA
+patch fixture through the real installed Homebrew loader without installing it.
 Native macOS CI also collects real GTK sink, libav plugin, and pixbuf-query inputs,
 then the full set selected by the copy ledger. Collector failures expose only a
 closed set of validation reasons or a generic missing/invalid-input category;
 raw exceptions, paths, and recipe output remain hidden. These intermediate
-records still need catalog assembly, embedded-resource representation, and
+records still need catalog assembly, embedded-component ownership/license evidence, and
 final-artifact integration below before they establish H1.3.
 
 ### Final-artifact integration
