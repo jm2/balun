@@ -5,6 +5,7 @@ use std::borrow::Cow;
 
 use crate::discovery::{InvalidExactDiscoveryTarget, InvalidHostnameTarget};
 
+/// Localized labels shared by the Find dialog and its accessible controls.
 pub struct FindLabels {
     pub title: Cow<'static, str>,
     pub description: Cow<'static, str>,
@@ -14,10 +15,12 @@ pub struct FindLabels {
 }
 
 impl FindLabels {
+    /// Resolve the complete label set using the currently selected locale.
     pub fn current() -> Self {
         Self::for_locale(&rust_i18n::locale())
     }
 
+    /// Resolve one explicit locale without changing process-wide language state.
     fn for_locale(locale: &str) -> Self {
         Self {
             title: rust_i18n::t!("device_dialogs.find_title", locale = locale),
@@ -29,6 +32,7 @@ impl FindLabels {
     }
 }
 
+/// Confirmation, action, and persistence-result copy for forgetting a device.
 pub struct ForgetLabels {
     pub menu: Cow<'static, str>,
     pub heading: Cow<'static, str>,
@@ -39,10 +43,12 @@ pub struct ForgetLabels {
 }
 
 impl ForgetLabels {
+    /// Resolve confirmation and result labels using the current locale.
     pub fn current() -> Self {
         Self::for_locale(&rust_i18n::locale())
     }
 
+    /// Keep the persistent and session-only outcomes distinct in one locale.
     fn for_locale(locale: &str) -> Self {
         Self {
             menu: rust_i18n::t!("device_dialogs.forget_menu", locale = locale),
@@ -55,10 +61,12 @@ impl ForgetLabels {
     }
 }
 
+/// Interpolate the display name once; callers must render the result as plain text.
 pub fn forget_description(device: &str) -> Cow<'static, str> {
     forget_description_in(&rust_i18n::locale(), device)
 }
 
+/// Translate the template before substituting the literal device display name.
 fn forget_description_in(locale: &str, device: &str) -> Cow<'static, str> {
     rust_i18n::t!(
         "device_dialogs.forget_description",
@@ -67,10 +75,12 @@ fn forget_description_in(locale: &str, device: &str) -> Cow<'static, str> {
     )
 }
 
+/// Describe an address rejection without accepting or echoing the rejected input.
 pub fn address_validation(error: InvalidExactDiscoveryTarget) -> Cow<'static, str> {
     address_validation_in(&rust_i18n::locale(), error)
 }
 
+/// Exhaustively map typed address failures to fixed copy for one locale.
 fn address_validation_in(locale: &str, error: InvalidExactDiscoveryTarget) -> Cow<'static, str> {
     match error {
         InvalidExactDiscoveryTarget::Empty => {
@@ -98,10 +108,12 @@ fn address_validation_in(locale: &str, error: InvalidExactDiscoveryTarget) -> Co
     }
 }
 
+/// Describe a hostname rejection using only its value-free failure category.
 pub fn hostname_validation(error: InvalidHostnameTarget) -> Cow<'static, str> {
     hostname_validation_in(&rust_i18n::locale(), error)
 }
 
+/// Exhaustively map typed hostname failures without interpolating user input.
 fn hostname_validation_in(locale: &str, error: InvalidHostnameTarget) -> Cow<'static, str> {
     match error {
         InvalidHostnameTarget::Empty => {
@@ -125,6 +137,7 @@ mod tests {
     use crate::discovery::{DiscoveryEntry, InvalidDiscoveryEntry};
     use crate::localization::SUPPORTED_LOCALES;
 
+    /// Exercise real parser failures across every catalog and check input privacy.
     #[test]
     fn rejected_entries_never_reach_translated_validation_copy() {
         for locale in SUPPORTED_LOCALES {
@@ -154,6 +167,7 @@ mod tests {
         );
     }
 
+    /// Check literal name substitution and distinguish saved versus session-only outcomes.
     #[test]
     fn confirmation_preserves_literal_names_and_distinguishes_session_only_forgetting() {
         let device = "Tuner <b>Room & %{device}</b>";
