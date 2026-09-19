@@ -32,3 +32,19 @@ progress:
   buffering_status: "Буферизация %{percent}%"
   buffering_description: "Буферизация прямого эфира: %{percent}%."
   opening: "Открытие %{channel} на %{device}."
+
+startup:
+  ready_title: "Выберите канал"
+  ready_description: >-
+    Воспроизведение через GStreamer %{version} доступно. Выберите канал, чтобы начать просмотр прямого эфира.
+  missing_title: "Компоненты воспроизведения недоступны"
+  missing_description: "Отсутствуют необходимые компоненты GStreamer: %{missing}."
+  failed_title: "Инициализация воспроизведения недоступна"
+  main_context_description: >-
+    Для инициализации воспроизведения Balun необходимо владеть основным контекстом GLib по умолчанию. Поиск
+    устройств и просмотр списка каналов остаются доступными.
+  initialization_failed_description: >-
+    Не удалось инициализировать GStreamer. Поиск устройств и просмотр списка каналов остаются доступными.
+  old_runtime_description: >-
+    Версия GStreamer %{found} слишком старая. Balun требуется GStreamer %{minimum} или новее. Поиск устройств и
+    просмотр списка каналов остаются доступными.

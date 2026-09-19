@@ -32,3 +32,20 @@ progress:
   buffering_status: "Buforowanie %{percent}%"
   buffering_description: "Buforowanie telewizji na żywo: %{percent}%."
   opening: "Otwieranie %{channel} na %{device}."
+
+startup:
+  ready_title: "Wybierz kanał"
+  ready_description: >-
+    Odtwarzanie za pomocą GStreamer %{version} jest dostępne; wybierz kanał, aby uruchomić telewizję na żywo.
+  missing_title: "Składniki odtwarzania są niedostępne"
+  missing_description: "Brakuje wymaganych składników GStreamer: %{missing}."
+  failed_title: "Inicjalizacja odtwarzania jest niedostępna"
+  main_context_description: >-
+    Inicjalizacja odtwarzania w Balun wymaga przejęcia domyślnego głównego kontekstu GLib. Wyszukiwanie urządzeń
+    i przeglądanie listy kanałów pozostają dostępne.
+  initialization_failed_description: >-
+    Nie udało się zainicjalizować GStreamer. Wyszukiwanie urządzeń i przeglądanie listy kanałów pozostają
+    dostępne.
+  old_runtime_description: >-
+    GStreamer %{found} jest zbyt stary; Balun wymaga GStreamer %{minimum} lub nowszego. Wyszukiwanie urządzeń i
+    przeglądanie listy kanałów pozostają dostępne.

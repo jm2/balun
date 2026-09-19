@@ -32,3 +32,18 @@ progress:
   buffering_status: "Bufferen %{percent}%"
   buffering_description: "Live-tv wordt gebufferd: %{percent}%."
   opening: "%{channel} openen op %{device}."
+
+startup:
+  ready_title: "Selecteer een zender"
+  ready_description: "Afspelen met GStreamer %{version} is beschikbaar; activeer een zender om live-tv te starten."
+  missing_title: "Afspeelcomponenten niet beschikbaar"
+  missing_description: "Vereiste GStreamer-componenten ontbreken: %{missing}."
+  failed_title: "Initialisatie van afspelen niet beschikbaar"
+  main_context_description: >-
+    Voor het initialiseren van afspelen moet Balun de standaard GLib-hoofdcontext bezitten. Apparaten zoeken en
+    de zenderlijst bekijken blijven beschikbaar.
+  initialization_failed_description: >-
+    GStreamer kon niet worden geïnitialiseerd. Apparaten zoeken en de zenderlijst bekijken blijven beschikbaar.
+  old_runtime_description: >-
+    GStreamer %{found} is te oud; Balun vereist GStreamer %{minimum} of nieuwer. Apparaten zoeken en de
+    zenderlijst bekijken blijven beschikbaar.

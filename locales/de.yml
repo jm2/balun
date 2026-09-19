@@ -32,3 +32,19 @@ progress:
   buffering_status: "Puffern %{percent} %"
   buffering_description: "Live-TV wird gepuffert: %{percent} %."
   opening: "%{channel} auf %{device} wird geöffnet."
+
+startup:
+  ready_title: "Kanal auswählen"
+  ready_description: >-
+    Die Wiedergabe mit GStreamer %{version} ist verfügbar. Aktivieren Sie einen Kanal, um Live-TV zu starten.
+  missing_title: "Wiedergabekomponenten nicht verfügbar"
+  missing_description: "Erforderliche GStreamer-Komponenten fehlen: %{missing}."
+  failed_title: "Wiedergabeinitialisierung nicht verfügbar"
+  main_context_description: >-
+    Für die Initialisierung der Balun-Wiedergabe muss der standardmäßige GLib-Hauptkontext übernommen werden.
+    Gerätesuche und Kanalliste bleiben verfügbar.
+  initialization_failed_description: >-
+    GStreamer konnte nicht initialisiert werden. Gerätesuche und Kanalliste bleiben verfügbar.
+  old_runtime_description: >-
+    GStreamer %{found} ist zu alt. Balun benötigt GStreamer %{minimum} oder neuer. Gerätesuche und Kanalliste
+    bleiben verfügbar.

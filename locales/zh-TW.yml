@@ -32,3 +32,13 @@ progress:
   buffering_status: "正在緩衝 %{percent}%"
   buffering_description: "電視直播正在緩衝：%{percent}%。"
   opening: "正在開啟 %{device} 上的 %{channel}。"
+
+startup:
+  ready_title: "選擇頻道"
+  ready_description: "GStreamer %{version} 播放功能已就緒；請選擇頻道以開始觀看直播電視。"
+  missing_title: "播放元件無法使用"
+  missing_description: "缺少必要的 GStreamer 元件：%{missing}。"
+  failed_title: "無法初始化播放"
+  main_context_description: "初始化 Balun 播放功能需要擁有預設 GLib 主上下文。裝置搜尋和頻道清單檢視功能仍可使用。"
+  initialization_failed_description: "無法初始化 GStreamer。裝置搜尋和頻道清單檢視功能仍可使用。"
+  old_runtime_description: "GStreamer %{found} 版本過舊；Balun 需要 GStreamer %{minimum} 或更新版本。裝置搜尋和頻道清單檢視功能仍可使用。"

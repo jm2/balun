@@ -58,7 +58,7 @@ address so you know which tuner failed.
 | Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved |
 | Native runtime inventory tooling | 🛠️ Reopened DMG content binding, macOS native copy ownership, installed Homebrew metadata, and native-scope SBOM generation; [catalog assembly, embedded-resource representation, remaining artifact adapters, and release attachment remain pending](docs/native-inventory.md) |
 | Light & dark mode | ✅ Automatic (libadwaita) |
-| i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Application menu, navigation, player controls/progress, and About description; [remaining scope](docs/localization.md) |
+| i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Application menu, navigation, player controls/progress/startup, and About description; [remaining scope](docs/localization.md) |
 
 Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
 today. Local broadcast and multicast discovery, exact IP or hostname discovery, and remembered

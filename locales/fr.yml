@@ -32,3 +32,21 @@ progress:
   buffering_status: "Mise en mémoire tampon : %{percent} %"
   buffering_description: "Mise en mémoire tampon de la télévision en direct : %{percent} %."
   opening: "Ouverture de %{channel} sur %{device}."
+
+startup:
+  ready_title: "Sélectionner une chaîne"
+  ready_description: >-
+    La lecture avec GStreamer %{version} est disponible ; activez une chaîne pour lancer la télévision en
+    direct.
+  missing_title: "Composants de lecture indisponibles"
+  missing_description: "Les composants GStreamer requis sont manquants : %{missing}."
+  failed_title: "Initialisation de la lecture indisponible"
+  main_context_description: >-
+    L’initialisation de la lecture de Balun nécessite le contrôle du contexte principal GLib par défaut. La
+    recherche d’appareils et la consultation des chaînes restent disponibles.
+  initialization_failed_description: >-
+    GStreamer n’a pas pu être initialisé. La recherche d’appareils et la consultation des chaînes restent
+    disponibles.
+  old_runtime_description: >-
+    GStreamer %{found} est trop ancien ; Balun nécessite GStreamer %{minimum} ou une version ultérieure. La
+    recherche d’appareils et la consultation des chaînes restent disponibles.
