@@ -1,8 +1,9 @@
 # Build input pins
 
-H2.2 remains open. The implemented slices pin the **starting job-container images**
-and the Rust release selected by rustup-based candidate jobs. They do not freeze
-the full build environment or claim reproducible artifacts. New signing and provenance work remains paused
+H2.2 remains open. Current pins cover the **starting job-container images**,
+YAML lint dependencies, and Rust selection in rustup-based candidate jobs.
+They do not freeze the full build environment or claim reproducible artifacts.
+New signing and provenance work remains paused
 by maintainer direction.
 
 ## Container inventory and enforcement
@@ -96,6 +97,34 @@ download validation remains in use. Arch's distribution compiler and Flatpak's
 SDK compiler are outside these five jobs. Shell-installed tools, containers,
 transitive inputs, and host tools require their own controls below. This is not
 a complete environment lock or a signing/provenance change.
+
+## YAML lint dependency closure
+
+[`yaml-lint-requirements.txt`](../build-aux/toolchain/yaml-lint-requirements.txt)
+pins yamllint 1.37.1, PyYAML 6.0.3, and pathspec 1.1.1 with SHA-256 hashes of
+their published wheels. These are the full runtime dependencies without optional
+extras. The same environment runs the builder-image policy checker. CI installs
+into a fresh virtual environment with `--require-hashes --only-binary=:all:`;
+missing transitive pins, changed bytes, and source-distribution fallback fail.
+This follows pip's documented
+[hash-checking installation mode](https://pip.pypa.io/en/stable/topics/secure-installs/).
+
+The reviewed PyYAML wheels support Linux CPython 3.12–3.14 on x86_64 and aarch64;
+the two remaining wheels are platform independent. CI currently uses the
+Ubuntu 24.04 runner's CPython 3.12. The wheel files were downloaded from PyPI and
+hashed independently against its exact-version metadata on 2026-09-19 UTC.
+Adding another interpreter/platform wheel requires a reviewed hash update;
+there is no source-build fallback. This does not pin the host Python interpreter,
+virtual-environment bootstrap, pip itself, or the runner image.
+
+To update this lock, inspect the exact releases' runtime dependency metadata,
+download the required wheels, verify their SHA-256 values, and update all pins
+and filename comments together. Check resolution for every listed platform and
+interpreter using an empty download directory, then install the supported host
+set into a fresh environment and run YAML lint and builder-image tests. Keep
+dependency resolution enabled so an omitted new dependency cannot be skipped.
+Before accepting new pins, also prove an incorrect local hash fails offline
+against the downloaded wheel set.
 
 ## Remaining H2.2 scope
 
