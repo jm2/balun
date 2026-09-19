@@ -144,7 +144,7 @@ RUSTUP_TOOLCHAIN=1.98.0 python3 -B scripts/coverage/run-rust.py \
 
 python3 -m venv "$coverage_work/python"
 PIP_CACHE_DIR="$coverage_work/pip-cache" "$coverage_work/python/bin/pip" \
-  install -r scripts/coverage/requirements.txt
+  install --require-hashes --only-binary=:all: -r scripts/coverage/requirements.txt
 export BALUN_COVERAGE_MODULES="$coverage_work/modules"
 pwsh -NoProfile -Command 'Save-Module -Name Pester -RequiredVersion 6.2.0 -Repository PSGallery -Path $env:BALUN_COVERAGE_MODULES -Force'
 "$coverage_work/python/bin/python" -B scripts/coverage/run-packages.py \
@@ -156,6 +156,15 @@ The runners delete their temporary build trees and raw profiles on exit. Keep
 the small summaries for review, then remove `"$coverage_work"` when finished.
 The Rust build and each test process have explicit timeouts. Package suites
 also have process timeouts; exceeding one fails the check.
+
+The coverage.py 7.16.1 requirement includes reviewed hashes for Linux CPython
+3.12–3.14 wheels on x86_64 and aarch64. It has no default runtime dependencies
+on those interpreters. CI uses the Ubuntu 24.04 runner's Python 3.12. Both CI and
+the command above require hashes and binary wheels, so another platform,
+interpreter, or source build needs a reviewed input update. Wheel bytes were
+downloaded and independently hashed against exact-version PyPI metadata on
+2026-09-19; offline resolution was checked for all six interpreter/architecture
+pairs. This does not pin the host Python, pip/venv bootstrap, or PowerShell/Pester.
 
 ## Limits of this baseline
 
