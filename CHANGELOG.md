@@ -25,8 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and an About description. The remaining interface and CLI are still English.
 - Bounded per-generation startup timing records separate predecessor retirement,
   handoff validation, graph setup, worker-captured HTTP/appsrc observations, and
-  received stream/PLAYING notifications.
-  Decoded/rendered media timings and useful-media deadlines remain pending.
+  received stream/PLAYING notifications. First raw video/audio sink ingress and
+  video paintable invalidation are recorded even after PLAYING, without treating
+  them as proof of displayed or audible output. Decoder-output/presentation
+  timing, continuing media progress, and useful-media deadlines remain pending.
 - Isolated native-call stall regressions document the limits of playback teardown
   timeouts; Windows CI now executes the desktop tests as well as compiling them.
 - Native inventory tooling independently hashes reopened package trees and completed
