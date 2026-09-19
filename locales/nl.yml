@@ -47,3 +47,73 @@ startup:
   old_runtime_description: >-
     GStreamer %{found} is te oud; Balun vereist GStreamer %{minimum} of nieuwer. Apparaten zoeken en de
     zenderlijst bekijken blijven beschikbaar.
+
+device_dialogs:
+  find_title: "Apparaat zoeken op adres"
+  find_description: >-
+    Stuur één begrensd HDHomeRun-zoekverzoek naar een bekend IP-adres of een bekende hostnaam; Balun scant
+    geen adresbereik. Voorbeeld: 192.168.1.20, fd00::20 of tuner.example.
+  target: "IP-adres of hostnaam"
+  cancel: "Annuleren"
+  find: "Zoeken"
+  enter_target: "Voer het IP-adres of de hostnaam van een apparaat in."
+  hostname_characters: "Voer één hostnaam in met letters, cijfers, koppeltekens en punten."
+  hostname_syntax: "Voer een hostnaam in zonder URL, poort, pad of bereik."
+  unicast: "Voer een bruikbaar unicast-adres voor het apparaat in."
+  numeric_address: "Voer één bruikbaar numeriek IPv4- of IPv6-adres in."
+  address_syntax: "Voer een IP-adres of hostnaam in zonder URL, poort of bereik."
+  ipv4_direct: "Voer het IPv4-adres rechtstreeks in."
+  link_local: "Link-local IPv6 wordt nog niet ondersteund; gebruik IPv4 of IPv6 zonder zone-ID."
+  scoped: "IPv6 met een zone-ID wordt nog niet ondersteund; gebruik IPv4 of IPv6 zonder zone-ID."
+  forget_menu: "Apparaat vergeten…"
+  forget_heading: "Dit apparaat vergeten?"
+  forget_description: >-
+    Balun zal bij het opstarten het opgeslagen adres of de naam van ‘%{device}’ niet meer opvragen. Het
+    apparaat blijft tot de volgende start in de lijst staan.
+  forget: "Vergeten"
+  forgotten: "Apparaat vergeten."
+  forgotten_session: "Apparaat alleen voor deze sessie vergeten; de instellingen zijn alleen-lezen."
+
+failure:
+  busy_title: "Geen tuner beschikbaar"
+  busy_description: >-
+    Alle tuners op %{device} zijn bezet. Apparaten zoeken en de zenderlijst bekijken blijven beschikbaar.
+  channel_title: "Zender niet beschikbaar"
+  channel_description: >-
+    %{device} biedt %{channel} niet meer aan. Gebruik Zenders opnieuw laden om de lijst opnieuw te lezen.
+    Apparaten zoeken en de zenderlijst bekijken blijven beschikbaar.
+  rejected_title: "Apparaat heeft de stream geweigerd"
+  rejected_description: >-
+    %{device} heeft het verzoek voor %{channel} geweigerd. Apparaten zoeken en de zenderlijst bekijken
+    blijven beschikbaar.
+  offline_title: "Apparaat of stream niet beschikbaar"
+  offline_description: >-
+    %{device} heeft %{channel} niet geleverd. Controleer of het apparaat aanstaat en bereikbaar is.
+    Apparaten zoeken en de zenderlijst bekijken blijven beschikbaar.
+  codec_title: "Vereist afspeelonderdeel of codec niet beschikbaar"
+  missing_audio_description: >-
+    Deze Balun-versie heeft geen %{codec}-audiodecoder voor %{channel} op %{device}. Apparaten zoeken en de
+    zenderlijst bekijken blijven beschikbaar.
+  missing_video_description: >-
+    Deze Balun-versie heeft geen %{codec}-videodecoder voor %{channel} op %{device}. Apparaten zoeken en de
+    zenderlijst bekijken blijven beschikbaar.
+  missing_component_description: >-
+    Deze Balun-versie mist een codec of GStreamer-plug-in voor %{channel} op %{device}. Apparaten zoeken en
+    de zenderlijst bekijken blijven beschikbaar.
+  protected_title: "Beveiligde zender niet ondersteund"
+  protected_description: >-
+    %{channel} op %{device} is beveiligd en kan niet worden afgespeeld. Apparaten zoeken en de zenderlijst
+    bekijken blijven beschikbaar.
+  internal_title: "Afspelen mislukt"
+  internal_description: >-
+    Het afspelen van %{channel} op %{device} is gestopt door een interne fout. Apparaten zoeken en de
+    zenderlijst bekijken blijven beschikbaar.
+  generic_title: "Kan zender niet afspelen"
+  generic_description: >-
+    De geselecteerde zender kon niet worden gestart. Apparaten zoeken en de zenderlijst bekijken blijven
+    beschikbaar.
+  stop_title: "Kan live-tv niet stoppen"
+  stop_description: "Het afspelen kon niet correct worden gestopt. Sluit Balun voordat u een andere zender kiest."
+  selected_device: "het geselecteerde apparaat"
+  selected_channel: "de geselecteerde zender"
+  channel_number: "zender %{number}"

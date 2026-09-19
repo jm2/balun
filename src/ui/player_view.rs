@@ -11,6 +11,9 @@ use balun::controller::{
 };
 use balun::domain::ChannelKey;
 use balun::localization::controls::PlayerLabels;
+use balun::localization::playback_failure::{
+    self, ContextLabels, FailureText as PlaybackFailureCopy,
+};
 use balun::localization::playback_startup;
 use balun::localization::playback_status::{self, ProgressLabels};
 use balun::playback::{
@@ -117,7 +120,7 @@ impl TuneContext {
             .iter()
             .find(|summary| summary.key() == key)
             .map_or_else(
-                || format!("channel {}", key.guide_number()),
+                || playback_failure::channel_number(key.guide_number().as_str()).into_owned(),
                 |summary| format!("{} {}", key.guide_number(), summary.name()),
             );
         Self { device, channel }
@@ -134,73 +137,19 @@ impl TuneContext {
 
 impl Default for TuneContext {
     fn default() -> Self {
+        let labels = ContextLabels::current();
         Self {
-            device: "the selected device".to_owned(),
-            channel: "the selected channel".to_owned(),
+            device: labels.selected_device.into_owned(),
+            channel: labels.selected_channel.into_owned(),
         }
     }
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PlaybackFailureCopy {
-    title: &'static str,
-    description: String,
-}
-
-const PLAYBACK_FAILURE_DESCRIPTION: &str = "The selected channel could not be started. Device discovery and lineup inspection remain available.";
-const PLAYBACK_FAILURE_SUFFIX: &str = "Device discovery and lineup inspection remain available.";
 
 fn pipeline_failure_copy(
     failure: PlaybackPipelineFailure,
     context: &TuneContext,
 ) -> PlaybackFailureCopy {
-    let device = context.device();
-    let channel = context.channel();
-    let (title, reason) = match failure {
-        PlaybackPipelineFailure::TunerBusy => (
-            "No tuner available",
-            format!("All tuners on {device} are busy."),
-        ),
-        PlaybackPipelineFailure::ChannelMissing => (
-            "Channel unavailable",
-            format!(
-                "{device} no longer offers {channel}. Use Reload channels to read its lineup again."
-            ),
-        ),
-        PlaybackPipelineFailure::HttpRejected => (
-            "Device rejected the stream",
-            format!("{device} rejected the request for {channel}."),
-        ),
-        PlaybackPipelineFailure::Offline => (
-            "Device or stream unavailable",
-            format!(
-                "{device} did not deliver {channel}. Check that the device is powered and reachable."
-            ),
-        ),
-        PlaybackPipelineFailure::MissingCodecOrPlugin(media) => (
-            "Required playback component or codec unavailable",
-            match media.description() {
-                Some(name) => {
-                    format!("This Balun build has no {name} decoder for {channel} on {device}.")
-                }
-                None => format!(
-                    "This Balun build lacks a codec or GStreamer plugin needed for {channel} on {device}."
-                ),
-            },
-        ),
-        PlaybackPipelineFailure::Protected => (
-            "Protected channel unsupported",
-            format!("{channel} on {device} is protected and cannot be played."),
-        ),
-        PlaybackPipelineFailure::Internal | _ => (
-            "Playback failed",
-            format!("Playback of {channel} on {device} stopped because of an internal error."),
-        ),
-    };
-    PlaybackFailureCopy {
-        title,
-        description: format!("{reason} {PLAYBACK_FAILURE_SUFFIX}"),
-    }
+    playback_failure::pipeline(failure, context.channel(), context.device())
 }
 
 fn handoff_failure_copy(failure: StreamHandoffError, context: &TuneContext) -> PlaybackFailureCopy {
@@ -675,24 +624,24 @@ impl PlayerView {
     }
 
     fn show_playback_failure(&self) {
-        self.status.set_title("Unable to play channel");
-        self.set_description_text(PLAYBACK_FAILURE_DESCRIPTION);
+        let copy = playback_failure::generic();
+        self.status.set_title(&copy.title);
+        self.set_description_text(&copy.description);
         self.status.set_visible(true);
     }
 
     fn show_failure_copy(&self, copy: &PlaybackFailureCopy) {
-        self.playback_status.set_label(copy.title);
-        self.status.set_title(copy.title);
+        self.playback_status.set_label(&copy.title);
+        self.status.set_title(&copy.title);
         self.set_description_text(&copy.description);
         self.status.set_visible(true);
     }
 
     fn show_stop_failure(&self) {
         self.set_audio_controls_sensitive(false);
-        self.status.set_title("Unable to stop live TV");
-        self.set_description_text(
-            "Playback could not be stopped cleanly. Close Balun before selecting another channel.",
-        );
+        let copy = playback_failure::stop();
+        self.status.set_title(&copy.title);
+        self.set_description_text(&copy.description);
         self.status.set_visible(true);
     }
 
@@ -980,7 +929,8 @@ mod tests {
             copy.description
         );
         assert!(
-            copy.description.ends_with(PLAYBACK_FAILURE_SUFFIX),
+            copy.description
+                .ends_with("Device discovery and lineup inspection remain available."),
             "description must keep the recovery hint: {:?}",
             copy.description
         );
@@ -1188,10 +1138,26 @@ mod tests {
             channel_key: channel_key.clone(),
             failure: PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Internal),
         });
-        assert_eq!(view.playback_status.label(), "Playback failed");
+        let internal =
+            pipeline_failure_copy(PlaybackPipelineFailure::Internal, &TuneContext::default());
+        assert_eq!(view.playback_status.label(), internal.title.as_ref());
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
-        assert_eq!(view.status.title(), "Playback failed");
+        assert_eq!(view.status.title(), internal.title.as_ref());
+        assert_literal_markup(
+            view.status.description().as_deref().unwrap(),
+            &internal.description,
+        );
+        if locale == "de" {
+            assert_eq!(view.status.title(), "Wiedergabe fehlgeschlagen");
+            assert!(
+                view.status
+                    .description()
+                    .as_deref()
+                    .unwrap()
+                    .contains("ausgewählte")
+            );
+        }
         assert!(!view.stop_button.is_sensitive());
 
         view.apply_session_state(&PlaybackSessionState::Failed {
@@ -1199,12 +1165,18 @@ mod tests {
             channel_key,
             failure: PlaybackSessionFailure::PipelineTeardown,
         });
-        assert_eq!(view.status.title(), "Unable to stop live TV");
-        assert_eq!(
-            view.status.description().as_deref(),
-            Some(
-                "Playback could not be stopped cleanly. Close Balun before selecting another channel."
-            )
+        let stop = playback_failure::stop();
+        assert_eq!(view.status.title(), stop.title.as_ref());
+        assert_literal_markup(
+            view.status.description().as_deref().unwrap(),
+            &stop.description,
+        );
+        view.show_playback_failure();
+        let generic = playback_failure::generic();
+        assert_eq!(view.status.title(), generic.title.as_ref());
+        assert_literal_markup(
+            view.status.description().as_deref().unwrap(),
+            &generic.description,
         );
 
         assert!(view.apply_paintable(Some(&paintable)));

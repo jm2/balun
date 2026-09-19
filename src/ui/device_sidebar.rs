@@ -312,13 +312,13 @@ pub(crate) fn build() -> DeviceSidebar {
     stack.add_named(&scrolled, Some(DEVICE_LIST_PAGE_NAME));
     stack.set_visible_child_name(STATUS_PAGE_NAME);
 
+    let find_title = balun::localization::device_dialogs::FindLabels::current().title;
     let exact_discovery_button = gtk::Button::builder()
         .icon_name("list-add-symbolic")
-        .tooltip_text("Find device by address")
+        .tooltip_text(&*find_title)
         .css_classes(["flat"])
         .build();
-    exact_discovery_button
-        .update_property(&[gtk::accessible::Property::Label("Find device by address")]);
+    exact_discovery_button.update_property(&[gtk::accessible::Property::Label(&find_title)]);
     let refresh_button = gtk::Button::builder()
         .icon_name("view-refresh-symbolic")
         .tooltip_text("Refresh devices (F5)")
