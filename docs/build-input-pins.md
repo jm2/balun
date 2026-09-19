@@ -1,8 +1,8 @@
 # Build input pins
 
-H2.2 remains open. This first slice pins the **starting job-container images**
-used by CI and Linux release builds. It does not freeze the full build environment
-or claim reproducible artifacts. New signing and provenance work remains paused
+H2.2 remains open. The implemented slices pin the **starting job-container images**
+and the Rust release selected by rustup-based candidate jobs. They do not freeze
+the full build environment or claim reproducible artifacts. New signing and provenance work remains paused
 by maintainer direction.
 
 ## Container inventory and enforcement
@@ -65,6 +65,38 @@ also need their affected package candidate builds before release acceptance.
 There is no automatic tag-to-digest refresh during builds. If a registry removes
 a pinned object, the job fails; it must not fall back to the mutable tag.
 
+## Release compiler selection
+
+[`release-toolchain/rust-toolchain.toml`](../build-aux/release-toolchain/rust-toolchain.toml)
+records Rust `1.98.0` for the five rustup-based release jobs: discovery diagnostics,
+macOS, Windows, Debian, and RPM. Their pinned action receives that literal release,
+so a new `stable` release does not silently change those compilers. The initial
+selection is the already-tested compiler floor; the [official release manifest](https://static.rust-lang.org/dist/channel-rust-1.98.0.toml)
+lists the required Linux, macOS, and Windows host targets as available.
+
+The lint job runs `scripts/check_release_rust.py` and its regression suite. It
+checks the separate manifest, canonical exact release, compatibility with the
+Cargo compiler floor, one matching literal input per recorded job, and exact job
+membership. Changed, floating, expression-based, missing, duplicate, or additional
+Rust action selections reject. The existing synchronization policy still checks
+the action's common immutable commit. These inspect trusted repository files;
+they do not execute or install the compiler.
+
+Dependabot proposes release compiler updates separately, including patch fixes.
+Update the manifest and all five action inputs together, then run the checker,
+its tests, workflow lint, and the complete CI matrix. Before release acceptance,
+build the affected package candidates with the selected compiler. The compiler
+floor proposal, rolling `stable` CI, developer toolchain selection, and the exact
+Rust coverage toolchain remain separate. Advancing the release pin does not
+automatically raise the MSRV, and an MSRV above the release pin fails this check.
+
+This pins the selected version, not independently reviewed distribution-file
+digests or rustup's bootstrap/update behavior. Rustup's existing distribution
+download validation remains in use. Arch's distribution compiler and Flatpak's
+SDK compiler are outside these five jobs. Shell-installed tools, containers,
+transitive inputs, and host tools require their own controls below. This is not
+a complete environment lock or a signing/provenance change.
+
 ## Remaining H2.2 scope
 
 The following inputs are still mutable or incompletely pinned. They are pending
@@ -73,7 +105,7 @@ work, not newly approved exceptions:
 - GitHub-hosted runner images and the preinstalled host tools/kernel.
 - Packages installed afterward through APT, DNF, pacman/MSYS2, and Homebrew,
   including their transitive native dependencies and repository snapshots.
-- Release Rust/compiler selection, Flatpak runtime/SDK/extensions, and native
+- Rust distribution/bootstrap content, Arch's compiler, Flatpak runtime/SDK/extensions, and native
   packagers and helper dependencies not already covered by existing exact pins.
 - Bootstrap tools and transitive Python/npm dependencies where a top-level
   version or action commit does not identify every downloaded input.

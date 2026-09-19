@@ -175,7 +175,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: 1.98.0
 
       - name: Test tagged source
         run: cargo test --all-targets --locked
@@ -296,7 +296,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: 1.98.0
           targets: aarch64-apple-darwin
 
       - name: Build, sign, probe, and reopen the macOS disk image
@@ -384,7 +384,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: 1.98.0
           targets: ${{ matrix.rust_target }}
 
       - name: Build the Windows desktop through the helper
@@ -472,7 +472,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: 1.98.0
 
       - name: Install the reviewed Debian package builder
         run: cargo install cargo-deb --version 3.7.0 --locked
@@ -521,7 +521,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
-          toolchain: stable
+          toolchain: 1.98.0
 
       - name: Install the reviewed RPM package builder
         run: cargo install cargo-generate-rpm --version 0.21.0 --locked
