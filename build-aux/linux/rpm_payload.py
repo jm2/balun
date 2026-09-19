@@ -34,7 +34,7 @@ class Limits:
 
 def require(condition):
     if not condition:
-        raise Invalid("RPM payload rejected")
+        raise Invalid("package payload rejected")
 
 
 def checkpoint(deadline):
@@ -138,6 +138,12 @@ def preflight(stream, *, limits=Limits(), deadline=None):
                     computed = (computed + sum(data)) & 0xffffffff
         require(checksum == (computed & 0xffffffff) if header[:6] == b"070702" else checksum == 0)
         require(not any(exact(stream, -size % 4)))
+    validate_tree(members, links, limits, deadline)
+    return len(members)
+
+
+def validate_tree(members, links, limits, deadline):
+    """Apply the shared Linux package path/link and implicit-directory contract."""
     directories = {""} | {name for name, kind in members.items() if kind == stat.S_IFDIR}
     entries = set(members)
     for name in members:
@@ -154,14 +160,13 @@ def preflight(stream, *, limits=Limits(), deadline=None):
     for name, raw in links.items():
         checkpoint(deadline)
         target = link_target(name, raw, limits.path, directories)
-        # Balun's RPM build-id links point directly to an included regular file.
+        # Balun's package links point directly to an included regular file.
         # Reject chains, directory links and dangling links in this first slice.
         require(members.get(target) == stat.S_IFREG)
     checkpoint(deadline)
-    return len(members)
 
 
-def decode(package, destination, *, limits=Limits(), command=None):
+def decode(package, destination, *, limits=Limits(), command=None, validate=None):
     """Bound one owned producer; remove our partial output on any failure."""
     deadline = time.monotonic() + limits.seconds
     created = False
@@ -199,7 +204,7 @@ def decode(package, destination, *, limits=Limits(), command=None):
                         break
                     time.sleep(min(0.01, max(0, deadline - time.monotonic())))
             output.flush()
-            preflight(output, limits=limits, deadline=deadline)
+            (preflight if validate is None else validate)(output, limits=limits, deadline=deadline)
         checkpoint(deadline)
         complete = True
     finally:

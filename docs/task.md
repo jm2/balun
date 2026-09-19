@@ -122,7 +122,9 @@ and paused. Independent correctness and package-inspection fixes may continue.
 
 - [ ] **H2.4 — Contain native archive inspection.** Preflight member paths,
   types, links, sizes, and extraction budgets before processing untrusted
-  artifacts; retain the current trusted-local-output boundary until proven.
+  artifacts. [Debian/RPM/Arch preflight](linux-archive-snapshots.md) now bounds
+  decoded members; native parser isolation and extraction containment remain.
+  Retain the current trusted-local-output boundary until proven.
 
 ## H3 — Security and privacy maintenance
 

