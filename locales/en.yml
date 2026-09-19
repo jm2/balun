@@ -47,3 +47,29 @@ startup:
   old_runtime_description: >-
     GStreamer %{found} is too old; Balun requires GStreamer %{minimum} or newer. Device discovery and lineup
     inspection remain available.
+
+device_dialogs:
+  find_title: "Find device by address"
+  find_description: >-
+    Send one bounded HDHomeRun discovery request to a known IP address or hostname; Balun does not scan a
+    range. Example: 192.168.1.20, fd00::20, or tuner.example.
+  target: "IP address or hostname"
+  cancel: "Cancel"
+  find: "Find"
+  enter_target: "Enter a device IP address or hostname."
+  hostname_characters: "Enter one hostname of letters, digits, hyphens, and dots."
+  hostname_syntax: "Enter a hostname without a URL, port, path, or range."
+  unicast: "Enter a usable unicast device address."
+  numeric_address: "Enter one usable numeric IPv4 or IPv6 address."
+  address_syntax: "Enter an IP address or hostname without a URL, port, or range."
+  ipv4_direct: "Enter the IPv4 address directly."
+  link_local: "Link-local IPv6 is not supported yet; use IPv4 or unscoped IPv6."
+  scoped: "Scoped IPv6 is not supported yet; use IPv4 or unscoped IPv6."
+  forget_menu: "Forget device…"
+  forget_heading: "Forget this device?"
+  forget_description: >-
+    Balun will stop probing the remembered address or name for “%{device}” at launch. The device stays listed
+    until the next launch.
+  forget: "Forget"
+  forgotten: "Device forgotten."
+  forgotten_session: "Device forgotten for this session only; settings are read-only."

@@ -43,3 +43,27 @@ startup:
   initialization_failed_description: "GStreamer を初期化できませんでした。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
   old_runtime_description: >-
     GStreamer %{found} は古すぎます。Balun には GStreamer %{minimum} 以降が必要です。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。
+
+device_dialogs:
+  find_title: "アドレスでデバイスを検索"
+  find_description: >-
+    既知のIPアドレスまたはホスト名に、制限付きのHDHomeRun検出リクエストを1件送信します。Balunはアドレス範囲をスキャンしません。
+    例：192.168.1.20、fd00::20、tuner.example。
+  target: "IPアドレスまたはホスト名"
+  cancel: "キャンセル"
+  find: "検索"
+  enter_target: "デバイスのIPアドレスまたはホスト名を入力してください。"
+  hostname_characters: "英字、数字、ハイフン、ドットで構成されるホスト名を1つ入力してください。"
+  hostname_syntax: "URL、ポート、パス、範囲を含まないホスト名を入力してください。"
+  unicast: "使用可能なデバイスのユニキャストアドレスを入力してください。"
+  numeric_address: "使用可能な数値形式のIPv4またはIPv6アドレスを1つ入力してください。"
+  address_syntax: "URL、ポート、範囲を含まないIPアドレスまたはホスト名を入力してください。"
+  ipv4_direct: "IPv4アドレスを直接入力してください。"
+  link_local: "リンクローカルIPv6にはまだ対応していません。IPv4またはゾーン識別子のないIPv6を使用してください。"
+  scoped: "ゾーン識別子付きIPv6にはまだ対応していません。IPv4またはゾーン識別子のないIPv6を使用してください。"
+  forget_menu: "デバイスの登録を解除…"
+  forget_heading: "このデバイスの登録を解除しますか？"
+  forget_description: "Balunは起動時に「%{device}」の保存済みアドレスまたは名前を問い合わせなくなります。デバイスは次回の起動まで一覧に残ります。"
+  forget: "登録を解除"
+  forgotten: "デバイスの登録を解除しました。"
+  forgotten_session: "このセッションでのみデバイスの登録を解除しました。設定は読み取り専用です。"

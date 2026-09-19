@@ -3,7 +3,8 @@
 V2.6 ([issue #74](https://github.com/jm2/balun/issues/74)) remains open. The first
 slice provides the shared catalog, startup selection, application menu, its
 tooltip/accessibility label, and the About description. A follow-on slice adds
-navigation titles, player-control copy, and playback progress. The remaining interface, CLI, errors,
+navigation titles, player-control copy, playback progress, and device dialogs.
+The remaining interface, CLI, errors,
 desktop metadata, pluralization, and layout evidence remain pending.
 
 ## Catalog and startup contract
@@ -56,8 +57,9 @@ env -u LANGUAGE -u LC_ALL -u LC_MESSAGES LANG=de_DE.UTF-8 \
 ```
 
 The application menu, About description, navigation titles, player controls, and
-playback progress and startup status are translated. Playback session errors,
-dialogs, and other window copy still contain English. The native GTK/libadwaita
+playback progress and startup status are translated, along with Find device and
+Forget device dialogs. Playback session errors, routed approval dialogs, and
+other window copy still contain English. The native GTK/libadwaita
 controls also depend on the platform's own translations and locale setup.
 
 ## Adding presentation text
@@ -137,3 +139,23 @@ initialization category, preserved runtime versions, literal component values,
 and selected German/French results. The English/German native player smoke checks
 the initial message and its restoration after Stop, including literal markup
 round trips. Native layout and translation-quality review remain outstanding.
+
+## Device dialogs
+
+Find device by address translates the dialog, entry label, response buttons,
+validation messages, and matching launcher tooltip/accessibility name. Typed
+address/hostname failures select fixed catalog messages; rejected input never
+becomes a translation parameter. The existing parser, entry bounds, canonical
+admission, close-time clearing, and language-independent response IDs are retained.
+
+Forget device translates the context-menu action, confirmation, and completion
+notices, including the session-only notice when settings are read-only. Cancel
+remains the default and close response. Device names are interpolated once into
+a plain-text dialog body, so markup and placeholder-looking text remain literal.
+The existing session and persistence behavior is unchanged.
+
+Catalog/placeholder parity and portable presentation tests cover all thirteen
+locales, rejected-input privacy, literal device names, and the distinct session-only
+notice. Existing dialog admission tests still cover cancellation and consumption
+after close-time clearing. Packaged dialog layout, screen-reader announcements,
+and translation quality remain part of the outstanding V2.6/H4.3 evidence.

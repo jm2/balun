@@ -48,3 +48,29 @@ startup:
   old_runtime_description: >-
     GStreamer %{found} ist zu alt. Balun benötigt GStreamer %{minimum} oder neuer. Gerätesuche und Kanalliste
     bleiben verfügbar.
+
+device_dialogs:
+  find_title: "Gerät über Adresse suchen"
+  find_description: >-
+    Eine begrenzte HDHomeRun-Suchanfrage an eine bekannte IP-Adresse oder einen Hostnamen senden; Balun
+    durchsucht keinen Adressbereich. Beispiel: 192.168.1.20, fd00::20 oder tuner.example.
+  target: "IP-Adresse oder Hostname"
+  cancel: "Abbrechen"
+  find: "Suchen"
+  enter_target: "Geben Sie die IP-Adresse oder den Hostnamen eines Geräts ein."
+  hostname_characters: "Geben Sie einen Hostnamen aus Buchstaben, Ziffern, Bindestrichen und Punkten ein."
+  hostname_syntax: "Geben Sie einen Hostnamen ohne URL, Port, Pfad oder Adressbereich ein."
+  unicast: "Geben Sie eine verwendbare Unicast-Adresse des Geräts ein."
+  numeric_address: "Geben Sie eine verwendbare numerische IPv4- oder IPv6-Adresse ein."
+  address_syntax: "Geben Sie eine IP-Adresse oder einen Hostnamen ohne URL, Port oder Adressbereich ein."
+  ipv4_direct: "Geben Sie die IPv4-Adresse direkt ein."
+  link_local: "Link-lokales IPv6 wird noch nicht unterstützt; verwenden Sie IPv4 oder IPv6 ohne Bereichskennung."
+  scoped: "IPv6 mit Bereichskennung wird noch nicht unterstützt; verwenden Sie IPv4 oder IPv6 ohne Bereichskennung."
+  forget_menu: "Gerät vergessen…"
+  forget_heading: "Dieses Gerät vergessen?"
+  forget_description: >-
+    Balun fragt die gespeicherte Adresse oder den Namen von „%{device}“ beim Start nicht mehr ab. Das Gerät
+    bleibt bis zum nächsten Start in der Liste.
+  forget: "Vergessen"
+  forgotten: "Gerät vergessen."
+  forgotten_session: "Gerät nur für diese Sitzung vergessen; die Einstellungen sind schreibgeschützt."
