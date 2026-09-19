@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
 - Reproducible adversarial parser, approval, route-budget, and package-manifest
   properties run in PR checks and scheduled extended corpora, with failure replay records.
+- Typed-subnet scope validation and exact preview budgets implement the approved
+  private `/23`–`/32` policy without granting scan authority. Runtime integration remains pending.
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
