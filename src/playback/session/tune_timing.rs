@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use super::super::transport_timing::{TransportPhase, TransportTiming};
 use super::TuneGeneration;
+use super::media_observation::{MediaPhase, MediaTiming};
 
 #[derive(Clone, Copy)]
 pub(super) enum Phase {
@@ -19,6 +20,10 @@ pub(super) enum Phase {
     HttpResponseReceived,
     HttpBodyReceived,
     AppsrcBufferAccepted,
+    VideoSinkBuffer,
+    AudioSinkBuffer,
+    PaintableInvalidated,
+    MediaObserverIncomplete,
 }
 
 impl Phase {
@@ -35,13 +40,16 @@ impl Phase {
             Self::HttpResponseReceived => "http_response_received",
             Self::HttpBodyReceived => "http_body_received",
             Self::AppsrcBufferAccepted => "appsrc_buffer_accepted",
+            Self::VideoSinkBuffer => "video_sink_buffer",
+            Self::AudioSinkBuffer => "audio_sink_buffer",
+            Self::PaintableInvalidated => "video_paintable_invalidated",
+            Self::MediaObserverIncomplete => "media_observer_incomplete",
         }
     }
 }
 
 #[derive(Clone, Copy)]
 pub(super) enum Outcome {
-    PlayingNotice,
     Failed,
     Cancelled,
     Superseded,
@@ -53,7 +61,6 @@ pub(super) enum Outcome {
 impl Outcome {
     fn label(self) -> &'static str {
         match self {
-            Self::PlayingNotice => "playing_notice",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
             Self::Superseded => "superseded",
@@ -64,13 +71,14 @@ impl Outcome {
     }
 }
 
-/// One fixed-size recorder per pending/connecting tune; no history or timers.
+/// One fixed-size recorder per tune, retained through playback; no history or timers.
 /// Only the session owner writes it, after the existing generation checks.
 pub(super) struct TuneTiming {
     generation: TuneGeneration,
     started: Instant,
     seen: u16,
     transport: Arc<TransportTiming>,
+    media: Arc<MediaTiming>,
 }
 
 impl TuneTiming {
@@ -84,13 +92,14 @@ impl TuneTiming {
             started,
             seen: 0,
             transport: Arc::new(TransportTiming::new(started)),
+            media: Arc::new(MediaTiming::new(started)),
         };
         timing.record_at(Phase::Requested, started);
         timing
     }
 
     pub(super) fn record(&mut self, phase: Phase) {
-        self.flush_transport();
+        self.flush();
         self.record_at(phase, Instant::now());
     }
 
@@ -117,6 +126,25 @@ impl TuneTiming {
         Arc::clone(&self.transport)
     }
 
+    pub(super) fn media(&self) -> Arc<MediaTiming> {
+        Arc::clone(&self.media)
+    }
+
+    pub(super) fn flush(&mut self) {
+        self.flush_transport();
+        for (phase, value) in self.media.snapshot() {
+            let phase = match phase {
+                MediaPhase::VideoSinkBuffer => Phase::VideoSinkBuffer,
+                MediaPhase::AudioSinkBuffer => Phase::AudioSinkBuffer,
+                MediaPhase::PaintableInvalidated => Phase::PaintableInvalidated,
+                MediaPhase::ObserverIncomplete => Phase::MediaObserverIncomplete,
+            };
+            if let Some(offset) = value {
+                self.record_offset(phase, offset);
+            }
+        }
+    }
+
     fn flush_transport(&mut self) {
         for (phase, value) in self.transport.snapshot() {
             let phase = match phase {
@@ -132,7 +160,8 @@ impl TuneTiming {
     }
 
     pub(super) fn finish(mut self, outcome: Outcome) {
-        self.flush_transport();
+        self.media.close();
+        self.flush();
         self.finish_at(outcome, Instant::now());
     }
 
@@ -142,7 +171,7 @@ impl TuneTiming {
             generation = self.generation.get(),
             outcome = outcome.label(),
             elapsed_us = self.elapsed_us(observed),
-            "tune startup ended"
+            "tune observations ended"
         );
     }
 
@@ -215,6 +244,10 @@ pub(super) mod tests {
                 Phase::AppsrcBufferAccepted,
                 Phase::StreamNoticeReceived,
                 Phase::PlayingNoticeReceived,
+                Phase::VideoSinkBuffer,
+                Phase::AudioSinkBuffer,
+                Phase::PaintableInvalidated,
+                Phase::MediaObserverIncomplete,
             ]
             .into_iter()
             .enumerate()
@@ -223,18 +256,18 @@ pub(super) mod tests {
                 timing.record_at(phase, time);
                 timing.record_at(phase, time + Duration::from_micros(7));
             }
-            timing.finish_at(Outcome::PlayingNotice, start + Duration::from_micros(1500));
+            timing.finish_at(Outcome::Stopped, start + Duration::from_micros(2000));
         });
         let lines: Vec<_> = output.lines().collect();
-        assert_eq!(lines.len(), 12);
-        for (index, line) in lines[..11].iter().enumerate() {
+        assert_eq!(lines.len(), 16);
+        for (index, line) in lines[..15].iter().enumerate() {
             assert!(line.contains("generation=27"), "{line}");
             assert!(
                 line.ends_with(&format!("elapsed_us={}", index * 125)),
                 "{line}"
             );
         }
-        assert!(lines[11].ends_with("outcome=\"playing_notice\" elapsed_us=1500"));
+        assert!(lines[15].ends_with("outcome=\"stopped\" elapsed_us=2000"));
         assert!(lines[0].contains("phase=\"requested\""));
         assert!(lines[9].contains("phase=\"stream_notice_received\""));
         assert!(lines[10].contains("phase=\"playing_notice_received\""));
