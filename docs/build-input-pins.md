@@ -1,8 +1,9 @@
 # Build input pins
 
-H2.2 remains open. This first slice pins the **starting job-container images**
-used by CI and Linux release builds. It does not freeze the full build environment
-or claim reproducible artifacts. New signing and provenance work remains paused
+H2.2 remains open. Current pins cover the **starting job-container images**,
+YAML lint dependencies, and Rust selection in rustup-based candidate jobs.
+They do not freeze the full build environment or claim reproducible artifacts.
+New signing and provenance work remains paused
 by maintainer direction.
 
 ## Container inventory and enforcement
@@ -65,6 +66,66 @@ also need their affected package candidate builds before release acceptance.
 There is no automatic tag-to-digest refresh during builds. If a registry removes
 a pinned object, the job fails; it must not fall back to the mutable tag.
 
+## Release compiler selection
+
+[`release-toolchain/rust-toolchain.toml`](../build-aux/release-toolchain/rust-toolchain.toml)
+records Rust `1.98.0` for the five rustup-based release jobs: discovery diagnostics,
+macOS, Windows, Debian, and RPM. Their pinned action receives that literal release,
+so a new `stable` release does not silently change those compilers. The initial
+selection is the already-tested compiler floor; the [official release manifest](https://static.rust-lang.org/dist/channel-rust-1.98.0.toml)
+lists the required Linux, macOS, and Windows host targets as available.
+
+The lint job runs `scripts/check_release_rust.py` and its regression suite. It
+checks the separate manifest, canonical exact release, compatibility with the
+Cargo compiler floor, one matching literal input per recorded job, and exact job
+membership. Changed, floating, expression-based, missing, duplicate, or additional
+Rust action selections reject. The existing synchronization policy still checks
+the action's common immutable commit. These inspect trusted repository files;
+they do not execute or install the compiler.
+
+Dependabot proposes release compiler updates separately, including patch fixes.
+Update the manifest and all five action inputs together, then run the checker,
+its tests, workflow lint, and the complete CI matrix. Before release acceptance,
+build the affected package candidates with the selected compiler. The compiler
+floor proposal, rolling `stable` CI, developer toolchain selection, and the exact
+Rust coverage toolchain remain separate. Advancing the release pin does not
+automatically raise the MSRV, and an MSRV above the release pin fails this check.
+
+This pins the selected version, not independently reviewed distribution-file
+digests or rustup's bootstrap/update behavior. Rustup's existing distribution
+download validation remains in use. Arch's distribution compiler and Flatpak's
+SDK compiler are outside these five jobs. Shell-installed tools, containers,
+transitive inputs, and host tools require their own controls below. This is not
+a complete environment lock or a signing/provenance change.
+
+## YAML lint dependency closure
+
+[`yaml-lint-requirements.txt`](../build-aux/toolchain/yaml-lint-requirements.txt)
+pins yamllint 1.37.1, PyYAML 6.0.3, and pathspec 1.1.1 with SHA-256 hashes of
+their published wheels. These are the full runtime dependencies without optional
+extras. The same environment runs the builder-image policy checker. CI installs
+into a fresh virtual environment with `--require-hashes --only-binary=:all:`;
+missing transitive pins, changed bytes, and source-distribution fallback fail.
+This follows pip's documented
+[hash-checking installation mode](https://pip.pypa.io/en/stable/topics/secure-installs/).
+
+The reviewed PyYAML wheels support Linux CPython 3.12–3.14 on x86_64 and aarch64;
+the two remaining wheels are platform independent. CI currently uses the
+Ubuntu 24.04 runner's CPython 3.12. The wheel files were downloaded from PyPI and
+hashed independently against its exact-version metadata on 2026-09-19 UTC.
+Adding another interpreter/platform wheel requires a reviewed hash update;
+there is no source-build fallback. This does not pin the host Python interpreter,
+virtual-environment bootstrap, pip itself, or the runner image.
+
+To update this lock, inspect the exact releases' runtime dependency metadata,
+download the required wheels, verify their SHA-256 values, and update all pins
+and filename comments together. Check resolution for every listed platform and
+interpreter using an empty download directory, then install the supported host
+set into a fresh environment and run YAML lint and builder-image tests. Keep
+dependency resolution enabled so an omitted new dependency cannot be skipped.
+Before accepting new pins, also prove an incorrect local hash fails offline
+against the downloaded wheel set.
+
 ## Remaining H2.2 scope
 
 The following inputs are still mutable or incompletely pinned. They are pending
@@ -73,7 +134,7 @@ work, not newly approved exceptions:
 - GitHub-hosted runner images and the preinstalled host tools/kernel.
 - Packages installed afterward through APT, DNF, pacman/MSYS2, and Homebrew,
   including their transitive native dependencies and repository snapshots.
-- Release Rust/compiler selection, Flatpak runtime/SDK/extensions, and native
+- Rust distribution/bootstrap content, Arch's compiler, Flatpak runtime/SDK/extensions, and native
   packagers and helper dependencies not already covered by existing exact pins.
 - Bootstrap tools and transitive Python/npm dependencies where a top-level
   version or action commit does not identify every downloaded input.

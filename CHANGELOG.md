@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Reviewed digest pins for all six CI/release job containers, with a workflow
   inventory check that rejects changed, missing, or unrecorded image references.
+- YAML lint and builder-image checks now install the complete three-package Python
+  dependency set from exact versions and reviewed wheel hashes, with no source-build fallback.
 - Playback startup and idle status now translate ready, missing-component, and
   initialization-failure messages in all thirteen supported locales. Runtime
   versions and component names stay literal; session failure copy remains pending.
@@ -45,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
+- Rustup-based release candidate jobs select reviewed Rust 1.98.0, with a separate
+  update manifest and CI rejection of changed or missing compiler selections.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
 
 ### Changed

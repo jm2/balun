@@ -346,13 +346,19 @@ jobs:
       - name: Lint YAML
         run: |
           python3 -m venv "$RUNNER_TEMP/yamllint"
-          "$RUNNER_TEMP/yamllint/bin/pip" install yamllint==1.37.1
+          "$RUNNER_TEMP/yamllint/bin/python" -m pip install --require-hashes --only-binary=:all: \
+            --requirement build-aux/toolchain/yaml-lint-requirements.txt
           "$RUNNER_TEMP/yamllint/bin/yamllint" --strict .
 
       - name: Check reviewed builder image pins
         run: |
           "$RUNNER_TEMP/yamllint/bin/python" -B scripts/check_builder_images.py
           "$RUNNER_TEMP/yamllint/bin/python" -B scripts/test_builder_images.py
+
+      - name: Check reviewed release compiler selection
+        run: |
+          "$RUNNER_TEMP/yamllint/bin/python" -B scripts/check_release_rust.py
+          "$RUNNER_TEMP/yamllint/bin/python" -B scripts/test_release_rust.py
 
       - name: Lint GitHub Actions workflows
         run: |

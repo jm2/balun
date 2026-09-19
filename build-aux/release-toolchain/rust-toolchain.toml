@@ -1,0 +1,5 @@
+# Reviewed compiler for the five rustup-based release candidate jobs.
+# Separate from the compiler-floor proposal in build-aux/toolchain.
+[toolchain]
+channel = "1.98.0"
+profile = "minimal"
