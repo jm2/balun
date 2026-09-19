@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inventory check that rejects changed, missing, or unrecorded image references.
 - Playback startup and idle status now translate ready, missing-component, and
   initialization-failure messages in all thirteen supported locales. Runtime
-  versions and component names stay literal; session failure copy remains pending.
+  versions and component names stay literal.
+- Playback failure categories, recovery instructions, and fallback device/channel
+  labels now translate in all thirteen catalogs, preserving literal codec names.
 
 - Translated playback progress and parameterized connecting/buffering messages in
   all thirteen catalogs, with placeholder parity and literal display-name rendering.

@@ -74,3 +74,48 @@ device_dialogs:
   forget: "Esquecer"
   forgotten: "Dispositivo esquecido."
   forgotten_session: "Dispositivo esquecido apenas nesta sessão; as configurações são somente leitura."
+
+failure:
+  busy_title: "Nenhum sintonizador disponível"
+  busy_description: >-
+    Todos os sintonizadores de %{device} estão ocupados. A descoberta de dispositivos e a consulta da lista
+    de canais continuam disponíveis.
+  channel_title: "Canal indisponível"
+  channel_description: >-
+    %{device} não oferece mais %{channel}. Use Recarregar canais para ler a lista novamente. A descoberta de
+    dispositivos e a consulta da lista de canais continuam disponíveis.
+  rejected_title: "O dispositivo rejeitou a transmissão"
+  rejected_description: >-
+    %{device} rejeitou a solicitação de %{channel}. A descoberta de dispositivos e a consulta da lista de
+    canais continuam disponíveis.
+  offline_title: "Dispositivo ou transmissão indisponível"
+  offline_description: >-
+    %{device} não transmitiu %{channel}. Verifique se o dispositivo está ligado e acessível. A descoberta de
+    dispositivos e a consulta da lista de canais continuam disponíveis.
+  codec_title: "Componente de reprodução ou codec necessário indisponível"
+  missing_audio_description: >-
+    Esta versão do Balun não tem um decodificador de áudio %{codec} para %{channel} em %{device}. A
+    descoberta de dispositivos e a consulta da lista de canais continuam disponíveis.
+  missing_video_description: >-
+    Esta versão do Balun não tem um decodificador de vídeo %{codec} para %{channel} em %{device}. A
+    descoberta de dispositivos e a consulta da lista de canais continuam disponíveis.
+  missing_component_description: >-
+    Esta versão do Balun não tem um codec ou plugin do GStreamer necessário para %{channel} em %{device}. A
+    descoberta de dispositivos e a consulta da lista de canais continuam disponíveis.
+  protected_title: "Canal protegido não suportado"
+  protected_description: >-
+    %{channel} em %{device} é protegido e não pode ser reproduzido. A descoberta de dispositivos e a
+    consulta da lista de canais continuam disponíveis.
+  internal_title: "Falha na reprodução"
+  internal_description: >-
+    A reprodução de %{channel} em %{device} parou devido a um erro interno. A descoberta de dispositivos e a
+    consulta da lista de canais continuam disponíveis.
+  generic_title: "Não foi possível reproduzir o canal"
+  generic_description: >-
+    Não foi possível iniciar o canal selecionado. A descoberta de dispositivos e a consulta da lista de
+    canais continuam disponíveis.
+  stop_title: "Não foi possível parar a TV ao vivo"
+  stop_description: "Não foi possível parar a reprodução corretamente. Feche o Balun antes de selecionar outro canal."
+  selected_device: "o dispositivo selecionado"
+  selected_channel: "o canal selecionado"
+  channel_number: "canal %{number}"

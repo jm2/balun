@@ -75,3 +75,48 @@ device_dialogs:
   forget: "Zapomnij"
   forgotten: "Zapomniano urządzenie."
   forgotten_session: "Zapomniano urządzenie tylko na czas tej sesji; ustawienia są tylko do odczytu."
+
+failure:
+  busy_title: "Brak dostępnego tunera"
+  busy_description: >-
+    Wszystkie tunery urządzenia %{device} są zajęte. Wyszukiwanie urządzeń i przeglądanie listy kanałów
+    pozostają dostępne.
+  channel_title: "Kanał niedostępny"
+  channel_description: >-
+    Urządzenie %{device} nie udostępnia już kanału %{channel}. Użyj opcji Wczytaj kanały ponownie, aby
+    odświeżyć listę. Wyszukiwanie urządzeń i przeglądanie listy kanałów pozostają dostępne.
+  rejected_title: "Urządzenie odrzuciło strumień"
+  rejected_description: >-
+    Urządzenie %{device} odrzuciło żądanie kanału %{channel}. Wyszukiwanie urządzeń i przeglądanie listy
+    kanałów pozostają dostępne.
+  offline_title: "Urządzenie lub strumień niedostępny"
+  offline_description: >-
+    Urządzenie %{device} nie przesłało kanału %{channel}. Sprawdź, czy urządzenie jest włączone i osiągalne.
+    Wyszukiwanie urządzeń i przeglądanie listy kanałów pozostają dostępne.
+  codec_title: "Wymagany składnik odtwarzania lub kodek niedostępny"
+  missing_audio_description: >-
+    Ta wersja Balun nie ma dekodera dźwięku %{codec} dla kanału %{channel} na urządzeniu %{device}.
+    Wyszukiwanie urządzeń i przeglądanie listy kanałów pozostają dostępne.
+  missing_video_description: >-
+    Ta wersja Balun nie ma dekodera obrazu %{codec} dla kanału %{channel} na urządzeniu %{device}.
+    Wyszukiwanie urządzeń i przeglądanie listy kanałów pozostają dostępne.
+  missing_component_description: >-
+    W tej wersji Balun brakuje kodeka lub wtyczki GStreamer wymaganej dla kanału %{channel} na urządzeniu
+    %{device}. Wyszukiwanie urządzeń i przeglądanie listy kanałów pozostają dostępne.
+  protected_title: "Kanał chroniony nie jest obsługiwany"
+  protected_description: >-
+    Kanał %{channel} na urządzeniu %{device} jest chroniony i nie można go odtworzyć. Wyszukiwanie urządzeń
+    i przeglądanie listy kanałów pozostają dostępne.
+  internal_title: "Odtwarzanie nie powiodło się"
+  internal_description: >-
+    Odtwarzanie kanału %{channel} na urządzeniu %{device} zatrzymało się z powodu błędu wewnętrznego.
+    Wyszukiwanie urządzeń i przeglądanie listy kanałów pozostają dostępne.
+  generic_title: "Nie można odtworzyć kanału"
+  generic_description: >-
+    Nie udało się uruchomić wybranego kanału. Wyszukiwanie urządzeń i przeglądanie listy kanałów pozostają
+    dostępne.
+  stop_title: "Nie można zatrzymać telewizji na żywo"
+  stop_description: "Nie udało się prawidłowo zatrzymać odtwarzania. Zamknij Balun przed wybraniem innego kanału."
+  selected_device: "wybrane urządzenie"
+  selected_channel: "wybrany kanał"
+  channel_number: "kanał %{number}"

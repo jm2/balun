@@ -67,3 +67,32 @@ device_dialogs:
   forget: "지우기"
   forgotten: "기기를 지웠습니다."
   forgotten_session: "이번 세션에서만 기기를 지웠습니다. 설정은 읽기 전용입니다."
+
+failure:
+  busy_title: "사용 가능한 튜너 없음"
+  busy_description: "%{device}의 모든 튜너가 사용 중입니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다."
+  channel_title: "채널 사용 불가"
+  channel_description: >-
+    %{device}에서 더 이상 %{channel}을(를) 제공하지 않습니다. 채널 새로고침으로 목록을 다시 읽으세요. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다.
+  rejected_title: "기기에서 스트림을 거부함"
+  rejected_description: "%{device}에서 %{channel} 요청을 거부했습니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다."
+  offline_title: "기기 또는 스트림 사용 불가"
+  offline_description: "%{device}에서 %{channel}을(를) 수신하지 못했습니다. 기기가 켜져 있고 연결 가능한지 확인하세요. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다."
+  codec_title: "필요한 재생 구성 요소 또는 코덱 사용 불가"
+  missing_audio_description: >-
+    이 Balun 빌드에는 %{device}의 %{channel}에 필요한 %{codec} 오디오 디코더가 없습니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다.
+  missing_video_description: >-
+    이 Balun 빌드에는 %{device}의 %{channel}에 필요한 %{codec} 비디오 디코더가 없습니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다.
+  missing_component_description: >-
+    이 Balun 빌드에는 %{device}의 %{channel}에 필요한 코덱 또는 GStreamer 플러그인이 없습니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다.
+  protected_title: "보호된 채널은 지원되지 않음"
+  protected_description: "%{device}의 %{channel}은(는) 보호되어 재생할 수 없습니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다."
+  internal_title: "재생 실패"
+  internal_description: "내부 오류로 인해 %{device}의 %{channel} 재생이 중단되었습니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다."
+  generic_title: "채널을 재생할 수 없음"
+  generic_description: "선택한 채널을 시작하지 못했습니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다."
+  stop_title: "실시간 TV를 중지할 수 없음"
+  stop_description: "재생을 정상적으로 중지하지 못했습니다. 다른 채널을 선택하기 전에 Balun을 종료하세요."
+  selected_device: "선택한 기기"
+  selected_channel: "선택한 채널"
+  channel_number: "채널 %{number}"
