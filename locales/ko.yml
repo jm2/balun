@@ -43,3 +43,27 @@ startup:
   initialization_failed_description: "GStreamer를 초기화하지 못했습니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다."
   old_runtime_description: >-
     GStreamer %{found} 버전이 너무 오래되었습니다. Balun에는 GStreamer %{minimum} 이상이 필요합니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다.
+
+device_dialogs:
+  find_title: "주소로 기기 찾기"
+  find_description: >-
+    알려진 IP 주소 또는 호스트 이름으로 제한된 HDHomeRun 검색 요청을 한 번 보냅니다. Balun은 주소 범위를 스캔하지 않습니다. 예: 192.168.1.20, fd00::20
+    또는 tuner.example.
+  target: "IP 주소 또는 호스트 이름"
+  cancel: "취소"
+  find: "찾기"
+  enter_target: "기기의 IP 주소 또는 호스트 이름을 입력하세요."
+  hostname_characters: "영문자, 숫자, 하이픈, 마침표로 구성된 호스트 이름 하나를 입력하세요."
+  hostname_syntax: "URL, 포트, 경로, 범위가 없는 호스트 이름을 입력하세요."
+  unicast: "사용 가능한 기기 유니캐스트 주소를 입력하세요."
+  numeric_address: "사용 가능한 숫자 형식의 IPv4 또는 IPv6 주소 하나를 입력하세요."
+  address_syntax: "URL, 포트, 범위가 없는 IP 주소 또는 호스트 이름을 입력하세요."
+  ipv4_direct: "IPv4 주소를 직접 입력하세요."
+  link_local: "링크 로컬 IPv6는 아직 지원되지 않습니다. IPv4 또는 영역 식별자가 없는 IPv6를 사용하세요."
+  scoped: "영역 식별자가 있는 IPv6는 아직 지원되지 않습니다. IPv4 또는 영역 식별자가 없는 IPv6를 사용하세요."
+  forget_menu: "기기 지우기…"
+  forget_heading: "이 기기를 지울까요?"
+  forget_description: "Balun은 시작할 때 “%{device}”의 저장된 주소 또는 이름에 더 이상 검색 요청을 보내지 않습니다. 기기는 다음 시작까지 목록에 남아 있습니다."
+  forget: "지우기"
+  forgotten: "기기를 지웠습니다."
+  forgotten_session: "이번 세션에서만 기기를 지웠습니다. 설정은 읽기 전용입니다."

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Find device and Forget device dialogs now use all thirteen supported locales,
+  including validation, launcher accessibility copy, and read-only-settings notices.
 - Reviewed digest pins for all six CI/release job containers, with a workflow
   inventory check that rejects changed, missing, or unrecorded image references.
 - Playback startup and idle status now translate ready, missing-component, and

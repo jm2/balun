@@ -49,3 +49,29 @@ startup:
   old_runtime_description: >-
     GStreamer %{found} jest zbyt stary; Balun wymaga GStreamer %{minimum} lub nowszego. Wyszukiwanie urządzeń i
     przeglądanie listy kanałów pozostają dostępne.
+
+device_dialogs:
+  find_title: "Znajdź urządzenie według adresu"
+  find_description: >-
+    Wyślij jedno ograniczone zapytanie wykrywania HDHomeRun na znany adres IP lub nazwę hosta; Balun nie
+    skanuje zakresu adresów. Przykład: 192.168.1.20, fd00::20 lub tuner.example.
+  target: "Adres IP lub nazwa hosta"
+  cancel: "Anuluj"
+  find: "Znajdź"
+  enter_target: "Wpisz adres IP lub nazwę hosta urządzenia."
+  hostname_characters: "Wpisz jedną nazwę hosta złożoną z liter, cyfr, łączników i kropek."
+  hostname_syntax: "Wpisz nazwę hosta bez adresu URL, portu, ścieżki ani zakresu."
+  unicast: "Wpisz użyteczny adres unicast urządzenia."
+  numeric_address: "Wpisz jeden użyteczny liczbowy adres IPv4 lub IPv6."
+  address_syntax: "Wpisz adres IP lub nazwę hosta bez adresu URL, portu ani zakresu."
+  ipv4_direct: "Wpisz bezpośrednio adres IPv4."
+  link_local: "Lokalny dla łącza IPv6 nie jest jeszcze obsługiwany; użyj IPv4 lub IPv6 bez identyfikatora strefy."
+  scoped: "IPv6 z identyfikatorem strefy nie jest jeszcze obsługiwany; użyj IPv4 lub IPv6 bez identyfikatora strefy."
+  forget_menu: "Zapomnij urządzenie…"
+  forget_heading: "Zapomnieć to urządzenie?"
+  forget_description: >-
+    Balun przestanie odpytywać zapamiętany adres lub nazwę urządzenia „%{device}” przy uruchamianiu.
+    Urządzenie pozostanie na liście do następnego uruchomienia.
+  forget: "Zapomnij"
+  forgotten: "Zapomniano urządzenie."
+  forgotten_session: "Zapomniano urządzenie tylko na czas tej sesji; ustawienia są tylko do odczytu."

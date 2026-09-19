@@ -16,6 +16,7 @@ use balun::discovery::{
     DiscoveryEntry, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget,
     RoutedScanTrigger,
 };
+use balun::localization::device_dialogs::{ForgetLabels, forget_description};
 use balun::playback::{PlaybackInitializationError, PlaybackRuntime};
 use balun::settings::RememberedTarget;
 
@@ -1115,9 +1116,9 @@ impl RediscoveryWiring {
         match pending_save {
             Some(pending_save) => {
                 self.settings.save(pending_save);
-                self.toast("Device forgotten.");
+                self.toast(&ForgetLabels::current().forgotten);
             }
-            None => self.toast("Device forgotten for this session only; settings are read-only."),
+            None => self.toast(&ForgetLabels::current().forgotten_session),
         }
     }
 
@@ -1209,7 +1210,7 @@ fn present_forget_menu(
     wiring: Rc<RediscoveryWiring>,
 ) {
     let forget = gtk::Button::builder()
-        .label("Forget device…")
+        .label(&*ForgetLabels::current().menu)
         .css_classes(["flat"])
         .build();
     let popover = gtk::Popover::builder()
@@ -1248,16 +1249,17 @@ fn present_forget_dialog(
     targets: Vec<RememberedTarget>,
     wiring: Rc<RediscoveryWiring>,
 ) {
+    let labels = ForgetLabels::current();
     let dialog = adw::AlertDialog::builder()
-        .heading("Forget this device?")
-        .body(format!(
-            "Balun will stop probing the remembered address or name for “{title}” at launch. The device stays listed until the next launch."
-        ))
+        .heading(&*labels.heading)
+        .heading_use_markup(false)
+        .body(&*forget_description(title))
+        .body_use_markup(false)
         .close_response(FORGET_CANCEL_RESPONSE)
         .default_response(FORGET_CANCEL_RESPONSE)
         .build();
-    dialog.add_response(FORGET_CANCEL_RESPONSE, "Cancel");
-    dialog.add_response(FORGET_RESPONSE, "Forget");
+    dialog.add_response(FORGET_CANCEL_RESPONSE, &labels.cancel);
+    dialog.add_response(FORGET_RESPONSE, &labels.forget);
     dialog.set_response_appearance(FORGET_RESPONSE, adw::ResponseAppearance::Destructive);
     dialog.connect_response(Some(FORGET_RESPONSE), move |_, _| wiring.forget(&targets));
     dialog.present(Some(parent));

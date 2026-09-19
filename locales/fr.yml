@@ -50,3 +50,33 @@ startup:
   old_runtime_description: >-
     GStreamer %{found} est trop ancien ; Balun nécessite GStreamer %{minimum} ou une version ultérieure. La
     recherche d’appareils et la consultation des chaînes restent disponibles.
+
+device_dialogs:
+  find_title: "Rechercher un appareil par adresse"
+  find_description: >-
+    Envoyer une requête de découverte HDHomeRun limitée à une adresse IP ou un nom d’hôte connu ; Balun ne
+    parcourt pas de plage d’adresses. Exemple : 192.168.1.20, fd00::20 ou tuner.example.
+  target: "Adresse IP ou nom d’hôte"
+  cancel: "Annuler"
+  find: "Rechercher"
+  enter_target: "Saisissez l’adresse IP ou le nom d’hôte d’un appareil."
+  hostname_characters: "Saisissez un nom d’hôte composé de lettres, de chiffres, de traits d’union et de points."
+  hostname_syntax: "Saisissez un nom d’hôte sans URL, port, chemin ni plage d’adresses."
+  unicast: "Saisissez une adresse unicast utilisable pour l’appareil."
+  numeric_address: "Saisissez une adresse numérique IPv4 ou IPv6 utilisable."
+  address_syntax: "Saisissez une adresse IP ou un nom d’hôte sans URL, port ni plage d’adresses."
+  ipv4_direct: "Saisissez directement l’adresse IPv4."
+  link_local: >-
+    L’IPv6 de liaison locale n’est pas encore pris en charge ; utilisez IPv4 ou une adresse IPv6 sans
+    identifiant de zone.
+  scoped: >-
+    L’IPv6 avec identifiant de zone n’est pas encore pris en charge ; utilisez IPv4 ou une adresse IPv6 sans
+    identifiant de zone.
+  forget_menu: "Oublier l’appareil…"
+  forget_heading: "Oublier cet appareil ?"
+  forget_description: >-
+    Balun ne sondera plus l’adresse ou le nom mémorisé de « %{device} » au démarrage. L’appareil restera dans
+    la liste jusqu’au prochain démarrage.
+  forget: "Oublier"
+  forgotten: "Appareil oublié."
+  forgotten_session: "Appareil oublié pour cette session uniquement ; les paramètres sont en lecture seule."
