@@ -321,6 +321,15 @@ dbus-run-session -- \
         ui::player_view::tests::opaque_paintable_binding_tracks_status_and_shutdown -- \
         --exact --ignored --nocapture
 
+# Repeat in an owned process with actual OS-locale selection. This checks the
+# translated control bindings and their fullscreen transitions without changing
+# the locale of any parallel Rust test. It is not full long-string layout proof.
+env LANGUAGE=de BALUN_TEST_EXPECTED_LOCALE=de dbus-run-session -- \
+    timeout --signal=TERM --kill-after=5s 30s \
+    cargo test --locked --features desktop --bin balun \
+        ui::player_view::tests::opaque_paintable_binding_tracks_status_and_shutdown -- \
+        --exact --ignored --nocapture
+
 dbus-run-session -- \
     timeout --signal=TERM --kill-after=5s 30s \
     cargo test --locked --features desktop --bin balun \

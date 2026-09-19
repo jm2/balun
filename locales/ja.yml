@@ -1,0 +1,34 @@
+# GTK action labels use _ for a mnemonic; tooltip/accessibility text does not.
+app:
+  about: "Balun について(_A)"
+  quit: "終了(_Q)"
+  main_menu: "メインメニュー"
+  description: "HDHomeRun のライブテレビを視聴できる軽量なクロスプラットフォームプレーヤー"
+
+navigation:
+  devices: "デバイス"
+  channels: "チャンネル"
+  live_tv: "ライブテレビ"
+  channels_and_live_tv: "チャンネルとライブテレビ"
+
+controls:
+  volume: "ライブテレビの音量"
+  mute: "ライブテレビをミュート"
+  unmute: "ライブテレビのミュートを解除"
+  stop: "ライブテレビを停止"
+  enter_fullscreen: "全画面表示にする"
+  exit_fullscreen: "全画面表示を終了"
+  video: "ライブテレビの映像"
+  status: "ライブテレビの再生状態"
+  watching: "ライブテレビを視聴中"
+
+progress:
+  stopped: "停止中"
+  connecting: "接続中"
+  playing: "再生中"
+  buffering: "バッファリング中"
+  unavailable: "利用不可"
+  playback_unavailable: "再生できません"
+  buffering_status: "バッファリング中 %{percent}%"
+  buffering_description: "ライブテレビをバッファリングしています: %{percent}%。"
+  opening: "%{device} の %{channel} を開いています。"

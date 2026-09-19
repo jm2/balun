@@ -1,0 +1,34 @@
+# GTK action labels use _ for a mnemonic; tooltip/accessibility text does not.
+app:
+  about: "關於 Balun(_A)"
+  quit: "結束(_Q)"
+  main_menu: "主選單"
+  description: "輕量級跨平台 HDHomeRun 電視直播播放器"
+
+navigation:
+  devices: "裝置"
+  channels: "頻道"
+  live_tv: "電視直播"
+  channels_and_live_tv: "頻道與電視直播"
+
+controls:
+  volume: "電視直播音量"
+  mute: "將電視直播靜音"
+  unmute: "取消電視直播靜音"
+  stop: "停止電視直播"
+  enter_fullscreen: "進入全螢幕"
+  exit_fullscreen: "結束全螢幕"
+  video: "電視直播畫面"
+  status: "電視直播播放狀態"
+  watching: "正在觀看電視直播"
+
+progress:
+  stopped: "已停止"
+  connecting: "正在連線"
+  playing: "正在播放"
+  buffering: "正在緩衝"
+  unavailable: "無法使用"
+  playback_unavailable: "無法播放"
+  buffering_status: "正在緩衝 %{percent}%"
+  buffering_description: "電視直播正在緩衝：%{percent}%。"
+  opening: "正在開啟 %{device} 上的 %{channel}。"

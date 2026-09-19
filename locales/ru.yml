@@ -1,0 +1,34 @@
+# GTK action labels use _ for a mnemonic; tooltip/accessibility text does not.
+app:
+  about: "_О Balun"
+  quit: "_Выйти"
+  main_menu: "Главное меню"
+  description: "Лёгкий кроссплатформенный проигрыватель прямого телеэфира для HDHomeRun"
+
+navigation:
+  devices: "Устройства"
+  channels: "Каналы"
+  live_tv: "Прямой эфир"
+  channels_and_live_tv: "Каналы и прямой эфир"
+
+controls:
+  volume: "Громкость прямого эфира"
+  mute: "Выключить звук прямого эфира"
+  unmute: "Включить звук прямого эфира"
+  stop: "Остановить прямой эфир"
+  enter_fullscreen: "Включить полноэкранный режим"
+  exit_fullscreen: "Выйти из полноэкранного режима"
+  video: "Видео прямого эфира"
+  status: "Состояние воспроизведения прямого эфира"
+  watching: "Просмотр прямого эфира"
+
+progress:
+  stopped: "Остановлено"
+  connecting: "Подключение"
+  playing: "Воспроизведение"
+  buffering: "Буферизация"
+  unavailable: "Недоступно"
+  playback_unavailable: "Воспроизведение недоступно"
+  buffering_status: "Буферизация %{percent}%"
+  buffering_description: "Буферизация прямого эфира: %{percent}%."
+  opening: "Открытие %{channel} на %{device}."

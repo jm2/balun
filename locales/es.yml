@@ -1,0 +1,34 @@
+# GTK action labels use _ for a mnemonic; tooltip/accessibility text does not.
+app:
+  about: "_Acerca de Balun"
+  quit: "_Salir"
+  main_menu: "Menú principal"
+  description: "Un reproductor ligero y multiplataforma de televisión en directo para HDHomeRun"
+
+navigation:
+  devices: "Dispositivos"
+  channels: "Canales"
+  live_tv: "TV en directo"
+  channels_and_live_tv: "Canales y TV en directo"
+
+controls:
+  volume: "Volumen de TV en directo"
+  mute: "Silenciar TV en directo"
+  unmute: "Activar el sonido de TV en directo"
+  stop: "Detener TV en directo"
+  enter_fullscreen: "Entrar en pantalla completa"
+  exit_fullscreen: "Salir de pantalla completa"
+  video: "Vídeo de TV en directo"
+  status: "Estado de reproducción de TV en directo"
+  watching: "Viendo TV en directo"
+
+progress:
+  stopped: "Detenido"
+  connecting: "Conectando"
+  playing: "Reproduciendo"
+  buffering: "Almacenando en búfer"
+  unavailable: "No disponible"
+  playback_unavailable: "Reproducción no disponible"
+  buffering_status: "Almacenando en búfer: %{percent} %"
+  buffering_description: "La TV en directo se está almacenando en búfer: %{percent} %."
+  opening: "Abriendo %{channel} en %{device}."

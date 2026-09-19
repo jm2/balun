@@ -1,0 +1,34 @@
+# GTK action labels use _ for a mnemonic; tooltip/accessibility text does not.
+app:
+  about: "_O programie Balun"
+  quit: "_Zakończ"
+  main_menu: "Menu główne"
+  description: "Lekki, wieloplatformowy odtwarzacz telewizji na żywo z HDHomeRun"
+
+navigation:
+  devices: "Urządzenia"
+  channels: "Kanały"
+  live_tv: "Telewizja na żywo"
+  channels_and_live_tv: "Kanały i telewizja na żywo"
+
+controls:
+  volume: "Głośność telewizji na żywo"
+  mute: "Wycisz telewizję na żywo"
+  unmute: "Włącz dźwięk telewizji na żywo"
+  stop: "Zatrzymaj telewizję na żywo"
+  enter_fullscreen: "Włącz pełny ekran"
+  exit_fullscreen: "Wyłącz pełny ekran"
+  video: "Obraz telewizji na żywo"
+  status: "Stan odtwarzania telewizji na żywo"
+  watching: "Oglądanie telewizji na żywo"
+
+progress:
+  stopped: "Zatrzymano"
+  connecting: "Łączenie"
+  playing: "Odtwarzanie"
+  buffering: "Buforowanie"
+  unavailable: "Niedostępne"
+  playback_unavailable: "Odtwarzanie niedostępne"
+  buffering_status: "Buforowanie %{percent}%"
+  buffering_description: "Buforowanie telewizji na żywo: %{percent}%."
+  opening: "Otwieranie %{channel} na %{device}."

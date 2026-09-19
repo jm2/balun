@@ -1,0 +1,34 @@
+# GTK action labels use _ for a mnemonic; tooltip/accessibility text does not.
+app:
+  about: "_Sobre o Balun"
+  quit: "Sa_ir"
+  main_menu: "Menu principal"
+  description: "Um reprodutor leve e multiplataforma de TV ao vivo para HDHomeRun"
+
+navigation:
+  devices: "Dispositivos"
+  channels: "Canais"
+  live_tv: "TV ao vivo"
+  channels_and_live_tv: "Canais e TV ao vivo"
+
+controls:
+  volume: "Volume da TV ao vivo"
+  mute: "Silenciar TV ao vivo"
+  unmute: "Ativar som da TV ao vivo"
+  stop: "Parar TV ao vivo"
+  enter_fullscreen: "Entrar em tela cheia"
+  exit_fullscreen: "Sair da tela cheia"
+  video: "Vídeo da TV ao vivo"
+  status: "Estado de reprodução da TV ao vivo"
+  watching: "Assistindo TV ao vivo"
+
+progress:
+  stopped: "Parado"
+  connecting: "Conectando"
+  playing: "Reproduzindo"
+  buffering: "Carregando buffer"
+  unavailable: "Indisponível"
+  playback_unavailable: "Reprodução indisponível"
+  buffering_status: "Carregando buffer: %{percent}%"
+  buffering_description: "A TV ao vivo está carregando o buffer: %{percent}%."
+  opening: "Abrindo %{channel} em %{device}."

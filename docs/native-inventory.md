@@ -3,10 +3,12 @@
 H1.3 requires an inventory tied to the final artifact's actual native members.
 `scripts/inventory/native_inventory.py` implements the portable join and report
 format. `observe_native.py` independently hashes the native members of an
-already reopened, validated package tree and its completed artifact. Package
-ownership collection, final-artifact integration, and release attachment remain
-pending. H1.3 and issue #91 remain open; existing release assets do not yet carry
-this inventory or SBOM.
+already reopened, validated package tree and its completed artifact. The macOS
+helper records each native copy's input owner and final staged content, then
+compares the reopened DMG payload against that ledger. Catalog assembly,
+other final-artifact adapters, and release attachment remain pending.
+H1.3 and issue #91 remain open; existing release assets do not yet carry this
+inventory or SBOM.
 
 ## Input boundary
 
@@ -135,6 +137,113 @@ macOS, and both Windows architectures, including a native Windows junction.
 
 ## Evidence and remaining integration
 
+### macOS native copy ledger
+
+The macOS helper invokes `native_copy_ledger.py` immediately after each native
+copy, before relocation changes its bytes. This includes the project binary,
+GStreamer plugins, scanner/query helpers, pixbuf loaders, and transitive native
+libraries. The copied bytes must equal the selected input. Installed inputs
+resolve through expected prefix links into their actual Cellar keg; project
+ownership requires an explicit selection. Unknown owners reject the build.
+
+After relocation and the existing signing and runtime gates, the helper freezes
+`dist/Balun.native-copies.json`. It independently scans the staged app, rejects
+unknown or missing native members, and retains both the original input and final
+staged size/hash for each destination. The DMG path compares this snapshot with
+the reopened artifact as described below. It does not authenticate the installed
+inputs or change signing policy.
+
+The ledger uses the observer's member, byte, traversal, identity, and time limits.
+It lives outside the payload in the trusted build workspace; the helper serializes
+updates. An interrupted write invalidates that build's ledger. Later reads fail
+closed, and the helper must freeze the complete ledger before artifact upload.
+Fixtures exercise changed copies, unknown/missing members, pre/post-relocation
+identities, recursive copies, source links, staged aliases, budgets, and CLI errors.
+
+```bash
+python3 -B scripts/inventory/test_native_copy_ledger.py
+python3 -B scripts/inventory/homebrew_metadata.py --cellar "$(brew --cellar)" \
+  --copy-ledger dist/Balun.native-copies.json > macos-native-owners.json
+```
+
+The ledger-driven metadata collector checks the installed source bytes still
+match those recorded at copy time. Native macOS CI retains the frozen ledger and
+metadata for every copied Homebrew input as internal evidence for 14 days.
+
+### Installed Homebrew metadata
+
+`homebrew_metadata.py` collects the installed recipe, declared source identity,
+license metadata, receipt hash, and source-file hashes for selected native inputs.
+It resolves expected Homebrew prefix/opt links into an explicitly supplied Cellar,
+then derives ownership from that installed keg. A `brew ruby` helper selects the
+**exact installed `.brew/<name>.rb` file loader**, requiring the returned recipe
+checksum to match its bytes. The receipt and recipe must agree on the upstream
+version; the recipe revision must match the versioned keg directory. Homebrew
+receipts do not provide a separate `source.revision` field. Asking
+Homebrew for a formula by name or accepting its current online metadata cannot
+substitute for this check. `brew info` may resolve a path-loaded formula again
+through its installed tap; direct file loading avoids that substitution and
+retains the independent recipe-byte checksum gate.
+
+```bash
+python3 -B scripts/inventory/homebrew_metadata.py --cellar "$(brew --cellar)" \
+  --member "$(pkg-config --variable=pluginsdir gstreamer-1.0)/libgstgtk4.dylib" \
+  > homebrew-native-inputs.json
+python3 -B scripts/inventory/test_homebrew_metadata.py
+```
+
+This collector supports stable `homebrew/core` installations with a complete
+receipt, a SHA-256 or immutable Git revision for the primary source, and declared
+license metadata. HEAD, custom taps, mismatched revisions, current-formula
+substitution, unknown owners, aliases in metadata, special files, duplicate
+members, and observed input changes reject the entire report. Source member
+paths are relative to the Cellar; host paths and raw receipts are not exported.
+The installed recipe text is retained with its hash, including its declarations
+of additional resources and patches. The primary source version is the package's
+version: it does not assert that every embedded resource shares that version or
+that the declared primary archive alone supplies every source-delivery obligation.
+
+Homebrew evaluates trusted installed Ruby recipes. Automatic updates and analytics
+are disabled for the query; this is a build-input tool, not a sandbox for untrusted
+recipes. Each query has a 60-second process deadline and 4 MiB output limit. The
+collector limits metadata files to 1 MiB, selected inputs to 4,096 members and
+256 packages, each member to 1 GiB, total native bytes to 4 GiB, the final report
+to 16 MiB, and overall checkpoints to five minutes. OS reads remain subject to
+the invoking CI job's timeout. Query processes are killed and reaped on failure.
+
+The implementation follows Homebrew's
+[formula JSON and recipe checksum](https://github.com/Homebrew/brew/blob/main/Library/Homebrew/formula.rb)
+and [installed receipt](https://github.com/Homebrew/brew/blob/main/Library/Homebrew/tab/tab.rb)
+contracts. Linux fixtures exercise stale metadata, installed revision mismatches,
+immutable source identities, substitutions, resource bounds and child cleanup.
+Native macOS CI also collects real GTK sink, libav plugin, and pixbuf-query inputs,
+then the full set selected by the copy ledger. Collector failures expose only a
+closed set of validation reasons or a generic missing/invalid-input category;
+raw exceptions, paths, and recipe output remain hidden. These intermediate
+records still need catalog assembly, embedded-resource representation, and
+final-artifact integration below before they establish H1.3.
+
+### Final-artifact integration
+
+The macOS `--dmg` path invokes `bind_final_native.py` while the completed image is
+mounted read-only, after its native closure, icon, and existing signature checks.
+The tool independently hashes the mounted app and disk image, then requires exact
+native membership, sizes, and hashes from the frozen staged ledger. Unknown,
+missing, or changed native members reject the build. It checks the ledger again
+after observation and only then emits `dist/Balun.dmg.native-observed.json`.
+
+```bash
+python3 -B scripts/inventory/test_bind_final_native.py
+```
+
+Native macOS PR CI now builds and reopens the DMG and retains this observation
+beside its copy ledger and installed-owner metadata. The record identifies the
+helper's `Balun.dmg` output. Release assembly still needs to join the catalog,
+bind the release asset's final name, and attach the resulting inventory/SBOM.
+This comparison covers native content, not an exact resource-tree comparison;
+existing resource and package gates remain necessary. It also retains the
+trusted-local-output boundary: the observer does not extract or mount input.
+
 Synthetic fixtures exercise exact membership, changed payloads, missing and
 unknown components, file aliases/collisions, malformed metadata, allocation
 budgets, and CLI failures without input echoes. An affected-version fixture
@@ -143,8 +252,8 @@ changed rebuild payload whose catalog was not refreshed. This is an inventory
 query regression, not H1.4's approved advisory response or rebuild exercise.
 
 Remaining H1.3 work must establish real package ownership and source/license
-records on macOS and both Windows architectures, invoke the observer from the
-validated final app/installer/archive adapters, describe externally managed Linux and
+records on macOS and both Windows architectures, integrate the remaining
+validated final installer/archive adapters, describe externally managed Linux and
 Flatpak runtimes, attach reports to every release artifact, and exercise
 unknown/changed native members in native CI. Only that integrated result can
 complete the ledger outcome.

@@ -601,6 +601,7 @@ PIXBUF_LOADERS_DEST="${RESOURCES_DIR}/lib/gdk-pixbuf-2.0/2.10.0/loaders"
 GST_SCANNER_DEST="${MACOS_DIR}/gst-plugin-scanner"
 PIXBUF_QUERY_DEST="${MACOS_DIR}/gdk-pixbuf-query-loaders"
 BIN_DEST="${MACOS_DIR}/${APP_NAME}"
+NATIVE_COPY_LEDGER="dist/${APP_NAME}.native-copies.json"
 if [ -d "/opt/homebrew" ]; then
     BREW_PREFIX="/opt/homebrew"
 elif [ -d "/usr/local/Cellar" ] || [ -d "/usr/local/opt" ]; then
@@ -612,8 +613,17 @@ fi
 info "Creating ${APP_BUNDLE}..."
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$FRAMEWORKS_DIR" "$GST_PLUGIN_DEST"
+rm -f "$NATIVE_COPY_LEDGER"
+
+record_native_copy() {
+    python3 -B "$script_dir/inventory/native_copy_ledger.py" record \
+        --tree "$APP_BUNDLE" --ledger "$NATIVE_COPY_LEDGER" \
+        --cellar "$BREW_PREFIX/Cellar" --source "$1" --destination "$2" "${@:3}" \
+        || fail 'Could not bind a native copy to its build input.'
+}
 
 cp "$binary" "${BIN_DEST}-bin"
+record_native_copy "$binary" "${BIN_DEST}-bin" --project
 chmod +x "${BIN_DEST}-bin"
 
 # Staged launcher establishing strict environment blinding and install-keyed cache isolation
@@ -757,9 +767,15 @@ PIXBUF_LOADER_DIR="${BREW_PREFIX}/lib/gdk-pixbuf-2.0"
 if [[ -d "$PIXBUF_LOADER_DIR" ]]; then
     mkdir -p "${RESOURCES_DIR}/lib"
     cp -RL "$PIXBUF_LOADER_DIR" "${RESOURCES_DIR}/lib/" 2>/dev/null || true
+    python3 -B "$script_dir/inventory/native_copy_ledger.py" record-tree \
+        --tree "$APP_BUNDLE" --ledger "$NATIVE_COPY_LEDGER" \
+        --cellar "$BREW_PREFIX/Cellar" --source "$PIXBUF_LOADER_DIR" \
+        --destination "${RESOURCES_DIR}/lib/gdk-pixbuf-2.0" \
+        || fail 'Could not bind pixbuf native copies to their installed owners.'
     rm -f "${RESOURCES_DIR}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
 fi
 cp "$pixbuf_query_src" "$PIXBUF_QUERY_DEST"
+record_native_copy "$pixbuf_query_src" "$PIXBUF_QUERY_DEST"
 chmod u+w "$PIXBUF_QUERY_DEST"
 
 # ── GStreamer Plugin Closure ─────────────────────────────────────────────────
@@ -769,6 +785,7 @@ for plugin in "${GSTREAMER_MACOS_PLUGIN_CLOSURE[@]}"; do
     src_plugin="${plugin_directory}/${plugin}.dylib"
     [ -f "$src_plugin" ] || fail "Required GStreamer plugin is missing: $src_plugin"
     cp "$src_plugin" "${GST_PLUGIN_DEST}/"
+    record_native_copy "$src_plugin" "${GST_PLUGIN_DEST}/${plugin}.dylib"
     chmod u+w "${GST_PLUGIN_DEST}/${plugin}.dylib"
 done
 bundled_plugin_count=$(ls -1 "${GST_PLUGIN_DEST}"/*.dylib 2>/dev/null | wc -l | tr -d ' ')
@@ -777,6 +794,7 @@ bundled_plugin_count=$(ls -1 "${GST_PLUGIN_DEST}"/*.dylib 2>/dev/null | wc -l | 
 info "Bundled $bundled_plugin_count GStreamer plugins."
 
 cp "$gst_scanner_src" "$GST_SCANNER_DEST"
+record_native_copy "$gst_scanner_src" "$GST_SCANNER_DEST"
 chmod u+w "$GST_SCANNER_DEST"
 
 # ── Icon & Info.plist ────────────────────────────────────────────────────────
@@ -847,6 +865,7 @@ copy_dylib() {
     local dest="${FRAMEWORKS_DIR}/${basename}"
     [[ -f "$dest" ]] && return 1
     cp -L "$src" "$dest" || fail "Could not copy $src into the bundle"
+    record_native_copy "$src" "$dest"
     chmod u+w "$dest" || fail "Could not make $dest writable for relocation"
     rewrite_dylib_id "$dest" "@executable_path/../Frameworks/${basename}"
     return 0
@@ -1111,6 +1130,11 @@ info "Signed runtime probe and final signature verification passed."
 trap - EXIT
 cleanup_probe
 
+python3 -B "$script_dir/inventory/native_copy_ledger.py" freeze \
+    --tree "$APP_BUNDLE" --ledger "$NATIVE_COPY_LEDGER" \
+    || fail 'Final native membership does not match the recorded copies.'
+info 'Native copy ownership and post-relocation content ledger frozen.'
+
 # ── DMG Creation ─────────────────────────────────────────────────────────────
 if $make_dmg; then
     info "Creating .dmg disk image via create-dmg..."
@@ -1153,6 +1177,12 @@ if $make_dmg; then
         fail "DMG app failed macOS icon policy: $MACOS_ICON_POLICY_REASON"
     fi
     codesign --verify --deep --strict --verbose=2 "$MOUNTED_APP"
+    python3 -B "$script_dir/inventory/bind_final_native.py" \
+        --tree "$MOUNTED_APP" --artifact "$DMG_PATH" \
+        --copy-ledger "$NATIVE_COPY_LEDGER" \
+        --platform "macos-${native_target%-apple-darwin}" --version "$CARGO_VERSION" \
+        > "${DMG_PATH}.native-observed.json" \
+        || fail 'Reopened DMG native content differs from the frozen copy ledger.'
     hdiutil detach "$DMG_MOUNT" >/dev/null \
         || fail "hdiutil could not detach the verified DMG"
     DMG_ATTACHED=false

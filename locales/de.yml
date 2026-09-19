@@ -1,0 +1,34 @@
+# GTK action labels use _ for a mnemonic; tooltip/accessibility text does not.
+app:
+  about: "_Über Balun"
+  quit: "_Beenden"
+  main_menu: "Hauptmenü"
+  description: "Ein schlanker, plattformübergreifender HDHomeRun-Player für Live-TV"
+
+navigation:
+  devices: "Geräte"
+  channels: "Sender"
+  live_tv: "Live-TV"
+  channels_and_live_tv: "Sender und Live-TV"
+
+controls:
+  volume: "Live-TV-Lautstärke"
+  mute: "Live-TV stummschalten"
+  unmute: "Live-TV-Ton einschalten"
+  stop: "Live-TV stoppen"
+  enter_fullscreen: "Vollbild aktivieren"
+  exit_fullscreen: "Vollbild verlassen"
+  video: "Live-TV-Bild"
+  status: "Live-TV-Wiedergabestatus"
+  watching: "Live-TV ansehen"
+
+progress:
+  stopped: "Gestoppt"
+  connecting: "Verbindung wird hergestellt"
+  playing: "Wiedergabe läuft"
+  buffering: "Puffern"
+  unavailable: "Nicht verfügbar"
+  playback_unavailable: "Wiedergabe nicht verfügbar"
+  buffering_status: "Puffern %{percent} %"
+  buffering_description: "Live-TV wird gepuffert: %{percent} %."
+  opening: "%{channel} auf %{device} wird geöffnet."

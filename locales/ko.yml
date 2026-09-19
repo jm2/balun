@@ -1,0 +1,34 @@
+# GTK action labels use _ for a mnemonic; tooltip/accessibility text does not.
+app:
+  about: "Balun 정보(_A)"
+  quit: "종료(_Q)"
+  main_menu: "메인 메뉴"
+  description: "HDHomeRun 실시간 TV를 시청하는 가벼운 크로스 플랫폼 플레이어"
+
+navigation:
+  devices: "장치"
+  channels: "채널"
+  live_tv: "실시간 TV"
+  channels_and_live_tv: "채널 및 실시간 TV"
+
+controls:
+  volume: "실시간 TV 음량"
+  mute: "실시간 TV 음소거"
+  unmute: "실시간 TV 음소거 해제"
+  stop: "실시간 TV 중지"
+  enter_fullscreen: "전체 화면 시작"
+  exit_fullscreen: "전체 화면 종료"
+  video: "실시간 TV 영상"
+  status: "실시간 TV 재생 상태"
+  watching: "실시간 TV 시청 중"
+
+progress:
+  stopped: "중지됨"
+  connecting: "연결 중"
+  playing: "재생 중"
+  buffering: "버퍼링 중"
+  unavailable: "사용할 수 없음"
+  playback_unavailable: "재생할 수 없음"
+  buffering_status: "버퍼링 중 %{percent}%"
+  buffering_description: "실시간 TV 버퍼링 중: %{percent}%."
+  opening: "%{device}에서 %{channel} 여는 중."

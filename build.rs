@@ -11,6 +11,9 @@
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=data/balun.ico");
+    // The procedural macro reads these files; catalog-only edits must also
+    // invalidate Cargo's compiled translation tables.
+    println!("cargo:rerun-if-changed=locales");
 
     #[cfg(target_os = "macos")]
     if std::env::var_os("CARGO_FEATURE_DESKTOP").is_some() {

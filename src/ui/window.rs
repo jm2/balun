@@ -307,6 +307,7 @@ pub(crate) fn build(
     settings: SettingsSession,
     shutdown_failed: Rc<Cell<bool>>,
 ) -> adw::ApplicationWindow {
+    let navigation = balun::localization::controls::NavigationLabels::current();
     let settings = Rc::new(settings);
     let window_state = settings.window();
     let device_sidebar = device_sidebar::build();
@@ -316,9 +317,9 @@ pub(crate) fn build(
     player_view.connect_audio_controls();
     player_view.connect_session_state();
 
-    let device_page = adw::NavigationPage::new(device_sidebar.root(), "Devices");
-    let channel_page = adw::NavigationPage::new(channel_sidebar.root(), "Channels");
-    let player_page = adw::NavigationPage::new(player_view.root(), "Live TV");
+    let device_page = adw::NavigationPage::new(device_sidebar.root(), &navigation.devices);
+    let channel_page = adw::NavigationPage::new(channel_sidebar.root(), &navigation.channels);
+    let player_page = adw::NavigationPage::new(player_view.root(), &navigation.live_tv);
 
     let channel_and_player = adw::NavigationSplitView::builder()
         .sidebar(&channel_page)
@@ -329,7 +330,7 @@ pub(crate) fn build(
         .sidebar_width_unit(adw::LengthUnit::Sp)
         .build();
     let channel_and_player_page =
-        adw::NavigationPage::new(&channel_and_player, "Channels and live TV");
+        adw::NavigationPage::new(&channel_and_player, &navigation.channels_and_live_tv);
 
     let device_and_content = adw::NavigationSplitView::builder()
         .sidebar(&device_page)

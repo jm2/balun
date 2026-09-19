@@ -373,19 +373,20 @@ pub(crate) fn build() -> DeviceSidebar {
     // window controls. Keep this short title's full minimum width so the
     // split view allocates enough space for "Devices" and the buttons.
     let title = gtk::Label::builder()
-        .label("Devices")
+        .label(balun::localization::controls::NavigationLabels::current().devices)
         .css_classes(["title"])
         .build();
     header.set_title_widget(Some(&title));
     let app_menu = gtk::gio::Menu::new();
-    app_menu.append(Some("_About Balun"), Some("app.about"));
-    app_menu.append(Some("_Quit"), Some("app.quit"));
+    app_menu.append(Some(&balun::localization::about_label()), Some("app.about"));
+    app_menu.append(Some(&balun::localization::quit_label()), Some("app.quit"));
+    let main_menu_label = balun::localization::main_menu_label();
     let app_menu_button = gtk::MenuButton::builder()
         .icon_name("open-menu-symbolic")
-        .tooltip_text("Main menu")
+        .tooltip_text(&*main_menu_label)
         .menu_model(&app_menu)
         .build();
-    app_menu_button.update_property(&[gtk::accessible::Property::Label("Main menu")]);
+    app_menu_button.update_property(&[gtk::accessible::Property::Label(&main_menu_label)]);
     header.pack_start(&app_menu_button);
     header.pack_end(&discovery_actions);
 

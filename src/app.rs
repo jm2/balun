@@ -26,6 +26,10 @@ pub(crate) fn run() -> gtk::glib::ExitCode {
             return gtk::glib::ExitCode::FAILURE;
         }
     }
+    if let Err(error) = balun::localization::initialize() {
+        eprintln!("{error}");
+        return gtk::glib::ExitCode::FAILURE;
+    }
     let controller = match ControllerRuntime::start_default() {
         Ok(controller) => controller,
         Err(error) => {
@@ -148,6 +152,7 @@ fn about_dialog() -> adw::AboutDialog {
         .application_name("Balun")
         .application_icon(APPLICATION_ID)
         .developer_name("John-Michael Mulesa")
+        .comments(balun::localization::application_description())
         .version(env!("CARGO_PKG_VERSION"))
         .website(env!("CARGO_PKG_REPOSITORY"))
         .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues"))
