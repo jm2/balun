@@ -9,10 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Locked the complete Markdown/TOML lint dependency tree with tarball integrity
-  checks and disabled install scripts; CI no longer resolves fresh transitive
-  npm dependencies for these tools on each run. The Markdown linter and its TOML
-  parser advance to clear the observed dependency advisories.
 - Reviewed digest pins for all six CI/release job containers, with a workflow
   inventory check that rejects changed, missing, or unrecorded image references.
 - Playback startup and idle status now translate ready, missing-component, and
@@ -50,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
+- Locked the complete Markdown/TOML lint dependency tree with tarball integrity
+  checks and disabled install scripts; CI no longer resolves fresh transitive
+  npm dependencies for these tools on each run. The Markdown linter and its TOML
+  parser advance to clear the observed dependency advisories.
 
 ### Changed
 
