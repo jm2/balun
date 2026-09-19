@@ -11,11 +11,11 @@ use balun::controller::{
 };
 use balun::domain::ChannelKey;
 use balun::localization::controls::PlayerLabels;
+use balun::localization::playback_startup;
 use balun::localization::playback_status::{self, ProgressLabels};
 use balun::playback::{
-    MissingMedia, PlaybackCapabilities, PlaybackInitializationError, PlaybackPipelineFailure,
-    PlaybackRuntime, PlaybackSession, PlaybackSessionFailure, PlaybackSessionState, TuneCompletion,
-    TuneRequest,
+    MissingMedia, PlaybackInitializationError, PlaybackPipelineFailure, PlaybackRuntime,
+    PlaybackSession, PlaybackSessionFailure, PlaybackSessionState, TuneCompletion, TuneRequest,
 };
 
 /// Main-context-owned player pane.
@@ -727,21 +727,17 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         .build();
     picture.update_property(&[gtk::accessible::Property::Label(&accessibility.video_label)]);
 
-    let (title, description, session) = match runtime {
+    let (startup, session) = match runtime {
         Ok(runtime) => {
-            let (title, description) = empty_state_copy(runtime.capabilities());
-            (title, description, Some(PlaybackSession::new(runtime)))
+            let text = playback_startup::capabilities(runtime.capabilities());
+            (text, Some(PlaybackSession::new(runtime)))
         }
-        Err(error) => (
-            "Playback initialization unavailable",
-            format!("{error}. Device discovery and lineup inspection remain available."),
-            None,
-        ),
+        Err(error) => (playback_startup::initialization(error), None),
     };
     let empty_state = adw::StatusPage::builder()
         .icon_name("video-display-symbolic")
-        .title(title)
-        .description(description_markup(&description))
+        .title(startup.title.as_ref())
+        .description(description_markup(&startup.description))
         .accessible_role(gtk::AccessibleRole::Status)
         .vexpand(true)
         .build();
@@ -834,8 +830,8 @@ pub(crate) fn build(runtime: Result<PlaybackRuntime, PlaybackInitializationError
         stop_button,
         fullscreen_button,
         playback_status,
-        idle_title: title.to_owned(),
-        idle_description: description,
+        idle_title: startup.title.into_owned(),
+        idle_description: startup.description.into_owned(),
         session,
         tune_context: RefCell::new(None),
         updating_audio_controls: Cell::new(false),
@@ -872,28 +868,6 @@ fn update_mute_presentation(button: &gtk::ToggleButton, volume: f64, muted: bool
     button.update_property(&[gtk::accessible::Property::Label(
         accessibility.mute_label.as_ref(),
     )]);
-}
-
-fn empty_state_copy(capabilities: &PlaybackCapabilities) -> (&'static str, String) {
-    if capabilities.is_foundation_ready() {
-        return (
-            "Select a channel",
-            format!(
-                "The GStreamer {} playback foundation is available; activate a channel to start live TV.",
-                capabilities.runtime_version()
-            ),
-        );
-    }
-
-    let missing = capabilities
-        .missing_required()
-        .map(|factory| factory.name())
-        .collect::<Vec<_>>()
-        .join(", ");
-    (
-        "Playback components unavailable",
-        format!("Required GStreamer factories are missing: {missing}."),
-    )
 }
 
 fn description_markup(text: &str) -> gtk::glib::GString {
@@ -1022,6 +996,8 @@ mod tests {
             assert_eq!(locale, expected);
         }
         let accessibility = PlayerLabels::current();
+        let startup =
+            playback_startup::initialization(PlaybackInitializationError::InitializationFailed);
         adw::init().expect("initialize libadwaita for player-view presentation smoke");
         let main_context = gtk::glib::MainContext::default();
         let _owner = main_context
@@ -1038,7 +1014,11 @@ mod tests {
         assert!(!view.picture.is_visible());
         assert!(view.picture.paintable().is_none());
         assert!(view.status.is_visible());
-        assert_eq!(view.status.title(), "Playback initialization unavailable");
+        assert_eq!(view.status.title(), startup.title.as_ref());
+        assert_literal_markup(
+            view.status.description().as_deref().unwrap(),
+            &startup.description,
+        );
         assert_eq!(
             view.status.upcast_ref::<gtk::Widget>().accessible_role(),
             gtk::AccessibleRole::Status
@@ -1234,7 +1214,11 @@ mod tests {
             ProgressLabels::current().stopped.as_ref()
         );
         assert!(view.picture.paintable().is_none());
-        assert_eq!(view.status.title(), "Playback initialization unavailable");
+        assert_eq!(view.status.title(), startup.title.as_ref());
+        assert_literal_markup(
+            view.status.description().as_deref().unwrap(),
+            &startup.description,
+        );
 
         let task_dropped = Rc::new(Cell::new(false));
         let drop_probe = DropProbe(Rc::clone(&task_dropped));
@@ -1248,7 +1232,11 @@ mod tests {
         assert!(view.picture.paintable().is_none());
         assert!(!view.picture.is_visible());
         assert!(view.status.is_visible());
-        assert_eq!(view.status.title(), "Playback initialization unavailable");
+        assert_eq!(view.status.title(), startup.title.as_ref());
+        assert_literal_markup(
+            view.status.description().as_deref().unwrap(),
+            &startup.description,
+        );
         assert!(!view.stop_button.is_sensitive());
         assert!(task_dropped.get());
 

@@ -32,3 +32,20 @@ progress:
   buffering_status: "Caricamento buffer: %{percent}%"
   buffering_description: "Caricamento del buffer della TV in diretta: %{percent}%."
   opening: "Apertura di %{channel} su %{device}."
+
+startup:
+  ready_title: "Seleziona un canale"
+  ready_description: >-
+    La riproduzione con GStreamer %{version} è disponibile; attiva un canale per avviare la TV in diretta.
+  missing_title: "Componenti di riproduzione non disponibili"
+  missing_description: "Mancano i componenti GStreamer richiesti: %{missing}."
+  failed_title: "Inizializzazione della riproduzione non disponibile"
+  main_context_description: >-
+    L’inizializzazione della riproduzione di Balun richiede il controllo del contesto principale predefinito di
+    GLib. La ricerca dei dispositivi e la consultazione dei canali restano disponibili.
+  initialization_failed_description: >-
+    Impossibile inizializzare GStreamer. La ricerca dei dispositivi e la consultazione dei canali restano
+    disponibili.
+  old_runtime_description: >-
+    GStreamer %{found} è troppo vecchio; Balun richiede GStreamer %{minimum} o successivo. La ricerca dei
+    dispositivi e la consultazione dei canali restano disponibili.

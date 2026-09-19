@@ -32,3 +32,14 @@ progress:
   buffering_status: "バッファリング中 %{percent}%"
   buffering_description: "ライブテレビをバッファリングしています: %{percent}%。"
   opening: "%{device} の %{channel} を開いています。"
+
+startup:
+  ready_title: "チャンネルを選択"
+  ready_description: "GStreamer %{version} による再生を利用できます。チャンネルを選んでライブテレビを開始してください。"
+  missing_title: "再生コンポーネントを利用できません"
+  missing_description: "必要な GStreamer コンポーネントがありません: %{missing}。"
+  failed_title: "再生を初期化できません"
+  main_context_description: "Balun の再生を初期化するには、既定の GLib メインコンテキストの所有権が必要です。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
+  initialization_failed_description: "GStreamer を初期化できませんでした。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
+  old_runtime_description: >-
+    GStreamer %{found} は古すぎます。Balun には GStreamer %{minimum} 以降が必要です。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。

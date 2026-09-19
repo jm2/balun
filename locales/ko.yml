@@ -32,3 +32,14 @@ progress:
   buffering_status: "버퍼링 중 %{percent}%"
   buffering_description: "실시간 TV 버퍼링 중: %{percent}%."
   opening: "%{device}에서 %{channel} 여는 중."
+
+startup:
+  ready_title: "채널 선택"
+  ready_description: "GStreamer %{version} 재생 기능을 사용할 수 있습니다. 채널을 선택하여 실시간 TV를 시작하세요."
+  missing_title: "재생 구성 요소를 사용할 수 없음"
+  missing_description: "필수 GStreamer 구성 요소가 없습니다: %{missing}."
+  failed_title: "재생 초기화를 사용할 수 없음"
+  main_context_description: "Balun 재생 초기화에는 기본 GLib 메인 컨텍스트의 소유권이 필요합니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다."
+  initialization_failed_description: "GStreamer를 초기화하지 못했습니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다."
+  old_runtime_description: >-
+    GStreamer %{found} 버전이 너무 오래되었습니다. Balun에는 GStreamer %{minimum} 이상이 필요합니다. 기기 검색과 채널 목록 확인은 계속 사용할 수 있습니다.
