@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Development builds now report version 0.2.0, with matching native package
+  versions. Changes remain unreleased until the release process is completed.
 - Deinterlacing evidence now distinguishes verified steady field order and progressive
   passthrough from unresolved mixed-stream transition and boundary timing behavior.
 - Playback and shutdown claims now reflect the accepted in-process native boundary:
