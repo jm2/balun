@@ -297,7 +297,6 @@ class ExternalPatch
 end
 class StringPatch
   def strip = :p1
-  def directory = nil
   def contents = "inline patch\\n"
 end
 class DATAPatch < StringPatch
@@ -334,6 +333,9 @@ end
         for item, content in zip(result["patches"], [b"inline patch\n", b"DATA patch\n"]):
             self.assertEqual(item["size"], len(content))
             self.assertEqual(item["sha256"], hashlib.sha256(content).hexdigest())
+        self.assertIsNone(result["patches"][0]["directory"])
+        self.assertIsNone(result["patches"][1]["directory"])
+        self.assertEqual(result["patches"][2]["directory"], "codec")
         self.assertEqual(result["patches"][2], result["resources"][0]["patches"][0])
 
     @unittest.skipUnless(shutil.which("ruby"), "requires Ruby for unsupported patch rejection")

@@ -21,6 +21,12 @@ def download_record(resource)
   }
 end
 
+# Older Homebrew patch objects cannot declare a subdirectory. Newer ones
+# expose it; preserve that value whenever the installed API supports it.
+def patch_directory(patch)
+  patch.respond_to?(:directory) ? patch.directory&.to_s : nil
+end
+
 def patch_record(patch, recipe)
   result = { "strip" => patch.strip.to_s }
   case patch
@@ -30,7 +36,7 @@ def patch_record(patch, recipe)
 
     result.merge(
       "kind" => "external", "source" => download_record(resource),
-      "directory" => resource.directory&.to_s, "files" => resource.patch_files.map(&:to_s)
+      "directory" => patch_directory(resource), "files" => resource.patch_files.map(&:to_s)
     )
   when DATAPatch, StringPatch
     # A DATA patch normally gets its recipe path immediately before staging.
@@ -42,7 +48,7 @@ def patch_record(patch, recipe)
 
     result.merge(
       "kind" => patch.is_a?(DATAPatch) ? "data" : "string",
-      "directory" => patch.directory&.to_s,
+      "directory" => patch_directory(patch),
       "size" => contents.bytesize, "sha256" => Digest::SHA256.hexdigest(contents)
     )
   else
