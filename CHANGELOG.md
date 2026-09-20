@@ -64,9 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Debian control/data and Arch payloads now receive bounded decoding and complete
+  tar member preflight before extraction. Native parser isolation and extraction
+  containment remain pending; only trusted local build output is admitted.
 - RPM payload inspection now bounds decoding and validates member paths, types,
   links, sizes, and directory budgets before invoking the native extractor.
-  Native parser isolation and Debian/Arch preflight remain pending.
+  Native parser isolation remains pending.
 - Linux Debian, RPM, and Arch inspectors now share one bounded private archive
   snapshot, preventing input replacement between metadata and payload checks.
   Complete extraction containment remains pending.
