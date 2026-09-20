@@ -346,7 +346,8 @@ jobs:
       - name: Lint YAML
         run: |
           python3 -m venv "$RUNNER_TEMP/yamllint"
-          "$RUNNER_TEMP/yamllint/bin/pip" install yamllint==1.37.1
+          "$RUNNER_TEMP/yamllint/bin/python" -m pip install --require-hashes --only-binary=:all: \
+            --requirement build-aux/toolchain/yaml-lint-requirements.txt
           "$RUNNER_TEMP/yamllint/bin/yamllint" --strict .
 
       - name: Check reviewed builder image pins
