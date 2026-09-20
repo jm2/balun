@@ -23,7 +23,7 @@ address so you know which tuner failed.
 ## Features
 
 | Feature | Status |
-|---------|--------|
+| --------- | -------- |
 | Local HDHomeRun discovery (IPv4 broadcast, IPv6 multicast) | ✅ |
 | Find a routed tuner by IP address or hostname (WireGuard and other tunnels) | ✅ Remembered across launches |
 | Approved private-range enumeration (`balun-discover` only, `/24` or narrower) | ✅ |
@@ -706,7 +706,7 @@ from the selected device. Reloading stops the current channel; select a channel 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
-|----------|--------|
+| ---------- | -------- |
 | `F11` | Toggle fullscreen |
 | `Escape` | Exit fullscreen |
 | `Ctrl+F` | Focus channel search |

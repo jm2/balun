@@ -342,13 +342,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install locked Markdown and TOML lint tools
+        run: |
+          mkdir "$RUNNER_TEMP/node-lint"
+          cp build-aux/toolchain/node-lint/package.json \
+            build-aux/toolchain/node-lint/package-lock.json "$RUNNER_TEMP/node-lint/"
+          npm ci --prefix "$RUNNER_TEMP/node-lint" --ignore-scripts --engine-strict --include=dev \
+            --no-audit --no-fund
+
       - name: Lint Markdown
-        run: npx --yes markdownlint-cli2@0.18.1 "**/*.md"
+        run: '"$RUNNER_TEMP/node-lint/node_modules/.bin/markdownlint-cli2" "**/*.md"'
 
       - name: Lint TOML
         run: |
-          npx --yes @taplo/cli@0.7.0 check Cargo.toml build-aux/toolchain/rust-toolchain.toml taplo.toml
-          npx --yes @taplo/cli@0.7.0 fmt --check Cargo.toml build-aux/toolchain/rust-toolchain.toml taplo.toml
+          "$RUNNER_TEMP/node-lint/node_modules/.bin/taplo" check \
+            Cargo.toml build-aux/toolchain/rust-toolchain.toml taplo.toml
+          "$RUNNER_TEMP/node-lint/node_modules/.bin/taplo" fmt --check \
+            Cargo.toml build-aux/toolchain/rust-toolchain.toml taplo.toml
 
       - name: Lint YAML
         run: |
