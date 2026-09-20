@@ -15,6 +15,21 @@ The existing CLI accepts one explicitly approved private `/24` or narrower
 range. The Linux route-derived proposal has a 256-candidate ceiling and a
 15-second default deadline. Both remain the current implementation baseline.
 
+The first implementation slice is the side-effect-free `TypedSubnetScope` library
+value. It accepts only canonical private `/23`–`/32` text, supplies usable-host
+enumeration and exact candidate/outbound-attempt counts, and names the fixed
+typed-policy limits below. It carries no consent, observation generation, or
+route-derived authority. Neither shipped application admits scans with this value
+yet; socket execution, observer health, consent, persistence, pacing, and UI/CLI
+integration remain pending. Diagnostic formatting redacts the scope; explicit
+display formatting retains canonical text for a future preview or preference.
+
+Portable fixtures cover each prefix at both ends of all three RFC 1918 blocks,
+`/23`, `/24`, `/30`, `/31`, and `/32` preview counts, noncanonical/invalid/private
+boundaries, diagnostic redaction, and the separate unchanged route-derived limits.
+The maximum-jitter budget fits the approved deadline arithmetically; it does not
+establish actual send pacing or completion timing, which require runner evidence.
+
 ## Assessment and approved traffic limits
 
 A `/23` contains 512 addresses, but the existing `Ipv4Net::hosts()` rule excludes

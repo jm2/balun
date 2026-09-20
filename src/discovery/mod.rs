@@ -9,6 +9,7 @@ mod manual;
 mod registry;
 mod routed;
 mod routes;
+mod typed_subnet;
 mod types;
 
 pub use approval::{RoutedProposalOriginSummary, RoutedProposalSummary, RoutedScanTrigger};
@@ -49,4 +50,5 @@ pub use routes::{
     RouteCandidateError, RouteCandidateOrigin, RouteKind, RouteProvider, RouteScope, RouteSnapshot,
     route_candidates, select_route_candidates,
 };
+pub use typed_subnet::{InvalidTypedSubnetScope, TypedSubnetScope};
 pub use types::{DiscoveryMethod, ProbeEndpoint};
