@@ -3,7 +3,7 @@
 V2.6 ([issue #74](https://github.com/jm2/balun/issues/74)) remains open. The first
 slice provides the shared catalog, startup selection, application menu, its
 tooltip/accessibility label, and the About description. A follow-on slice adds
-navigation titles, player-control copy, playback progress, and device dialogs.
+navigation titles, player-control copy, playback progress and failures, and device dialogs.
 The remaining interface, CLI, errors,
 desktop metadata, pluralization, and layout evidence remain pending.
 
@@ -57,8 +57,8 @@ env -u LANGUAGE -u LC_ALL -u LC_MESSAGES LANG=de_DE.UTF-8 \
 ```
 
 The application menu, About description, navigation titles, player controls, and
-playback progress and startup status are translated, along with Find device and
-Forget device dialogs. Playback session errors, routed approval dialogs, and
+playback progress, startup status, and session errors are translated, along with
+Find device and Forget device dialogs. Routed approval dialogs and
 other window copy still contain English. The native GTK/libadwaita
 controls also depend on the platform's own translations and locale setup.
 
@@ -95,7 +95,7 @@ The device header and navigation page share their title key. Channel, live-TV,
 and combined navigation pages use the same catalog. Player-control labels cover
 volume, mute/unmute, stop, enter/exit fullscreen, the video accessible name,
 playback-status tooltip, and the desktop's idle-inhibition reason. Playback session
-errors are still pending; startup/idle copy is described below.
+errors and startup/idle copy are described below.
 
 Tooltips and accessible names share translated text. The mute toggle retains a
 stable translated name while its checked state conveys muting; its tooltip
@@ -123,7 +123,7 @@ Portable tests check percentage bounds and uninterpreted display names in every
 catalog, plus explicit translated templates. The English/German native player
 smoke checks status transitions and parses the widget's actual descriptions back
 to their literal text. Fallback device/channel names and session failure messages
-remain English until their presentation slice is complete.
+use the same startup locale, as described below.
 
 ## Playback startup
 
@@ -139,6 +139,27 @@ initialization category, preserved runtime versions, literal component values,
 and selected German/French results. The English/German native player smoke checks
 the initial message and its restoration after Stop, including literal markup
 round trips. Native layout and translation-quality review remain outstanding.
+
+## Playback failures
+
+All thirteen catalogs translate busy, unavailable-channel, rejected-request,
+offline, missing-codec/plugin, protected-channel, and internal-error messages.
+Each description is a complete localized message including its recovery hint;
+there is no English suffix assembled at runtime. Known codec identifiers such as
+`AC-4` and `H.264` stay literal while audio/video wording is translated. Generic
+startup failure and the distinct close-before-retuning instruction after a
+teardown failure are translated too. Domain errors and tracing remain unchanged.
+
+The helper accepts closed failure categories and admitted device/channel display
+names. Native exception text does not enter its API. Snapshot fallback names and
+bare channel-number labels use the same locale. Values are interpolated once;
+the player still escapes the completed description at the GTK markup boundary.
+
+Portable tests cover every category and known codec across the thirteen catalogs,
+literal placeholder-like display names, English fallback, and selected translated
+results. The native English/German player smoke verifies the actual failure,
+teardown, and generic status widgets and their literal descriptions. These checks
+do not complete translation-quality, long-string, or screen-reader acceptance.
 
 ## Device dialogs
 

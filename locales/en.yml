@@ -73,3 +73,44 @@ device_dialogs:
   forget: "Forget"
   forgotten: "Device forgotten."
   forgotten_session: "Device forgotten for this session only; settings are read-only."
+
+failure:
+  busy_title: "No tuner available"
+  busy_description: "All tuners on %{device} are busy. Device discovery and lineup inspection remain available."
+  channel_title: "Channel unavailable"
+  channel_description: >-
+    %{device} no longer offers %{channel}. Use Reload channels to read its lineup again. Device discovery
+    and lineup inspection remain available.
+  rejected_title: "Device rejected the stream"
+  rejected_description: >-
+    %{device} rejected the request for %{channel}. Device discovery and lineup inspection remain available.
+  offline_title: "Device or stream unavailable"
+  offline_description: >-
+    %{device} did not deliver %{channel}. Check that the device is powered and reachable. Device discovery
+    and lineup inspection remain available.
+  codec_title: "Required playback component or codec unavailable"
+  missing_audio_description: >-
+    This Balun build has no %{codec} audio decoder for %{channel} on %{device}. Device discovery and lineup
+    inspection remain available.
+  missing_video_description: >-
+    This Balun build has no %{codec} video decoder for %{channel} on %{device}. Device discovery and lineup
+    inspection remain available.
+  missing_component_description: >-
+    This Balun build lacks a codec or GStreamer plugin needed for %{channel} on %{device}. Device discovery
+    and lineup inspection remain available.
+  protected_title: "Protected channel unsupported"
+  protected_description: >-
+    %{channel} on %{device} is protected and cannot be played. Device discovery and lineup inspection remain
+    available.
+  internal_title: "Playback failed"
+  internal_description: >-
+    Playback of %{channel} on %{device} stopped because of an internal error. Device discovery and lineup
+    inspection remain available.
+  generic_title: "Unable to play channel"
+  generic_description: >-
+    The selected channel could not be started. Device discovery and lineup inspection remain available.
+  stop_title: "Unable to stop live TV"
+  stop_description: "Playback could not be stopped cleanly. Close Balun before selecting another channel."
+  selected_device: "the selected device"
+  selected_channel: "the selected channel"
+  channel_number: "channel %{number}"

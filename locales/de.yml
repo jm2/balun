@@ -74,3 +74,48 @@ device_dialogs:
   forget: "Vergessen"
   forgotten: "Gerät vergessen."
   forgotten_session: "Gerät nur für diese Sitzung vergessen; die Einstellungen sind schreibgeschützt."
+
+failure:
+  busy_title: "Kein Tuner verfügbar"
+  busy_description: "Alle Tuner auf %{device} sind belegt. Gerätesuche und Kanallistenansicht bleiben verfügbar."
+  channel_title: "Kanal nicht verfügbar"
+  channel_description: >-
+    %{device} bietet %{channel} nicht mehr an. Lesen Sie die Kanalliste mit „Kanäle neu laden“ erneut ein.
+    Gerätesuche und Kanallistenansicht bleiben verfügbar.
+  rejected_title: "Gerät hat den Stream abgelehnt"
+  rejected_description: >-
+    %{device} hat die Anfrage für %{channel} abgelehnt. Gerätesuche und Kanallistenansicht bleiben
+    verfügbar.
+  offline_title: "Gerät oder Stream nicht verfügbar"
+  offline_description: >-
+    %{device} hat %{channel} nicht geliefert. Prüfen Sie, ob das Gerät eingeschaltet und erreichbar ist.
+    Gerätesuche und Kanallistenansicht bleiben verfügbar.
+  codec_title: "Erforderliche Wiedergabekomponente oder Codec nicht verfügbar"
+  missing_audio_description: >-
+    Dieser Balun-Version fehlt ein %{codec}-Audiodecoder für %{channel} auf %{device}. Gerätesuche und
+    Kanallistenansicht bleiben verfügbar.
+  missing_video_description: >-
+    Dieser Balun-Version fehlt ein %{codec}-Videodecoder für %{channel} auf %{device}. Gerätesuche und
+    Kanallistenansicht bleiben verfügbar.
+  missing_component_description: >-
+    Dieser Balun-Version fehlt ein Codec oder GStreamer-Plugin für %{channel} auf %{device}. Gerätesuche und
+    Kanallistenansicht bleiben verfügbar.
+  protected_title: "Geschützter Kanal nicht unterstützt"
+  protected_description: >-
+    %{channel} auf %{device} ist geschützt und kann nicht wiedergegeben werden. Gerätesuche und
+    Kanallistenansicht bleiben verfügbar.
+  internal_title: "Wiedergabe fehlgeschlagen"
+  internal_description: >-
+    Die Wiedergabe von %{channel} auf %{device} wurde wegen eines internen Fehlers beendet. Gerätesuche und
+    Kanallistenansicht bleiben verfügbar.
+  generic_title: "Kanal kann nicht wiedergegeben werden"
+  generic_description: >-
+    Der ausgewählte Kanal konnte nicht gestartet werden. Gerätesuche und Kanallistenansicht bleiben
+    verfügbar.
+  stop_title: "Live-TV kann nicht gestoppt werden"
+  stop_description: >-
+    Die Wiedergabe konnte nicht ordnungsgemäß gestoppt werden. Schließen Sie Balun, bevor Sie einen anderen
+    Kanal auswählen.
+  selected_device: "das ausgewählte Gerät"
+  selected_channel: "der ausgewählte Kanal"
+  channel_number: "Kanal %{number}"

@@ -73,3 +73,47 @@ device_dialogs:
   forget: "Vergeten"
   forgotten: "Apparaat vergeten."
   forgotten_session: "Apparaat alleen voor deze sessie vergeten; de instellingen zijn alleen-lezen."
+
+failure:
+  busy_title: "Geen tuner beschikbaar"
+  busy_description: >-
+    Alle tuners op %{device} zijn bezet. Apparaten zoeken en de zenderlijst bekijken blijven beschikbaar.
+  channel_title: "Zender niet beschikbaar"
+  channel_description: >-
+    %{device} biedt %{channel} niet meer aan. Gebruik Zenders opnieuw laden om de lijst opnieuw te lezen.
+    Apparaten zoeken en de zenderlijst bekijken blijven beschikbaar.
+  rejected_title: "Apparaat heeft de stream geweigerd"
+  rejected_description: >-
+    %{device} heeft het verzoek voor %{channel} geweigerd. Apparaten zoeken en de zenderlijst bekijken
+    blijven beschikbaar.
+  offline_title: "Apparaat of stream niet beschikbaar"
+  offline_description: >-
+    %{device} heeft %{channel} niet geleverd. Controleer of het apparaat aanstaat en bereikbaar is.
+    Apparaten zoeken en de zenderlijst bekijken blijven beschikbaar.
+  codec_title: "Vereist afspeelonderdeel of codec niet beschikbaar"
+  missing_audio_description: >-
+    Deze Balun-versie heeft geen %{codec}-audiodecoder voor %{channel} op %{device}. Apparaten zoeken en de
+    zenderlijst bekijken blijven beschikbaar.
+  missing_video_description: >-
+    Deze Balun-versie heeft geen %{codec}-videodecoder voor %{channel} op %{device}. Apparaten zoeken en de
+    zenderlijst bekijken blijven beschikbaar.
+  missing_component_description: >-
+    Deze Balun-versie mist een codec of GStreamer-plug-in voor %{channel} op %{device}. Apparaten zoeken en
+    de zenderlijst bekijken blijven beschikbaar.
+  protected_title: "Beveiligde zender niet ondersteund"
+  protected_description: >-
+    %{channel} op %{device} is beveiligd en kan niet worden afgespeeld. Apparaten zoeken en de zenderlijst
+    bekijken blijven beschikbaar.
+  internal_title: "Afspelen mislukt"
+  internal_description: >-
+    Het afspelen van %{channel} op %{device} is gestopt door een interne fout. Apparaten zoeken en de
+    zenderlijst bekijken blijven beschikbaar.
+  generic_title: "Kan zender niet afspelen"
+  generic_description: >-
+    De geselecteerde zender kon niet worden gestart. Apparaten zoeken en de zenderlijst bekijken blijven
+    beschikbaar.
+  stop_title: "Kan live-tv niet stoppen"
+  stop_description: "Het afspelen kon niet correct worden gestopt. Sluit Balun voordat u een andere zender kiest."
+  selected_device: "het geselecteerde apparaat"
+  selected_channel: "de geselecteerde zender"
+  channel_number: "zender %{number}"
