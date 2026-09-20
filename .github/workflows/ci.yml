@@ -79,7 +79,8 @@ jobs:
       - name: Install pinned portable coverage tools
         run: |
           python3 -m venv "$RUNNER_TEMP/package-coverage-python"
-          "$RUNNER_TEMP/package-coverage-python/bin/pip" install -r scripts/coverage/requirements.txt
+          "$RUNNER_TEMP/package-coverage-python/bin/pip" install \
+            --require-hashes --only-binary=:all: -r scripts/coverage/requirements.txt
 
       - name: Install pinned PowerShell coverage profiler
         shell: pwsh
