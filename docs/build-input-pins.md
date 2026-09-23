@@ -1,7 +1,8 @@
 # Build input pins
 
-H2.2 remains open. This first slice pins the **starting job-container images**
-used by CI and Linux release builds. It does not freeze the full build environment
+H2.2 remains open. Current pins cover the **starting job-container images**
+used by CI/Linux release builds and the complete YAML lint dependency closure.
+They do not freeze the full build environment
 or claim reproducible artifacts. New signing and provenance work remains paused
 by maintainer direction.
 
@@ -65,6 +66,34 @@ also need their affected package candidate builds before release acceptance.
 There is no automatic tag-to-digest refresh during builds. If a registry removes
 a pinned object, the job fails; it must not fall back to the mutable tag.
 
+## YAML lint dependency closure
+
+[`yaml-lint-requirements.txt`](../build-aux/toolchain/yaml-lint-requirements.txt)
+pins yamllint 1.37.1, PyYAML 6.0.3, and pathspec 1.1.1 with SHA-256 hashes of
+their published wheels. These are the full runtime dependencies without optional
+extras. The same environment runs the builder-image policy checker. CI installs
+into a fresh virtual environment with `--require-hashes --only-binary=:all:`;
+missing transitive pins, changed bytes, and source-distribution fallback fail.
+This follows pip's documented
+[hash-checking installation mode](https://pip.pypa.io/en/stable/topics/secure-installs/).
+
+The reviewed PyYAML wheels support Linux CPython 3.12–3.14 on x86_64 and aarch64;
+the two remaining wheels are platform independent. CI currently uses the
+Ubuntu 24.04 runner's CPython 3.12. The wheel files were downloaded from PyPI and
+hashed independently against its exact-version metadata on 2026-09-19 UTC.
+Adding another interpreter/platform wheel requires a reviewed hash update;
+there is no source-build fallback. This does not pin the host Python interpreter,
+virtual-environment bootstrap, pip itself, or the runner image.
+
+To update this lock, inspect the exact releases' runtime dependency metadata,
+download the required wheels, verify their SHA-256 values, and update all pins
+and filename comments together. Check resolution for every listed platform and
+interpreter using an empty download directory, then install the supported host
+set into a fresh environment and run YAML lint and builder-image tests. Keep
+dependency resolution enabled so an omitted new dependency cannot be skipped.
+Before accepting new pins, also prove an incorrect local hash fails offline
+against the downloaded wheel set.
+
 ## Remaining H2.2 scope
 
 The following inputs are still mutable or incompletely pinned. They are pending
@@ -75,10 +104,20 @@ work, not newly approved exceptions:
   including their transitive native dependencies and repository snapshots.
 - Release Rust/compiler selection, Flatpak runtime/SDK/extensions, and native
   packagers and helper dependencies not already covered by existing exact pins.
-- Bootstrap tools and transitive Python/npm dependencies where a top-level
-  version or action commit does not identify every downloaded input.
+- Bootstrap tools and remaining Python dependency closures,
+  where a top-level version or action commit does not identify every input.
 
 Existing Cargo locks, action commits, component-policy hashes, and Windows
 installer-tool pins remain separate controls. H2.2 completes only after the
 remaining input inventory, enforceable pins or explicitly reviewed exceptions,
 and drift rejection evidence are in place.
+
+## Node lint dependency closure
+
+The Markdown and TOML checks use a reviewed npm lock containing all 87 dependency
+packages, with exact versions, tarball URLs, and SHA-512 integrity values. Fresh
+CI installs use `npm ci` with lifecycle scripts disabled and invoke installed
+binaries directly. The Markdown linter and its TOML parser advance to clear the
+observed dependency advisories; Taplo remains at 0.7.0. Updating, local
+validation, and the remaining Node/npm bootstrap boundary are documented in
+the [lint tool manifest directory](../build-aux/toolchain/node-lint/README.md).

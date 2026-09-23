@@ -1,0 +1,19 @@
+{
+  "name": "balun-ci-lint-tools",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Reviewed dependency closure for Balun's Markdown and TOML checks",
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@taplo/cli": "0.7.0",
+    "markdownlint-cli2": "0.23.2"
+  },
+  "overrides": {
+    "markdownlint-cli2@0.23.2": {
+      "smol-toml": "1.8.0"
+    }
+  }
+}

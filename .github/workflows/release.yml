@@ -461,7 +461,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             binutils build-essential ca-certificates curl git libadwaita-1-dev \
             libdbus-1-dev libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
-            libgtk-4-dev perl pkg-config gstreamer1.0-gtk4 gstreamer1.0-libav \
+            libgtk-4-dev perl pkg-config python3 tar gstreamer1.0-gtk4 gstreamer1.0-libav \
             gstreamer1.0-plugins-bad gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good
 
@@ -551,7 +551,7 @@ jobs:
         run: >-
           pacman -Syu --noconfirm binutils git gst-libav gst-plugin-gtk4
           gst-plugins-bad-libs gst-plugins-base-libs gst-plugins-good gstreamer
-          gtk4 libadwaita libarchive perl pkgconf rust
+          gtk4 libadwaita libarchive perl pkgconf python rust tar zstd
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

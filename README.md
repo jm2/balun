@@ -23,7 +23,7 @@ address so you know which tuner failed.
 ## Features
 
 | Feature | Status |
-|---------|--------|
+| --------- | -------- |
 | Local HDHomeRun discovery (IPv4 broadcast, IPv6 multicast) | ✅ |
 | Find a routed tuner by IP address or hostname (WireGuard and other tunnels) | ✅ Remembered across launches |
 | Approved private-range enumeration (`balun-discover` only, `/24` or narrower) | ✅ |
@@ -467,8 +467,9 @@ ledger.
 
 Linux native package inspection also requires Python 3 and freezes one
 [bounded private input snapshot](docs/linux-archive-snapshots.md) for all metadata and payload
-tools. RPM payloads also receive bounded decoding and member preflight before extraction.
-Native parser isolation and Debian/Arch preflight remain pending; the release workflow
+tools. RPM, Debian, and Arch payloads receive bounded decoding and member preflight before
+extraction. Debian inspection requires GNU tar; Arch requires zstd and GNU tar.
+Native parser isolation and extraction containment remain pending; the release workflow
 continues to accept only locally produced packages.
 
 ### Testing & Code Quality
@@ -705,7 +706,7 @@ from the selected device. Reloading stops the current channel; select a channel 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
-|----------|--------|
+| ---------- | -------- |
 | `F11` | Toggle fullscreen |
 | `Escape` | Exit fullscreen |
 | `Ctrl+F` | Focus channel search |

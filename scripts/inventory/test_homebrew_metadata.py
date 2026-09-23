@@ -41,7 +41,8 @@ class HomebrewMetadataTests(unittest.TestCase):
             "ruby_source_checksum": {"sha256": hashlib.sha256(self.recipe.read_bytes()).hexdigest()},
             "urls": {"stable": {"url": "https://example.com/fixture-1.2.3.tar.xz",
                                 "checksum": "b" * 64, "revision": None}},
-            "license": {"any_of": ["MIT", "Apache-2.0"]}}]}
+            "license": {"any_of": ["MIT", "Apache-2.0"]},
+            "balun_source_inputs": {"schema": 1, "resources": [], "patches": []}}]}
 
     def query(self, recipe, _deadline):
         self.assertEqual(recipe, self.recipe)
@@ -55,6 +56,7 @@ class HomebrewMetadataTests(unittest.TestCase):
         link.symlink_to(self.member)
         result = self.collect(members=[link])
         package = result["packages"][0]
+        self.assertEqual(result["schema"], 2)
         self.assertEqual(package["key"], "fixture/1.2.3_2")
         self.assertEqual(package["version"], "1.2.3")
         self.assertEqual(package["license"], {"any_of": ["MIT", "Apache-2.0"]})
@@ -64,6 +66,111 @@ class HomebrewMetadataTests(unittest.TestCase):
                          "package": "fixture/1.2.3_2", "size": self.member.stat().st_size,
                          "sha256": hashlib.sha256(self.member.read_bytes()).hexdigest()}])
         self.assertNotIn(str(self.root), json.dumps(result))
+
+    def test_additional_sources_have_independent_identities_and_ordered_patches(self):
+        inputs = self.metadata["formulae"][0]["balun_source_inputs"]
+        source = {"url": "https://example.com/resource.tar.xz", "checksum": "e" * 64,
+                  "revision": None, "git": False}
+        patch = {"kind": "external", "strip": "p1", "directory": "subprojects/codec",
+                 "source": source, "files": ["fixes/first.patch", "fixes/second.patch"]}
+        embedded = {"kind": "data", "strip": "p0", "directory": None,
+                    "size": 25, "sha256": "f" * 64}
+        inputs["resources"] = [dict(source, name="z-helper", version_hint="9.0", patches=[patch]),
+                               dict(source, name="a-codec", version_hint=None, patches=[])]
+        inputs["patches"] = [patch, embedded]
+        result = self.collect()["packages"][0]["source_inputs"]
+        self.assertEqual([item["name"] for item in result["resources"]], ["a-codec", "z-helper"])
+        self.assertIsNone(result["resources"][0]["version_hint"])
+        self.assertEqual(result["resources"][1]["version_hint"], "9.0")
+        self.assertEqual(result["resources"][0]["source"]["identity"], "sha256:" + "e" * 64)
+        self.assertEqual([item["kind"] for item in result["patches"]], ["external", "data"])
+        self.assertEqual(result["patches"][0]["files"], patch["files"])
+        self.assertEqual(result["resources"][1]["patches"], [result["patches"][0]])
+        for length, prefix in [(40, "git:"), (64, "git-sha256:")]:
+            git = dict(source, checksum=None, revision="d" * length, git=True)
+            self.assertEqual(collector.download_source(git)["identity"], prefix + "d" * length)
+
+    def test_source_inputs_reject_missing_mutable_ambiguous_or_unbounded_records(self):
+        source = {"url": "https://example.com/input", "checksum": "e" * 64,
+                  "revision": None, "git": False}
+        resource = dict(source, name="codec", version_hint="2.0", patches=[])
+        invalid_sources = [dict(source, checksum=None), dict(source, checksum="short"),
+                           dict(source, checksum=None, revision="main", git=True),
+                           dict(source, checksum=None, revision="f" * 40),
+                           dict(source, git=1), dict(source, url="https://example.com/input?token=private")]
+        for item in invalid_sources:
+            with self.subTest(item=item), self.assertRaises(collector.Invalid):
+                collector.download_source(item)
+        empty = {"schema": 1, "resources": [], "patches": []}
+        invalid_inputs = [None, {}, dict(empty, schema=True), dict(empty, unexpected=[]),
+                          dict(empty, resources=None), dict(empty, patches=None),
+                          dict(empty, resources=[resource, dict(resource, name="CODEC")]),
+                          dict(empty, resources=[dict(resource, version_hint=True)]),
+                          dict(empty, patches=[{"kind": "local"}])]
+        formula = self.metadata["formulae"][0]
+        for value in invalid_inputs:
+            formula["balun_source_inputs"] = value
+            with self.subTest(value=value), self.assertRaises(collector.Invalid):
+                self.collect()
+        del formula["balun_source_inputs"]
+        with self.assertRaises(collector.Invalid):
+            self.collect()
+        embedded_patch = {"kind": "string", "strip": "p1", "directory": None, "size": 1, "sha256": "f" * 64}
+        for change in [dict(strip="p-1"), dict(directory="../escape"), dict(size=True),
+                       dict(size=collector.MAX_METADATA + 1), dict(sha256="short")]:
+            with self.subTest(change=change), self.assertRaises(collector.Invalid):
+                collector.source_inputs(dict(empty, patches=[dict(embedded_patch, **change)]))
+        external = {"kind": "external", "strip": "p1", "directory": None,
+                    "source": source, "files": []}
+        for files in [["../escape"], ["one.patch", "ONE.patch"], "one.patch"]:
+            with self.subTest(files=files), self.assertRaises(collector.Invalid):
+                collector.source_inputs(dict(empty, patches=[dict(external, files=files)]))
+        # One total patch budget covers primary and resource-specific patches.
+        with patch.object(collector, "MAX_PATCHES", 1), self.assertRaises(collector.Invalid):
+            collector.source_inputs(dict(empty, patches=[embedded_patch],
+                                         resources=[dict(resource, patches=[embedded_patch])]))
+        with patch.object(collector, "MAX_RESOURCES", 0), self.assertRaises(collector.Invalid):
+            collector.source_inputs(dict(empty, resources=[resource]))
+
+    def test_local_patch_uses_installed_receipt_commit_without_current_tap_lookup(self):
+        local = {"kind": "local", "strip": "p1", "directory": None,
+                 "file": "Patches/fixture/fix space.diff"}
+        self.metadata["formulae"][0]["balun_source_inputs"]["patches"] = [local]
+        receipt = json.loads(self.receipt.read_text())
+        receipt["source"]["tap_git_head"] = "a" * 40
+        self.receipt.write_text(json.dumps(receipt))
+        # A current formula's tap revision must not replace the installed one.
+        self.metadata["formulae"][0]["tap_git_head"] = "b" * 40
+        result = self.collect()["packages"][0]["source_inputs"]["patches"][0]
+        self.assertEqual(result["file"], local["file"])
+        self.assertEqual(result["source"], {
+            "reference": "https://github.com/Homebrew/homebrew-core/blob/" + "a" * 40 + "/Patches/fixture/fix%20space.diff",
+            "identity": "git:" + "a" * 40})
+        for commit in [None, "", "main", "short", "b" * 39, "B" * 40, True]:
+            receipt["source"]["tap_git_head"] = commit
+            self.receipt.write_text(json.dumps(receipt))
+            with self.subTest(commit=commit), self.assertRaisesRegex(collector.Invalid, "immutable tap identity"):
+                self.collect()
+        for path in ["../outside", "/absolute", "Patches/../outside", "Patches\\outside"]:
+            with self.subTest(path=path), self.assertRaises(collector.Invalid):
+                collector.source_inputs({"schema": 1, "resources": [], "patches": [dict(local, file=path)]},
+                                        tap_commit="a" * 40)
+
+    def test_public_github_patch_selector_is_preserved_without_admitting_other_queries(self):
+        base = "https://github.com/example/project/commit/" + "a" * 40 + ".patch"
+        source = {"url": base + "?full_index=1", "checksum": "e" * 64, "revision": None, "git": False}
+        self.assertEqual(collector.download_source(source)["reference"], source["url"])
+        invalid = [base + "?full_index=0", base + "?full_index=1&token=private",
+                   base + "?full_index=1#private", base + "?FULL_INDEX=1",
+                   base.replace("github.com", "example.com") + "?full_index=1",
+                   base.replace("https://", "https://user:private@") + "?full_index=1",
+                   base.replace("a" * 40, "main") + "?full_index=1"]
+        for url in invalid:
+            with self.subTest(url=url), self.assertRaises(collector.Invalid):
+                collector.download_source(dict(source, url=url))
+        # The general catalog/source-delivery URL policy is unchanged.
+        with self.assertRaises(collector.Invalid):
+            collector.reference(source["url"])
 
     def test_current_formula_cannot_replace_installed_recipe(self):
         mutations = [lambda f: f.update(name="other"),
@@ -170,13 +277,15 @@ class HomebrewMetadataTests(unittest.TestCase):
                 collector.query_formula(self.recipe, time.monotonic() + 10)
             self.assertIsNotNone(processes[-1].poll())
 
-    @unittest.skipUnless(shutil.which("ruby"), "requires Ruby for the installed-file loader contract")
-    def test_ruby_helper_selects_the_exact_file_loader(self):
+    def ruby_fixture(self, extra=""):
         # Model the two distinct Homebrew entry points: generic resolution must
         # not be used when inspecting a recipe selected by its installed path.
         stub = self.root / "ruby-stub"
         stub.mkdir()
         (stub / "formulary.rb").write_text("""require "digest"
+class ExternalPatch; end
+class StringPatch; end
+class DATAPatch < StringPatch; end
 module Formulary
   def self.factory(*)
     raise "generic formula resolution is forbidden in this fixture"
@@ -190,20 +299,170 @@ module Formulary
       self
     end
     attr_reader :path
+    def stable
+      Struct.new(:resources, :patches).new({}, [])
+    end
     def to_hash
       { "name" => path.basename(".rb").to_s,
         "ruby_source_checksum" => { "sha256" => Digest::SHA256.file(path).hexdigest } }
     end
   end
 end
-""")
+""" + extra)
         helper = Path(collector.__file__).with_name("homebrew_recipe.rb")
-        result = subprocess.run(["ruby", "-I", str(stub), str(helper), str(self.recipe)],
-                                capture_output=True, text=True, timeout=10, check=True)
+        return subprocess.run(["ruby", "-I", str(stub), str(helper), str(self.recipe)],
+                              capture_output=True, text=True, timeout=10)
+
+    @unittest.skipUnless(shutil.which("ruby"), "requires Ruby for the installed-file loader contract")
+    def test_ruby_helper_selects_the_exact_file_loader(self):
+        result = self.ruby_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
         self.assertEqual(json.loads(result.stdout), {"casks": [], "formulae": [{
             "name": "fixture", "ruby_source_checksum": {
-                "sha256": hashlib.sha256(self.recipe.read_bytes()).hexdigest()}}]})
+                "sha256": hashlib.sha256(self.recipe.read_bytes()).hexdigest()},
+            "balun_source_inputs": {"schema": 1, "resources": [], "patches": []}}]})
+
+    @unittest.skipUnless(shutil.which("ruby"), "requires Ruby for resource/patch serialization")
+    def test_ruby_helper_records_resources_and_embedded_and_external_patches_without_fetching(self):
+        result = self.ruby_fixture('''
+class GitDownloadStrategy; end
+class CurlDownloadStrategy; end
+class ExternalPatch
+  attr_reader :strip, :resource
+  def initialize(resource)
+    @strip = :p2
+    @resource = resource
+  end
+end
+class StringPatch
+  def strip = :p1
+  def contents = "inline patch\\n"
+end
+class DATAPatch < StringPatch
+  attr_accessor :path
+  def contents
+    raise "DATA path not selected" unless path.file?
+    "DATA patch\\n"
+  end
+end
+ResourceFixture = Struct.new(:name, :version, :patches) do
+  def url = "https://example.com/input"
+  def checksum = Struct.new(:hexdigest).new("e" * 64)
+  def specs = {}
+  def download_strategy = CurlDownloadStrategy
+  def directory = "codec"
+  def patch_files = ["first.patch", "second.patch"]
+  def fetch = raise("must not download")
+  def stage = raise("must not stage")
+end
+class Formulary::FromPathLoader
+  def stable
+    patch = ExternalPatch.new(ResourceFixture.new("patch", nil, []))
+    resource = ResourceFixture.new("codec", "7.0", [patch])
+    Struct.new(:resources, :patches).new({"codec" => resource}, [StringPatch.new, DATAPatch.new, patch])
+  end
+end
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        raw = json.loads(result.stdout)["formulae"][0]["balun_source_inputs"]
+        result = collector.source_inputs(raw)
+        self.assertEqual(result["resources"][0]["version_hint"], "7.0")
+        self.assertEqual(result["resources"][0]["source"]["identity"], "sha256:" + "e" * 64)
+        self.assertEqual([item["kind"] for item in result["patches"]], ["string", "data", "external"])
+        for item, content in zip(result["patches"], [b"inline patch\n", b"DATA patch\n"]):
+            self.assertEqual(item["size"], len(content))
+            self.assertEqual(item["sha256"], hashlib.sha256(content).hexdigest())
+        self.assertIsNone(result["patches"][0]["directory"])
+        self.assertIsNone(result["patches"][1]["directory"])
+        self.assertEqual(result["patches"][2]["directory"], "codec")
+        self.assertEqual(result["patches"][2], result["resources"][0]["patches"][0])
+
+    @unittest.skipUnless(shutil.which("ruby"), "requires Ruby for local patch declarations")
+    def test_ruby_helper_records_local_patch_path_without_reading_current_tap(self):
+        result = self.ruby_fixture('''
+class LocalPatch
+  def strip = :p1
+  def file = "Patches/fixture/fix.diff"
+  def contents = raise("must not read a separate local patch")
+end
+class Formulary::FromPathLoader
+  def stable = Struct.new(:resources, :patches).new({}, [LocalPatch.new])
+end
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        raw = json.loads(result.stdout)["formulae"][0]["balun_source_inputs"]
+        self.assertEqual(raw["patches"], [{"kind": "local", "strip": "p1", "directory": None,
+                                           "file": "Patches/fixture/fix.diff"}])
+        self.assertEqual(collector.source_inputs(raw, tap_commit="a" * 40)["patches"][0]["source"]["identity"],
+                         "git:" + "a" * 40)
+        self.assertNotIn("must not read a separate local patch", result.stderr)
+
+    @unittest.skipUnless(shutil.which("ruby"), "requires Ruby for unsupported patch rejection")
+    def test_ruby_helper_rejects_unknown_patch_kinds(self):
+        result = self.ruby_fixture('''
+class UnknownPatch
+  def strip = :p1
+  def contents = raise("must not read an unknown patch")
+end
+class Formulary::FromPathLoader
+  def stable = Struct.new(:resources, :patches).new({}, [UnknownPatch.new])
+end
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("unsupported installed patch declaration", result.stderr)
+        self.assertNotIn("must not read an unknown patch", result.stderr)
+
+    @unittest.skipUnless(shutil.which("brew"), "requires native Homebrew recipe evaluation")
+    def test_real_homebrew_evaluates_resource_and_patch_declarations(self):
+        # No install, download, or native load: the existing inert member selects
+        # an authored formula, evaluated through the production brew ruby path.
+        self.recipe.write_text('''class Fixture < Formula
+  desc "Balun source-input fixture"
+  homepage "https://example.com/fixture"
+  url "https://example.com/fixture-1.2.3.tar.xz"
+  sha256 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  license "MIT"
+  revision 2
+  resource "codec" do
+    url "https://example.com/codec-9.0.tar.xz"
+    sha256 "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    patch do
+      url "https://example.com/resource-fix.patch"
+      sha256 "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    end
+  end
+  patch :DATA
+  patch do
+    file "Patches/fixture/historical.diff"
+  end
+  def install
+    raise "fixture must not be installed"
+  end
+end
+__END__
+--- a/fixture
++++ b/fixture
+@@ -1 +1 @@
+-before
++after
+''')
+        receipt = json.loads(self.receipt.read_text())
+        receipt["source"]["tap_git_head"] = "a" * 40
+        self.receipt.write_text(json.dumps(receipt))
+        result = collector.collect(self.cellar, [self.member])["packages"][0]["source_inputs"]
+        self.assertEqual(result["resources"][0]["name"], "codec")
+        self.assertEqual(result["resources"][0]["version_hint"], "9.0")
+        self.assertEqual(result["resources"][0]["source"]["identity"], "sha256:" + "e" * 64)
+        self.assertEqual(result["resources"][0]["patches"][0]["source"]["identity"], "sha256:" + "f" * 64)
+        content = self.recipe.read_bytes().split(b"__END__\n", 1)[1]
+        self.assertEqual(result["patches"][0]["kind"], "data")
+        self.assertEqual(result["patches"][0]["size"], len(content))
+        self.assertEqual(result["patches"][0]["sha256"], hashlib.sha256(content).hexdigest())
+        self.assertEqual(result["patches"][1]["kind"], "local")
+        self.assertEqual(result["patches"][1]["source"]["identity"], "git:" + "a" * 40)
+        self.assertTrue(result["patches"][1]["source"]["reference"].endswith("/Patches/fixture/historical.diff"))
 
     def test_diagnostic_reasons_are_closed_and_never_echo_exception_data(self):
         reason = "installed receipt and formula versions differ"

@@ -120,9 +120,9 @@ and paused. Independent correctness and package-inspection fixes may continue.
   builder/input identity to final artifact digests, publish verifiable
   attestations, and test mismatched source or payload rejection.
 
-- [ ] **H2.4 — Contain native archive inspection.** Preflight member paths,
-  types, links, sizes, and extraction budgets before processing untrusted
-  artifacts; retain the current trusted-local-output boundary until proven.
+- [ ] **H2.4 — Contain native archive inspection.** After [member preflight](linux-archive-snapshots.md),
+  add native parser isolation and extraction/header-query budgets. Retain the
+  current trusted-local-output boundary until containment is proven.
 
 ## H3 — Security and privacy maintenance
 

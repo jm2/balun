@@ -21,7 +21,9 @@ use super::transport::{PIPELINE_URI, STREAM_STARTED_MESSAGE, StreamTransport, Tr
 use crate::controller::{OperationGeneration, StreamHandoff, StreamHandoffError, StreamSelection};
 use crate::domain::ChannelKey;
 
+mod media_observation;
 mod tune_timing;
+use media_observation::{MEDIA_PROGRESS_MESSAGE, MediaObserver};
 use tune_timing::{Outcome as TimingOutcome, Phase as TimingPhase, TuneTiming};
 
 // Bounds later settlement/join waits after synchronous native calls return.
@@ -230,6 +232,7 @@ pub enum TuneCompletion {
 enum PipelineEvent {
     /// The transport pushed its first stream bytes; the live clock may start.
     StreamStarted,
+    MediaProgress,
     Playing,
     Buffering(u8),
     EndOfStream,
@@ -629,11 +632,15 @@ impl<B: PipelineBackend> SessionCore<B> {
             }
             PipelineEvent::Playing => {
                 self.record_timing(TimingPhase::PlayingNoticeReceived);
-                self.finish_timing(TimingOutcome::PlayingNotice);
                 self.publish_state(PlaybackSessionState::Playing {
                     generation,
                     channel_key,
                 });
+            }
+            PipelineEvent::MediaProgress => {
+                if let Some(timing) = self.timing.as_mut() {
+                    timing.flush();
+                }
             }
             PipelineEvent::Buffering(percent) => {
                 self.publish_state(PlaybackSessionState::Buffering {
@@ -723,6 +730,7 @@ struct GstreamerPipeline {
     pipeline: gst::Pipeline,
     paintable: gdk::Paintable,
     bus_watch: Option<gst::bus::BusWatchGuard>,
+    media_observer: Option<MediaObserver>,
     armed: bool,
 }
 
@@ -732,6 +740,7 @@ impl GstreamerPipeline {
         // Detach callbacks before requesting NULL so teardown messages cannot
         // mutate the settled generation.
         self.bus_watch.take();
+        self.media_observer.take();
         // Cancel the private HTTP request first so the device connection
         // starts closing while the pipeline settles. The transport is joined
         // only after NULL, because a flushing appsrc is what unblocks a feeder
@@ -772,6 +781,7 @@ impl GstreamerPipeline {
 impl Drop for GstreamerPipeline {
     fn drop(&mut self) {
         self.bus_watch.take();
+        self.media_observer.take();
         if let Some(transport) = self.source_policy.retire() {
             drop(transport);
         }
@@ -837,6 +847,15 @@ impl PipelineBackend for GstreamerBackend {
                 {
                     Some(PipelineEvent::StreamStarted)
                 }
+                gst::MessageView::Application(application)
+                    if message.src().is_some_and(|source| {
+                        source == watched_pipeline.upcast_ref::<gst::Object>()
+                    }) && application
+                        .structure()
+                        .is_some_and(|structure| structure.name() == MEDIA_PROGRESS_MESSAGE) =>
+                {
+                    Some(PipelineEvent::MediaProgress)
+                }
                 gst::MessageView::Error(_)
                 | gst::MessageView::Element(_)
                 | gst::MessageView::Application(_) => {
@@ -897,12 +916,15 @@ impl PipelineBackend for GstreamerBackend {
                 PlaybackSessionFailure::PipelineConstruction,
             ));
         }
+        let media_observer =
+            MediaObserver::install(&pipeline, &video_sink, &paintable, timing.media());
         let mut active = GstreamerPipeline {
             source_policy,
             unjoined_transport: None,
             pipeline,
             paintable,
             bus_watch: Some(bus_watch),
+            media_observer: Some(media_observer),
             armed: true,
         };
         timing.record(TimingPhase::GraphPrepared);
@@ -1418,7 +1440,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_timings_exclude_stale_events_and_end_once_at_playing_notice() {
+    fn startup_timings_exclude_stale_events_and_survive_playing_until_stop() {
         let output = tune_timing::tests::capture(|| {
             let control = FakeControl::default();
             let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
@@ -1430,6 +1452,7 @@ mod tests {
             core.borrow_mut()
                 .complete_tune(first, Ok(handoff(&first_key(), 11)), events_for(&core))
                 .unwrap();
+            let retired_media = core.borrow().timing.as_ref().unwrap().media();
             let second = core
                 .borrow_mut()
                 .begin_tune(selection(&second_key(), 11))
@@ -1445,15 +1468,26 @@ mod tests {
                 control.emit(second_generation, PipelineEvent::Buffering(25));
                 control.emit(second_generation, PipelineEvent::Playing);
             }
+            assert!(core.borrow().timing.is_some());
+            assert!(!retired_media.record(media_observation::MediaPhase::AudioSinkBuffer));
+            let current_media = core.borrow().timing.as_ref().unwrap().media();
+            assert!(current_media.record(media_observation::MediaPhase::VideoSinkBuffer));
+            control.emit(first_generation, PipelineEvent::MediaProgress);
+            control.emit(second_generation, PipelineEvent::MediaProgress);
+            control.emit(second_generation, PipelineEvent::MediaProgress);
             core.borrow_mut().stop().unwrap();
+            assert!(!current_media.record(media_observation::MediaPhase::AudioSinkBuffer));
+            control.emit(second_generation, PipelineEvent::MediaProgress);
             control.emit(second_generation, PipelineEvent::Playing);
             assert!(core.borrow().timing.is_none());
         });
         let lines: Vec<_> = output.lines().collect();
         // FakeBackend does not claim the two native-only phases.
-        assert_eq!(lines.len(), 10, "{output}");
+        assert_eq!(lines.len(), 11, "{output}");
+        assert_eq!(output.matches("phase=\"video_sink_buffer\"").count(), 1);
+        assert!(!output.contains("audio_sink_buffer"));
         assert_eq!(output.matches("outcome=\"superseded\"").count(), 1);
-        assert_eq!(output.matches("outcome=\"playing_notice\"").count(), 1);
+        assert_eq!(output.matches("outcome=\"stopped\"").count(), 1);
         assert_eq!(
             output.matches("phase=\"stream_notice_received\"").count(),
             1
@@ -1769,6 +1803,7 @@ mod tests {
         );
 
         let request_generation = request.generation();
+        let media = session.inner.borrow().timing.as_ref().unwrap().media();
         assert_eq!(
             session.complete_tune(request, Ok(handoff)),
             Ok(TuneCompletion::Applied)
@@ -1839,6 +1874,9 @@ mod tests {
             observed_playing,
             "the production session must publish PLAYING from the appsrc feed"
         );
+        assert!(media.observed(media_observation::MediaPhase::VideoSinkBuffer));
+        assert!(media.observed(media_observation::MediaPhase::PaintableInvalidated));
+        assert!(!media.observed(media_observation::MediaPhase::ObserverIncomplete));
         assert_eq!(session.state().unwrap(), PlaybackSessionState::Stopped);
         assert!(
             session.paintable().unwrap().is_none(),
