@@ -465,7 +465,7 @@ mod tests {
     use crate::playback::pipeline_failure::{PlaybackPipelineFailure, classify_pipeline_message};
     use crate::playback::test_support::{
         FIXTURE_BYTES, FixtureStreamServer, StreamBehavior, fixture_response,
-        hold_decoder_selection, http_response,
+        hold_decoder_selection, http_response, open_ended_response_head,
     };
     use crate::playback::transport::{PIPELINE_URI, STREAM_STARTED_MESSAGE};
 
@@ -888,6 +888,81 @@ mod tests {
                 && !deinterlacing.contains("output-framerate=not negotiated"),
             "the actual playsink filter must retain the selected software method: {deinterlacing}"
         );
+    }
+
+    /// A tuner can answer 200 and end the body before any byte. The session
+    /// holds at PAUSED until the stream-started notice, and a live `appsrc`
+    /// never delivers EOS while paused, so only a transport failure can end
+    /// the tune. Production deadlines keep a timeout from standing in for it.
+    #[test]
+    fn playbin3_paused_hold_fails_offline_when_the_stream_ends_before_any_data() {
+        for (response, shape) in [
+            (
+                http_response("200 OK", &[("Content-Length", "0".to_owned())], b""),
+                "zero content length",
+            ),
+            (open_ended_response_head(), "open-ended head then close"),
+        ] {
+            let playbin = pipeline().expect("the empty-stream regression requires playbin3");
+            let server = FixtureStreamServer::start(response, StreamBehavior::Close);
+            let video_sink = gst::ElementFactory::make("fakesink").build().unwrap();
+            let audio_sink = gst::ElementFactory::make("fakesink").build().unwrap();
+            crate::playback::session::configure_playbin_video(&playbin, &video_sink).unwrap();
+            playbin.set_property("audio-sink", &audio_sink);
+            let policy = SourcePolicy::install(
+                &playbin,
+                handoff(&server.stream_url()),
+                TransportConfig::PRODUCTION,
+                None,
+            )
+            .expect("install the appsrc policy");
+            playbin.set_property("uri", PIPELINE_URI);
+            let bus = playbin.bus().unwrap();
+            playbin
+                .set_state(gst::State::Paused)
+                .expect("hold the pipeline at PAUSED");
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut outcome = None;
+            let mut started = false;
+            while outcome.is_none() && Instant::now() < deadline {
+                let Some(message) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) else {
+                    continue;
+                };
+                if let Some(failure) = classify_pipeline_message(&message, &playbin) {
+                    outcome = Some(failure);
+                    continue;
+                }
+                match message.view() {
+                    gst::MessageView::Eos(_) => panic!("{shape}: EOS during the PAUSED hold"),
+                    gst::MessageView::Application(application)
+                        if application.structure().is_some_and(|structure| {
+                            structure.name() == STREAM_STARTED_MESSAGE
+                        }) =>
+                    {
+                        started = true;
+                    }
+                    _ => {}
+                }
+            }
+            assert!(server.request(Duration::from_secs(3)).is_some(), "{shape}");
+            let (_, held, _) = playbin.state(gst::ClockTime::ZERO);
+            let mut transport = policy
+                .retire()
+                .expect("the accepted transport is returned once");
+            playbin.set_state(gst::State::Null).unwrap();
+            let (transition, current, _) = playbin.state(gst::ClockTime::from_seconds(5));
+            assert!(transition.is_ok());
+            assert_eq!(current, gst::State::Null);
+            assert_eq!(
+                transport.join(Instant::now() + Duration::from_secs(5)),
+                Ok(())
+            );
+
+            assert_eq!(outcome, Some(PlaybackPipelineFailure::Offline), "{shape}");
+            assert!(!started, "{shape}: no bytes means no stream-started notice");
+            assert_eq!(held, gst::State::Paused, "{shape}");
+        }
     }
 
     /// A stream Balun never presents, muxed beside the checked-in video.
