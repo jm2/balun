@@ -76,6 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Linux, routine IPv6 address refreshes no longer cancel device searches and routed approvals
+  every few seconds, and a remembered device whose startup search was interrupted is tried again.
+- Losing one IPv6 address, such as a rotated temporary address, no longer removes tuners found over
+  IPv4 or stops playback.
 - Discovery keeps working after a tuner's address passes to another tuner, one bad tuner count no
   longer hides every device or halts discovery, and re-probing the playing tuner no longer stops it.
 - Debian control/data and Arch payloads now receive bounded decoding and complete

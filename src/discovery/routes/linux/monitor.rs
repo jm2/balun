@@ -60,6 +60,40 @@ const RECONCILIATION_CAPACITY: usize = 1;
 pub(in crate::discovery) trait RouteMonitorObserver: Send + Sync {
     fn invalidate(&self);
     fn poison(&self);
+
+    /// Called with the kind of each validated notification immediately before
+    /// `invalidate`. Authority observers ignore it: invalidation never depends
+    /// on the kind.
+    fn observed(&self, _kind: NotificationKind) {}
+}
+
+/// The rtnetlink group that carried one validated notification.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::discovery) enum NotificationKind {
+    Link,
+    Ipv4Address,
+    Ipv6Address,
+    Ipv4Route,
+    Ipv4Rule,
+}
+
+impl NotificationKind {
+    /// Whether the notification reported an interface address, which covers
+    /// the lifetime refreshes routers trigger for addresses that already exist.
+    pub(in crate::discovery) const fn is_address(self) -> bool {
+        matches!(self, Self::Ipv4Address | Self::Ipv6Address)
+    }
+
+    const fn from_group(group: u32) -> Option<Self> {
+        match group {
+            RTNLGRP_LINK => Some(Self::Link),
+            RTNLGRP_IPV4_IFADDR => Some(Self::Ipv4Address),
+            RTNLGRP_IPV6_IFADDR => Some(Self::Ipv6Address),
+            RTNLGRP_IPV4_ROUTE => Some(Self::Ipv4Route),
+            RTNLGRP_IPV4_RULE => Some(Self::Ipv4Rule),
+            _ => None,
+        }
+    }
 }
 
 /// A coalesced request for the controller to debounce and rebuild its baseline.
@@ -329,9 +363,10 @@ impl MonitorCore {
         source_pid: u32,
         source_groups: &Groups,
     ) -> Result<(), LinuxRouteMonitorError> {
-        if let Err(error) = validate_notification(bytes, source_pid, source_groups) {
-            return self.fail(error);
-        }
+        let kind = match validate_notification(bytes, source_pid, source_groups) {
+            Ok(kind) => kind,
+            Err(error) => return self.fail(error),
+        };
 
         // This is deliberately sticky for the lifetime of the subscription.
         // A cancelled or repeated baseline barrier can therefore never turn a
@@ -339,6 +374,7 @@ impl MonitorCore {
         self.notification_seen = true;
         // Invalidate before notification. A full channel only coalesces work;
         // it never delays or suppresses authority invalidation.
+        self.observer.observed(kind);
         self.observer.invalidate();
         match self.reconciliation.try_send(RouteReconciliationRequired) {
             Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
@@ -572,7 +608,7 @@ fn validate_notification(
     bytes: &[u8],
     source_pid: u32,
     source_groups: &Groups,
-) -> Result<(), LinuxRouteMonitorError> {
+) -> Result<NotificationKind, LinuxRouteMonitorError> {
     // Only the sender sockaddr is kernel-authenticated. The nlmsg_pid header is
     // ordinary datagram content and can be forged by a userspace netlink peer.
     if source_pid != 0 {
@@ -583,7 +619,13 @@ fn validate_notification(
         return Err(LinuxRouteMonitorError::UnsupportedNotification);
     }
 
-    validate_netlink_frames(bytes, groups.as_slice())
+    validate_netlink_frames(bytes, groups.as_slice())?;
+    // Every message was checked against exactly this one source group.
+    match groups.as_slice() {
+        [group] => NotificationKind::from_group(*group)
+            .ok_or(LinuxRouteMonitorError::UnsupportedNotification),
+        _ => Err(LinuxRouteMonitorError::UnsupportedNotification),
+    }
 }
 
 const NETLINK_HEADER_BYTES: usize = 16;
@@ -775,6 +817,7 @@ mod tests {
     struct FakeObserver {
         invalidations: AtomicUsize,
         poisons: AtomicUsize,
+        kinds: std::sync::Mutex<Vec<(NotificationKind, usize)>>,
     }
 
     impl RouteMonitorObserver for FakeObserver {
@@ -784,6 +827,11 @@ mod tests {
 
         fn poison(&self) {
             self.poisons.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn observed(&self, kind: NotificationKind) {
+            let invalidations = self.invalidations.load(Ordering::SeqCst);
+            self.kinds.lock().unwrap().push((kind, invalidations));
         }
     }
 
@@ -952,6 +1000,56 @@ mod tests {
         assert_eq!(observer.poisons.load(Ordering::SeqCst), 0);
         assert_eq!(receiver.try_recv(), Ok(RouteReconciliationRequired));
         assert_eq!(receiver.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+    }
+
+    #[test]
+    fn each_notification_reports_its_kind_before_invalidating() {
+        let events = [
+            (Rtm::Newlink, RTNLGRP_LINK, NotificationKind::Link),
+            (
+                Rtm::Newaddr,
+                RTNLGRP_IPV4_IFADDR,
+                NotificationKind::Ipv4Address,
+            ),
+            (
+                Rtm::Newaddr,
+                RTNLGRP_IPV6_IFADDR,
+                NotificationKind::Ipv6Address,
+            ),
+            (
+                Rtm::Newroute,
+                RTNLGRP_IPV4_ROUTE,
+                NotificationKind::Ipv4Route,
+            ),
+            (Rtm::Newrule, RTNLGRP_IPV4_RULE, NotificationKind::Ipv4Rule),
+        ];
+        let (mut core, observer, _receiver) = core();
+
+        for (message_type, group, _) in events {
+            let bytes = datagram(u16::from(message_type), group);
+            core.notification(&bytes, 0, &Groups::new_groups(&[group]))
+                .unwrap();
+        }
+
+        let kinds = observer.kinds.lock().unwrap().clone();
+        let expected = events
+            .iter()
+            .enumerate()
+            .map(|(index, (_, _, kind))| (*kind, index))
+            .collect::<Vec<_>>();
+        // Each kind arrives while the invalidation count still excludes its
+        // own notification: the report precedes, and never replaces, it.
+        assert_eq!(kinds, expected);
+        assert_eq!(observer.invalidations.load(Ordering::SeqCst), events.len());
+        assert!(NotificationKind::Ipv4Address.is_address());
+        assert!(NotificationKind::Ipv6Address.is_address());
+        for kind in [
+            NotificationKind::Link,
+            NotificationKind::Ipv4Route,
+            NotificationKind::Ipv4Rule,
+        ] {
+            assert!(!kind.is_address());
+        }
     }
 
     #[test]

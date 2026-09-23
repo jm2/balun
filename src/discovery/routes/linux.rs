@@ -29,7 +29,7 @@ use super::{
 mod monitor;
 
 pub(in crate::discovery) use monitor::{
-    LinuxRouteEventMonitor, LinuxRouteMonitorError, RouteMonitorObserver,
+    LinuxRouteEventMonitor, LinuxRouteMonitorError, NotificationKind, RouteMonitorObserver,
     RouteReconciliationRequired,
 };
 

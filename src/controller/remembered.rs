@@ -100,6 +100,9 @@ pub struct RediscoveryQueue {
     queue: VecDeque<ExactDiscoveryTarget>,
     awaiting: Option<OperationGeneration>,
     in_flight: Option<ExactDiscoveryTarget>,
+    /// Targets already sent again after an interrupted probe; each is
+    /// retried at most once.
+    retried: Vec<ExactDiscoveryTarget>,
 }
 
 /// What one discovery state lets the queue do: report the queued target
@@ -155,7 +158,9 @@ impl RediscoveryQueue {
 
     /// Feed the newest discovery state. When the previous send has settled,
     /// report it as reachable if a newer exact operation reached `Ready`,
-    /// and hand out the next target once the lane is idle.
+    /// and hand out the next target once the lane is idle. A probe that a
+    /// network change cancelled, or that another search took over, never got
+    /// its answer, so its target is queued once more.
     pub fn advance(&mut self, discovery: DiscoveryState) -> RediscoveryStep {
         let mut step = RediscoveryStep::default();
         if let Some(sent_at) = self.awaiting {
@@ -170,6 +175,13 @@ impl RediscoveryQueue {
                 && discovery.status() == DiscoveryStatus::Ready
             {
                 step.reachable = settled;
+            } else if let Some(target) = settled
+                && (discovery.status() == DiscoveryStatus::Idle
+                    || discovery.kind() != DiscoveryKind::Exact)
+                && !self.retried.contains(&target)
+            {
+                self.retried.push(target);
+                self.queue.push_back(target);
             }
         } else if discovery.status() == DiscoveryStatus::Refreshing {
             return step;
@@ -488,6 +500,58 @@ mod tests {
                 .send,
             Some(target(2))
         );
+    }
+
+    #[test]
+    fn queue_retries_an_interrupted_probe_once() {
+        let mut queue = RediscoveryQueue::new([target(1), target(2)]);
+        assert_eq!(
+            queue.advance(DiscoveryState::idle(generation(0))).send,
+            Some(target(1))
+        );
+
+        // A network change cancels the probe into Idle before any reply.
+        let interrupted = queue.advance(DiscoveryState::idle_for(
+            generation(1),
+            DiscoveryKind::Exact,
+        ));
+        assert_eq!(interrupted.reachable, None);
+        assert_eq!(interrupted.send, Some(target(2)));
+        assert_eq!(
+            queue.remaining(),
+            1,
+            "the interrupted target waits its turn"
+        );
+
+        // Target 2 is taken over by a local refresh; target 1 goes next.
+        assert_eq!(
+            queue
+                .advance(DiscoveryState::ready_for(
+                    generation(2),
+                    DiscoveryKind::Local,
+                    0
+                ))
+                .send,
+            Some(target(1))
+        );
+        // Interrupted again: target 1 has had its retry, target 2 has not.
+        assert_eq!(
+            queue
+                .advance(DiscoveryState::idle_for(
+                    generation(3),
+                    DiscoveryKind::Exact
+                ))
+                .send,
+            Some(target(2))
+        );
+        // A probe that ran to completion without a reply is not retried.
+        assert_eq!(
+            queue
+                .advance(DiscoveryState::exact_no_response(generation(4), 0))
+                .send,
+            None
+        );
+        assert!(queue.is_settled());
     }
 
     #[test]
