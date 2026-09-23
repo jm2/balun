@@ -19,6 +19,8 @@ pub use changes::{
 };
 #[cfg(target_os = "linux")]
 pub use changes::{LinuxNetworkChangeWatcher, NetworkChangeWatchError};
+#[cfg(all(test, feature = "desktop"))]
+pub(crate) use client::DiscoveryPortOverride;
 pub use client::{
     DiscoveryClient, DiscoveryError, DiscoveryObservation, DiscoveryReport, DiscoveryStats,
     InvalidProbeConfig, ProbeConfig, ProbeFailureClass, ProbeIssue,
