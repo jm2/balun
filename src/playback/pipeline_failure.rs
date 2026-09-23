@@ -82,11 +82,43 @@ impl MissingMedia {
     }
 
     fn from_missing_plugin(element: &gst::message::Element) -> Self {
-        element
-            .structure()
-            .and_then(|structure| structure.get::<gst::Caps>(MISSING_PLUGIN_DETAIL_FIELD).ok())
-            .map_or(Self::Unknown, |caps| Self::from_caps(&caps))
+        missing_plugin_caps(element).map_or(Self::Unknown, |caps| Self::from_caps(&caps))
     }
+}
+
+fn missing_plugin_caps(element: &gst::message::Element) -> Option<gst::Caps> {
+    element
+        .structure()
+        .and_then(|structure| structure.get::<gst::Caps>(MISSING_PLUGIN_DETAIL_FIELD).ok())
+}
+
+/// Closed label for a missing plugin that only affects a stream Balun never
+/// presents, such as teletext or DVB subtitles. GStreamer plays on without
+/// such a decoder, so the report is logged and is not terminal.
+///
+/// Only the media type prefix of each reported caps structure is read. `None`
+/// keeps the report terminal: any audio, video, or image structure, and caps
+/// that are absent, unreadable, empty, or ANY, since none of those prove the
+/// missing plugin is irrelevant to playback.
+fn unpresented_stream(element: &gst::message::Element) -> Option<&'static str> {
+    let caps = missing_plugin_caps(element)?;
+    if caps.iter().any(|structure| {
+        ["audio/", "video/", "image/"]
+            .into_iter()
+            .any(|prefix| structure.name().starts_with(prefix))
+    }) {
+        return None;
+    }
+    let name = caps.structure(0)?.name();
+    Some(if name == "application/x-teletext" {
+        "teletext"
+    } else if name.starts_with("subpicture/") || name.starts_with("text/") {
+        "subtitle"
+    } else if name.starts_with("closedcaption/") {
+        "closed-caption"
+    } else {
+        "other"
+    })
 }
 
 impl fmt::Display for MissingMedia {
@@ -111,8 +143,9 @@ pub enum PlaybackPipelineFailure {
     /// The stream request could not connect, receive headers, or keep reading.
     #[error("the selected tuner is offline or unreachable")]
     Offline,
-    /// GStreamer reported an exact missing codec or plugin condition, naming
-    /// the stream type when its caps were in the closed table.
+    /// GStreamer reported an exact missing codec or plugin condition that can
+    /// affect presented audio or video, naming the stream type when its caps
+    /// were in the closed table.
     #[error("a required playback codec or plugin is unavailable ({0})")]
     MissingCodecOrPlugin(MissingMedia),
     /// GStreamer reported that the stream could not be decrypted.
@@ -184,12 +217,21 @@ pub(super) fn log_pipeline_message(message: &gst::MessageRef) {
             );
         }
         gst::MessageView::Element(element) if element.has_name(MISSING_PLUGIN_MESSAGE) => {
-            tracing::warn!(
-                target: "balun::playback",
-                source = %source,
-                media = %MissingMedia::from_missing_plugin(element).description().unwrap_or("unknown"),
-                "GStreamer reported a missing plugin"
-            );
+            if let Some(stream) = unpresented_stream(element) {
+                tracing::info!(
+                    target: "balun::playback",
+                    source = %source,
+                    stream = %stream,
+                    "GStreamer reported a missing plugin for a stream Balun does not present"
+                );
+            } else {
+                tracing::warn!(
+                    target: "balun::playback",
+                    source = %source,
+                    media = %MissingMedia::from_missing_plugin(element).description().unwrap_or("unknown"),
+                    "GStreamer reported a missing plugin"
+                );
+            }
         }
         gst::MessageView::Warning(warning) => {
             let native = warning.error();
@@ -396,6 +438,8 @@ fn factory_name(element: &gst::Element) -> &'static str {
                 "playsink",
                 "uridecodebin3",
                 "decodebin3",
+                "parsebin",
+                "subtitleoverlay",
                 "appsrc",
                 "queue",
                 "multiqueue",
@@ -564,7 +608,8 @@ fn describe_caps(caps: &gst::CapsRef) -> String {
 
 /// Native error and debug text, source names, details, and every structure
 /// field other than the transport marker's bounded code and the missing
-/// plugin's media type are ignored.
+/// plugin's media type are ignored. A missing plugin reported only for a
+/// stream Balun never presents is not a failure.
 pub(super) fn classify_pipeline_message(
     message: &gst::MessageRef,
     pipeline: &gst::Pipeline,
@@ -587,9 +632,13 @@ pub(super) fn classify_pipeline_message(
             }
         }
         gst::MessageView::Element(element) if element.has_name(MISSING_PLUGIN_MESSAGE) => {
-            Some(PlaybackPipelineFailure::MissingCodecOrPlugin(
-                MissingMedia::from_missing_plugin(element),
-            ))
+            if unpresented_stream(element).is_some() {
+                None
+            } else {
+                Some(PlaybackPipelineFailure::MissingCodecOrPlugin(
+                    MissingMedia::from_missing_plugin(element),
+                ))
+            }
         }
         gst::MessageView::Application(application) => {
             if message.src() != Some(pipeline.upcast_ref::<gst::Object>()) {
@@ -727,6 +776,19 @@ mod tests {
                 )
                 .src(&source)
                 .build(),
+                gst::message::Element::builder(
+                    gst::Structure::builder(MISSING_PLUGIN_MESSAGE)
+                        .field(
+                            MISSING_PLUGIN_DETAIL_FIELD,
+                            gst::Caps::builder("audio/x-secret-user-password-192-0-2-77")
+                                .field("uri", SECRET_URI)
+                                .build(),
+                        )
+                        .field("name", SECRET_URI)
+                        .build(),
+                )
+                .src(&source)
+                .build(),
                 gst::message::StreamCollection::builder(&collection)
                     .src(&source)
                     .build(),
@@ -786,7 +848,9 @@ mod tests {
         for expected in [
             "GStreamer reported an error",
             "GStreamer reported a warning",
-            "GStreamer reported a missing plugin",
+            "GStreamer reported a missing plugin source=uridecodebin3 media=unknown",
+            "GStreamer reported a missing plugin for a stream Balun does not present",
+            "stream=other",
             "stream collection",
             "streams selected",
             "application marker",
@@ -1217,6 +1281,149 @@ mod tests {
             PlaybackPipelineFailure::MissingCodecOrPlugin(MissingMedia::Ac4Audio).to_string(),
             "a required playback codec or plugin is unavailable (AC-4 audio)"
         );
+    }
+
+    /// The fields `gst_missing_decoder_message_new` posts, as parsebin
+    /// (teletext), playsink's subtitle overlay (DVB subtitles), and decodebin3
+    /// (audio and video) report a missing decoder.
+    fn missing_decoder_message(source: &gst::Element, caps: &gst::Caps) -> gst::Message {
+        gst::message::Element::builder(
+            gst::Structure::builder(MISSING_PLUGIN_MESSAGE)
+                .field("type", "decoder")
+                .field(MISSING_PLUGIN_DETAIL_FIELD, caps)
+                .field("name", SECRET_URI)
+                .field("stream-id", SECRET_TOKEN)
+                .build(),
+        )
+        .src(source)
+        .build()
+    }
+
+    fn unpresented_label(message: &gst::Message) -> Option<&'static str> {
+        let gst::MessageView::Element(element) = message.view() else {
+            panic!("missing-plugin reports are element messages");
+        };
+        unpresented_stream(element)
+    }
+
+    #[test]
+    fn missing_plugins_for_unpresented_streams_do_not_end_playback() {
+        let pipeline = pipeline().expect("initialize GStreamer");
+        let source = gst::ElementFactory::make("fakesrc").build().unwrap();
+        let cases = [
+            (
+                gst::Caps::builder("application/x-teletext").build(),
+                "teletext",
+            ),
+            (gst::Caps::builder("subpicture/x-dvb").build(), "subtitle"),
+            (gst::Caps::builder("subpicture/x-pgs").build(), "subtitle"),
+            (
+                gst::Caps::builder("text/x-raw")
+                    .field("format", SECRET_URI)
+                    .build(),
+                "subtitle",
+            ),
+            (
+                gst::Caps::builder("closedcaption/x-cea-608").build(),
+                "closed-caption",
+            ),
+            (
+                gst::Caps::builder("application/x-secret-user-password-192-0-2-77")
+                    .field("uri", SECRET_URI)
+                    .build(),
+                "other",
+            ),
+            (
+                gst::Caps::builder_full()
+                    .structure(gst::Structure::new_empty("application/x-teletext"))
+                    .structure(gst::Structure::new_empty("subpicture/x-dvb"))
+                    .build(),
+                "teletext",
+            ),
+        ];
+        for (caps, label) in cases {
+            let message = missing_decoder_message(&source, &caps);
+            assert_eq!(
+                classify_pipeline_message(&message, &pipeline),
+                None,
+                "{caps:?}"
+            );
+            assert_eq!(unpresented_label(&message), Some(label), "{caps:?}");
+        }
+    }
+
+    #[test]
+    fn missing_plugins_for_audio_or_video_still_end_playback() {
+        let pipeline = pipeline().expect("initialize GStreamer");
+        let source = gst::ElementFactory::make("fakesrc").build().unwrap();
+        let cases = [
+            (
+                gst::Caps::builder("audio/x-ac4").build(),
+                MissingMedia::Ac4Audio,
+            ),
+            (
+                gst::Caps::builder("video/x-h265").build(),
+                MissingMedia::HevcVideo,
+            ),
+            (
+                gst::Caps::builder("video/mpeg")
+                    .field("mpegversion", 2_i32)
+                    .build(),
+                MissingMedia::Mpeg2Video,
+            ),
+            (
+                gst::Caps::builder("audio/x-dts").build(),
+                MissingMedia::Unknown,
+            ),
+            (
+                gst::Caps::builder("video/x-av1").build(),
+                MissingMedia::Unknown,
+            ),
+            (
+                gst::Caps::builder("image/x-jpc").build(),
+                MissingMedia::Unknown,
+            ),
+            // One presented structure keeps a mixed report terminal.
+            (
+                gst::Caps::builder_full()
+                    .structure(gst::Structure::new_empty("application/x-teletext"))
+                    .structure(gst::Structure::new_empty("audio/x-ac4"))
+                    .build(),
+                MissingMedia::Unknown,
+            ),
+            // Nothing proves an unreadable report irrelevant.
+            (gst::Caps::new_empty(), MissingMedia::Unknown),
+            (gst::Caps::new_any(), MissingMedia::Unknown),
+        ];
+        for (caps, expected) in cases {
+            let message = missing_decoder_message(&source, &caps);
+            assert_eq!(
+                classify_pipeline_message(&message, &pipeline),
+                Some(PlaybackPipelineFailure::MissingCodecOrPlugin(expected)),
+                "{caps:?}"
+            );
+            assert_eq!(unpresented_label(&message), None, "{caps:?}");
+        }
+        for structure in [
+            gst::Structure::builder(MISSING_PLUGIN_MESSAGE)
+                .field("type", "element")
+                .field(MISSING_PLUGIN_DETAIL_FIELD, "videoconvert")
+                .build(),
+            gst::Structure::builder(MISSING_PLUGIN_MESSAGE)
+                .field("type", "decoder")
+                .build(),
+        ] {
+            let message = gst::message::Element::builder(structure)
+                .src(&source)
+                .build();
+            assert_eq!(
+                classify_pipeline_message(&message, &pipeline),
+                Some(PlaybackPipelineFailure::MissingCodecOrPlugin(
+                    MissingMedia::Unknown
+                ))
+            );
+            assert_eq!(unpresented_label(&message), None);
+        }
     }
 
     #[test]

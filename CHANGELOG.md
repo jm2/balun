@@ -76,6 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Channels carrying teletext or DVB subtitles no longer fail to play when those decoders
+  are missing, and subtitles are no longer burned into the video.
 - Debian control/data and Arch payloads now receive bounded decoding and complete
   tar member preflight before extraction. Native parser isolation and extraction
   containment remain pending; only trusted local build output is admitted.

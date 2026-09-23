@@ -340,7 +340,10 @@ exact pipeline carrying a single bounded numeric category code. The
 generation-scoped bus watch reduces that marker, native missing-plugin,
 codec-not-found, and decryption errors, and the source-policy rejection marker
 into the seven fixed `PlaybackPipelineFailure` categories; malformed markers,
-foreign pipelines, and every other native condition close to internal.
+foreign pipelines, and every other native condition close to internal. A
+missing-plugin notice whose caps name only streams Balun never presents, such
+as teletext or subtitles, is logged with a closed label and does not end the
+tune; one naming audio, video, or image caps, or unreadable caps, still does.
 
 Teardown cancels the request first, so the device connection begins closing
 while the pipeline moves to `NULL`; the transport is then joined inside the
@@ -398,6 +401,7 @@ packaged-runtime probes are P3 work.
 The pipeline-side visual contract is explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the
 pipeline is still `NULL`; enables playbin's adaptive `deinterlace` flag;
+clears its subtitle `text` flag, since Balun has no subtitle presentation;
 forces source aspect-ratio preservation; and installs the private GTK paintable
 sink with its own aspect preservation enabled plus the bus watch before copying
 the authorized URI into native storage. A factory-backed unit test proves the

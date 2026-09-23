@@ -462,10 +462,12 @@ mod tests {
     use super::*;
     use crate::controller::OperationGeneration;
     use crate::domain::{ChannelKey, DeviceId, GuideNumber};
+    use crate::playback::pipeline_failure::{PlaybackPipelineFailure, classify_pipeline_message};
     use crate::playback::test_support::{
-        FixtureStreamServer, StreamBehavior, fixture_response, hold_decoder_selection,
+        FIXTURE_BYTES, FixtureStreamServer, StreamBehavior, fixture_response,
+        hold_decoder_selection, http_response,
     };
-    use crate::playback::transport::PIPELINE_URI;
+    use crate::playback::transport::{PIPELINE_URI, STREAM_STARTED_MESSAGE};
 
     const QUICK: TransportConfig = TransportConfig::new(
         Duration::from_millis(500),
@@ -886,5 +888,232 @@ mod tests {
                 && !deinterlacing.contains("output-framerate=not negotiated"),
             "the actual playsink filter must retain the selected software method: {deinterlacing}"
         );
+    }
+
+    /// A stream Balun never presents, muxed beside the checked-in video.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum AncillaryStream {
+        Teletext,
+        DvbSubtitles,
+    }
+
+    /// Remux the checked-in MPEG-2 fixture with one teletext or DVB subtitle
+    /// stream, as DVB broadcasts carry them. Every factory is required, so the
+    /// regression below can never pass by skipping.
+    fn fixture_with(ancillary: AncillaryStream) -> Vec<u8> {
+        let branch = match ancillary {
+            AncillaryStream::Teletext => {
+                "appsrc name=teletext format=time caps=application/x-teletext ! queue ! mux."
+            }
+            AncillaryStream::DvbSubtitles => {
+                "videotestsrc num-buffers=25 pattern=ball \
+                 ! video/x-raw,format=AYUV,width=160,height=96,framerate=25/1 \
+                 ! dvbsubenc ! queue ! mux."
+            }
+        };
+        let muxer = gst::parse::launch(&format!(
+            "appsrc name=video format=bytes caps=video/mpegts,systemstream=true \
+             ! tsdemux ! mpegvideoparse ! queue ! mpegtsmux name=mux \
+             ! appsink name=out sync=false {branch}"
+        ))
+        .expect("the ancillary-stream fixture requires its muxing factories")
+        .downcast::<gst::Pipeline>()
+        .unwrap();
+        let video = muxer.by_name("video").unwrap();
+        let buffer = gst::Buffer::from_slice(FIXTURE_BYTES);
+        assert_eq!(
+            video.emit_by_name::<gst::FlowReturn>("push-buffer", &[&buffer]),
+            gst::FlowReturn::Ok
+        );
+        assert_eq!(
+            video.emit_by_name::<gst::FlowReturn>("end-of-stream", &[]),
+            gst::FlowReturn::Ok
+        );
+        if let Some(teletext) = muxer.by_name("teletext") {
+            for index in 0..25_u64 {
+                // EBU teletext data identifier, then one 44-byte stuffing unit
+                // per video frame of the fixture.
+                let mut payload = vec![0x10, 0xFF, 0x2C];
+                payload.resize(47, 0);
+                let mut buffer = gst::Buffer::from_mut_slice(payload);
+                let timed = buffer.get_mut().unwrap();
+                timed.set_pts(gst::ClockTime::from_mseconds(165 + 40 * index));
+                timed.set_duration(gst::ClockTime::from_mseconds(40));
+                assert_eq!(
+                    teletext.emit_by_name::<gst::FlowReturn>("push-buffer", &[&buffer]),
+                    gst::FlowReturn::Ok
+                );
+            }
+            assert_eq!(
+                teletext.emit_by_name::<gst::FlowReturn>("end-of-stream", &[]),
+                gst::FlowReturn::Ok
+            );
+        }
+        muxer
+            .set_state(gst::State::Playing)
+            .expect("start the fixture muxer");
+        let out = muxer.by_name("out").unwrap();
+        let mut stream = Vec::new();
+        while let Some(sample) = out.emit_by_name::<Option<gst::Sample>>(
+            "try-pull-sample",
+            &[&gst::ClockTime::from_seconds(5).nseconds()],
+        ) {
+            stream.extend_from_slice(&sample.buffer().unwrap().map_readable().unwrap());
+        }
+        assert!(out.property::<bool>("eos"), "the fixture muxer must finish");
+        assert!(
+            muxer
+                .bus()
+                .unwrap()
+                .pop_filtered(&[gst::MessageType::Error])
+                .is_none(),
+            "the fixture muxer failed"
+        );
+        muxer.set_state(gst::State::Null).unwrap();
+        assert!(stream.len() > FIXTURE_BYTES.len());
+        stream
+    }
+
+    /// DVB broadcasts can carry teletext and subtitle streams Balun never
+    /// presents. Their missing decoder or renderer must not end the tune, and
+    /// playbin must not burn subtitles into the video. The renderers are
+    /// demoted so the missing condition holds on every runtime, and the stream
+    /// runs through the production source policy, video configuration, PAUSED
+    /// hold, and bus classifier.
+    #[test]
+    fn playbin3_plays_past_unpresented_teletext_and_subtitle_streams() {
+        gst::init().expect("initialize GStreamer");
+        assert!(
+            mpeg2_decoder_available(),
+            "the ancillary-stream regression requires an MPEG-2 decoder"
+        );
+        let mut decoders = prefer_software_mpeg2_decoders();
+        let registry = gst::Registry::get();
+        for name in ["teletextdec", "dvbsuboverlay"] {
+            if let Some(feature) = registry.lookup_feature(name) {
+                decoders.original.push((feature.clone(), feature.rank()));
+                feature.set_rank(gst::Rank::NONE);
+            }
+        }
+
+        for ancillary in [AncillaryStream::Teletext, AncillaryStream::DvbSubtitles] {
+            let stream = fixture_with(ancillary);
+            let server = FixtureStreamServer::start(
+                http_response(
+                    "200 OK",
+                    &[("Content-Length", stream.len().to_string())],
+                    &stream,
+                ),
+                StreamBehavior::Close,
+            );
+            let playbin = pipeline().expect("the ancillary-stream regression requires playbin3");
+            let video_sink = gst::ElementFactory::make("fakesink").build().unwrap();
+            let audio_sink = gst::ElementFactory::make("fakesink").build().unwrap();
+            crate::playback::session::configure_playbin_video(&playbin, &video_sink).unwrap();
+            playbin.set_property("audio-sink", &audio_sink);
+            let policy =
+                SourcePolicy::install(&playbin, handoff(&server.stream_url()), QUICK, None)
+                    .expect("install the appsrc policy");
+            playbin.set_property("uri", PIPELINE_URI);
+            let bus = playbin.bus().unwrap();
+            playbin
+                .set_state(gst::State::Paused)
+                .expect("hold the pipeline at PAUSED");
+
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut outcome = None;
+            let mut missing = Vec::new();
+            let mut text_streams = 0;
+            while outcome.is_none() && Instant::now() < deadline {
+                let Some(message) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) else {
+                    continue;
+                };
+                if let Some(failure) = classify_pipeline_message(&message, &playbin) {
+                    outcome = Some(Err(failure));
+                    continue;
+                }
+                match message.view() {
+                    gst::MessageView::Eos(_) => outcome = Some(Ok(())),
+                    gst::MessageView::Application(application)
+                        if message.src() == Some(playbin.upcast_ref::<gst::Object>())
+                            && application.structure().is_some_and(|structure| {
+                                structure.name() == STREAM_STARTED_MESSAGE
+                            }) =>
+                    {
+                        playbin
+                            .set_state(gst::State::Playing)
+                            .expect("leave the PAUSED hold");
+                    }
+                    gst::MessageView::Element(element) if element.has_name("missing-plugin") => {
+                        missing.push(
+                            element
+                                .structure()
+                                .and_then(|structure| structure.get::<gst::Caps>("detail").ok())
+                                .and_then(|caps| {
+                                    caps.structure(0)
+                                        .map(|structure| structure.name().to_string())
+                                })
+                                .unwrap_or_default(),
+                        );
+                    }
+                    gst::MessageView::StreamCollection(collection) => {
+                        text_streams = text_streams.max(
+                            collection
+                                .stream_collection()
+                                .iter()
+                                .filter(|stream| {
+                                    stream.stream_type().contains(gst::StreamType::TEXT)
+                                })
+                                .count(),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            let rendered = video_sink
+                .property::<gst::Structure>("stats")
+                .get::<u64>("rendered")
+                .unwrap_or(0);
+            let overlays = playbin
+                .iterate_recurse()
+                .into_iter()
+                .flatten()
+                .filter(|element| {
+                    element.factory().is_some_and(|factory| {
+                        ["subtitleoverlay", "dvbsuboverlay", "textoverlay"]
+                            .contains(&factory.name().as_str())
+                    })
+                })
+                .count();
+            let mut transport = policy
+                .retire()
+                .expect("the played transport is returned once");
+            playbin.set_state(gst::State::Null).unwrap();
+            let (transition, current, _) = playbin.state(gst::ClockTime::from_seconds(5));
+            assert!(transition.is_ok());
+            assert_eq!(current, gst::State::Null);
+            assert_eq!(
+                transport.join(Instant::now() + Duration::from_secs(5)),
+                Ok(())
+            );
+
+            assert_eq!(
+                outcome,
+                Some(Ok::<(), PlaybackPipelineFailure>(())),
+                "{ancillary:?}"
+            );
+            assert!(rendered >= 2, "{ancillary:?}: rendered {rendered}");
+            assert_eq!(overlays, 0, "{ancillary:?}: subtitles must not be rendered");
+            match ancillary {
+                AncillaryStream::Teletext => assert!(
+                    missing.iter().any(|name| name == "application/x-teletext"),
+                    "the missing teletext decoder must be reported: {missing:?}"
+                ),
+                AncillaryStream::DvbSubtitles => {
+                    assert!(text_streams >= 1, "the subtitle stream must be advertised");
+                    assert!(missing.is_empty(), "{missing:?}");
+                }
+            }
+        }
     }
 }

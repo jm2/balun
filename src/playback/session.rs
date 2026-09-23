@@ -33,6 +33,9 @@ const PIPELINE_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 #[path = "native_failure_study.rs"]
 mod native_failure_study;
 const DEINTERLACE_PLAY_FLAG: &str = "deinterlace";
+/// Balun has no subtitle presentation, so playbin must not render (burn in)
+/// DVB or other subtitle streams.
+const TEXT_PLAY_FLAG: &str = "text";
 const PAINTABLE_ASPECT_PROPERTY: &str = "force-aspect-ratio";
 const PLAYBIN_VOLUME_PROPERTY: &str = "volume";
 const PLAYBIN_MUTE_PROPERTY: &str = "mute";
@@ -972,8 +975,9 @@ impl PipelineBackend for GstreamerBackend {
     }
 }
 
-/// Apply the deinterlace flag, forced aspect preservation, and the exact
-/// video sink, and read every setting back. Shared with the packaged probe.
+/// Set the deinterlace flag, clear the subtitle flag, and apply forced aspect
+/// preservation and the exact video sink, reading every setting back. Shared
+/// with the packaged probe.
 pub(super) fn configure_playbin_video(
     pipeline: &gst::Pipeline,
     video_sink: &gst::Element,
@@ -990,7 +994,12 @@ pub(super) fn configure_playbin_video(
         .ok_or(PlaybackSessionFailure::PipelineConstruction)?;
     let flags = flags_class
         .builder_with_value(flags)
-        .and_then(|builder| builder.set_by_nick(DEINTERLACE_PLAY_FLAG).build())
+        .and_then(|builder| {
+            builder
+                .set_by_nick(DEINTERLACE_PLAY_FLAG)
+                .unset_by_nick(TEXT_PLAY_FLAG)
+                .build()
+        })
         .ok_or(PlaybackSessionFailure::PipelineConstruction)?;
     pipeline.set_property("flags", flags);
     pipeline.set_property("force-aspect-ratio", true);
@@ -999,6 +1008,7 @@ pub(super) fn configure_playbin_video(
     let configured_flags = pipeline.property_value("flags");
     let configured_sink = pipeline.property::<Option<gst::Element>>("video-sink");
     if !flags_class.is_set_by_nick(&configured_flags, DEINTERLACE_PLAY_FLAG)
+        || flags_class.is_set_by_nick(&configured_flags, TEXT_PLAY_FLAG)
         || !pipeline.property::<bool>("force-aspect-ratio")
         || configured_sink.as_ref() != Some(video_sink)
     {
@@ -1697,6 +1707,10 @@ mod tests {
         let video_sink = gst::Bin::new().upcast::<gst::Element>();
         let initial_flags = pipeline.property_value("flags");
         let initial_flags_class = gst::glib::FlagsClass::with_type(initial_flags.type_()).unwrap();
+        assert!(
+            initial_flags_class.is_set_by_nick(&initial_flags, TEXT_PLAY_FLAG),
+            "playbin3 renders subtitles by default"
+        );
         let without_deinterlace = initial_flags_class
             .builder_with_value(initial_flags)
             .unwrap()
@@ -1719,7 +1733,11 @@ mod tests {
         let flags = pipeline.property_value("flags");
         let flags_class = gst::glib::FlagsClass::with_type(flags.type_()).unwrap();
         assert!(flags_class.is_set_by_nick(&flags, DEINTERLACE_PLAY_FLAG));
+        assert!(!flags_class.is_set_by_nick(&flags, TEXT_PLAY_FLAG));
         assert!(flags_class.is_set_by_nick(&flags, "buffering"));
+        for kept in ["video", "audio", "soft-volume"] {
+            assert!(flags_class.is_set_by_nick(&flags, kept), "{kept}");
+        }
         assert!(pipeline.property::<bool>("force-aspect-ratio"));
         assert_eq!(
             pipeline.property::<Option<gst::Element>>("video-sink"),
