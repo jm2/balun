@@ -1576,7 +1576,8 @@ impl ControllerActor {
         self.selected_device.is_some_and(|device_id| {
             match (self.registry.get(device_id), candidate.get(device_id)) {
                 (Some(current), Some(next)) => !current.same_evidence(next),
-                (current, next) => current.is_some() || next.is_some(),
+                // The device appeared or disappeared.
+                (current, next) => current.is_some() != next.is_some(),
             }
         })
     }
@@ -2067,8 +2068,7 @@ fn rebuild_registry(
     let mut contradicted = 0;
     for (seen_at, _, batch) in batches {
         for observation in &batch.observations {
-            match registry.observe(observation.clone(), seen_at) {
-                Ok(_) => {}
+            let replayed = match registry.observe(observation.clone(), seen_at) {
                 Err(RegistryError::LocatorConflict {
                     locator,
                     current_owner,
@@ -2083,13 +2083,15 @@ fn rebuild_registry(
                     if superseded {
                         registry
                             .confirm_reassignment(observation.clone(), seen_at)
-                            .map_err(|_| ())?;
+                            .map(drop)
                     } else {
                         contradicted += 1;
+                        Ok(())
                     }
                 }
-                Err(_) => return Err(()),
-            }
+                other => other.map(drop),
+            };
+            replayed.map_err(|_| ())?;
         }
     }
     Ok((registry, contradicted))
@@ -2176,11 +2178,13 @@ fn project_devices(registry: &mut DeviceRegistry) -> (Vec<DeviceSummary>, usize)
         });
         match projected {
             Some(Ok(summary)) => devices.push(summary),
-            Some(Err(error)) => {
+            // A registered device always has a preferred locator; either way
+            // it cannot be listed.
+            unusable => {
+                let error = unusable.and_then(Result::err);
                 tracing::warn!(?error, "discovered device not listed");
                 unlisted.push(device.device_id());
             }
-            None => unlisted.push(device.device_id()),
         }
     }
     for device_id in &unlisted {
