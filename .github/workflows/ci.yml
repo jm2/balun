@@ -42,6 +42,7 @@ jobs:
         run: |
           python3 -B build-aux/linux/test_archive_snapshot.py
           python3 -B build-aux/linux/test_rpm_payload.py
+          python3 -B build-aux/linux/test_tar_payload.py
           build-aux/linux/test-package-compliance.sh
 
       - name: Test Linux build helper policy
@@ -78,7 +79,8 @@ jobs:
       - name: Install pinned portable coverage tools
         run: |
           python3 -m venv "$RUNNER_TEMP/package-coverage-python"
-          "$RUNNER_TEMP/package-coverage-python/bin/pip" install -r scripts/coverage/requirements.txt
+          "$RUNNER_TEMP/package-coverage-python/bin/pip" install \
+            --require-hashes --only-binary=:all: -r scripts/coverage/requirements.txt
 
       - name: Install pinned PowerShell coverage profiler
         shell: pwsh
@@ -156,10 +158,16 @@ jobs:
       - name: Install validators
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends appstream desktop-file-utils rpm cpio
+          sudo apt-get install -y --no-install-recommends \
+            appstream desktop-file-utils rpm cpio dpkg libarchive-tools zstd
 
       - name: Test native RPM payload preflight and extraction
         run: python3 -B build-aux/linux/test_rpm_payload.py NativeToolsTests
+
+      - name: Test native Debian and Arch payload preflight and extraction
+        run: |
+          for tool in dpkg-deb bsdtar zstd tar; do command -v "$tool"; done
+          python3 -B build-aux/linux/test_tar_payload.py NativeToolsTests
 
       - name: Validate the desktop entry
         run: |
@@ -335,13 +343,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install locked Markdown and TOML lint tools
+        run: |
+          mkdir "$RUNNER_TEMP/node-lint"
+          cp build-aux/toolchain/node-lint/package.json \
+            build-aux/toolchain/node-lint/package-lock.json "$RUNNER_TEMP/node-lint/"
+          npm ci --prefix "$RUNNER_TEMP/node-lint" --ignore-scripts --engine-strict --include=dev \
+            --no-audit --no-fund
+
       - name: Lint Markdown
-        run: npx --yes markdownlint-cli2@0.18.1 "**/*.md"
+        run: '"$RUNNER_TEMP/node-lint/node_modules/.bin/markdownlint-cli2" "**/*.md"'
 
       - name: Lint TOML
         run: |
-          npx --yes @taplo/cli@0.7.0 check Cargo.toml build-aux/toolchain/rust-toolchain.toml taplo.toml
-          npx --yes @taplo/cli@0.7.0 fmt --check Cargo.toml build-aux/toolchain/rust-toolchain.toml taplo.toml
+          "$RUNNER_TEMP/node-lint/node_modules/.bin/taplo" check \
+            Cargo.toml build-aux/toolchain/rust-toolchain.toml taplo.toml
+          "$RUNNER_TEMP/node-lint/node_modules/.bin/taplo" fmt --check \
+            Cargo.toml build-aux/toolchain/rust-toolchain.toml taplo.toml
 
       - name: Lint YAML
         run: |

@@ -142,7 +142,7 @@ case "$tool" in
 esac
 EOF
 done
-for inspector in bsdtar dpkg-deb rpm rpm2cpio cpio python3; do
+for inspector in bsdtar dpkg-deb rpm rpm2cpio cpio python3 zstd tar; do
     cat > "$fake_bin/$inspector" <<'EOF'
 #!/usr/bin/env bash
 exit 0
@@ -229,6 +229,8 @@ chmod +x \
     "$fake_bin/rpm2cpio" \
     "$fake_bin/cpio" \
     "$fake_bin/python3" \
+    "$fake_bin/zstd" \
+    "$fake_bin/tar" \
     "$fake_bin/rustc" \
     "$fake_bin/pkg-config" \
     "$fake_bin/readelf" \
@@ -489,12 +491,15 @@ for tool_and_mode in \
     'python3 --arch-pkg' \
     'cargo-deb --deb' \
     'dpkg-deb --deb' \
+    'tar --deb' \
     'cargo-generate-rpm --rpm' \
     'rpm --rpm' \
     'rpm2cpio --rpm' \
     'cpio --rpm' \
     'makepkg --arch-pkg' \
-    'bsdtar --arch-pkg'
+    'bsdtar --arch-pkg' \
+    'zstd --arch-pkg' \
+    'tar --arch-pkg'
 do
     tool=${tool_and_mode%% *}
     package_mode=${tool_and_mode#* }

@@ -57,13 +57,13 @@ Build selection:
                     desktop application. This also makes check, Clippy, and
                     coverage GTK-free.
   --deb             Build a native Debian package with preinstalled cargo-deb
-                    3.7.0 and reopen it with dpkg-deb. Supports amd64 and
+                    3.7.0 and reopen it with dpkg-deb and GNU tar. Supports amd64 and
                     arm64 GNU/Linux hosts.
   --rpm             Build a native RPM package with preinstalled
                     cargo-generate-rpm 0.21.0 and reopen it with rpm, rpm2cpio,
                     and cpio. Supports x86_64 and aarch64.
   --arch-pkg        Build an x86_64 Arch package with preinstalled makepkg and
-                    reopen it with bsdtar.
+                    preflight/decode it with zstd and extract with GNU tar.
 
 Launch:
   --run             After the desktop build and its gates pass, replace this
@@ -319,6 +319,7 @@ build|deb|rpm|arch-pkg)
         deb)
             require_command cargo-deb 'install the reviewed cargo-deb version explicitly'
             require_command dpkg-deb 'install dpkg explicitly; the completed package is reopened with it'
+            require_command tar 'install GNU tar explicitly; preflighted members are extracted with it'
             installed_packager_version=$(cargo-deb --version 2>/dev/null || true)
             [ "$installed_packager_version" = "$cargo_deb_version" ] || \
                 fail "Native Debian packaging requires preinstalled $cargo_deb_version exactly; this helper will not install or replace tools."
@@ -335,6 +336,8 @@ build|deb|rpm|arch-pkg)
         arch-pkg)
             require_command makepkg 'use an Arch Linux build host with base-devel installed'
             require_command bsdtar 'install Arch libarchive explicitly'
+            require_command zstd 'install zstd explicitly; the completed package is decoded with it'
+            require_command tar 'install GNU tar explicitly; preflighted members are extracted with it'
             require_command cp 'install GNU coreutils explicitly'
             [ -f "$arch_recipe" ] && [ ! -L "$arch_recipe" ] || \
                 fail "Required Arch package recipe is unavailable or is not a regular file: $arch_recipe"

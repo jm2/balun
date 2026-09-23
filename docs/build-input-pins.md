@@ -136,10 +136,20 @@ work, not newly approved exceptions:
   including their transitive native dependencies and repository snapshots.
 - Rust distribution/bootstrap content, Arch's compiler, Flatpak runtime/SDK/extensions, and native
   packagers and helper dependencies not already covered by existing exact pins.
-- Bootstrap tools and transitive Python/npm dependencies where a top-level
-  version or action commit does not identify every downloaded input.
+- Bootstrap tools and remaining Python dependency closures,
+  where a top-level version or action commit does not identify every input.
 
 Existing Cargo locks, action commits, component-policy hashes, and Windows
 installer-tool pins remain separate controls. H2.2 completes only after the
 remaining input inventory, enforceable pins or explicitly reviewed exceptions,
 and drift rejection evidence are in place.
+
+## Node lint dependency closure
+
+The Markdown and TOML checks use a reviewed npm lock containing all 87 dependency
+packages, with exact versions, tarball URLs, and SHA-512 integrity values. Fresh
+CI installs use `npm ci` with lifecycle scripts disabled and invoke installed
+binaries directly. The Markdown linter and its TOML parser advance to clear the
+observed dependency advisories; Taplo remains at 0.7.0. Updating, local
+validation, and the remaining Node/npm bootstrap boundary are documented in
+the [lint tool manifest directory](../build-aux/toolchain/node-lint/README.md).

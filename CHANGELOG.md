@@ -9,13 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Find device and Forget device dialogs now use all thirteen supported locales,
+  including validation, launcher accessibility copy, and read-only-settings notices.
 - Reviewed digest pins for all six CI/release job containers, with a workflow
   inventory check that rejects changed, missing, or unrecorded image references.
 - YAML lint and builder-image checks now install the complete three-package Python
   dependency set from exact versions and reviewed wheel hashes, with no source-build fallback.
 - Playback startup and idle status now translate ready, missing-component, and
   initialization-failure messages in all thirteen supported locales. Runtime
-  versions and component names stay literal; session failure copy remains pending.
+  versions and component names stay literal.
+- Playback failure categories, recovery instructions, and fallback device/channel
+  labels now translate in all thirteen catalogs, preserving literal codec names.
 
 - Translated playback progress and parameterized connecting/buffering messages in
   all thirteen catalogs, with placeholder parity and literal display-name rendering.
@@ -27,8 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and an About description. The remaining interface and CLI are still English.
 - Bounded per-generation startup timing records separate predecessor retirement,
   handoff validation, graph setup, worker-captured HTTP/appsrc observations, and
-  received stream/PLAYING notifications.
-  Decoded/rendered media timings and useful-media deadlines remain pending.
+  received stream/PLAYING notifications. First raw video/audio sink ingress and
+  video paintable invalidation are recorded even after PLAYING, without treating
+  them as proof of displayed or audible output. Decoder-output/presentation
+  timing, continuing media progress, and useful-media deadlines remain pending.
 - Isolated native-call stall regressions document the limits of playback teardown
   timeouts; Windows CI now executes the desktop tests as well as compiling them.
 - Native inventory tooling independently hashes reopened package trees and completed
@@ -36,20 +42,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emits a native-scope CycloneDX SBOM. The macOS helper records each native copy's
   input owner and pre/post-relocation content, rejecting unknown final members
   and any changed native content in the reopened DMG.
-  An installed Homebrew recipe collector preserves
-  actual package/source/license metadata. Catalog assembly, embedded-resource
-  representation, remaining final-artifact adapters, and release attachment remain
+  An installed Homebrew recipe collector preserves actual package/source/license
+  metadata plus independently identified resource and ordered patch declarations.
+  Catalog assembly, embedded-component ownership/license evidence,
+  remaining final-artifact adapters, and release attachment remain
   pending; current packages do not yet include these reports.
 - Critical admission, cancellation, identity, privacy, and package gates have measured
   coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
+- Python package-gate coverage installs now require reviewed wheel hashes and
+  reject source-build fallback for the existing coverage.py 7.16.1 tool.
 - Reproducible adversarial parser, approval, route-budget, and package-manifest
   properties run in PR checks and scheduled extended corpora, with failure replay records.
+- Typed-subnet scope validation and exact preview budgets implement the approved
+  private `/23`–`/32` policy without granting scan authority. Runtime integration remains pending.
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
 - Rustup-based release candidate jobs select reviewed Rust 1.98.0, with a separate
   update manifest and CI rejection of changed or missing compiler selections.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
+- Locked the complete Markdown/TOML lint dependency tree with tarball integrity
+  checks and disabled install scripts; CI no longer resolves fresh transitive
+  npm dependencies for these tools on each run. The Markdown linter and its TOML
+  parser advance to clear the observed dependency advisories.
 
 ### Changed
 
@@ -63,9 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Debian control/data and Arch payloads now receive bounded decoding and complete
+  tar member preflight before extraction. Native parser isolation and extraction
+  containment remain pending; only trusted local build output is admitted.
 - RPM payload inspection now bounds decoding and validates member paths, types,
   links, sizes, and directory budgets before invoking the native extractor.
-  Native parser isolation and Debian/Arch preflight remain pending.
+  Native parser isolation remains pending.
 - Linux Debian, RPM, and Arch inspectors now share one bounded private archive
   snapshot, preventing input replacement between metadata and payload checks.
   Complete extraction containment remains pending.

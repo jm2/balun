@@ -17,8 +17,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import quote, urlsplit, urlunsplit
 
-from native_inventory import MAX_DOCUMENT, Invalid, member_path, reference, require, text, unique_object
+from native_inventory import (MAX_DOCUMENT, Invalid, digest, fields, member_path, reference,
+                              require, text, unique_object)
 from native_copy_ledger import read_ledger
 from observe_native import checkpoint, ordinary, signature, snapshot_file
 
@@ -26,6 +28,8 @@ MAX_METADATA = 1024**2
 MAX_QUERY = 4 * 1024**2
 MAX_MEMBERS = 4096
 MAX_PACKAGES = 256
+MAX_RESOURCES = 256
+MAX_PATCHES = 1024
 MAX_MEMBER = 1024**3
 MAX_TOTAL = 4 * 1024**3
 QUERY_SECONDS = 60
@@ -47,6 +51,7 @@ PUBLIC_REJECTIONS = frozenset({
     "invalid installed package revision",
     "missing source metadata",
     "installed recipe has no immutable primary source identity",
+    "installed local patch has no immutable tap identity",
     "missing or invalid license metadata",
     "reference must be an HTTPS URL without credentials, query or fragment",
     "selected member is outside the trusted Cellar",
@@ -136,6 +141,106 @@ def license_record(value, depth=0):
     return result
 
 
+def download_reference(value):
+    """Keep one public GitHub patch selector; never admit arbitrary URL queries."""
+    text(value, 2048)
+    parsed = urlsplit(value)
+    if parsed.query == "full_index=1":
+        base = urlunsplit(parsed._replace(query=""))
+        reference(base)
+        require(re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/commit/"
+                             r"[0-9a-f]{40}\.patch", base) is not None,
+                "unsupported patch download selector")
+        return value
+    return reference(value)
+
+
+def download_source(value):
+    fields(value, "url checksum revision git")
+    source_url = download_reference(value["url"])
+    require(type(value["git"]) is bool, "invalid source download strategy")
+    checksum, revision = value["checksum"], value["revision"]
+    if checksum is not None:
+        identity = "sha256:" + digest(checksum)
+    else:
+        require(value["git"] and isinstance(revision, str)
+                and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision),
+                "additional source has no immutable identity")
+        identity = ("git:" if len(revision) == 40 else "git-sha256:") + revision
+    return {"reference": source_url, "identity": identity}
+
+
+def source_inputs(value, *, tap_commit=None):
+    """Normalize evaluated declarations without asserting use in a final member."""
+    fields(value, "schema resources patches")
+    require(type(value["schema"]) is int and value["schema"] == 1,
+            "unsupported source-input schema")
+    resources = value["resources"]
+    require(isinstance(resources, list) and len(resources) <= MAX_RESOURCES,
+            "resource count exceeds budget")
+    patch_count = 0
+
+    def patches(items):
+        nonlocal patch_count
+        require(isinstance(items, list), "invalid patch declarations")
+        patch_count += len(items)
+        require(patch_count <= MAX_PATCHES, "patch count exceeds budget")
+        output = []
+        for item in items:
+            require(isinstance(item, dict), "invalid patch declaration")
+            kind = item.get("kind")
+            require(isinstance(kind, str) and kind in {"external", "data", "string", "local"},
+                    "unsupported patch declaration")
+            extra_fields = {"external": "source files", "local": "file"}.get(kind, "size sha256")
+            fields(item, "kind strip directory " + extra_fields)
+            strip = text(item["strip"], 5)
+            require(re.fullmatch(r"p(?:0|[1-9][0-9]{0,2})", strip), "invalid patch strip level")
+            directory = item["directory"]
+            if directory is not None:
+                member_path(directory)
+            record = {"kind": kind, "strip": strip, "directory": directory}
+            if kind == "external":
+                files = item["files"]
+                require(isinstance(files, list) and len(files) <= MAX_PATCHES,
+                        "patch file count exceeds budget")
+                selected = [member_path(path) for path in files]
+                require(len(set(path.casefold() for path in selected)) == len(selected),
+                        "duplicate patch member")
+                record.update(source=download_source(item["source"]), files=selected)
+            elif kind == "local":
+                require(isinstance(tap_commit, str) and re.fullmatch(r"[0-9a-f]{40}", tap_commit),
+                        "installed local patch has no immutable tap identity")
+                selected = member_path(item["file"])
+                # The trusted installed receipt names the tap revision. Current
+                # tap/cache contents and the currently published formula cannot
+                # substitute for that historical source identity.
+                source_url = "https://github.com/Homebrew/homebrew-core/blob/" + tap_commit + "/" + quote(selected, safe="/-._~")
+                record.update(file=selected, source={"reference": reference(source_url),
+                                                     "identity": "git:" + tap_commit})
+            else:
+                require(type(item["size"]) is int and 0 < item["size"] <= MAX_METADATA,
+                        "embedded patch size exceeds budget")
+                record.update(size=item["size"], sha256=digest(item["sha256"]))
+            output.append(record)
+        return output  # Patch application order is meaningful; do not sort it.
+
+    normalized = []
+    names = set()
+    for item in resources:
+        fields(item, "name version_hint url checksum revision git patches")
+        name = text(item["name"], 256)
+        require(name.casefold() not in names, "duplicate or case-colliding resource name")
+        names.add(name.casefold())
+        version_hint = item["version_hint"]
+        if version_hint is not None:
+            text(version_hint, 128)
+        normalized.append({"name": name, "version_hint": version_hint,
+                           "source": download_source({key: item[key] for key in ("url", "checksum", "revision", "git")}),
+                           "patches": patches(item["patches"])})
+    return {"resources": sorted(normalized, key=lambda item: item["name"]),
+            "patches": patches(value["patches"])}
+
+
 def package_metadata(keg, name, package_version, deadline, query):
     recipe = keg / ".brew" / (name + ".rb")
     ordinary(recipe.parent.lstat(), directory=True)
@@ -179,12 +284,15 @@ def package_metadata(keg, name, package_version, deadline, query):
                 "installed recipe has no immutable primary source identity")
         source_identity = "git:" + source_revision
     license_value = license_record(formula.get("license"))
+    additional_inputs = source_inputs(formula.get("balun_source_inputs"),
+                                      tap_commit=source.get("tap_git_head"))
     require(read_metadata(recipe) == recipe_bytes and read_metadata(receipt_path) == receipt_bytes,
             "installed metadata changed during Homebrew evaluation")
     checkpoint(deadline)
     return {"name": name, "version": version, "package_version": package_version,
             "tap": "homebrew/core", "license": license_value,
             "primary_source": {"reference": source_url, "identity": source_identity},
+            "source_inputs": additional_inputs,
             "recipe": {"sha256": recipe_hash, "text": recipe_bytes.decode("utf-8")},
             "receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest()}
 
@@ -236,7 +344,7 @@ def collect(cellar, members, *, query=query_formula):
     for path, content in metadata_snapshots:
         require(read_metadata(path) == content, "installed metadata changed before collection completed")
     checkpoint(deadline)
-    result = {"schema": 1, "scope": "selected-homebrew-build-inputs",
+    result = {"schema": 2, "scope": "selected-homebrew-build-inputs",
               "packages": [dict(key=key, **packages[key]) for key in sorted(packages)],
               "members": [files[key] for key in sorted(files)]}
     require(len(json.dumps(result).encode()) <= MAX_DOCUMENT, "metadata report exceeds byte budget")

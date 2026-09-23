@@ -43,3 +43,55 @@ startup:
   initialization_failed_description: "GStreamer を初期化できませんでした。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
   old_runtime_description: >-
     GStreamer %{found} は古すぎます。Balun には GStreamer %{minimum} 以降が必要です。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。
+
+device_dialogs:
+  find_title: "アドレスでデバイスを検索"
+  find_description: >-
+    既知のIPアドレスまたはホスト名に、制限付きのHDHomeRun検出リクエストを1件送信します。Balunはアドレス範囲をスキャンしません。
+    例：192.168.1.20、fd00::20、tuner.example。
+  target: "IPアドレスまたはホスト名"
+  cancel: "キャンセル"
+  find: "検索"
+  enter_target: "デバイスのIPアドレスまたはホスト名を入力してください。"
+  hostname_characters: "英字、数字、ハイフン、ドットで構成されるホスト名を1つ入力してください。"
+  hostname_syntax: "URL、ポート、パス、範囲を含まないホスト名を入力してください。"
+  unicast: "使用可能なデバイスのユニキャストアドレスを入力してください。"
+  numeric_address: "使用可能な数値形式のIPv4またはIPv6アドレスを1つ入力してください。"
+  address_syntax: "URL、ポート、範囲を含まないIPアドレスまたはホスト名を入力してください。"
+  ipv4_direct: "IPv4アドレスを直接入力してください。"
+  link_local: "リンクローカルIPv6にはまだ対応していません。IPv4またはゾーン識別子のないIPv6を使用してください。"
+  scoped: "ゾーン識別子付きIPv6にはまだ対応していません。IPv4またはゾーン識別子のないIPv6を使用してください。"
+  forget_menu: "デバイスの登録を解除…"
+  forget_heading: "このデバイスの登録を解除しますか？"
+  forget_description: "Balunは起動時に「%{device}」の保存済みアドレスまたは名前を問い合わせなくなります。デバイスは次回の起動まで一覧に残ります。"
+  forget: "登録を解除"
+  forgotten: "デバイスの登録を解除しました。"
+  forgotten_session: "このセッションでのみデバイスの登録を解除しました。設定は読み取り専用です。"
+
+failure:
+  busy_title: "利用可能なチューナーがありません"
+  busy_description: "%{device} のすべてのチューナーが使用中です。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
+  channel_title: "チャンネルを利用できません"
+  channel_description: "%{device} は %{channel} を提供しなくなりました。「チャンネルを再読み込み」で一覧を再取得してください。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
+  rejected_title: "デバイスがストリームを拒否しました"
+  rejected_description: "%{device} が %{channel} のリクエストを拒否しました。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
+  offline_title: "デバイスまたはストリームを利用できません"
+  offline_description: "%{device} から %{channel} を受信できませんでした。デバイスの電源と接続を確認してください。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
+  codec_title: "必要な再生コンポーネントまたはコーデックを利用できません"
+  missing_audio_description: >-
+    この Balun には、%{device} の %{channel} に必要な %{codec} 音声デコーダーがありません。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。
+  missing_video_description: >-
+    この Balun には、%{device} の %{channel} に必要な %{codec} 映像デコーダーがありません。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。
+  missing_component_description: >-
+    この Balun には、%{device} の %{channel} に必要なコーデックまたは GStreamer プラグインがありません。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。
+  protected_title: "保護されたチャンネルには対応していません"
+  protected_description: "%{device} の %{channel} は保護されているため再生できません。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
+  internal_title: "再生に失敗しました"
+  internal_description: "内部エラーにより、%{device} の %{channel} の再生が停止しました。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
+  generic_title: "チャンネルを再生できません"
+  generic_description: "選択したチャンネルを開始できませんでした。デバイスの検索とチャンネル一覧の確認は引き続き利用できます。"
+  stop_title: "ライブテレビを停止できません"
+  stop_description: "再生を正常に停止できませんでした。別のチャンネルを選択する前に Balun を終了してください。"
+  selected_device: "選択したデバイス"
+  selected_channel: "選択したチャンネル"
+  channel_number: "チャンネル %{number}"

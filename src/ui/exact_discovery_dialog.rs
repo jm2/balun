@@ -1,5 +1,6 @@
 //! Bounded, topology-redacting address-or-hostname discovery admission dialog.
 
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -8,6 +9,7 @@ use balun::discovery::{
     DiscoveryEntry, InvalidDiscoveryEntry, InvalidExactDiscoveryTarget, InvalidHostnameTarget,
     MAX_HOSTNAME_BYTES,
 };
+use balun::localization::device_dialogs::{FindLabels, address_validation, hostname_validation};
 
 const CANCEL_RESPONSE: &str = "cancel";
 const FIND_RESPONSE: &str = "find";
@@ -15,7 +17,7 @@ const FIND_RESPONSE: &str = "find";
 #[derive(Clone)]
 struct Admission {
     entry: Option<DiscoveryEntry>,
-    validation_message: Option<&'static str>,
+    validation_message: Option<Cow<'static, str>>,
 }
 
 /// Present one address-or-hostname admission dialog.
@@ -28,23 +30,24 @@ pub(crate) fn present(
     on_admit: impl Fn(DiscoveryEntry) + 'static,
     on_closed: impl Fn() + 'static,
 ) {
+    let labels = FindLabels::current();
     let dialog = adw::AlertDialog::builder()
-        .heading("Find device by address")
-        .body(
-            "Send one bounded HDHomeRun discovery request to a known IP address or hostname; Balun does not scan a range. Example: 192.168.1.20, fd00::20, or tuner.example.",
-        )
+        .heading(&*labels.title)
+        .heading_use_markup(false)
+        .body(&*labels.description)
+        .body_use_markup(false)
         .close_response(CANCEL_RESPONSE)
         .default_response(FIND_RESPONSE)
         .build();
-    dialog.add_response(CANCEL_RESPONSE, "Cancel");
-    dialog.add_response(FIND_RESPONSE, "Find");
+    dialog.add_response(CANCEL_RESPONSE, &labels.cancel);
+    dialog.add_response(FIND_RESPONSE, &labels.find);
     dialog.set_response_appearance(FIND_RESPONSE, adw::ResponseAppearance::Suggested);
     dialog.set_response_enabled(FIND_RESPONSE, false);
 
     let maximum_length =
         i32::try_from(MAX_HOSTNAME_BYTES).expect("hostname text bound must fit a GTK entry length");
     let entry = adw::EntryRow::builder()
-        .title("IP address or hostname")
+        .title(&*labels.target)
         .activates_default(true)
         .input_hints(gtk::InputHints::NO_EMOJI | gtk::InputHints::NO_SPELLCHECK)
         .max_length(maximum_length)
@@ -163,7 +166,7 @@ fn apply_admission(
 ) {
     dialog.set_response_enabled(FIND_RESPONSE, admission.entry.is_some());
     if let Some(message) = admission.validation_message {
-        validation.set_label(message);
+        validation.set_label(&message);
         validation.set_visible(true);
         entry.add_css_class("error");
     } else {
@@ -186,48 +189,12 @@ fn admission(value: &str) -> Admission {
         },
         Err(InvalidDiscoveryEntry::Address(error)) => Admission {
             entry: None,
-            validation_message: Some(validation_message(error)),
+            validation_message: Some(address_validation(error)),
         },
         Err(InvalidDiscoveryEntry::Hostname(error)) => Admission {
             entry: None,
-            validation_message: Some(hostname_validation_message(error)),
+            validation_message: Some(hostname_validation(error)),
         },
-    }
-}
-
-fn hostname_validation_message(error: InvalidHostnameTarget) -> &'static str {
-    match error {
-        InvalidHostnameTarget::Empty => "Enter a device IP address or hostname.",
-        InvalidHostnameTarget::TooLong { .. } | InvalidHostnameTarget::ControlCharacter => {
-            "Enter one hostname of letters, digits, hyphens, and dots."
-        }
-        InvalidHostnameTarget::InvalidSyntax => {
-            "Enter a hostname without a URL, port, path, or range."
-        }
-        InvalidHostnameTarget::IpAddressLiteral => "Enter a usable unicast device address.",
-    }
-}
-
-fn validation_message(error: InvalidExactDiscoveryTarget) -> &'static str {
-    match error {
-        InvalidExactDiscoveryTarget::Empty => "Enter a device IP address or hostname.",
-        InvalidExactDiscoveryTarget::TooLong { .. }
-        | InvalidExactDiscoveryTarget::ControlCharacter => {
-            "Enter one usable numeric IPv4 or IPv6 address."
-        }
-        InvalidExactDiscoveryTarget::InvalidSyntax => {
-            "Enter an IP address or hostname without a URL, port, or range."
-        }
-        InvalidExactDiscoveryTarget::UnicastRequired => "Enter a usable unicast device address.",
-        InvalidExactDiscoveryTarget::Ipv4MappedIpv6Unsupported => {
-            "Enter the IPv4 address directly."
-        }
-        InvalidExactDiscoveryTarget::LinkLocalIpv6ScopeRequired => {
-            "Link-local IPv6 is not supported yet; use IPv4 or unscoped IPv6."
-        }
-        InvalidExactDiscoveryTarget::ScopedIpv6Unsupported => {
-            "Scoped IPv6 is not supported yet; use IPv4 or unscoped IPv6."
-        }
     }
 }
 

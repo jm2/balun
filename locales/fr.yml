@@ -50,3 +50,79 @@ startup:
   old_runtime_description: >-
     GStreamer %{found} est trop ancien ; Balun nécessite GStreamer %{minimum} ou une version ultérieure. La
     recherche d’appareils et la consultation des chaînes restent disponibles.
+
+device_dialogs:
+  find_title: "Rechercher un appareil par adresse"
+  find_description: >-
+    Envoyer une requête de découverte HDHomeRun limitée à une adresse IP ou un nom d’hôte connu ; Balun ne
+    parcourt pas de plage d’adresses. Exemple : 192.168.1.20, fd00::20 ou tuner.example.
+  target: "Adresse IP ou nom d’hôte"
+  cancel: "Annuler"
+  find: "Rechercher"
+  enter_target: "Saisissez l’adresse IP ou le nom d’hôte d’un appareil."
+  hostname_characters: "Saisissez un nom d’hôte composé de lettres, de chiffres, de traits d’union et de points."
+  hostname_syntax: "Saisissez un nom d’hôte sans URL, port, chemin ni plage d’adresses."
+  unicast: "Saisissez une adresse unicast utilisable pour l’appareil."
+  numeric_address: "Saisissez une adresse numérique IPv4 ou IPv6 utilisable."
+  address_syntax: "Saisissez une adresse IP ou un nom d’hôte sans URL, port ni plage d’adresses."
+  ipv4_direct: "Saisissez directement l’adresse IPv4."
+  link_local: >-
+    L’IPv6 de liaison locale n’est pas encore pris en charge ; utilisez IPv4 ou une adresse IPv6 sans
+    identifiant de zone.
+  scoped: >-
+    L’IPv6 avec identifiant de zone n’est pas encore pris en charge ; utilisez IPv4 ou une adresse IPv6 sans
+    identifiant de zone.
+  forget_menu: "Oublier l’appareil…"
+  forget_heading: "Oublier cet appareil ?"
+  forget_description: >-
+    Balun ne sondera plus l’adresse ou le nom mémorisé de « %{device} » au démarrage. L’appareil restera dans
+    la liste jusqu’au prochain démarrage.
+  forget: "Oublier"
+  forgotten: "Appareil oublié."
+  forgotten_session: "Appareil oublié pour cette session uniquement ; les paramètres sont en lecture seule."
+
+failure:
+  busy_title: "Aucun tuner disponible"
+  busy_description: >-
+    Tous les tuners de %{device} sont occupés. La découverte des périphériques et la consultation des
+    chaînes restent disponibles.
+  channel_title: "Chaîne indisponible"
+  channel_description: >-
+    %{device} ne propose plus %{channel}. Utilisez Recharger les chaînes pour relire sa liste. La découverte
+    des périphériques et la consultation des chaînes restent disponibles.
+  rejected_title: "Le périphérique a refusé le flux"
+  rejected_description: >-
+    %{device} a refusé la demande pour %{channel}. La découverte des périphériques et la consultation des
+    chaînes restent disponibles.
+  offline_title: "Périphérique ou flux indisponible"
+  offline_description: >-
+    %{device} n’a pas transmis %{channel}. Vérifiez que le périphérique est allumé et accessible. La
+    découverte des périphériques et la consultation des chaînes restent disponibles.
+  codec_title: "Composant de lecture ou codec requis indisponible"
+  missing_audio_description: >-
+    Cette version de Balun n’a pas de décodeur audio %{codec} pour %{channel} sur %{device}. La découverte
+    des périphériques et la consultation des chaînes restent disponibles.
+  missing_video_description: >-
+    Cette version de Balun n’a pas de décodeur vidéo %{codec} pour %{channel} sur %{device}. La découverte
+    des périphériques et la consultation des chaînes restent disponibles.
+  missing_component_description: >-
+    Il manque à cette version de Balun un codec ou un greffon GStreamer requis pour %{channel} sur
+    %{device}. La découverte des périphériques et la consultation des chaînes restent disponibles.
+  protected_title: "Chaîne protégée non prise en charge"
+  protected_description: >-
+    %{channel} sur %{device} est protégée et ne peut pas être lue. La découverte des périphériques et la
+    consultation des chaînes restent disponibles.
+  internal_title: "Échec de la lecture"
+  internal_description: >-
+    La lecture de %{channel} sur %{device} s’est arrêtée à cause d’une erreur interne. La découverte des
+    périphériques et la consultation des chaînes restent disponibles.
+  generic_title: "Impossible de lire la chaîne"
+  generic_description: >-
+    La chaîne sélectionnée n’a pas pu être lancée. La découverte des périphériques et la consultation des
+    chaînes restent disponibles.
+  stop_title: "Impossible d’arrêter la télévision en direct"
+  stop_description: >-
+    La lecture n’a pas pu être arrêtée correctement. Fermez Balun avant de sélectionner une autre chaîne.
+  selected_device: "le périphérique sélectionné"
+  selected_channel: "la chaîne sélectionnée"
+  channel_number: "chaîne %{number}"

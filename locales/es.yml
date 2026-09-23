@@ -48,3 +48,74 @@ startup:
   old_runtime_description: >-
     GStreamer %{found} es demasiado antiguo; Balun requiere GStreamer %{minimum} o posterior. La búsqueda de
     dispositivos y la consulta de canales siguen disponibles.
+
+device_dialogs:
+  find_title: "Buscar dispositivo por dirección"
+  find_description: >-
+    Enviar una solicitud limitada de detección HDHomeRun a una dirección IP o nombre de host conocido; Balun
+    no explora un rango de direcciones. Ejemplo: 192.168.1.20, fd00::20 o tuner.example.
+  target: "Dirección IP o nombre de host"
+  cancel: "Cancelar"
+  find: "Buscar"
+  enter_target: "Introduce la dirección IP o el nombre de host de un dispositivo."
+  hostname_characters: "Introduce un nombre de host con letras, dígitos, guiones y puntos."
+  hostname_syntax: "Introduce un nombre de host sin URL, puerto, ruta ni rango."
+  unicast: "Introduce una dirección unicast válida para el dispositivo."
+  numeric_address: "Introduce una dirección numérica IPv4 o IPv6 válida."
+  address_syntax: "Introduce una dirección IP o nombre de host sin URL, puerto ni rango."
+  ipv4_direct: "Introduce la dirección IPv4 directamente."
+  link_local: "IPv6 de enlace local aún no es compatible; usa IPv4 o IPv6 sin identificador de zona."
+  scoped: "IPv6 con identificador de zona aún no es compatible; usa IPv4 o IPv6 sin identificador de zona."
+  forget_menu: "Olvidar dispositivo…"
+  forget_heading: "¿Olvidar este dispositivo?"
+  forget_description: >-
+    Balun dejará de consultar la dirección o el nombre guardado de «%{device}» al iniciarse. El dispositivo
+    seguirá en la lista hasta el próximo inicio.
+  forget: "Olvidar"
+  forgotten: "Dispositivo olvidado."
+  forgotten_session: "Dispositivo olvidado solo durante esta sesión; los ajustes son de solo lectura."
+
+failure:
+  busy_title: "No hay sintonizadores disponibles"
+  busy_description: >-
+    Todos los sintonizadores de %{device} están ocupados. La búsqueda de dispositivos y la consulta de
+    canales siguen disponibles.
+  channel_title: "Canal no disponible"
+  channel_description: >-
+    %{device} ya no ofrece %{channel}. Use Recargar canales para volver a leer su lista. La búsqueda de
+    dispositivos y la consulta de canales siguen disponibles.
+  rejected_title: "El dispositivo rechazó la transmisión"
+  rejected_description: >-
+    %{device} rechazó la solicitud de %{channel}. La búsqueda de dispositivos y la consulta de canales
+    siguen disponibles.
+  offline_title: "Dispositivo o transmisión no disponible"
+  offline_description: >-
+    %{device} no transmitió %{channel}. Compruebe que el dispositivo esté encendido y sea accesible. La
+    búsqueda de dispositivos y la consulta de canales siguen disponibles.
+  codec_title: "Componente de reproducción o códec necesario no disponible"
+  missing_audio_description: >-
+    Esta versión de Balun no tiene un decodificador de audio %{codec} para %{channel} en %{device}. La
+    búsqueda de dispositivos y la consulta de canales siguen disponibles.
+  missing_video_description: >-
+    Esta versión de Balun no tiene un decodificador de vídeo %{codec} para %{channel} en %{device}. La
+    búsqueda de dispositivos y la consulta de canales siguen disponibles.
+  missing_component_description: >-
+    Esta versión de Balun carece de un códec o complemento de GStreamer necesario para %{channel} en
+    %{device}. La búsqueda de dispositivos y la consulta de canales siguen disponibles.
+  protected_title: "Canal protegido no compatible"
+  protected_description: >-
+    %{channel} en %{device} está protegido y no se puede reproducir. La búsqueda de dispositivos y la
+    consulta de canales siguen disponibles.
+  internal_title: "Error de reproducción"
+  internal_description: >-
+    La reproducción de %{channel} en %{device} se detuvo debido a un error interno. La búsqueda de
+    dispositivos y la consulta de canales siguen disponibles.
+  generic_title: "No se puede reproducir el canal"
+  generic_description: >-
+    No se pudo iniciar el canal seleccionado. La búsqueda de dispositivos y la consulta de canales siguen
+    disponibles.
+  stop_title: "No se puede detener la televisión en directo"
+  stop_description: "La reproducción no se pudo detener correctamente. Cierre Balun antes de seleccionar otro canal."
+  selected_device: "el dispositivo seleccionado"
+  selected_channel: "el canal seleccionado"
+  channel_number: "canal %{number}"

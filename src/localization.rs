@@ -8,6 +8,9 @@ use std::borrow::Cow;
 use std::sync::OnceLock;
 
 pub mod controls;
+pub mod device_dialogs;
+#[cfg(feature = "playback")]
+pub mod playback_failure;
 #[cfg(feature = "playback")]
 pub mod playback_startup;
 pub mod playback_status;
