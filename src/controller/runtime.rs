@@ -868,18 +868,16 @@ impl ControllerActor {
         // or exact probe holds no authority, and a change that lost nothing
         // (a route change, a new address) cannot make its replies stale, so it
         // keeps running; a routed scan always stops.
-        let cancelled_scope = self
-            .active_discovery
-            .as_ref()
-            .map(|active| active.scope)
-            .filter(|scope| {
-                matches!(scope, DiscoveryScope::Routed(_)) || !change.lost_interfaces().is_empty()
-            });
-        if cancelled_scope.is_some()
-            && let Some(active) = &self.active_discovery
-        {
-            active.cancellation.cancel();
-        }
+        let cancelled_scope = match &self.active_discovery {
+            Some(active)
+                if matches!(active.scope, DiscoveryScope::Routed(_))
+                    || !change.lost_interfaces().is_empty() =>
+            {
+                active.cancellation.cancel();
+                Some(active.scope)
+            }
+            _ => None,
+        };
         if let Some(control) = &self.active_routed_control {
             control.cancellation.cancel();
         }
