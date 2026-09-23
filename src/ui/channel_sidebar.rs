@@ -29,6 +29,9 @@ pub(crate) struct ChannelSidebar {
     reload_button: gtk::Button,
     presentation: Rc<Cell<LineupPresentation>>,
     selected_device: Rc<Cell<Option<DeviceId>>>,
+    /// A highlight the lineup could not show while it was loading, failed
+    /// or unselected, restored by its ChannelKey from the next ready lineup.
+    carried_highlight: Rc<RefCell<Option<ChannelKey>>>,
     applying_snapshot: Rc<Cell<bool>>,
     activation_generation: Rc<Cell<Option<OperationGeneration>>>,
     sync_state: Rc<SidebarSyncState>,
@@ -248,7 +251,9 @@ impl ChannelSidebar {
     /// by a list position. Protected rows remain visible but unselectable.
     /// Search text is cleared when a different device becomes selected.
     pub(crate) fn apply_snapshot(&self, snapshot: &ApplicationSnapshot) {
-        let prior_selection = self.selected_channel_key();
+        let prior_selection = self
+            .selected_channel_key()
+            .or_else(|| self.carried_highlight.take());
         let lineup = snapshot.selected_lineup();
         let channels = if lineup.status() == SelectedLineupStatus::Ready {
             lineup.channels()
@@ -280,6 +285,13 @@ impl ChannelSidebar {
             self.store.splice(0, self.store.n_items(), &rows);
             self.restore_selection(prior_selection.as_ref());
         }
+        // A reload publishes Loading first, which empties the list; the
+        // highlight waits for the ready lineup instead of being lost.
+        self.carried_highlight.replace(carried_highlight(
+            lineup.status(),
+            prior_selection,
+            self.selection.selected() != gtk::INVALID_LIST_POSITION,
+        ));
         self.activation_generation.set(activation_generation);
 
         self.presentation
@@ -299,12 +311,16 @@ impl ChannelSidebar {
             .key()
     }
 
-    /// Re-select `key` if it is still visible and activatable; otherwise
-    /// leave nothing highlighted.
+    /// Re-select `key` if it is still visible and activatable, and scroll it
+    /// into view without moving focus; otherwise leave nothing highlighted.
     fn restore_selection(&self, key: Option<&ChannelKey>) {
         let position = key.and_then(|key| self.visible_position(key));
         self.selection
             .set_selected(position.unwrap_or(gtk::INVALID_LIST_POSITION));
+        if let Some(position) = position {
+            self.list
+                .scroll_to(position, gtk::ListScrollFlags::NONE, None);
+        }
     }
 
     fn visible_position(&self, key: &ChannelKey) -> Option<u32> {
@@ -335,6 +351,21 @@ fn rows_match(store: &gtk::gio::ListStore, channels: &[ChannelSummary]) -> bool 
                 .and_downcast::<ChannelRowObject>()
                 .is_some_and(|row| row.matches(summary))
         })
+}
+
+/// The highlight to keep for a later snapshot. One this lineup could not
+/// show, because it is loading, failed or unselected, waits for the next
+/// ready lineup, which settles it whether or not it lists the channel.
+fn carried_highlight(
+    status: SelectedLineupStatus,
+    wanted: Option<ChannelKey>,
+    shown: bool,
+) -> Option<ChannelKey> {
+    if shown || status == SelectedLineupStatus::Ready {
+        None
+    } else {
+        wanted
+    }
 }
 
 /// Build the channel pane without inventing lineup or guide data.
@@ -458,6 +489,7 @@ pub(crate) fn build() -> ChannelSidebar {
         reload_button,
         presentation,
         selected_device: Rc::new(Cell::new(None)),
+        carried_highlight: Rc::default(),
         applying_snapshot: Rc::new(Cell::new(false)),
         activation_generation: Rc::new(Cell::new(None)),
         sync_state,
@@ -899,6 +931,44 @@ mod tests {
         )
         .unwrap();
         assert!(!rows_match(&store, &renamed), "a changed row differs");
+    }
+
+    #[test]
+    fn a_reload_carries_the_highlight_to_the_ready_lineup() {
+        let (_snapshot, key, _protected, _generation) = ready_snapshot();
+        let failed = SelectedLineupStatus::Failed(LineupFailure::Unreachable);
+
+        // Loading empties the list, so the highlight cannot be shown yet.
+        let carried = carried_highlight(SelectedLineupStatus::Loading, Some(key.clone()), false);
+        assert_eq!(carried.as_ref(), Some(&key));
+        assert_eq!(
+            carried_highlight(failed, carried.clone(), false).as_ref(),
+            Some(&key),
+            "a failed reload keeps it for the next attempt"
+        );
+        assert_eq!(
+            carried_highlight(SelectedLineupStatus::Unselected, carried.clone(), false).as_ref(),
+            Some(&key)
+        );
+
+        // The ready lineup settles it, shown or no longer listed.
+        assert_eq!(
+            carried_highlight(SelectedLineupStatus::Ready, carried.clone(), true),
+            None
+        );
+        assert_eq!(
+            carried_highlight(SelectedLineupStatus::Ready, carried, false),
+            None
+        );
+        assert_eq!(
+            carried_highlight(SelectedLineupStatus::Loading, Some(key), true),
+            None,
+            "a highlight still shown needs no carrying"
+        );
+        assert_eq!(
+            carried_highlight(SelectedLineupStatus::Loading, None, false),
+            None
+        );
     }
 
     /// Run through `scripts/test-desktop-lifecycle.sh`; ordinary unit jobs

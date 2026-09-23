@@ -87,6 +87,22 @@ impl DeviceRowObject {
         object
     }
 
+    /// Show `summary`'s text in place, keeping this object and so the list
+    /// row GTK built for it. Identity never changes: a summary for another
+    /// device leaves the row alone. Returns whether the text changed.
+    pub(crate) fn refresh(&self, summary: &DeviceSummary) -> bool {
+        let projection = DeviceRowProjection::from_summary(summary);
+        if self.device_id() != Some(projection.device_id)
+            || (*self.imp().title.borrow() == projection.title
+                && *self.imp().subtitle.borrow() == projection.subtitle)
+        {
+            return false;
+        }
+        self.imp().title.replace(projection.title);
+        self.imp().subtitle.replace(projection.subtitle);
+        true
+    }
+
     #[must_use]
     pub(crate) fn device_id(&self) -> Option<DeviceId> {
         self.imp().device_id.get()
@@ -232,6 +248,30 @@ mod tests {
         assert!(row.matches(&summary));
         let unfavorited = ChannelSummary::new(key, "News".to_owned(), false, false, true).unwrap();
         assert!(!row.matches(&unfavorited));
+    }
+
+    #[test]
+    fn device_row_refreshes_its_text_in_place_but_never_its_identity() {
+        let summary = |id, name: &str| {
+            DeviceSummary::new(
+                id,
+                Some(name.to_owned()),
+                None,
+                Some(2),
+                "192.0.2.10:65001".parse().unwrap(),
+                vec!["192.0.2.10:65001".parse().unwrap()],
+            )
+            .unwrap()
+        };
+        let row = DeviceRowObject::from_summary(&summary(device_id(), "Living room"));
+        assert!(!row.refresh(&summary(device_id(), "Living room")));
+        assert!(row.refresh(&summary(device_id(), "Den")));
+        assert_eq!(row.title(), "Den · 105A1232");
+
+        let other = DeviceId::new(0x105A_1243).unwrap();
+        assert!(!row.refresh(&summary(other, "Kitchen")));
+        assert_eq!(row.device_id(), Some(device_id()));
+        assert_eq!(row.title(), "Den · 105A1232");
     }
 
     #[test]

@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keyboard focus, scroll position, and an open Forget menu in the device list no longer
+  reset when discovery or channel loading updates it, so arrow keys select the next device.
+- Reload channels keeps the highlighted channel and scrolls back to it once the lineup loads.
 - Debian control/data and Arch payloads now receive bounded decoding and complete
   tar member preflight before extraction. Native parser isolation and extraction
   containment remain pending; only trusted local build output is admitted.
