@@ -3844,6 +3844,48 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn only_an_admitted_revocation_stops_the_routed_scan() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let (_snapshot_sender, snapshot_receiver) =
+            watch::channel(Arc::new(ApplicationSnapshot::initial()));
+        let controller = ControllerHandle {
+            exact_searches: Arc::new(Mutex::new(0)),
+            routed_revocations: Arc::default(),
+            commands: sender,
+            shutdown: CancellationToken::new(),
+            snapshots: snapshot_receiver,
+        };
+        let scan = CancellationToken::new();
+        controller.routed_revocations.register_scan(&scan, 0);
+
+        controller
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        assert_eq!(
+            controller.try_send(ControllerCommand::RevokeRoutedApprovals),
+            Err(ControllerCommandError::Full)
+        );
+        assert!(
+            !scan.is_cancelled(),
+            "a refused revocation withdraws nothing"
+        );
+
+        receiver.try_recv().unwrap();
+        controller
+            .try_send(ControllerCommand::RevokeRoutedApprovals)
+            .unwrap();
+        assert!(scan.is_cancelled());
+        // A scan registered before the actor processes the revocation is
+        // cancelled at once; after it has been processed, scans run again.
+        let next = CancellationToken::new();
+        controller.routed_revocations.register_scan(&next, 0);
+        assert!(next.is_cancelled());
+        let after = CancellationToken::new();
+        controller.routed_revocations.register_scan(&after, 1);
+        assert!(!after.is_cancelled());
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn explicit_refresh_runs_on_named_current_thread_runtime_and_publishes_devices() {
         let (service, starts) = ScriptedService::new([ServiceStep::Immediate(Ok(report(
@@ -6014,6 +6056,16 @@ mod tests {
         })
         .await;
         assert_eq!(settled.routed().proposal(), RoutedProposalStatus::None);
+        // The idle state is published before the revocation task runs; wait
+        // for it to reach the service before shutting down.
+        let deadline = std::time::Instant::now() + WAIT;
+        while !routed.calls().contains(&RoutedCall::RevokeAll) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the revocation reaches the service"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
         controller.shutdown().unwrap();
         assert_eq!(
             routed.calls(),
