@@ -1033,7 +1033,19 @@ impl ControllerActor {
     }
 
     /// Forget every remembered routed approval.
+    ///
+    /// Withdrawn consent first stops a routed scan already under way, exactly
+    /// as Cancel does: its token is cancelled before the first await and the
+    /// run is joined before the revocation is queued, because the supervisor
+    /// handles one command at a time and would otherwise finish the scan.
     async fn revoke_routed(&mut self) -> Result<(), ControllerRuntimeError> {
+        if self
+            .active_discovery
+            .as_ref()
+            .is_some_and(|active| active.scope.kind() == DiscoveryKind::Routed)
+        {
+            self.cancel_discovery().await?;
+        }
         self.cancel_active_routed_control().await;
         if self.shutdown.is_cancelled() {
             return Ok(());
@@ -5789,6 +5801,72 @@ mod tests {
         })
         .await;
         controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn revocation_stops_an_active_routed_run_before_forgetting() {
+        let routed = ScriptedRoutedService::new(Vec::new());
+        let (started, started_rx) = std_mpsc::channel();
+        let (cancelled, cancelled_rx) = std_mpsc::channel();
+        routed.script_run(RoutedStep::UntilCancelled { started, cancelled });
+        let (release, release_rx) = oneshot::channel();
+        routed.script_revoke(RoutedStep::Gated {
+            release: release_rx,
+        });
+        let (controller, _discovery, _starts) = start_routed(routed.clone());
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        started_rx
+            .recv_timeout(WAIT)
+            .expect("the routed run is in flight before approvals are forgotten");
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().kind() == DiscoveryKind::Routed
+                && snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::RevokeRoutedApprovals)
+            .unwrap();
+        let stopped = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().kind() == DiscoveryKind::Routed
+                && snapshot.discovery().status() == DiscoveryStatus::Idle
+        })
+        .await;
+
+        // The run had already observed its cancellation, so its scan can send
+        // nothing more, when the stopped state was published; the revocation
+        // is still held, so stopping never waits for the store write.
+        cancelled_rx
+            .try_recv()
+            .expect("the routed run is cancelled before the revocation completes");
+        assert_eq!(stopped.routed().proposal(), RoutedProposalStatus::None);
+
+        release
+            .send(Ok(()))
+            .expect("the gated revocation should still be scripted or in flight");
+        let forgotten = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.revision() > stopped.revision()
+        })
+        .await;
+        assert_eq!(forgotten.discovery().kind(), DiscoveryKind::Routed);
+        assert_eq!(forgotten.discovery().status(), DiscoveryStatus::Idle);
+        assert_eq!(forgotten.routed().proposal(), RoutedProposalStatus::None);
+        assert_eq!(
+            routed.calls(),
+            vec![
+                RoutedCall::Run(RoutedScanTrigger::ExplicitRefresh),
+                RoutedCall::RevokeAll,
+            ]
+        );
+        controller.shutdown().unwrap();
+        assert_eq!(routed.calls().len(), 2, "revocation starts no discovery");
     }
 
     #[test]
