@@ -76,6 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Linux, routine IPv6 address refreshes no longer cancel device searches and routed approvals
+  every few seconds, and a remembered device whose startup search was interrupted is tried again.
+- Losing one IPv6 address, such as a rotated temporary address, no longer removes tuners found over
+  IPv4 or stops playback.
 - Debian control/data and Arch payloads now receive bounded decoding and complete
   tar member preflight before extraction. Native parser isolation and extraction
   containment remain pending; only trusted local build output is admitted.

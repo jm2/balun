@@ -34,7 +34,8 @@ use super::{
 use crate::discovery::{
     DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryMethod, DiscoveryObservation,
     DiscoveryReport, ExactDiscoveryTarget, ExpirationOutcome, HostnameResolutionError,
-    HostnameResolver, HostnameTarget, LocatorOrigin, NetworkChange, ProbeConfig, RegistryInstant,
+    HostnameResolver, HostnameTarget, InterfaceLoss, LocatorOrigin, NetworkChange, ProbeConfig,
+    RegistryInstant,
 };
 use crate::discovery::{MAX_ROUTED_CANDIDATES, RoutedProposalOriginSummary, RoutedScanTrigger};
 use crate::domain::{ChannelKey, DeviceId};
@@ -863,15 +864,28 @@ impl ControllerActor {
         change: NetworkChange,
     ) -> Result<(), ControllerRuntimeError> {
         // (1) Cancel before the first await so no datagram leaves on the old
-        // authority; joining afterwards keeps the lanes deterministic.
-        let cancelled_scope = self.active_discovery.as_ref().map(|active| active.scope);
-        if let Some(active) = &self.active_discovery {
+        // authority; joining afterwards keeps the lanes deterministic. A local
+        // or exact probe holds no authority, and a change that lost nothing
+        // (a route change, a new address) cannot make its replies stale, so it
+        // keeps running; a routed scan always stops.
+        let cancelled_scope = self
+            .active_discovery
+            .as_ref()
+            .map(|active| active.scope)
+            .filter(|scope| {
+                matches!(scope, DiscoveryScope::Routed(_)) || !change.lost_interfaces().is_empty()
+            });
+        if cancelled_scope.is_some()
+            && let Some(active) = &self.active_discovery
+        {
             active.cancellation.cancel();
         }
         if let Some(control) = &self.active_routed_control {
             control.cancellation.cancel();
         }
-        self.cancel_active_discovery().await;
+        if cancelled_scope.is_some() {
+            self.cancel_active_discovery().await;
+        }
         self.cancel_active_routed_control().await;
         if self.shutdown.is_cancelled() {
             return Ok(());
@@ -945,14 +959,14 @@ impl ControllerActor {
         &self,
         change: &NetworkChange,
     ) -> Result<(DiscoveryUpdate, ExpirationOutcome), ControllerRuntimeError> {
-        let lost = change.lost_interfaces();
+        // Routed discovery is IPv4-only.
         let routed_lost = self.routed_batch.as_ref().is_some_and(|batch| {
             batch
                 .interfaces
                 .iter()
-                .any(|interface| lost.contains(interface))
+                .any(|interface| change.loss(interface).ipv4())
         });
-        let expires = |origin: &LocatorOrigin| origin_expires(origin, lost, routed_lost);
+        let expires = |origin: &LocatorOrigin| origin_expires(origin, change, routed_lost);
 
         let local_batch = self.local_batch.as_ref().and_then(|batch| {
             batch.retain(|observation| {
@@ -2081,19 +2095,24 @@ async fn recv_optional<T>(receiver: Option<&mut mpsc::Receiver<T>>) -> Option<T>
 /// Whether one locator origin depended on something a network change lost.
 ///
 /// Exact and hostname targets are user data and never expire here. Local
-/// broadcast and multicast origins expire with their interface. Routed
-/// origins carry no interface of their own; they expire together when the
-/// tunnel the routed batch was bound to is lost.
-fn origin_expires(origin: &LocatorOrigin, lost: &BTreeSet<String>, routed_lost: bool) -> bool {
+/// broadcast and multicast origins expire when their interface lost the
+/// address family they were observed through, so an IPv6 address rotation
+/// leaves IPv4 evidence in place. Routed origins carry no interface of their
+/// own; they expire together when the tunnel the routed batch was bound to is
+/// lost.
+fn origin_expires(origin: &LocatorOrigin, change: &NetworkChange, routed_lost: bool) -> bool {
+    let loss = |family: fn(InterfaceLoss) -> bool| {
+        origin
+            .interface
+            .as_deref()
+            .is_some_and(|interface| family(change.loss(interface)))
+    };
     match origin.method {
         DiscoveryMethod::Targeted => false,
         DiscoveryMethod::RoutedTargeted => routed_lost,
-        DiscoveryMethod::Ipv4Broadcast
-        | DiscoveryMethod::Ipv6LinkLocalMulticast
-        | DiscoveryMethod::Ipv6SiteLocalMulticast => origin
-            .interface
-            .as_deref()
-            .is_some_and(|interface| lost.contains(interface)),
+        DiscoveryMethod::Ipv4Broadcast => loss(InterfaceLoss::ipv4),
+        DiscoveryMethod::Ipv6LinkLocalMulticast => loss(InterfaceLoss::ipv6_link_local),
+        DiscoveryMethod::Ipv6SiteLocalMulticast => loss(InterfaceLoss::ipv6_routable),
     }
 }
 
@@ -5974,7 +5993,7 @@ mod tests {
 
     #[test]
     fn origin_expiry_spares_exact_targets_and_binds_routed_evidence_to_its_tunnel() {
-        let lost = ["eth0".to_owned()].into_iter().collect::<BTreeSet<_>>();
+        let lost = lost(&["eth0"]);
         let exact = LocatorOrigin {
             method: DiscoveryMethod::Targeted,
             interface: None,
@@ -5998,6 +6017,51 @@ mod tests {
         assert!(origin_expires(&multicast, &lost, false));
         assert!(origin_expires(&routed, &lost, true));
         assert!(!origin_expires(&routed, &lost, false));
+    }
+
+    #[test]
+    fn origin_expiry_follows_the_address_family_an_interface_lost() {
+        let origin = |method| LocatorOrigin {
+            method,
+            interface: Some("eth0".to_owned()),
+        };
+        let ipv4 = origin(DiscoveryMethod::Ipv4Broadcast);
+        let link_local = origin(DiscoveryMethod::Ipv6LinkLocalMulticast);
+        let site_local = origin(DiscoveryMethod::Ipv6SiteLocalMulticast);
+        let inventory = |addresses: &[&str]| {
+            crate::discovery::InterfaceInventory::from_addresses(
+                addresses
+                    .iter()
+                    .map(|address| ("eth0".to_owned(), address.parse().unwrap())),
+            )
+        };
+        let change_between = |before: &[&str], after: &[&str]| {
+            NetworkChange::coalesced(inventory(before).loss_since(&inventory(after)), 1)
+        };
+        let full = ["192.0.2.10", "fe80::10", "2001:db8::10", "2001:db8::beef"];
+        let expired = |change: &NetworkChange| {
+            [&ipv4, &link_local, &site_local].map(|origin| origin_expires(origin, change, false))
+        };
+
+        // A temporary IPv6 address expires while a stable one remains:
+        // nothing observed through the interface is stale.
+        let rotation = change_between(&full, &["192.0.2.10", "fe80::10", "2001:db8::10"]);
+        assert!(rotation.lost_interfaces().is_empty());
+        assert_eq!(expired(&rotation), [false, false, false]);
+        // IPv4 renumbering expires only IPv4 broadcast evidence.
+        let renumbered = change_between(
+            &full,
+            &["192.0.2.99", "fe80::10", "2001:db8::10", "2001:db8::beef"],
+        );
+        assert_eq!(expired(&renumbered), [true, false, false]);
+        // The last routable IPv6 address going away expires site-local
+        // multicast evidence; the link-local address still reaches the LAN.
+        let no_routable = change_between(&full, &["192.0.2.10", "fe80::10"]);
+        assert_eq!(expired(&no_routable), [false, false, true]);
+        let no_link_local = change_between(&full, &["192.0.2.10", "2001:db8::10"]);
+        assert_eq!(expired(&no_link_local), [false, true, false]);
+        // A removed interface loses everything.
+        assert_eq!(expired(&lost(&["eth0"])), [true, true, true]);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -6402,6 +6466,65 @@ mod tests {
         );
         assert_eq!(reconciled.devices().len(), 1, "unrelated evidence stays");
         assert_eq!(reconciled.network().expired_locators(), 0);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn network_change_that_lost_nothing_keeps_an_in_flight_local_refresh() {
+        let (release, release_rx) = oneshot::channel();
+        let (cancelled, cancelled_rx) = std_mpsc::channel();
+        let (controller, starts, _selection_starts, _selection, changes) = start_with_changes(
+            [ServiceStep::Gated {
+                release: release_rx,
+                cancelled,
+                cancellation_result: Err(DiscoveryFailure::Internal),
+            }],
+            [],
+            unavailable_routed(),
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        let refreshing = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+
+        // A route change or a new address loses nothing a local probe used.
+        changes
+            .try_send(NetworkChange::coalesced(BTreeMap::new(), 3))
+            .unwrap();
+        let reconciled = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 1
+        })
+        .await;
+
+        assert!(
+            cancelled_rx.try_recv().is_err(),
+            "the local refresh must keep running"
+        );
+        assert_eq!(reconciled.discovery().kind(), DiscoveryKind::Local);
+        assert_eq!(reconciled.discovery().status(), DiscoveryStatus::Refreshing);
+        assert_eq!(
+            reconciled.discovery_generation(),
+            refreshing.discovery_generation()
+        );
+
+        release
+            .send(Ok(report_of(vec![broadcast_observation(
+                first_id(),
+                "192.0.2.10:65001",
+                "eth0",
+            )])))
+            .unwrap();
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(ready.devices().len(), 1);
         controller.shutdown().unwrap();
     }
 }
