@@ -19,13 +19,17 @@ are outside this lock. New supported wheels need a reviewed hash update.
 Each job creates a fresh virtual environment without pip, then uses the host
 pip to install into that environment with `--require-hashes --only-binary=:all:`.
 The generator step explicitly selects that environment through `PYTHON`.
+Both steps unset `PYTHONPATH` and `PYTHONHOME` first: the pinned Flathub CI
+image exports `PYTHONPATH=/app/lib/python3.13/site-packages`, whose older
+aiohttp, tomlkit, and transitive packages would otherwise shadow the locked wheels.
 No system package override or unpinned installation fallback is used.
 The host pip must support
 [`--python`, added in pip 22.3](https://pip.pypa.io/en/stable/topics/python-option/).
 Python, pip, the virtual-environment implementation, and the hosted/container
 base remain separate H2.2 inputs; this lock does not make the full build immutable.
 
-From the repository root on a supported Linux interpreter with pip available:
+From the repository root on a supported Linux interpreter with pip available
+and `PYTHONPATH`/`PYTHONHOME` unset:
 
 ```sh
 generator_work=$(mktemp -d -p "${TMPDIR:-/var/tmp}" balun-generator.XXXXXX)
