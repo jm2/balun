@@ -156,6 +156,10 @@ pub enum ProtocolError {
     #[error("invalid concrete HDHomeRun device ID {0:08X}")]
     InvalidDeviceId(u32),
 
+    /// A tuner count is outside the range device metadata accepts.
+    #[error("invalid HDHomeRun tuner count {0}; expected 1 through 32")]
+    InvalidTunerCount(u8),
+
     /// A string tag is not UTF-8.
     #[error("HDHomeRun string tag {tag:#04X} is not valid UTF-8")]
     InvalidUtf8 { tag: u8 },
@@ -439,7 +443,12 @@ pub fn parse_tuner_discover_response(datagram: &[u8]) -> Result<DiscoverResponse
             }
             TAG_TUNER_COUNT => {
                 require_tag_length(item, 1, "1")?;
-                set_once(&mut tuner_count, item.value[0], item.tag)?;
+                // The same range `discover.json` metadata must satisfy.
+                let value = item.value[0];
+                if !(1..=32).contains(&value) {
+                    return Err(ProtocolError::InvalidTunerCount(value));
+                }
+                set_once(&mut tuner_count, value, item.tag)?;
             }
             TAG_BASE_URL => {
                 let value = parse_wire_string(item.tag, item.value)?;
@@ -973,6 +982,24 @@ mod tests {
             parse_tuner_discover_response(&frame),
             Err(ProtocolError::InvalidDeviceId(0x105A_1233))
         );
+    }
+
+    #[test]
+    fn response_accepts_only_tuner_counts_that_device_metadata_accepts() {
+        for valid in [1, 32] {
+            let frame = response_with_extra_tlv(TAG_TUNER_COUNT, &[valid]);
+            assert_eq!(
+                parse_tuner_discover_response(&frame).unwrap().tuner_count,
+                Some(valid)
+            );
+        }
+        for invalid in [0, 33, u8::MAX] {
+            let frame = response_with_extra_tlv(TAG_TUNER_COUNT, &[invalid]);
+            assert_eq!(
+                parse_tuner_discover_response(&frame),
+                Err(ProtocolError::InvalidTunerCount(invalid))
+            );
+        }
     }
 
     #[test]

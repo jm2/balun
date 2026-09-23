@@ -76,6 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Discovery keeps working after a tuner's address passes to another tuner, one bad tuner count no
+  longer hides every device or halts discovery, and re-probing the playing tuner no longer stops it.
 - Debian control/data and Arch payloads now receive bounded decoding and complete
   tar member preflight before extraction. Native parser isolation and extraction
   containment remain pending; only trusted local build output is admitted.
