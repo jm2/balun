@@ -324,6 +324,41 @@ pub struct ControllerHandle {
     /// Exact searches admitted through every clone of this handle, in the
     /// order the actor will process them; shared so tickets stay in step.
     exact_searches: Arc<Mutex<u64>>,
+    routed_revocations: Arc<RoutedRevocations>,
+}
+
+/// Routed-approval revocations admitted through any handle, and the routed
+/// scan they must stop. Admission cancels that scan at once, so consent
+/// withdrawn while the actor is busy stops its traffic before the command is
+/// processed, and no routed scan starts while a revocation is pending.
+#[derive(Default)]
+struct RoutedRevocations {
+    state: Mutex<RoutedRevocationState>,
+}
+
+#[derive(Default)]
+struct RoutedRevocationState {
+    admitted: u64,
+    scan: Option<CancellationToken>,
+}
+
+impl RoutedRevocations {
+    fn lock(&self) -> std::sync::MutexGuard<'_, RoutedRevocationState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Record a routed scan about to start, or cancel it at once when a
+    /// revocation the actor has not processed yet was already admitted.
+    fn register_scan(&self, cancellation: &CancellationToken, processed: u64) {
+        let mut state = self.lock();
+        if state.admitted > processed {
+            cancellation.cancel();
+        } else {
+            state.scan = Some(cancellation.clone());
+        }
+    }
 }
 
 /// Unique owner of the controller thread and its deterministic shutdown.
@@ -439,6 +474,8 @@ impl ControllerRuntime {
         ));
         let (ready_sender, ready_receiver) = std_mpsc::sync_channel(1);
         let actor_shutdown = shutdown.clone();
+        let routed_revocations = Arc::new(RoutedRevocations::default());
+        let actor_revocations = Arc::clone(&routed_revocations);
 
         let controller_thread = thread::Builder::new()
             .name(CONTROLLER_THREAD_NAME.to_owned())
@@ -460,6 +497,7 @@ impl ControllerRuntime {
                     snapshot_sender,
                 );
                 actor.hostname_resolver = hostname_resolver;
+                actor.routed_revocations = actor_revocations;
                 if ready_sender.send(Ok(())).is_err() {
                     return Ok(());
                 }
@@ -471,6 +509,7 @@ impl ControllerRuntime {
             Ok(Ok(())) => Ok(Self {
                 handle: ControllerHandle {
                     exact_searches: Arc::new(Mutex::new(0)),
+                    routed_revocations,
                     commands: command_sender,
                     shutdown,
                     snapshots: snapshot_receiver,
@@ -555,10 +594,25 @@ impl Drop for ControllerRuntime {
 impl ControllerHandle {
     /// Try to admit a command without waiting for queue capacity.
     pub fn try_send(&self, command: ControllerCommand) -> Result<(), ControllerCommandError> {
-        if let ControllerCommand::DiscoverExact(target) = command {
-            return self.try_discover_exact(target).map(|_| ());
+        match command {
+            ControllerCommand::DiscoverExact(target) => self.try_discover_exact(target).map(|_| ()),
+            ControllerCommand::RevokeRoutedApprovals => self.try_revoke_routed(),
+            command => self.try_send_actor(ActorCommand::Controller(command)),
         }
-        self.try_send_actor(ActorCommand::Controller(command))
+    }
+
+    /// Admit a routed-approval revocation and stop any routed scan at once.
+    /// The lock spans admission so a scan cannot register between the two.
+    fn try_revoke_routed(&self) -> Result<(), ControllerCommandError> {
+        let mut revocations = self.routed_revocations.lock();
+        self.try_send_actor(ActorCommand::Controller(
+            ControllerCommand::RevokeRoutedApprovals,
+        ))?;
+        revocations.admitted = revocations.admitted.saturating_add(1);
+        if let Some(scan) = revocations.scan.take() {
+            scan.cancel();
+        }
+        Ok(())
     }
 
     /// Admit an exact-address search and return its ticket. Every exact
@@ -680,6 +734,9 @@ struct ControllerActor {
     network_changes: Option<mpsc::Receiver<NetworkChange>>,
     network: NetworkChangeSummary,
     exact_searches: u64,
+    routed_revocations: Arc<RoutedRevocations>,
+    /// Revocations processed, compared with those admitted by handles.
+    revocations_processed: u64,
 }
 
 impl ControllerActor {
@@ -723,6 +780,8 @@ impl ControllerActor {
             network_changes: None,
             network: NetworkChangeSummary::INITIAL,
             exact_searches: 0,
+            routed_revocations: Arc::default(),
+            revocations_processed: 0,
         }
     }
 
@@ -1039,6 +1098,7 @@ impl ControllerActor {
     /// run is joined before the revocation is queued, because the supervisor
     /// handles one command at a time and would otherwise finish the scan.
     async fn revoke_routed(&mut self) -> Result<(), ControllerRuntimeError> {
+        self.revocations_processed = self.revocations_processed.saturating_add(1);
         if self
             .active_discovery
             .as_ref()
@@ -1234,6 +1294,10 @@ impl ControllerActor {
         self.publish()?;
 
         let cancellation = self.shutdown.child_token();
+        if matches!(scope, DiscoveryScope::Routed(_)) {
+            self.routed_revocations
+                .register_scan(&cancellation, self.revocations_processed);
+        }
         let service = Arc::clone(&self.discovery_service);
         let routed_service = Arc::clone(&self.routed_service);
         let task_cancellation = cancellation.clone();
@@ -3748,6 +3812,7 @@ mod tests {
         let shutdown = CancellationToken::new();
         let controller = ControllerHandle {
             exact_searches: Arc::new(Mutex::new(0)),
+            routed_revocations: Arc::default(),
             commands: sender,
             shutdown: shutdown.clone(),
             snapshots: snapshot_receiver,
@@ -5867,6 +5932,97 @@ mod tests {
         );
         controller.shutdown().unwrap();
         assert_eq!(routed.calls().len(), 2, "revocation starts no discovery");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admitted_revocation_stops_a_routed_run_while_the_actor_is_busy() {
+        let (discovery, discovery_starts) = ScriptedService::new([ServiceStep::Immediate(Ok(
+            report(first_id(), "192.0.2.10:65001", 4),
+        ))]);
+        let (cancellation_observed, cancellation_observed_rx) = std_mpsc::channel();
+        let (finish_cancellation, finish_cancellation_rx) = oneshot::channel();
+        let (selection, selection_starts) =
+            ScriptedSelectionService::new([SelectionStep::CancellationBarrier {
+                cancellation_observed,
+                finish_cancellation: finish_cancellation_rx,
+                cancellation_result: Ok(
+                    ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
+                ),
+            }]);
+        let routed = ScriptedRoutedService::new(Vec::new());
+        let (started, started_rx) = std_mpsc::channel();
+        let (cancelled, cancelled_rx) = std_mpsc::channel();
+        routed.script_run(RoutedStep::UntilCancelled { started, cancelled });
+        routed.script_revoke(RoutedStep::Immediate(Ok(())));
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            routed.clone(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        started_rx
+            .recv_timeout(WAIT)
+            .expect("the routed run is in flight");
+
+        // The actor now waits for the selected-device work to finish
+        // cancelling, so it cannot process the commands queued behind it: a
+        // second routed run, then the revocation.
+        handle.try_send(ControllerCommand::ClearSelection).unwrap();
+        cancellation_observed_rx
+            .recv_timeout(WAIT)
+            .expect("clearing the selection holds the actor");
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        handle
+            .try_send(ControllerCommand::RevokeRoutedApprovals)
+            .unwrap();
+        let stopped_while_busy = cancelled_rx.recv_timeout(WAIT);
+
+        // Release the actor before asserting so a regression fails, not hangs.
+        finish_cancellation.send(()).unwrap();
+        assert!(
+            stopped_while_busy.is_ok(),
+            "admission alone must stop the routed run"
+        );
+        let settled = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_device().is_none()
+                && snapshot.discovery().kind() == DiscoveryKind::Routed
+                && snapshot.discovery().status() == DiscoveryStatus::Idle
+        })
+        .await;
+        assert_eq!(settled.routed().proposal(), RoutedProposalStatus::None);
+        controller.shutdown().unwrap();
+        assert_eq!(
+            routed.calls(),
+            vec![
+                RoutedCall::Run(RoutedScanTrigger::ExplicitRefresh),
+                RoutedCall::RevokeAll,
+            ],
+            "the run queued before the revocation never reaches the service"
+        );
     }
 
     #[test]
