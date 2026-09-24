@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Validate or synchronize Balun's authoritative Rust/MSRV declarations.
 
-Dependabot proposes compiler-floor updates through
-`build-aux/toolchain/rust-toolchain.toml`. Those proposals are only an input:
-this helper coordinates Cargo.toml, the single exact MSRV CI input, and
-developer documentation before the complete CI matrix decides whether the new
-compiler is feasible. Jobs which intentionally track `stable` are not
+The compiler floor is declared in `build-aux/toolchain/rust-toolchain.toml`
+and raised deliberately (Dependabot does not propose it): this helper
+coordinates Cargo.toml, the single exact MSRV CI input, and developer
+documentation before the complete CI matrix decides whether the new compiler is
+feasible. Jobs which intentionally track `stable` are not
 compiler-floor authorities and are never rewritten here.
 
 The `dtolnay/rust-toolchain` action reference is a separate supply-chain
