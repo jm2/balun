@@ -77,17 +77,20 @@ lists the required Linux, macOS, and Windows host targets as available.
 
 The lint job runs `scripts/check_release_rust.py` and its regression suite. It
 checks the separate manifest, canonical exact release, compatibility with the
-Cargo compiler floor, one matching literal input per recorded job, and exact job
-membership. Changed, floating, expression-based, missing, duplicate, or additional
-Rust action selections reject. The existing synchronization policy still checks
-the action's common immutable commit. These inspect trusted repository files;
-they do not execute or install the compiler.
+Cargo compiler floor, one exact reviewed manifest-reading step before each
+recorded job's Rust action, that action receiving the step's output, and exact job
+membership. Literal, floating, other-expression, missing, duplicate, or additional
+Rust action selections reject, as does a changed, missing, or late read step.
+The existing synchronization policy still checks the action's common immutable
+commit. These inspect trusted repository files; they do not execute or install
+the compiler.
 
-Dependabot proposes release compiler updates separately, including patch fixes.
-Update the manifest and all five action inputs together, then run the checker,
-its tests, workflow lint, and the complete CI matrix. Before release acceptance,
-build the affected package candidates with the selected compiler. The compiler
-floor proposal, rolling `stable` CI, developer toolchain selection, and the exact
+Dependabot proposes release compiler updates, including patch fixes. Every
+release job reads the manifest, so a proposal changes only that file; like other
+minor and patch Dependabot updates, it merges automatically once the required
+checks pass. Before release acceptance, build the affected package candidates
+with the selected compiler. The compiler floor (raised deliberately, not proposed
+by Dependabot), rolling `stable` CI, developer toolchain selection, and the exact
 Rust coverage toolchain remain separate. Advancing the release pin does not
 automatically raise the MSRV, and an MSRV above the release pin fails this check.
 

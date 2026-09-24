@@ -536,13 +536,13 @@ build inputs remain tracked under H2.2.
 
 ### Rust toolchain policy
 
-`build-aux/toolchain/rust-toolchain.toml` is the Dependabot proposal source for the compiler
-floor; its nested location keeps it from acting as a repository-wide rustup override.
+`build-aux/toolchain/rust-toolchain.toml` declares the compiler floor; its nested location keeps
+it from acting as a repository-wide rustup override.
 
 ```bash
 python3 scripts/test_rust_toolchain_policy.py
 python3 scripts/sync_rust_toolchain.py --check
-# After reviewing a Dependabot compiler proposal:
+# After raising the floor in build-aux/toolchain/rust-toolchain.toml:
 python3 scripts/sync_rust_toolchain.py --from-toolchain
 ```
 
@@ -649,7 +649,7 @@ build-aux/
 ├── inno/                   # x86_64/ARM64 Windows installer recipe
 ├── linux/                  # Native Linux package payload and metadata validators
 ├── packaging/              # Shared forbidden-component policy and validator
-└── toolchain/              # Dependabot-tracked Rust floor proposal
+└── toolchain/              # Rust compiler floor declaration
 
 data/
 ├── io.github.jm2.Balun.desktop      # Desktop entry

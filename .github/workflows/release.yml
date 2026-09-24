@@ -172,10 +172,18 @@ jobs:
         shell: pwsh
         run: ./scripts/test-build-windows-routing.ps1
 
+      - name: Read the reviewed release compiler
+        id: release-rust
+        shell: bash
+        run: |
+          toolchain="$(sed -n 's/^channel = "\([0-9.]*\)"$/\1/p' build-aux/release-toolchain/rust-toolchain.toml)"
+          test -n "$toolchain"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          toolchain: 1.98.0
+          toolchain: ${{ steps.release-rust.outputs.toolchain }}
 
       - name: Test tagged source
         run: cargo test --all-targets --locked
@@ -297,10 +305,18 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: '1'
         run: brew install create-dmg gstreamer gtk4 libadwaita adwaita-icon-theme pkgconf
 
+      - name: Read the reviewed release compiler
+        id: release-rust
+        shell: bash
+        run: |
+          toolchain="$(sed -n 's/^channel = "\([0-9.]*\)"$/\1/p' build-aux/release-toolchain/rust-toolchain.toml)"
+          test -n "$toolchain"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          toolchain: 1.98.0
+          toolchain: ${{ steps.release-rust.outputs.toolchain }}
           targets: aarch64-apple-darwin
 
       - name: Build, sign, probe, and reopen the macOS disk image
@@ -385,10 +401,18 @@ jobs:
             ${{ matrix.mingw_package_prefix }}-pkg-config
             ${{ matrix.mingw_package_prefix }}-toolchain
 
+      - name: Read the reviewed release compiler
+        id: release-rust
+        shell: bash
+        run: |
+          toolchain="$(sed -n 's/^channel = "\([0-9.]*\)"$/\1/p' build-aux/release-toolchain/rust-toolchain.toml)"
+          test -n "$toolchain"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          toolchain: 1.98.0
+          toolchain: ${{ steps.release-rust.outputs.toolchain }}
           targets: ${{ matrix.rust_target }}
 
       - name: Build the Windows desktop through the helper
@@ -473,10 +497,18 @@ jobs:
           ref: ${{ needs.prepare.outputs.build_ref }}
           persist-credentials: false
 
+      - name: Read the reviewed release compiler
+        id: release-rust
+        shell: bash
+        run: |
+          toolchain="$(sed -n 's/^channel = "\([0-9.]*\)"$/\1/p' build-aux/release-toolchain/rust-toolchain.toml)"
+          test -n "$toolchain"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          toolchain: 1.98.0
+          toolchain: ${{ steps.release-rust.outputs.toolchain }}
 
       - name: Install the reviewed Debian package builder
         run: cargo install cargo-deb --version 3.7.0 --locked
@@ -522,10 +554,18 @@ jobs:
           ref: ${{ needs.prepare.outputs.build_ref }}
           persist-credentials: false
 
+      - name: Read the reviewed release compiler
+        id: release-rust
+        shell: bash
+        run: |
+          toolchain="$(sed -n 's/^channel = "\([0-9.]*\)"$/\1/p' build-aux/release-toolchain/rust-toolchain.toml)"
+          test -n "$toolchain"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          toolchain: 1.98.0
+          toolchain: ${{ steps.release-rust.outputs.toolchain }}
 
       - name: Install the reviewed RPM package builder
         run: cargo install cargo-generate-rpm --version 0.21.0 --locked
