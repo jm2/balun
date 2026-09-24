@@ -378,8 +378,9 @@ binary artifacts plus `SHA256SUMS.txt`.
 
 Release contract:
 
-- As maintainer procedure, create a signed, annotated, v-prefixed Semantic
-  Version tag from the reviewed `main` release commit. The workflow verifies
+- As maintainer procedure, create an annotated, v-prefixed Semantic Version
+  tag from the reviewed `main` release commit; signing is deferred with H2.1,
+  so v0.1.0 and v0.1.1 used unsigned tags by maintainer approval. The workflow verifies
   the annotated Semantic Version shape and resolves its commit; it does not
   verify the signer or `main` ancestry.
 - Build every package from that one SHA with locked dependencies and pinned

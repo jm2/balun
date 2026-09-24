@@ -49,18 +49,19 @@ dependency ledger, not an effort estimate. P4.1 is carried forward once.
 
 ## Current focus
 
-The CI baseline repair landed in [PR #96](https://github.com/jm2/balun/pull/96) with all
-ten jobs passing. H0's five corrections are complete. Establish the remaining package
-guarantees in H1 before claiming them for a new release. H3 maintains privacy and the
-review record. H2/H4 may proceed independently and do not delay a corrective patch
-solely to complete beta infrastructure. P4.1 follows the relevant fixes and candidate
-builds; development-build evidence does not complete it.
+The 2026-09-23 holistic review filed [#145–#188](https://github.com/jm2/balun/issues?q=is%3Aissue+145..188).
+Its user-facing defects come first, then P4.1's packaged hardware pass on candidate
+builds, collecting H4.3 accessibility evidence and the V2.1 timing re-take in the same
+pass. H0 is complete. By maintainer direction on 2026-09-24, the remaining assurance
+work in H1.4, H2.2, and H2.4 is deferred until after that pass; landed slices stay.
+Development-build evidence does not complete P4.1.
 
 P4.5 records publication of "Balun v0.1.0 Alpha" on 2026-09-05 with the
 12-artifact inventory and `SHA256SUMS.txt`. The initial tag was unsigned by
-maintainer approval; packaged live-tuner acceptance was still incomplete.
-Signed annotated tags remain the procedure for later releases; H2.1 adds
-machine enforcement of the chosen source policy.
+maintainer approval, and v0.1.1 was published the same day from an unsigned
+annotated tag; packaged live-tuner acceptance was still incomplete. Signing stays
+deferred with H2.1 (maintainer direction, 2026-09-24), so later releases may also
+use unsigned annotated tags until H2.1 resumes.
 
 ## H0 — Confirmed defects for v0.1.x
 
@@ -98,6 +99,8 @@ machine enforcement of the chosen source policy.
   versions, source identities, licenses, and hashes to final artifact members;
   emit an SBOM and distinguish bundled code from externally managed runtimes.
 
+Maintainer direction on 2026-09-24: H1.4 is deferred until after the P4.1 pass.
+
 - [ ] **H1.4 — Establish native advisory response ([#91]).** After H1.3,
   record applicability, exception owners/expiry, and rebuild expectations;
   exercise identification and rebuilding of an affected-version fixture.
@@ -106,7 +109,9 @@ machine enforcement of the chosen source policy.
 
 Maintainer direction on 2026-09-17: hold all new signing and provenance work.
 No trusted signing identities are designated; H2.1 and H2.3 remain unchecked
-and paused. Independent correctness and package-inspection fixes may continue.
+and paused. On 2026-09-24 the maintainer kept signing deferred and also deferred
+the rest of H2.2 ([#184]) and H2.4 ([#186]) until after the P4.1 pass; their
+landed slices stay. Independent correctness fixes may continue.
 
 - [ ] **H2.1 — Enforce release source identity.** Define trusted signers and
   reviewed-source ancestry, enforce the chosen tag policy before building,
@@ -228,9 +233,9 @@ newly discovered defects. P4.1 remains open and is not counted again above.
 
 ## P1 — Viewer completion
 
-- [x] **P1.1 — Add versioned settings.** Persist remembered targets, friendly
-  names, and window state as atomic, migration-tested JSON; never credentials,
-  stream URLs, or incidental topology.
+- [x] **P1.1 — Add versioned settings.** Persist remembered targets and window
+  state as atomic, migration-tested JSON; never credentials, stream URLs, or
+  incidental topology. The unused friendly-name store was removed ([#153]).
 
 - [x] **P1.2 — Remember targets and admit hostnames.** Rediscover persisted
   exact targets at startup and accept a hostname resolved to a bounded set of
@@ -289,7 +294,7 @@ newly discovered defects. P4.1 remains open and is not counted again above.
   runtime closure, Mach-O inspection, signing policy, and reopened DMG check.
 
 - [x] **P3.5 — Complete release automation.** Build from one annotated tag
-  (signed after v0.1.0), require 12 public binaries and `SHA256SUMS.txt`, create a draft,
+  (signing deferred with H2.1), require 12 public binaries and `SHA256SUMS.txt`, create a draft,
   and confine release-write authority to the final no-source job.
 
 - [x] **P3.6 — Harden CI for packages.** Add the dependency audit and
@@ -355,3 +360,6 @@ remainder.
 [#91]: https://github.com/jm2/balun/issues/91
 [#92]: https://github.com/jm2/balun/issues/92
 [#93]: https://github.com/jm2/balun/issues/93
+[#153]: https://github.com/jm2/balun/issues/153
+[#184]: https://github.com/jm2/balun/issues/184
+[#186]: https://github.com/jm2/balun/issues/186
