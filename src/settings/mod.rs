@@ -898,6 +898,57 @@ mod tests {
         }
     }
 
+    /// Byte for byte what v0.1.1 wrote. Its route-derived discovery kept
+    /// approvals in a separate store, so retiring it (ADR-0003) leaves every
+    /// field here loadable, and a resave still writes nothing routed.
+    #[test]
+    fn documents_written_by_v0_1_1_load_after_routed_discovery_retired() {
+        let (_directory, store) = test_store();
+        write_raw(
+            &store,
+            br#"{
+  "schema_version": 2,
+  "window": {
+    "width": 1280,
+    "height": 800,
+    "maximized": true
+  },
+  "remembered_targets": [
+    {
+      "address": "192.0.2.1"
+    },
+    {
+      "host": "tuner.example"
+    }
+  ],
+  "device_names": {}
+}
+"#,
+        );
+
+        let loaded = store.load().expect("load").expect("document");
+        assert_eq!(loaded.window(), WindowState::new(1280, 800, true).unwrap());
+        assert_eq!(
+            loaded.remembered_targets(),
+            &[
+                RememberedTarget::Address(target(1)),
+                RememberedTarget::Hostname(HostnameTarget::parse("tuner.example").unwrap()),
+            ]
+        );
+
+        store.save(&loaded).expect("save");
+        let value: serde_json::Value = serde_json::from_slice(&raw_bytes(&store)).expect("json");
+        assert_eq!(value["schema_version"], SCHEMA_VERSION);
+        let keys: Vec<_> = value
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, ["remembered_targets", "schema_version", "window"]);
+        assert_eq!(store.load(), Ok(Some(loaded)));
+    }
+
     #[test]
     fn remembered_hostnames_round_trip_and_normalize() {
         let (_directory, store) = test_store();
