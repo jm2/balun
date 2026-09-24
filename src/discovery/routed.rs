@@ -1,3 +1,11 @@
+//! Approved private-range enumeration for `balun-discover --approved-range`.
+//!
+//! The scanner probes every host of one explicitly approved private IPv4 range
+//! at a paced, jittered rate within fixed packet, concurrency, and wall-clock
+//! budgets, and stops promptly when cancelled. Route-table-derived discovery,
+//! which once fed it route proposals, was retired (ADR-0003); typed-subnet
+//! search (V2.4) is expected to build on this scanner.
+
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -13,9 +21,6 @@ use tokio_util::sync::CancellationToken;
 use super::client::{DiscoveryClient, DiscoveryError, DiscoveryReport, ProbeIssue};
 use super::types::{DiscoveryMethod, ProbeEndpoint};
 use crate::hdhr::protocol::DISCOVERY_UDP_PORT;
-
-#[cfg(target_os = "linux")]
-pub(super) mod linux;
 
 /// Hard ceiling for an explicitly approved routed discovery range.
 pub const MAX_ROUTED_CANDIDATES: usize = 256;
@@ -79,23 +84,18 @@ impl ApprovedIpv4Range {
     }
 }
 
-/// A deterministic, bounded set of routed IPv4 targets that has received
-/// caller-level approval.
+/// The deterministic, bounded target set of one approved range scan.
 ///
-/// Construction validates only Balun's technical safety boundary. The caller
-/// remains responsible for associating the set with explicit user approval
-/// before starting a scan. Duplicate addresses are removed before the hard
-/// candidate cap is applied.
+/// Construction validates only Balun's technical safety boundary. Duplicate
+/// addresses are removed before the hard candidate cap is applied.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ApprovedIpv4Targets {
+struct ApprovedIpv4Targets {
     addresses: Vec<Ipv4Addr>,
 }
 
 impl ApprovedIpv4Targets {
     /// Validate and canonicalize an approved address list.
-    pub(crate) fn new(
-        targets: impl IntoIterator<Item = Ipv4Addr>,
-    ) -> Result<Self, RoutedTargetsError> {
+    fn new(targets: impl IntoIterator<Item = Ipv4Addr>) -> Result<Self, RoutedTargetsError> {
         let mut addresses = BTreeSet::new();
         for address in targets {
             if !address.is_private() {
@@ -121,23 +121,23 @@ impl ApprovedIpv4Targets {
     }
 
     #[must_use]
-    pub(crate) fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.addresses.len()
     }
 
     #[must_use]
-    pub(crate) fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.addresses.is_empty()
     }
 
     /// Return canonical targets in ascending address order.
-    pub(crate) fn candidates(&self) -> impl ExactSizeIterator<Item = Ipv4Addr> + '_ {
+    fn candidates(&self) -> impl ExactSizeIterator<Item = Ipv4Addr> + '_ {
         self.addresses.iter().copied()
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub(crate) enum RoutedTargetsError {
+enum RoutedTargetsError {
     #[error("routed discovery target {0} is not an RFC 1918 private address")]
     NotPrivate(Ipv4Addr),
 
@@ -245,7 +245,7 @@ impl RoutedScanConfig {
 
     /// Conservative number of request datagrams for an approved target set.
     #[must_use]
-    pub(crate) fn maximum_target_request_datagrams(
+    fn maximum_target_request_datagrams(
         self,
         targets: &ApprovedIpv4Targets,
         attempts_per_target: u8,
@@ -290,8 +290,12 @@ pub enum InvalidRoutedScanConfig {
 }
 
 impl DiscoveryClient {
-    /// Probe every host in a range that has already passed the routed safety
+    /// Probe every host in a range that has already passed the range safety
     /// policy and received user approval.
+    ///
+    /// This path sends only targeted HDHomeRun UDP discovery datagrams. HTTP
+    /// metadata enrichment remains a separate operation over responders in
+    /// the returned report, so nonresponders cannot cause TCP or HTTP work.
     pub async fn discover_approved_range(
         &self,
         range: ApprovedIpv4Range,
@@ -299,24 +303,9 @@ impl DiscoveryClient {
         cancellation: &CancellationToken,
     ) -> Result<DiscoveryReport, DiscoveryError> {
         let targets = ApprovedIpv4Targets::from_range(range);
-        self.discover_approved_targets(&targets, scan_config, cancellation)
-            .await
-    }
-
-    /// Probe a caller-approved, policy-validated set of routed targets.
-    ///
-    /// This path sends only targeted HDHomeRun UDP discovery datagrams. HTTP
-    /// metadata enrichment remains a separate operation over responders in
-    /// the returned report, so nonresponders cannot cause TCP or HTTP work.
-    pub(crate) async fn discover_approved_targets(
-        &self,
-        targets: &ApprovedIpv4Targets,
-        scan_config: RoutedScanConfig,
-        cancellation: &CancellationToken,
-    ) -> Result<DiscoveryReport, DiscoveryError> {
         let client = self.clone();
         scan_approved_targets_with(
-            targets,
+            &targets,
             scan_config,
             self.config().attempts(),
             cancellation,
@@ -368,7 +357,7 @@ where
     .await
 }
 
-pub(super) async fn scan_approved_targets_until<F, Fut>(
+async fn scan_approved_targets_until<F, Fut>(
     targets: &ApprovedIpv4Targets,
     scan_config: RoutedScanConfig,
     attempts_per_target: u8,

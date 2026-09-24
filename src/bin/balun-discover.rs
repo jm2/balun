@@ -7,8 +7,6 @@ use balun::discovery::{
     ApprovedIpv4Range, DiscoveryClient, DiscoveryReport, ExactDiscoveryTarget, ProbeConfig,
     RegistryError, RoutedRangeError, RoutedScanConfig,
 };
-#[cfg(any(target_os = "linux", test))]
-use balun::discovery::{RouteCandidateError, RouteSnapshot, select_route_candidates};
 use balun::domain::DeviceId;
 use balun::hdhr::{
     DeviceInspectionError, DeviceInspectionIssueKind, DeviceInspectionReport, DeviceInspector,
@@ -23,14 +21,11 @@ Usage:
   balun-discover [--inspect] --local
   balun-discover [--inspect] --target <IP> [--target <IP> ...]
   balun-discover [--inspect] --approved-range <PRIVATE-CIDR>
-  balun-discover --providers
 
 No arguments performs ordinary local-interface discovery.
---providers reports route-provider availability and tunnel candidate counts
-without sending packets or printing any address or route.
 --inspect also fetches bounded device metadata and lineup counts; it never
 starts a stream or allocates a tuner.
-Routed enumeration requires the explicit --approved-range option and is
+Range enumeration requires the explicit --approved-range option and is
 limited by Balun's private-/24 and packet-rate safety policy.
 At most 32 actions and one approved range are accepted per invocation.
 --target uses the desktop's unicast address rules and bounded reply budget.";
@@ -42,7 +37,6 @@ enum Action {
     Local,
     Target(SocketAddr),
     ApprovedRange(ApprovedIpv4Range),
-    Providers,
 }
 
 #[derive(Debug)]
@@ -161,15 +155,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut inspection = InspectionOutcome::default();
     for action in cli.actions {
         match action {
-            Action::Providers => {}
             Action::Target(_) => print_probe_budget(exact_client.config()),
             Action::Local | Action::ApprovedRange(_) => print_probe_budget(client.config()),
         }
         let report = match action {
-            Action::Providers => {
-                print_providers();
-                continue;
-            }
             Action::Local => client.discover_local(&cancellation).await?,
             Action::Target(target) => {
                 exact_client
@@ -222,7 +211,6 @@ fn parse_cli(arguments: impl Iterator<Item = String>) -> Result<Option<Cli>, Cli
         match argument.as_str() {
             "-h" | "--help" => return Ok(None),
             "--inspect" => inspect = true,
-            "--providers" => actions.push(Action::Providers),
             "--local" => actions.push(Action::Local),
             "--target" => {
                 let value = arguments
@@ -337,70 +325,6 @@ fn print_probe_budget(config: ProbeConfig) {
     );
 }
 
-/// Bounded counts from one route snapshot, never a route or an address.
-#[cfg(any(target_os = "linux", test))]
-#[derive(Debug)]
-struct ProviderCounts {
-    interfaces: usize,
-    effective_routes: usize,
-    /// Every active, unambiguously classified tunnel the provider reported,
-    /// whether or not one of its routes is eligible to produce a candidate.
-    tunnel_interfaces: usize,
-    tunnel_candidates: Result<usize, RouteCandidateError>,
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn provider_counts(snapshot: &RouteSnapshot) -> ProviderCounts {
-    ProviderCounts {
-        interfaces: snapshot.interfaces().len(),
-        effective_routes: snapshot.effective_routes().len(),
-        tunnel_interfaces: snapshot.tunnel_interfaces().len(),
-        tunnel_candidates: select_route_candidates(snapshot, &[])
-            .map(|candidates| candidates.len()),
-    }
-}
-
-#[cfg(any(target_os = "linux", test))]
-impl std::fmt::Display for ProviderCounts {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "interfaces={} effective_routes={} tunnel_interfaces={}",
-            self.interfaces, self.effective_routes, self.tunnel_interfaces
-        )?;
-        match &self.tunnel_candidates {
-            Ok(count) => write!(formatter, " tunnel_candidates={count}"),
-            Err(error) => write!(formatter, "; candidate selection failed: {error}"),
-        }
-    }
-}
-
-/// Route-provider availability and bounded counts, never a route or address.
-#[cfg(target_os = "linux")]
-fn print_providers() {
-    use balun::discovery::{LinuxRouteProvider, RouteProvider};
-
-    match LinuxRouteProvider::new().snapshot() {
-        Ok(snapshot) => println!(
-            "route provider: linux rtnetlink available; {}",
-            provider_counts(&snapshot)
-        ),
-        Err(error) => {
-            // The reason names the rtnetlink step or unsupported route shape
-            // that failed closed; it carries no address, prefix, or interface.
-            println!("route provider: linux rtnetlink unavailable ({error})");
-            return;
-        }
-    }
-    println!("routed discovery: offered on this platform; approvals are asked for in the desktop");
-}
-
-#[cfg(not(target_os = "linux"))]
-fn print_providers() {
-    println!("route provider: unavailable on this platform (no native route provider yet)");
-    println!("routed discovery: not offered; use --target or a hostname for a tunnelled tuner");
-}
-
 fn advertised_url_summary(_url: &str) -> &'static str {
     "present (untrusted value hidden)"
 }
@@ -468,10 +392,6 @@ fn write_inspection_issue(
 
 #[cfg(test)]
 mod tests {
-    use balun::discovery::{
-        InterfaceId, InterfaceKind, NetworkInterface, NetworkRoute, RouteKind, RouteScope,
-    };
-
     use super::*;
 
     #[test]
@@ -508,69 +428,6 @@ mod tests {
 
     fn parse(values: &[&str]) -> Result<Option<Cli>, CliError> {
         parse_cli(values.iter().map(|value| (*value).to_owned()))
-    }
-
-    fn snapshot(kind: InterfaceKind, is_up: bool, route: &str) -> RouteSnapshot {
-        let tunnel = InterfaceId::new(7);
-        RouteSnapshot::from_effective_routes(
-            vec![NetworkInterface::new(
-                tunnel,
-                "wg0",
-                kind,
-                is_up,
-                ["10.255.0.2/32".parse().unwrap()],
-            )],
-            vec![NetworkRoute::effective(
-                route.parse().unwrap(),
-                Some(tunnel),
-                RouteKind::Unicast,
-                RouteScope::OnLink,
-            )],
-        )
-    }
-
-    #[test]
-    fn tunnel_interfaces_are_counted_before_candidate_selection() {
-        // An active tunnel whose only route is public yields no candidate but
-        // is still one recognized tunnel.
-        let counts = provider_counts(&snapshot(InterfaceKind::Tunnel, true, "198.51.100.0/24"));
-        assert_eq!(
-            (
-                counts.interfaces,
-                counts.effective_routes,
-                counts.tunnel_interfaces
-            ),
-            (1, 1, 1)
-        );
-        assert!(matches!(counts.tunnel_candidates, Ok(0)));
-        assert_eq!(
-            counts.to_string(),
-            "interfaces=1 effective_routes=1 tunnel_interfaces=1 tunnel_candidates=0"
-        );
-
-        // The same tunnel with an eligible private route produces candidates.
-        let counts = provider_counts(&snapshot(InterfaceKind::Tunnel, true, "192.168.40.8/30"));
-        assert_eq!(counts.tunnel_interfaces, 1);
-        assert!(matches!(counts.tunnel_candidates, Ok(count) if count > 0));
-
-        // A down tunnel or a non-tunnel interface is not a tunnel interface.
-        for (kind, is_up) in [(InterfaceKind::Tunnel, false), (InterfaceKind::Other, true)] {
-            let counts = provider_counts(&snapshot(kind, is_up, "192.168.40.8/30"));
-            assert_eq!(counts.tunnel_interfaces, 0);
-            assert!(matches!(counts.tunnel_candidates, Ok(0)));
-        }
-    }
-
-    #[test]
-    fn providers_is_a_packet_free_action() {
-        let cli = parse(&["--providers"]).unwrap().unwrap();
-        assert!(matches!(cli.actions.as_slice(), [Action::Providers]));
-        assert!(!cli.inspect);
-        let mixed = parse(&["--providers", "--local"]).unwrap().unwrap();
-        assert!(matches!(
-            mixed.actions.as_slice(),
-            [Action::Providers, Action::Local]
-        ));
     }
 
     #[test]
@@ -661,6 +518,17 @@ mod tests {
     #[test]
     fn help_short_circuits_actions() {
         assert!(parse(&["--help"]).unwrap().is_none());
+    }
+
+    #[test]
+    fn retired_route_provider_report_is_an_unknown_option() {
+        assert!(
+            parse(&["--providers"])
+                .unwrap_err()
+                .to_string()
+                .starts_with("unknown option \"--providers\"")
+        );
+        assert!(!USAGE.contains("--providers"));
     }
 
     #[test]

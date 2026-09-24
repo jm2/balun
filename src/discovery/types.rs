@@ -8,7 +8,7 @@ pub enum DiscoveryMethod {
     /// Exact unicast address supplied by a manual, cached, or similarly
     /// high-confidence source.
     Targeted,
-    /// Unicast address selected by the separately approved routed-scan
+    /// Unicast address selected by the separately approved private-range scan
     /// policy.
     RoutedTargeted,
     Ipv4Broadcast,

@@ -802,6 +802,16 @@ mod tests {
         assert_eq!(default_directory_from(|_| None), None);
     }
 
+    /// The production lookup reads the process environment through the same
+    /// rules the injected lookups above exercise.
+    #[test]
+    fn default_directory_reads_the_process_environment() {
+        assert_eq!(
+            default_directory(),
+            default_directory_from(|key| std::env::var_os(key))
+        );
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn default_directory_uses_application_support() {
