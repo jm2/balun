@@ -81,6 +81,19 @@ support for a shared or network profile, or a change to the local-user threat
 model. Stronger Windows ACL attestation or hostile-writer transaction semantics
 would require a separately reviewed platform design.
 
+## Retired routed approval store (2026-09-24)
+
+`settings.json` never held route-derived approvals, so retiring that discovery
+([ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md)) changes
+neither its schema nor its loading: v0.1.x settings files load unchanged. v0.1.x
+kept its approvals in a separate `routed-approvals/` directory beside
+`settings.json` (`routed-approvals.json`, `routed-approvals.key`, and
+`routed-approvals.lock`). Balun now leaves that directory untouched: it never
+reads, writes, or deletes it. A downgrade to v0.1.x therefore finds its
+approvals intact, and no deletion path is added to the private profile. Users
+may delete the directory by hand; it holds only keyed fingerprints and bounded
+policy state, never raw routes, interface names, or prefixes.
+
 ## Accepted responsiveness and durability tradeoff
 
 Keep filesystem work off the GTK main context. Use one bounded worker per

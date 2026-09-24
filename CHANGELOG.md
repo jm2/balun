@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
 - Python package-gate coverage installs now require reviewed wheel hashes and
   reject source-build fallback for the existing coverage.py 7.16.1 tool.
-- Reproducible adversarial parser, approval, route-budget, and package-manifest
+- Reproducible adversarial packet, metadata/URL, lineup, and package-manifest
   properties run in PR checks and scheduled extended corpora, with failure replay records.
 - Typed-subnet scope validation and exact preview budgets implement the approved
   private `/23`–`/32` policy without granting scan authority. Runtime integration remains pending.
@@ -79,14 +79,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   native hangs can block the UI or close before timed waits, and network bytes do not
   establish useful-media progress. Review is owned before beta and after a reproduced hang.
 
+### Removed
+
+- Route-table tunnel discovery (**Search routes behind your tunnel**) and
+  `balun-discover --providers` are removed; add remote tuners by IP address or hostname, or scan
+  a private range with `balun-discover --approved-range`, until in-app subnet search arrives.
+
 ### Fixed
 
-- On Linux, routed searches keep running through routine IPv6 address refreshes, and a search
-  stopped by a network change now says so instead of reporting an internal error.
-- **Forget routed approvals** now stops a routed search that is already running instead of
-  letting it probe the rest of its approved addresses first.
-- On Linux, routine IPv6 address refreshes no longer cancel device searches and routed approvals
-  every few seconds, and a remembered device whose startup search was interrupted is tried again.
+- On Linux, routine IPv6 address refreshes no longer cancel device searches every few seconds,
+  and a remembered device whose startup search was interrupted is tried again.
 - Keyboard focus, scroll position, and an open Forget menu in the device list no longer
   reset when discovery or channel loading updates it, so arrow keys select the next device.
 - Reload channels keeps the highlighted channel and scrolls back to it once the lineup loads.
@@ -129,9 +131,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Completed Windows installers now undergo bounded static payload extraction and exact
   manifest comparison, followed by repeated native/resource checks and a runtime probe
   on the extracted tree for both x86_64 and ARM64 before upload.
-- Routed scans add bounded positive jitter; the diagnostic uses desktop exact-address
+- Approved-range scans add bounded positive jitter; the diagnostic uses desktop exact-address
   admission and reply limits, caps each invocation, and rejects repeated range scans.
-  Newer approval-state schemas now have a distinct, preserving quarantine reason.
 - Device and lineup JSON errors now retain only fixed failure categories and line/column
   positions, preventing mistyped device values from reaching inspection, debug output,
   CLI diagnostics, or nested error sources.
@@ -148,8 +149,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offers direct IP entry or a later retry.
 - Playback startup and retirement now coordinate worker ownership, so an overlapping
   source callback or failed worker creation cannot escape the predecessor's teardown join.
-- Routed discovery rechecks approval, deadline, and the interface pin after socket
-  readiness, including retries, so a pending send cannot bypass revocation.
 - macOS builds no longer require Homebrew's unavailable FDK AAC plugin; the bundled
   libav, FAAD, and AudioToolbox decoders continue to provide AAC support.
 - Restore the Rust minimum-version CI check and prevent patch-only compiler-floor drift.

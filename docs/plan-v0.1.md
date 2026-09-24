@@ -9,8 +9,9 @@ This is the scope, architecture, and delivery-order contract for the first
 alpha. The countable ledger is [`task.md`](task.md); sanitized hardware
 evidence is in [`compatibility-v0.1.md`](compatibility-v0.1.md); user-visible
 outcomes are in [`../CHANGELOG.md`](../CHANGELOG.md); decisions are in
-[ADR-0001](architecture/adr-0001-discovery-playback.md) and
-[ADR-0002](architecture/adr-0002-scope-and-diagnostics.md). The original
+[ADR-0001](architecture/adr-0001-discovery-playback.md),
+[ADR-0002](architecture/adr-0002-scope-and-diagnostics.md), and
+[ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md). The original
 milestone plan and its ledger are archived in
 [`task-foundation-2026-09.md`](task-foundation-2026-09.md).
 
@@ -22,7 +23,7 @@ For V2.4, the maintainer-approved
 [typed-subnet contract](typed-subnet-discovery-proposal.md) of 2026-09-18
 supersedes this plan's former treatment of user-entered ranges as routed
 discovery. Its scope, traffic limits, and per-search consent govern typed
-subnets; the Linux route-derived contract below remains unchanged.
+subnets. The Linux route-derived contract was retired on 2026-09-24 (§5).
 
 ## 1. Product direction
 
@@ -34,15 +35,15 @@ reliably. It is not a DVR, a tuner administration tool, or a guide service.
 The end goal for v0.1.0: a user on Linux, macOS, or Windows installs a
 package, sees local tuners and any remembered remote tuner, picks a device and a
 channel, watches it with sound, switches channels, and quits without leaving a
-tuner allocated. On Linux, an explicitly approved route-table-derived scan can
-also find tuners across a tunnel.
+tuner allocated. On Linux, v0.1.0 also shipped an explicitly approved
+route-table-derived scan across a tunnel; it was retired on 2026-09-24 (§5).
 
 Primary goals:
 
 - Discover HDHomeRun tuners on ordinary local networks with a fixed packet
   budget and no traffic while idle.
 - Reach tuners across routed networks such as WireGuard by exact address or
-  hostname, and on Linux by a bounded, user-approved route-table-derived scan.
+  hostname.
 - Keep every device's lineup visibly and structurally separate.
 - Start, switch, and stop live TV predictably without leaking tuner
   allocations.
@@ -61,8 +62,8 @@ Included:
 - IPv4 broadcast and non-link-local IPv6 multicast tuner discovery.
 - Exact IP address entry, hostname entry, and remembered targets rediscovered
   at startup.
-- Bounded, user-approved route-table-derived discovery on Linux; exact and
-  hostname targets on macOS and Windows.
+- Bounded, user-approved route-table-derived discovery on Linux, retired on
+  2026-09-24 (§5); exact and hostname targets on every platform.
 - Multiple devices in a device sidebar, one selected device's lineup in a
   channel sidebar, with favorite, HD, and protected badges.
 - Playback of unprotected channels with the installed or bundled GStreamer
@@ -116,7 +117,7 @@ Built and tested:
 - Linux route inspection, a keyed approval policy, a durable approval store,
   and route/store observers, connected end to end: the sidebar's tunnel
   search proposes, asks for approval once per exact route set, and shows
-  progress, cooldown, and revocation.
+  progress, cooldown, and revocation. Retired on 2026-09-24 (§5).
 - Live TV verified by the owner on the Windows development build against real
   tuners: ATSC 1.0 channels play with audio; ATSC 3.0 channels fail closed on
   AC-4 ([compatibility notes](compatibility-v0.1.md)).
@@ -173,7 +174,7 @@ src/
   bin/balun-discover.rs        GTK-free diagnostic
   domain/                      DeviceID and device-scoped ChannelKey
   hdhr/                        protocol, device HTTP, lineup, inspection, resolver, fake device
-  discovery/                   client, local, manual, registry, routed, routes, approval
+  discovery/                   client, local, manual, hostname, registry, changes, range scan
   controller/                  runtime actor, snapshots, stream handoff
   settings/                    versioned atomic settings.json store
   playback/                    GStreamer runtime, session, source policy, transport, failures
@@ -183,7 +184,7 @@ src/
 Runtime and concurrency:
 
 - GTK and the GStreamer pipeline live on the GLib main thread.
-- One named Tokio worker owns UDP, HTTP, route inspection, and timers.
+- One named Tokio worker owns UDP, HTTP, and timers.
 - Bounded typed channels carry commands and coalesced immutable snapshots.
 - Shutdown cancels network work, moves the pipeline to `NULL`, joins the
   transport and controller against deadlines, and exits. In-process native calls
@@ -203,7 +204,6 @@ Identity:
 
 Order of authority, least to most expansive: remembered and explicit targets,
 local broadcast and multicast, then a user-approved bounded subnet scan.
-Route-derived and explicitly typed scopes have separate approval contracts.
 
 Local discovery:
 
@@ -226,40 +226,31 @@ Exact and hostname targets:
 - A successful target binds to its first DeviceID; remembered targets are
   probed again at startup and never become scan authority.
 
-Approved route-derived discovery (Linux):
-
-- Consider only private IPv4 space behind an active tunnel route;
-  exclude public, default, loopback, link-local, multicast, and
-  directly connected LAN routes.
-- Enumerate at most one `/24` and 256 candidates; never enumerate IPv6.
-- Send only HDHomeRun UDP discovery frames at 64 datagrams per second with
-  bounded concurrency, jitter, a 15-second default deadline, progress, and
-  immediate cancellation.
-- Require remembered approval bound to a keyed, topology-redacted fingerprint
-  of the targets, tunnel, routes, and budget; revoke it when that fingerprint,
-  the route table, or the durable store changes.
-- Apply cooldown and exponential backoff after empty runs; rerun on a debounced
-  network change or explicit refresh, never on a timer.
-- Run approved tunnel discovery even when a local tuner exists.
-
-Native providers: Linux uses rtnetlink and recognizes WireGuard and other
-unambiguous tunnel links. macOS and Windows providers stay unavailable with a
-fixed reason until a safe route-table wrapper, a provable routing domain, and a
-stable tunnel identity exist; exact and hostname targets are the supported path
-there.
+Retired route-derived discovery (2026-09-24): the Linux route-table-derived
+tunnel search of P2 shipped in v0.1.0 and v0.1.1 and was removed by V2.9
+([#181](https://github.com/jm2/balun/issues/181)) under
+[ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md), because
+explicitly typed subnet search (V2.4, below and in the
+[typed-subnet contract](typed-subnet-discovery-proposal.md)) replaces it on every
+platform. Balun no longer derives candidates from route tables, remembers route
+approvals, or runs routed scans. Until V2.4 lands, remote tuners are added by
+exact address or hostname, or one private range is scanned with
+`balun-discover --approved-range`, which keeps its `/24`, 256-candidate,
+64 datagrams per second, 16-probe, 15-second, and cancellation bounds. The P2.5
+routed validation remains historical evidence.
 
 Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
 
 - The [approved typed-subnet contract](typed-subnet-discovery-proposal.md)
-  governs this separate cross-platform scope, using current system routing
-  without deriving authority from a tunnel provider or remembered route approval.
+  governs this cross-platform scope, using current system routing without
+  deriving authority from a route table or a remembered approval.
 - Accept one canonical RFC 1918 IPv4 CIDR, `/23` through `/32`, with at most
   510 usable-host candidates and two targeted requests per candidate: at most
   1,020 requests, 64 requests per second, 16 concurrent probes, and a 30-second
   UDP deadline. Apply the contract's reply, receive, result, and cancellation bounds.
 - Confirm the exact scope and request budget before every search. Remember only
   the entered prefix; do not persist typed-subnet authorization or reuse
-  route-derived or exact-address approval for this scope.
+  exact-address approval for this scope.
 - Never scan automatically on startup, timers, profile loading, or network
   changes. A detected network change cancels the active search; another search
   requires fresh confirmation. The CLI's explicit `--approved-range` argument
@@ -275,8 +266,7 @@ Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
   downstream routers to block directed broadcasts; Balun cannot verify that
   remote setting or guarantee single-host delivery if it is changed.
 - This approved contract permits V2.4 implementation; the documentation changes
-  no runtime behavior. Existing route-derived limits and provider requirements
-  continue to apply to route-derived scans alone.
+  no runtime behavior.
 
 Network rules:
 
@@ -349,7 +339,6 @@ unless the evidence demands it.
 Persisted state is atomic, versioned JSON:
 
 - Remembered exact or hostname targets.
-- Approved routed ranges and their fingerprints (Linux).
 - For V2.4, the user-entered subnet preference only; never its scan authorization.
 - Window geometry and UI preferences.
 
@@ -417,6 +406,7 @@ the existing approval store and observers, add the approval and progress UX,
 reconcile network changes, expose diagnostics, and prove one routed case plus
 two-site multi-device validation. Exit: local and remote tuners coexist within
 the documented traffic budget with deterministic cancellation and revocation.
+V2.9 retired this feature on 2026-09-24 (§5); network-change reconciliation stays.
 
 **P3 — Packages.** Desktop metadata and assets; Flatpak, Debian, RPM, and Arch
 packages; Windows x86_64 and ARM64 ZIPs and installers; and the Apple Silicon
@@ -430,23 +420,22 @@ publish the support and limitations matrix, and cut the release.
 
 v0.2 candidates: an in-band guide crawled from full-multiplex streams, since
 per-channel streams carry no PSIP (P0.8); XMLTV file or URL with explicit
-mappings; native macOS and Windows route providers; SBOM, provenance, fuzzing,
-and a coverage ratchet; conduct, support, and issue-form governance once
-contributors exist.
+mappings; SBOM, provenance, fuzzing, and a coverage ratchet; conduct, support,
+and issue-form governance once contributors exist.
 
 ## 10. Verification strategy
 
 Unit and property tests: discovery framing and hostile packets; DeviceID
-validation and duplicates; address classification, route filtering, budgets,
-cooldowns, and cancellation; lineup fields, tags, sorting, and hostile URLs;
+validation and duplicates; address classification, range budgets, pacing,
+and cancellation; lineup fields, tags, sorting, and hostile URLs;
 device HTTP redirect, credential, scheme, and body policy; registry claims and
 expiry; generation races; settings migration.
 
 Integration tests: the loopback fake HDHomeRun device through discovery,
 lineup, DRM refusal, tuning, switching, 404 and 503, cancellation, and
 shutdown; the synthetic MPEG-2 fixture through `playbin3` and
-`gtk4paintablesink` under headless Wayland; fake route providers; installed-
-and packaged-runtime probes.
+`gtk4paintablesink` under headless Wayland; installed- and packaged-runtime
+probes.
 
 Real hardware complements rather than replaces those tests. Results are
 recorded in [`compatibility-v0.1.md`](compatibility-v0.1.md) without device
@@ -475,7 +464,6 @@ leaking tuner allocations.
 - AC-4 and protected ATSC 3.0 channels have no distributable playback path.
 - Packaging breadth can outpace feature work; the phase order guards this.
 - macOS and Windows local-network permissions may hide discovery failures.
-- A broad tunnel route contains too many hosts for friendly enumeration.
 - Rapid channel changes can consume multiple tuners if teardown ownership
   slips.
 - In-band guide tables may not survive the device's PID filter.

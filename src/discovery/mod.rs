@@ -1,6 +1,5 @@
 //! Bounded HDHomeRun discovery orchestration.
 
-pub(crate) mod approval;
 mod changes;
 mod client;
 mod hostname;
@@ -12,7 +11,6 @@ mod routes;
 mod typed_subnet;
 mod types;
 
-pub use approval::{RoutedProposalOriginSummary, RoutedProposalSummary, RoutedScanTrigger};
 #[cfg(target_os = "linux")]
 pub use changes::LinuxNetworkChangeWatcher;
 #[cfg(target_os = "macos")]
@@ -50,13 +48,6 @@ pub use routed::{
     MAX_ROUTED_CANDIDATES, MAX_ROUTED_CONCURRENCY, MAX_ROUTED_SCAN_DEADLINE,
     MAX_ROUTED_WIRE_DATAGRAMS_PER_SECOND, MIN_ROUTED_SCAN_DEADLINE, RoutedRangeError,
     RoutedScanConfig,
-};
-#[cfg(target_os = "linux")]
-pub use routes::LinuxRouteProvider;
-pub use routes::{
-    InterfaceId, InterfaceKind, NetworkInterface, NetworkRoute, RouteCandidate,
-    RouteCandidateError, RouteCandidateOrigin, RouteKind, RouteProvider, RouteScope, RouteSnapshot,
-    route_candidates, select_route_candidates,
 };
 pub use typed_subnet::{InvalidTypedSubnetScope, TypedSubnetScope};
 pub use types::{DiscoveryMethod, ProbeEndpoint};

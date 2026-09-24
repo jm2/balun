@@ -1,6 +1,7 @@
 # ADR-0002: Hardware-first delivery order, guide deferral, and device-naming diagnostics
 
-- Status: Accepted
+- Status: Accepted; decision 3 superseded by
+  [ADR-0003](adr-0003-retire-route-derived-discovery.md) on 2026-09-24
 - Date: 2026-09-02
 - Milestone: `v0.1.0`
 
@@ -40,7 +41,8 @@ unreachable tuner reported only "Device or stream unavailable".
    The [2026-09-18 typed-subnet amendment](adr-0001-discovery-playback.md#typed-subnet-amendment--2026-09-18)
    separately permits V2.4 implementation across all three platforms under the
    approved scope, per-search consent, and outbound-request boundary.
-   Route-derived provider policy is unchanged.
+   Route-derived provider policy is unchanged. ADR-0003 retired route-derived
+   discovery on 2026-09-24 in favour of that typed-subnet search.
 4. **Errors and diagnostics may name the device.** Failure copy, the
    `balun-discover` output, and logs may include a device's friendly name,
    address, and DeviceID suffix. `DeviceAuth`, credentials, and query values

@@ -72,11 +72,11 @@ impl EventKinds {
     }
 }
 
-/// Whether a delivered burst can matter to discovery evidence or routed
-/// authority. Routers refresh address lifetimes every few seconds on
-/// many IPv6 networks; a burst of only address notifications that left
-/// every interface and address unchanged is such a refresh and is
-/// dropped. Link, route, and rule notifications are always delivered.
+/// Whether a delivered burst can matter to discovery evidence. Routers
+/// refresh address lifetimes every few seconds on many IPv6 networks; a
+/// burst of only address notifications that left every interface and
+/// address unchanged is such a refresh and is dropped. Link, route, and rule
+/// notifications are always delivered.
 pub(super) fn burst_matters(
     previous: &InterfaceInventory,
     latest: &InterfaceInventory,

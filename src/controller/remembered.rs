@@ -37,7 +37,7 @@ pub enum ExactSearchOutcome {
     /// The pending target answered; remember it.
     Reachable(ExactDiscoveryTarget),
     /// The pending target's own search ended without a valid reply, or a
-    /// local or routed search took over its lane; the state says which.
+    /// local search took over its lane; the state says which.
     Settled,
     /// A later exact search was processed before this target's result was
     /// observed.

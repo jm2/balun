@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **43/58 (74.1%)** records complete: historical P0–P4 **30/30**,
-hardening and assurance H0–H4 **13/21**, and roadmap V2 **0/7**. This is a
+Current status: **44/60 (73.3%)** records complete: historical P0–P4 **30/30**,
+hardening and assurance H0–H4 **13/21**, and roadmap V2 **1/9**. This is a
 dependency ledger, not an effort estimate.
 
 ## Current focus
@@ -180,9 +180,10 @@ Independent correctness fixes may continue.
   H3.5, compare a reuse prototype with the baseline and retain teardown proofs;
   speculative extra-tuner allocation requires a separate approved design.
 
-- [ ] **V2.4 — Add explicitly approved subnet discovery ([#71]).** After
-  H0.1, implement the [approved traffic, consent, and delivery contract](typed-subnet-discovery-proposal.md);
-  confirm every search and preserve cross-platform cancellation.
+- [ ] **V2.4 — Add explicitly approved subnet discovery ([#71]).** After H0.1 and
+  V2.8, implement the
+  [approved traffic, consent, and delivery contract](typed-subnet-discovery-proposal.md) on every
+  platform; confirm every search and preserve cross-platform cancellation.
 
 - [ ] **V2.5 — Complete deinterlacing quality evidence ([#78]).** Retain the
   implemented YADIF policy and diagnostics; measure mixed fields and CPU use,
@@ -195,6 +196,14 @@ Independent correctness fixes may continue.
 - [ ] **V2.7 — Prove mobile/TV prerequisites ([#64]).** After H0 and V2.1,
   validate GTK-free playback, sink/network boundaries, and each platform's
   feasibility; split proven platform milestones before implementing shells.
+
+- [ ] **V2.8 — Observe network changes natively on macOS and Windows ([#181]).** Add macOS
+  routing-socket and Windows IP Helper sources with Linux's baseline, loss, and failure
+  semantics, tested in each platform's CI lane.
+
+- [x] **V2.9 — Retire route-derived tunnel discovery ([#181]).** Remove route-table
+  candidates, approvals, and routed scans in favour of typed-subnet search (V2.4); keep
+  exact/hostname targets and the approved-range CLI.
 
 ## Historical v0.1.0 records
 
@@ -258,6 +267,8 @@ v0.1.1 packages.
   sidebars and the player for focus order, labels, and keyboard operation.
 
 ## P2 — Route-table-derived discovery (Linux)
+
+V2.9 retired this feature on 2026-09-24; these records remain historical.
 
 - [x] **P2.1 — Connect the monitored routed runner.** Replace and rebaseline
   the observer pair after store publication, serialize the final pre-send
@@ -329,7 +340,7 @@ v0.1.1 packages.
 - Guide data: XMLTV, the HDHomeRun XMLTV API, and an in-band crawl of each
   full multiplex are v0.2 candidates; P0.8 ruled out now/next from the playing
   stream.
-- Native macOS and Windows route-table providers and observers.
+- Route-table-derived tunnel discovery on any platform (retired by V2.9).
 - Code of conduct, support policy, and issue forms until there are
   contributors.
 - Decryption, DRM bypass, CableCARD protected-channel playback, or any
@@ -363,5 +374,6 @@ remainder.
 [#92]: https://github.com/jm2/balun/issues/92
 [#93]: https://github.com/jm2/balun/issues/93
 [#153]: https://github.com/jm2/balun/issues/153
+[#181]: https://github.com/jm2/balun/issues/181
 [#184]: https://github.com/jm2/balun/issues/184
 [#186]: https://github.com/jm2/balun/issues/186

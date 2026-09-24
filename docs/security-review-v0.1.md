@@ -12,6 +12,18 @@ Contracts audited: [`plan-v0.1.md`](plan-v0.1.md) §5-§8,
 checked in. The default and `desktop` test suites, strict Clippy, and
 `cargo audit` pass with the fixes applied; the live-hardware tests were not run.
 
+## 2026-09-24 route-derived discovery retired (V2.9)
+
+V2.9 ([#181](https://github.com/jm2/balun/issues/181)) removed route-table-derived
+tunnel discovery under [ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md).
+The route providers, approval policy and store, fresh-route gate, monitored
+runner, and interface-pinned sender reviewed below and in the H0.1 correction no
+longer exist. Findings about them are historical and need no further action. The
+approved-range scanner in `src/discovery/routed.rs` and `balun-discover
+--approved-range` keep their private `/24`, 256-candidate, pacing, deadline, and
+cancellation bounds. Balun no longer reads or writes the `routed-approvals/`
+profile directory. The pending H3.4 refresh covers the reduced surface.
+
 ## 2026-09-17 playback description correction
 
 The interface review found a rendering-boundary gap in

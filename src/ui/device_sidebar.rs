@@ -7,7 +7,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, DeviceSummary, DiscoveryFailure, DiscoveryKind, DiscoveryStatus,
-    NetworkChangeSummary, OperationGeneration, RoutedAvailability, RoutedUnavailableReason,
+    NetworkChangeSummary, OperationGeneration,
 };
 
 use super::objects::DeviceRowObject;
@@ -50,8 +50,6 @@ pub(crate) struct DeviceSidebar {
     spinner: gtk::Spinner,
     cancel_discovery_button: gtk::Button,
     exact_discovery_button: gtk::Button,
-    routed_discovery_button: gtk::Button,
-    routed_menu_button: gtk::MenuButton,
     refresh_button: gtk::Button,
     device_context: SharedDeviceContextHandler,
     bound_rows: BoundRows,
@@ -66,9 +64,6 @@ pub(crate) struct DeviceSidebar {
     /// snapshots of the same outcome do not show it again.
     announced_generation: Rc<Cell<Option<OperationGeneration>>>,
 }
-
-/// Window action that forgets every remembered routed approval.
-pub(crate) const FORGET_ROUTED_APPROVALS_ACTION: &str = "forget-routed-approvals";
 
 impl DeviceSidebar {
     #[must_use]
@@ -89,11 +84,6 @@ impl DeviceSidebar {
     #[must_use]
     pub(crate) fn cancel_discovery_button(&self) -> &gtk::Button {
         &self.cancel_discovery_button
-    }
-
-    #[must_use]
-    pub(crate) fn routed_discovery_button(&self) -> &gtk::Button {
-        &self.routed_discovery_button
     }
 
     #[must_use]
@@ -196,13 +186,6 @@ impl DeviceSidebar {
         self.refresh_button.set_sensitive(actions.start_sensitive);
         self.exact_discovery_button
             .set_sensitive(actions.start_sensitive);
-        let routed_availability = snapshot.routed().availability();
-        let routed_available = routed_availability == RoutedAvailability::Available;
-        self.routed_discovery_button
-            .set_visible(routed_search_visible(routed_availability));
-        self.routed_discovery_button
-            .set_sensitive(actions.start_sensitive);
-        self.routed_menu_button.set_visible(routed_available);
         self.cancel_discovery_button
             .set_sensitive(actions.cancel_sensitive);
         self.cancel_discovery_button
@@ -210,12 +193,7 @@ impl DeviceSidebar {
 
         let show_status = rows.is_empty();
         let refreshing = discovery.status() == DiscoveryStatus::Refreshing;
-        let title = terminal_banner_title_for_availability(
-            discovery.kind(),
-            discovery.status(),
-            !show_status,
-            routed_availability,
-        );
+        let title = terminal_banner_title(discovery.kind(), discovery.status(), !show_status);
         match plan_terminal_banner(
             discovery.kind(),
             discovery.status(),
@@ -252,7 +230,6 @@ impl DeviceSidebar {
             discovery.kind(),
             discovery.status(),
             discovery.issue_count(),
-            routed_availability,
         );
         self.stack.set_visible_child_name(if show_status {
             STATUS_PAGE_NAME
@@ -286,14 +263,6 @@ fn reconcile_rows(
         })
         .collect();
     (rows, refreshed)
-}
-
-const fn routed_search_visible(availability: RoutedAvailability) -> bool {
-    matches!(
-        availability,
-        RoutedAvailability::Available
-            | RoutedAvailability::Unavailable(RoutedUnavailableReason::ObserversUnavailable)
-    )
 }
 
 /// Build the device pane without starting discovery or any other network work.
@@ -372,37 +341,10 @@ pub(crate) fn build() -> DeviceSidebar {
         .build();
     cancel_discovery_button
         .update_property(&[gtk::accessible::Property::Label("Stop device discovery")]);
-    // Routed actions stay hidden until a snapshot says the platform offers
-    // them; the menu holds the one destructive gesture, forgetting approvals.
-    let routed_discovery_button = gtk::Button::builder()
-        .icon_name("network-vpn-symbolic")
-        .tooltip_text("Search routes behind your tunnel")
-        .css_classes(["flat"])
-        .visible(false)
-        .build();
-    routed_discovery_button.update_property(&[gtk::accessible::Property::Label(
-        "Search routes behind your tunnel",
-    )]);
-    let routed_menu = gtk::gio::Menu::new();
-    routed_menu.append(
-        Some("Forget routed approvals"),
-        Some(&format!("win.{FORGET_ROUTED_APPROVALS_ACTION}")),
-    );
-    let routed_menu_button = gtk::MenuButton::builder()
-        .icon_name("view-more-symbolic")
-        .tooltip_text("More discovery options")
-        .css_classes(["flat"])
-        .menu_model(&routed_menu)
-        .visible(false)
-        .build();
-    routed_menu_button
-        .update_property(&[gtk::accessible::Property::Label("More discovery options")]);
     let discovery_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     discovery_actions.append(&exact_discovery_button);
-    discovery_actions.append(&routed_discovery_button);
     discovery_actions.append(&refresh_button);
     discovery_actions.append(&cancel_discovery_button);
-    discovery_actions.append(&routed_menu_button);
     let header = adw::HeaderBar::new();
     // The automatic NavigationPage title ellipsizes to fit beside macOS's
     // window controls. Keep this short title's full minimum width so the
@@ -443,8 +385,6 @@ pub(crate) fn build() -> DeviceSidebar {
         spinner,
         cancel_discovery_button,
         exact_discovery_button,
-        routed_discovery_button,
-        routed_menu_button,
         refresh_button,
         device_context,
         bound_rows,
@@ -724,14 +664,8 @@ fn apply_empty_presentation(
     discovery_kind: DiscoveryKind,
     discovery_status: DiscoveryStatus,
     issue_count: u16,
-    routed_availability: RoutedAvailability,
 ) {
-    let presentation = discovery_presentation_for_availability(
-        discovery_kind,
-        discovery_status,
-        issue_count,
-        routed_availability,
-    );
+    let presentation = discovery_presentation(discovery_kind, discovery_status, issue_count);
     status.set_icon_name(Some(presentation.icon_name));
     status.set_title(presentation.title);
     status.set_description(Some(presentation.description));
@@ -782,22 +716,6 @@ fn plan_terminal_banner(
     }
 }
 
-fn terminal_banner_title_for_availability(
-    kind: DiscoveryKind,
-    status: DiscoveryStatus,
-    has_device_rows: bool,
-    routed_availability: RoutedAvailability,
-) -> Option<&'static str> {
-    if kind == DiscoveryKind::Routed
-        && status == DiscoveryStatus::Failed(DiscoveryFailure::RoutedUnavailable)
-        && has_device_rows
-        && let RoutedAvailability::Unavailable(reason) = routed_availability
-    {
-        return Some(routed_unavailable_banner_title(reason));
-    }
-    terminal_banner_title(kind, status, has_device_rows)
-}
-
 /// Keep relevant terminal discovery outcomes visible when retained device
 /// rows make the empty-state page unavailable. Copy is fixed and the
 /// controller snapshot intentionally contains no target address.
@@ -828,13 +746,6 @@ fn terminal_banner_title(
         (DiscoveryKind::Local, DiscoveryStatus::Failed(_)) => {
             Some("Local device discovery failed.")
         }
-        (DiscoveryKind::Routed, DiscoveryStatus::Ready) => Some("Routed discovery finished."),
-        (DiscoveryKind::Routed, DiscoveryStatus::NoResponse) => {
-            Some("No HDHomeRun replies from the approved routes.")
-        }
-        (DiscoveryKind::Routed, DiscoveryStatus::Failed(failure)) => {
-            Some(routed_failure_banner_title(failure))
-        }
         (_, DiscoveryStatus::Idle | DiscoveryStatus::Refreshing | DiscoveryStatus::Ready) => None,
     }
 }
@@ -851,37 +762,6 @@ fn network_change_banner_title(network: NetworkChangeSummary) -> Option<&'static
         Some("Network changed; stale device addresses were dropped.")
     } else {
         None
-    }
-}
-
-fn routed_failure_banner_title(failure: DiscoveryFailure) -> &'static str {
-    match failure {
-        DiscoveryFailure::RoutedNotApproved => "Routed discovery needs your approval.",
-        DiscoveryFailure::RoutedCoolingDown => "Routed discovery is cooling down.",
-        DiscoveryFailure::RoutedBusy => "Another routed scan is still reserved.",
-        DiscoveryFailure::RoutedNoCandidates => "No tunnel route offers addresses to probe.",
-        DiscoveryFailure::RoutedUnavailable => "Routed discovery is not available here.",
-        DiscoveryFailure::RoutedProposalChanged => "The routed proposal changed; review it again.",
-        DiscoveryFailure::RoutedUnconfirmed
-        | DiscoveryFailure::InterfaceEnumeration
-        | DiscoveryFailure::Network
-        | DiscoveryFailure::ExactTargetLimitReached
-        | DiscoveryFailure::Internal => "Routed discovery failed.",
-    }
-}
-
-const fn routed_unavailable_banner_title(reason: RoutedUnavailableReason) -> &'static str {
-    match reason {
-        RoutedUnavailableReason::UnsupportedPlatform => {
-            "Automatic route discovery is unsupported on this platform."
-        }
-        RoutedUnavailableReason::NotConfigured => {
-            "This Balun session has no routed discovery service."
-        }
-        RoutedUnavailableReason::NoPrivateDirectory => "Routed approval storage is unavailable.",
-        RoutedUnavailableReason::ObserversUnavailable => {
-            "Route or approval monitoring is unavailable on this host; find the device by address instead."
-        }
     }
 }
 
@@ -958,72 +838,14 @@ fn discovery_presentation(
             title: "No valid HDHomeRun replies received",
             description: "Check that a tuner is reachable, then refresh again.",
         },
-        (DiscoveryKind::Routed, DiscoveryStatus::Idle) => DiscoveryPresentation {
-            icon_name: "process-stop-symbolic",
-            title: "Routed discovery stopped",
-            description: "No routed discovery request is running.",
-        },
-        (DiscoveryKind::Routed, DiscoveryStatus::Refreshing) => DiscoveryPresentation {
-            icon_name: "network-transmit-receive-symbolic",
-            title: "Searching approved routes",
-            description: "Probing the approved addresses behind your tunnel.",
-        },
-        (DiscoveryKind::Routed, DiscoveryStatus::Ready) => DiscoveryPresentation {
-            icon_name: "network-offline-symbolic",
-            title: "No HDHomeRun devices found behind the tunnel",
-            description: if issue_count == 0 {
-                "Every approved address was probed without a valid reply."
-            } else {
-                "No usable tuner was found; one or more probes were not completed."
-            },
-        },
-        (DiscoveryKind::Routed, DiscoveryStatus::NoResponse) => DiscoveryPresentation {
-            icon_name: "network-offline-symbolic",
-            title: "No HDHomeRun replies from the approved routes",
-            description: "Check that the tunnel is up and the remote tuner is powered.",
-        },
         (kind, DiscoveryStatus::Failed(failure)) => DiscoveryPresentation {
             icon_name: "dialog-error-symbolic",
             title: match kind {
                 DiscoveryKind::Local => "Device discovery failed",
                 DiscoveryKind::Exact => "Device search failed",
-                DiscoveryKind::Routed => "Routed discovery did not run",
             },
             description: discovery_failure_description(kind, failure),
         },
-    }
-}
-
-fn discovery_presentation_for_availability(
-    kind: DiscoveryKind,
-    status: DiscoveryStatus,
-    issue_count: u16,
-    routed_availability: RoutedAvailability,
-) -> DiscoveryPresentation {
-    let mut presentation = discovery_presentation(kind, status, issue_count);
-    if kind == DiscoveryKind::Routed
-        && status == DiscoveryStatus::Failed(DiscoveryFailure::RoutedUnavailable)
-        && let RoutedAvailability::Unavailable(reason) = routed_availability
-    {
-        presentation.description = routed_unavailable_description(reason);
-    }
-    presentation
-}
-
-const fn routed_unavailable_description(reason: RoutedUnavailableReason) -> &'static str {
-    match reason {
-        RoutedUnavailableReason::UnsupportedPlatform => {
-            "Automatic route-derived discovery is not supported here; find the device by address instead."
-        }
-        RoutedUnavailableReason::NotConfigured => {
-            "This Balun session was started without a routed discovery service."
-        }
-        RoutedUnavailableReason::NoPrivateDirectory => {
-            "Balun could not open its private storage for routed approvals."
-        }
-        RoutedUnavailableReason::ObserversUnavailable => {
-            "Balun could not model or watch this host's routes or its routed-approval storage, so route-derived discovery is off; the log names the cause. Find the device by address instead."
-        }
     }
 }
 
@@ -1041,35 +863,8 @@ fn discovery_failure_description(kind: DiscoveryKind, failure: DiscoveryFailure)
         (DiscoveryKind::Exact, DiscoveryFailure::Network) => {
             "The exact-address discovery request could not be completed."
         }
-        (DiscoveryKind::Routed, DiscoveryFailure::InterfaceEnumeration) => {
-            "Balun could not inspect this computer's routes."
-        }
-        (DiscoveryKind::Routed, DiscoveryFailure::Network) => {
-            "The routed discovery scan could not be completed."
-        }
         (_, DiscoveryFailure::ExactTargetLimitReached) => {
             "This session has reached its limit for distinct device addresses."
-        }
-        (_, DiscoveryFailure::RoutedUnavailable) => {
-            "Routed discovery is not available on this system."
-        }
-        (_, DiscoveryFailure::RoutedNoCandidates) => {
-            "No active tunnel route offers an address to probe."
-        }
-        (_, DiscoveryFailure::RoutedNotApproved) => {
-            "Review and approve the routed proposal before it can run."
-        }
-        (_, DiscoveryFailure::RoutedBusy) => {
-            "Wait for the current routed reservation to finish, then try again."
-        }
-        (_, DiscoveryFailure::RoutedCoolingDown) => {
-            "Automatic routed discovery is cooling down; refresh to run it now."
-        }
-        (_, DiscoveryFailure::RoutedUnconfirmed) => {
-            "The approval store could not confirm the reservation; try again shortly."
-        }
-        (_, DiscoveryFailure::RoutedProposalChanged) => {
-            "The routed proposal changed since it was shown; review it again."
         }
         (_, DiscoveryFailure::Internal) => "Device discovery stopped because of an internal error.",
     }
@@ -1391,128 +1186,6 @@ mod tests {
     }
 
     #[test]
-    fn routed_discovery_copy_is_topology_free_and_names_every_decision() {
-        for status in [
-            DiscoveryStatus::Idle,
-            DiscoveryStatus::Refreshing,
-            DiscoveryStatus::Ready,
-            DiscoveryStatus::NoResponse,
-            DiscoveryStatus::Failed(DiscoveryFailure::RoutedNotApproved),
-        ] {
-            let presentation = discovery_presentation(DiscoveryKind::Routed, status, 0);
-            assert!(!presentation.title.is_empty());
-            assert!(!presentation.description.is_empty());
-            assert!(!presentation.title.to_ascii_lowercase().contains("local"));
-            assert!(!presentation.description.contains("172."));
-        }
-        let failures = [
-            DiscoveryFailure::RoutedUnavailable,
-            DiscoveryFailure::RoutedNoCandidates,
-            DiscoveryFailure::RoutedNotApproved,
-            DiscoveryFailure::RoutedBusy,
-            DiscoveryFailure::RoutedCoolingDown,
-            DiscoveryFailure::RoutedUnconfirmed,
-            DiscoveryFailure::RoutedProposalChanged,
-            DiscoveryFailure::Network,
-        ];
-        let descriptions = failures
-            .iter()
-            .map(|failure| discovery_failure_description(DiscoveryKind::Routed, *failure))
-            .collect::<Vec<_>>();
-        let banners = failures
-            .iter()
-            .map(|failure| routed_failure_banner_title(*failure))
-            .collect::<Vec<_>>();
-        for (description, banner) in descriptions.iter().zip(&banners) {
-            assert!(!description.is_empty());
-            assert!(!banner.is_empty());
-        }
-        assert_eq!(
-            descriptions
-                .iter()
-                .collect::<std::collections::BTreeSet<_>>()
-                .len(),
-            descriptions.len(),
-            "every routed decision reads differently"
-        );
-        assert_eq!(
-            terminal_banner_title(
-                DiscoveryKind::Routed,
-                DiscoveryStatus::Failed(DiscoveryFailure::RoutedCoolingDown),
-                true
-            ),
-            Some("Routed discovery is cooling down.")
-        );
-        assert_eq!(
-            terminal_banner_title(DiscoveryKind::Routed, DiscoveryStatus::Refreshing, true),
-            None
-        );
-    }
-
-    #[test]
-    fn routed_unavailable_copy_explains_the_snapshot_reason() {
-        let cases = [
-            (
-                RoutedUnavailableReason::UnsupportedPlatform,
-                "Automatic route-derived discovery is not supported here; find the device by address instead.",
-                "Automatic route discovery is unsupported on this platform.",
-            ),
-            (
-                RoutedUnavailableReason::NotConfigured,
-                "This Balun session was started without a routed discovery service.",
-                "This Balun session has no routed discovery service.",
-            ),
-            (
-                RoutedUnavailableReason::NoPrivateDirectory,
-                "Balun could not open its private storage for routed approvals.",
-                "Routed approval storage is unavailable.",
-            ),
-            (
-                RoutedUnavailableReason::ObserversUnavailable,
-                "Balun could not model or watch this host's routes or its routed-approval storage, so route-derived discovery is off; the log names the cause. Find the device by address instead.",
-                "Route or approval monitoring is unavailable on this host; find the device by address instead.",
-            ),
-        ];
-        for (reason, description, banner) in cases {
-            let availability = RoutedAvailability::Unavailable(reason);
-            let presentation = discovery_presentation_for_availability(
-                DiscoveryKind::Routed,
-                DiscoveryStatus::Failed(DiscoveryFailure::RoutedUnavailable),
-                0,
-                availability,
-            );
-            assert_eq!(presentation.description, description);
-            assert_eq!(
-                terminal_banner_title_for_availability(
-                    DiscoveryKind::Routed,
-                    DiscoveryStatus::Failed(DiscoveryFailure::RoutedUnavailable),
-                    true,
-                    availability,
-                ),
-                Some(banner)
-            );
-        }
-    }
-
-    #[test]
-    fn transient_routed_observer_failure_keeps_a_retry_action() {
-        assert!(routed_search_visible(RoutedAvailability::Available));
-        assert!(routed_search_visible(RoutedAvailability::Unavailable(
-            RoutedUnavailableReason::ObserversUnavailable
-        )));
-        for reason in [
-            RoutedUnavailableReason::UnsupportedPlatform,
-            RoutedUnavailableReason::NotConfigured,
-            RoutedUnavailableReason::NoPrivateDirectory,
-        ] {
-            assert!(!routed_search_visible(RoutedAvailability::Unavailable(
-                reason
-            )));
-        }
-        assert!(!routed_search_visible(RoutedAvailability::Unknown));
-    }
-
-    #[test]
     #[ignore = "requires the isolated display supplied by scripts/test-desktop-lifecycle.sh"]
     fn device_sidebar_accessibility_contract() {
         adw::init().expect("initialize libadwaita for device accessibility test");
@@ -1530,14 +1203,6 @@ mod tests {
         );
         assert_eq!(
             sidebar.refresh_button.accessible_role(),
-            gtk::AccessibleRole::Button
-        );
-        assert_eq!(
-            sidebar.routed_discovery_button.accessible_role(),
-            gtk::AccessibleRole::Button
-        );
-        assert_eq!(
-            sidebar.routed_menu_button.accessible_role(),
             gtk::AccessibleRole::Button
         );
         assert_eq!(
