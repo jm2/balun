@@ -168,12 +168,14 @@ fresh confirmation. Check the live observation generation after write readiness
 and immediately before every nonblocking send attempt, including retries.
 Revoke on detection; UI notification debounce must not delay that revocation.
 
-The current `default_network_change_source()` in `src/controller/runtime.rs`
-uses `UnavailableNetworkChangeSource` on macOS and Windows. Those platforms
-need working native change sources (V2.8) and cancellation evidence before typed
-scans can be enabled. The existing Linux source and its debounced controller stream
-also need the readiness, health, and immediate-invalidation evidence above;
-their mere presence is not sufficient admission proof.
+`default_network_change_source()` in `src/controller/runtime.rs` now starts a
+native source on Linux (rtnetlink), macOS (a `PF_ROUTE` routing socket), and
+Windows (IP Helper interface, unicast-address, and route notifications). Each
+subscribes before reading its baseline, reports one change after resubscribing,
+and gives up after bounded consecutive failures. Typed scans still need
+cancellation evidence on every platform, and these sources and their debounced
+controller stream still need the readiness, health, and immediate-invalidation
+evidence above; their mere presence is not sufficient admission proof.
 
 ## Integration and acceptance
 

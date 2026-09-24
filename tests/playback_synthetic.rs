@@ -1,4 +1,5 @@
 #![cfg(feature = "desktop")]
+#![forbid(unsafe_code)]
 
 use std::cell::{Cell, RefCell};
 use std::path::Path;

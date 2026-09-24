@@ -1,5 +1,9 @@
 //! GTK-free core services for Balun.
 
+// Windows network-change callbacks need the crate's only unsafe code; see
+// `discovery::changes::windows`. Every other target forbids it outright.
+#![cfg_attr(not(windows), forbid(unsafe_code))]
+
 #[cfg(test)]
 mod adversarial;
 

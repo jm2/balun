@@ -8,8 +8,8 @@ mod runtime;
 mod state;
 
 pub use handoff::{StreamHandoff, StreamHandoffError, StreamHandoffReceiver, StreamSelection};
-#[cfg(target_os = "linux")]
-pub use network::LinuxNetworkChangeSource;
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub use network::NativeNetworkChangeSource;
 pub use network::{NetworkChangeSource, UnavailableNetworkChangeSource};
 pub use remembered::{ExactSearchOutcome, ExactTargetTracker, RediscoveryQueue, RediscoveryStep};
 pub use resolution::HostnameResolutionReceiver;

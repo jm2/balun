@@ -42,7 +42,7 @@ address so you know which tuner failed.
 | Channel search and favorites-only filter | ✅ |
 | Fixed, endpoint-free playback error messages | ✅ |
 | Windows local discovery | ✅ |
-| Network-change handling | 🚧 Linux: stale addresses expire when adapters or routes change, and nothing rescans on its own; macOS and Windows in a future release |
+| Network-change handling | 🚧 Linux, macOS, and Windows: stale addresses expire when adapters, addresses, or routes change, and nothing rescans on its own; macOS and Windows await real-network confirmation |
 | Program guide (in-band PSIP/EIT, XMLTV) | 🚧 Future release |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name; stuck name lookups cannot block closing the viewer |
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; live timing accounts for delayed media arrival; codec contract frozen, see the support matrix |
@@ -59,8 +59,8 @@ address so you know which tuner failed.
 | Light & dark mode | ✅ Automatic (libadwaita) |
 | i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Application menu, navigation, player controls/progress/startup, and About description; [remaining scope](docs/localization.md) |
 
-Network-change handling is Linux-only today. Local broadcast and multicast discovery, exact IP or
-hostname discovery, and remembered targets work on Linux, macOS, and Windows.
+Local broadcast and multicast discovery, exact IP or hostname discovery, remembered targets, and
+network-change handling work on Linux, macOS, and Windows.
 
 Settings support a private local profile under the account's existing configuration parent,
 which may be group-writable only for the account's own user-private group.
@@ -598,12 +598,13 @@ src/
 │   ├── manual.rs           # Exact-address target validation
 │   ├── registry.rs         # Device registry with locator claims and expiry
 │   ├── changes.rs          # Debounced network-change coalescing and interface inventory
+│   ├── changes/            # rtnetlink, routing-socket, and IP Helper change watchers
 │   ├── routed.rs           # Approved-range scan budgets and candidate limits
 │   └── routes/linux/       # rtnetlink change monitor
 ├── controller/
 │   ├── runtime.rs          # Controller thread, command ingress, snapshot publishing
 │   ├── state.rs            # Immutable URL-free device and channel projections
-│   ├── network.rs          # Network-change source boundary and Linux watcher thread
+│   ├── network.rs          # Network-change source boundary and native watcher thread
 │   └── handoff.rs          # One-shot, URL-redacted stream handoff
 ├── settings/
 │   ├── mod.rs              # Versioned settings schema and validation

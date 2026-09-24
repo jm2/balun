@@ -145,14 +145,15 @@ impl DiscoveryService for DiscoveryClient {
     }
 }
 
-/// The production network-change source: the Linux rtnetlink watcher thread,
-/// started only when the actor subscribes, or nothing elsewhere.
-#[cfg(target_os = "linux")]
+/// The production network-change source: the native watcher thread on
+/// Linux, macOS, and Windows, started only when the actor subscribes, or
+/// nothing elsewhere.
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 fn default_network_change_source() -> Arc<dyn NetworkChangeSource> {
-    Arc::new(super::network::LinuxNetworkChangeSource::new())
+    Arc::new(super::network::NativeNetworkChangeSource::new())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn default_network_change_source() -> Arc<dyn NetworkChangeSource> {
     Arc::new(UnavailableNetworkChangeSource)
 }

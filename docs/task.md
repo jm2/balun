@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **44/60 (73.3%)** records complete: historical P0–P4 **30/30**,
-hardening and assurance H0–H4 **13/21**, and roadmap V2 **1/9**. This is a
+Current status: **45/60 (75.0%)** records complete: historical P0–P4 **30/30**,
+hardening and assurance H0–H4 **13/21**, and roadmap V2 **2/9**. This is a
 dependency ledger, not an effort estimate.
 
 ## Current focus
@@ -197,7 +197,7 @@ Independent correctness fixes may continue.
   validate GTK-free playback, sink/network boundaries, and each platform's
   feasibility; split proven platform milestones before implementing shells.
 
-- [ ] **V2.8 — Observe network changes natively on macOS and Windows ([#181]).** Add macOS
+- [x] **V2.8 — Observe network changes natively on macOS and Windows ([#181]).** Add macOS
   routing-socket and Windows IP Helper sources with Linux's baseline, loss, and failure
   semantics, tested in each platform's CI lane.
 

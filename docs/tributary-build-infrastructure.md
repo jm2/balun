@@ -204,8 +204,9 @@ Setup. The deliberate differences are:
   plugins, scanners, or DLLs fail before the runtime probe.
 - **Layout.** Tributary stages a flat tree and sets `GST_PLUGIN_PATH`,
   `GST_PLUGIN_SYSTEM_PATH`, `GST_PLUGIN_SCANNER`, and `GST_REGISTRY` in-process
-  at launch. Balun forbids unsafe code, and writing the process environment is
-  not possible in safe Rust, so the package keeps the MSYS2 prefix shape
+  at launch. Balun's only unsafe code is the Windows IP Helper notification
+  module (V2.8), and writing the process environment is not possible in safe
+  Rust, so the package keeps the MSYS2 prefix shape
   (`bin\balun.exe` beside every DLL, `lib\gstreamer-1.0`,
   `libexec\gstreamer-1.0\gst-plugin-scanner.exe`, `share`). GStreamer derives
   the plugin directory and the scanner from its own DLL location and prepends

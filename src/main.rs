@@ -1,5 +1,6 @@
 //! Balun desktop application entry point.
 
+#![forbid(unsafe_code)]
 #![cfg_attr(
     all(not(debug_assertions), not(feature = "windows-console")),
     windows_subsystem = "windows"

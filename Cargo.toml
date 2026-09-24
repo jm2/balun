@@ -67,8 +67,22 @@ rustix = { version = "1.1", features = ["fs", "process"] }
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.31", default-features = false, features = ["fs"] }
 
+# The PF_ROUTE routing socket behind macOS network-change observation.
+[target.'cfg(target_os = "macos")'.dependencies]
+rustix = { version = "1.1", features = ["net"] }
+
+# Checks the routing-socket layout the parser hard-codes against the SDK.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_Networking_WinSock",
+  "Win32_Storage_FileSystem",
+] }
 
 # The Windows icon and version resource for balun.exe; see build.rs.
 [target.'cfg(target_os = "windows")'.build-dependencies]
@@ -187,4 +201,6 @@ opt-level = 3
 strip = true
 
 [lints.rust]
-unsafe_code = "forbid"
+# Every crate root forbids unsafe code except the library on Windows, where
+# only the IP Helper notification module may allow it.
+unsafe_code = "deny"

@@ -11,12 +11,18 @@ mod routes;
 mod typed_subnet;
 mod types;
 
+#[cfg(target_os = "linux")]
+pub use changes::LinuxNetworkChangeWatcher;
+#[cfg(target_os = "macos")]
+pub use changes::MacosNetworkChangeWatcher;
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub use changes::NetworkChangeWatchError;
+#[cfg(windows)]
+pub use changes::WindowsNetworkChangeWatcher;
 pub use changes::{
     Coalesced, InterfaceInventory, InterfaceLoss, NETWORK_CHANGE_MAX_DELAY,
     NETWORK_CHANGE_QUIET_PERIOD, NetworkChange, coalesce_burst,
 };
-#[cfg(target_os = "linux")]
-pub use changes::{LinuxNetworkChangeWatcher, NetworkChangeWatchError};
 #[cfg(all(test, feature = "desktop"))]
 pub(crate) use client::DiscoveryPortOverride;
 pub use client::{

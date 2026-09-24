@@ -7,6 +7,8 @@
 //! and requires exactly this resource set, so a build that silently lost it
 //! cannot reach a package.
 
+#![forbid(unsafe_code)]
+
 /// Prepare platform resources without adding dependencies to the diagnostic.
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
