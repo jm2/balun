@@ -5,6 +5,7 @@
 //! lineup rows (and therefore their stream URLs) remain inside the HDHomeRun
 //! protocol boundary; callers receive only validated metadata and counts.
 
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -47,8 +48,10 @@ impl DeviceInspector {
     /// The preferred locator is attempted first. A failure then falls back to
     /// each remaining supported locator in deterministic address order. Every
     /// attempt validates `/discover.json` against the registry DeviceID before
-    /// accepting lineup-derived counts. Cancellation or deadline expiry is
-    /// atomic: no partial inspection report is returned.
+    /// accepting lineup-derived counts. When two DeviceIDs answer from one
+    /// address, the first keeps it and the other carries a locator-conflict
+    /// issue. Cancellation or deadline expiry is atomic: no partial
+    /// inspection report is returned.
     pub async fn inspect_discovery_report(
         &self,
         report: &DiscoveryReport,
@@ -136,10 +139,13 @@ impl DeviceInspectionSummary {
 pub enum DeviceInspectionIssueKind {
     UnsupportedEndpoint,
     SnapshotFailed,
+    /// Another DeviceID answered from the same address in this report.
+    LocatorConflict,
 }
 
 /// One failed locator attempt. Messages originate only from endpoint and HTTP
-/// errors that reject credentials and cross-responder authorities.
+/// errors that reject credentials and cross-responder authorities, or name
+/// the DeviceID that already claimed the address.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeviceInspectionIssue {
     source: SocketAddr,
@@ -333,6 +339,7 @@ async fn inspect_discovery_report<I: SnapshotInspector>(
     )?;
 
     let mut registry = DeviceRegistry::default();
+    let mut conflicts = BTreeMap::<DeviceId, Vec<DeviceInspectionIssue>>::new();
     for (index, observation) in report.observations.iter().enumerate() {
         if index > 0 && index % INSPECTION_PREPROCESS_YIELD_INTERVAL == 0 {
             tokio::task::yield_now().await;
@@ -341,10 +348,28 @@ async fn inspect_discovery_report<I: SnapshotInspector>(
             return Err(DeviceInspectionError::Cancelled);
         }
         validate_observation_bounds(observation)?;
-        registry.observe(observation.clone(), RegistryInstant::default())?;
+        match registry.observe(observation.clone(), RegistryInstant::default()) {
+            Ok(_) => {}
+            // Two identities answering from one address in the same report,
+            // such as behind overlapping subnets, is ambiguous: the first
+            // claim stands and the other is reported rather than aborting.
+            Err(RegistryError::LocatorConflict {
+                locator,
+                current_owner,
+                claimant,
+            }) => conflicts
+                .entry(claimant)
+                .or_default()
+                .push(DeviceInspectionIssue {
+                    source: locator,
+                    kind: DeviceInspectionIssueKind::LocatorConflict,
+                    message: format!("{current_owner} answered from the same address"),
+                }),
+            Err(error) => return Err(error.into()),
+        }
     }
 
-    let mut devices = Vec::with_capacity(registry.len());
+    let mut devices = Vec::with_capacity(registry.len() + conflicts.len());
     for (device_index, device) in registry.devices().enumerate() {
         if device_index > 0 {
             tokio::task::yield_now().await;
@@ -367,7 +392,7 @@ async fn inspect_discovery_report<I: SnapshotInspector>(
             .iter()
             .filter(|candidate| matches!(candidate, InspectionCandidate::Supported(_)))
             .count();
-        let mut issues = Vec::new();
+        let mut issues = conflicts.remove(&device.device_id()).unwrap_or_default();
         let mut summary = None;
         for candidate in candidates {
             if cancellation.is_cancelled() {
@@ -444,6 +469,18 @@ async fn inspect_discovery_report<I: SnapshotInspector>(
             summary,
         });
     }
+    // A claimant left with no address of its own is still reported.
+    devices.extend(
+        conflicts
+            .into_iter()
+            .map(|(device_id, issues)| DeviceInspection {
+                device_id,
+                supported_locator_count: 0,
+                issues,
+                summary: None,
+            }),
+    );
+    devices.sort_by_key(DeviceInspection::device_id);
 
     if cancellation.is_cancelled() {
         return Err(DeviceInspectionError::Cancelled);
@@ -643,25 +680,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn conflicting_locator_identity_fails_before_http() {
-        let inspector = FakeInspector::new(Vec::new());
+    async fn conflicting_locator_identity_is_reported_without_http_to_the_later_claimant() {
+        let first = DeviceId::new(FIRST_ID).unwrap();
+        let second = DeviceId::new(SECOND_ID).unwrap();
+        let inspector = FakeInspector::new(vec![Ok(details(first, "First tuner"))]);
+        // Overlapping subnets on two interfaces: one address, two identities.
+        let mut on_eth0 = observation(FIRST_ID, 65_001, DiscoveryMethod::Ipv4Broadcast);
+        on_eth0.interface = Some("eth0".to_owned());
+        let mut on_eth1 = observation(SECOND_ID, 65_001, DiscoveryMethod::Ipv4Broadcast);
+        on_eth1.interface = Some("eth1".to_owned());
+        let report = DiscoveryReport {
+            observations: vec![on_eth0, on_eth1],
+            ..DiscoveryReport::default()
+        };
+
+        let result = inspect_discovery_report(&inspector, &report, &CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(result.attempted_devices(), 2);
+        assert_eq!(result.failed_devices(), 1);
+        assert_eq!(result.devices()[0].device_id(), first);
+        assert!(result.devices()[0].succeeded());
+        assert!(result.devices()[0].issues().is_empty());
+        let conflicted = &result.devices()[1];
+        assert_eq!(conflicted.device_id(), second);
+        assert_eq!(conflicted.supported_locator_count(), 0);
+        assert!(conflicted.summary().is_none());
+        assert_eq!(conflicted.issues().len(), 1);
+        let issue = &conflicted.issues()[0];
+        assert_eq!(issue.kind(), DeviceInspectionIssueKind::LocatorConflict);
+        assert_eq!(issue.source().port(), 65_001);
+        assert_eq!(issue.message(), "105A1232 answered from the same address");
+        assert_eq!(inspector.attempts(), vec![(65_001, first)]);
+    }
+
+    #[tokio::test]
+    async fn conflicted_claimant_is_still_inspected_through_its_other_address() {
+        let first = DeviceId::new(FIRST_ID).unwrap();
+        let second = DeviceId::new(SECOND_ID).unwrap();
+        let inspector = FakeInspector::new(vec![
+            Ok(details(first, "First tuner")),
+            Ok(details(second, "Second tuner")),
+        ]);
         let report = DiscoveryReport {
             observations: vec![
                 observation(FIRST_ID, 65_001, DiscoveryMethod::Targeted),
                 observation(SECOND_ID, 65_001, DiscoveryMethod::Targeted),
+                observation(SECOND_ID, 65_002, DiscoveryMethod::Targeted),
             ],
             ..DiscoveryReport::default()
         };
 
-        let error = inspect_discovery_report(&inspector, &report, &CancellationToken::new())
+        let result = inspect_discovery_report(&inspector, &report, &CancellationToken::new())
             .await
-            .unwrap_err();
+            .unwrap();
 
-        assert!(matches!(
-            error,
-            DeviceInspectionError::Registry(RegistryError::LocatorConflict { .. })
-        ));
-        assert!(inspector.attempts().is_empty());
+        assert_eq!(result.failed_devices(), 0);
+        let conflicted = &result.devices()[1];
+        assert_eq!(conflicted.supported_locator_count(), 1);
+        assert_eq!(conflicted.summary().unwrap().source().port(), 65_002);
+        assert_eq!(
+            conflicted.issues()[0].kind(),
+            DeviceInspectionIssueKind::LocatorConflict
+        );
+        assert_eq!(
+            inspector.attempts(),
+            vec![(65_001, first), (65_002, second)]
+        );
     }
 
     #[tokio::test]

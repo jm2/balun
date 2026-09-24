@@ -15,7 +15,7 @@ pub use linux::LinuxRouteProvider;
 
 #[cfg(target_os = "linux")]
 pub(in crate::discovery) use linux::{
-    LinuxRouteEventMonitor, LinuxRouteMonitorError, RouteMonitorObserver,
+    LinuxRouteEventMonitor, LinuxRouteMonitorError, NotificationKind, RouteMonitorObserver,
     RouteReconciliationRequired,
 };
 

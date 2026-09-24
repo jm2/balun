@@ -29,19 +29,15 @@ updates:
           - minor
           - patch
 
-  # Compiler-floor proposals are independent of action implementation updates.
-  # They require synchronization and the complete CI matrix before adoption.
+  # The release compiler, including patch fixes. Release jobs read the manifest,
+  # so a proposal changes one file and merges automatically once CI passes.
+  # The compiler floor (build-aux/toolchain) is raised deliberately with
+  # scripts/sync_rust_toolchain.py, not proposed here.
   - package-ecosystem: rust-toolchain
-    directory: /build-aux/toolchain
+    directory: /build-aux/release-toolchain
     schedule:
       interval: weekly
     open-pull-requests-limit: 1
-    # This manifest proposes an X.Y compiler floor, tested at X.Y.0.
-    # Build jobs track stable independently and receive compiler patch fixes.
-    ignore:
-      - dependency-name: "*"
-        update-types:
-          - version-update:semver-patch
 
   - package-ecosystem: github-actions
     directory: /

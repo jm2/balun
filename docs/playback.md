@@ -523,14 +523,17 @@ Those claims belong to the P0 evidence records and the P3 packaging records.
 ## Fake-device end-to-end acceptance
 
 The fake-server path is covered by a complete loopback fake HDHomeRun
-device: a UDP discovery responder on the fixed discovery port advertising a
+device: a UDP discovery responder on an ephemeral loopback port advertising a
 checksum-valid identity and the fake's metadata origin, identity-checked
 `discover.json`/`lineup.json` responses on an ephemeral loopback port, and an
 MPEG-TS stream server on the fixed device stream port that records per-path
 connection open and close instants. Because an unprivileged test process
 cannot bind port 80, a test-only exemption accepts exactly the installed
 loopback fake metadata port — and nothing else — in place of the production
-port-80 policy for the device's lifetime.
+port-80 policy for the device's lifetime. Because Windows can reserve the
+fixed discovery port 65001, a matching test-only redirect probes exactly
+`127.0.0.1` on the installed responder port instead; replies must still come
+from that probed address and port, and every other address keeps 65001.
 
 A headless test drives the real controller through `RefreshLocalDiscovery`
 and `SelectDevice` against this fake, asserts the identity-checked lineup and

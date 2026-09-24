@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, btree_map::Entry};
 use std::fmt;
 use std::future::Future;
 use std::io;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+#[cfg(all(test, feature = "desktop"))]
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use thiserror::Error;
@@ -338,7 +340,7 @@ impl DiscoveryClient {
         cancellation: &CancellationToken,
     ) -> Result<DiscoveryReport, DiscoveryError> {
         debug_assert!(method.is_targeted());
-        let destination = with_port(target, DISCOVERY_UDP_PORT);
+        let destination = with_port(target, discovery_port(target.ip()));
         if invalid_target(destination) {
             return Err(DiscoveryError::InvalidEndpoint {
                 endpoint: destination,
@@ -466,7 +468,7 @@ impl DiscoveryClient {
         target: Ipv4Addr,
         cancellation: &CancellationToken,
     ) -> Result<DiscoveryReport, DiscoveryError> {
-        let destination = SocketAddr::V4(SocketAddrV4::new(target, DISCOVERY_UDP_PORT));
+        let destination = SocketAddr::V4(SocketAddrV4::new(target, discovery_port(target.into())));
         if invalid_target(destination) {
             return Err(DiscoveryError::InvalidEndpoint {
                 endpoint: destination,
@@ -713,7 +715,7 @@ fn validate_endpoint(endpoint: &ProbeEndpoint) -> Result<(), DiscoveryError> {
             reason: "discovery bind port must be selected by the operating system",
         });
     }
-    if endpoint.destination.port() != DISCOVERY_UDP_PORT {
+    if endpoint.destination.port() != discovery_port(endpoint.destination.ip()) {
         return Err(DiscoveryError::InvalidEndpoint {
             endpoint: endpoint.destination,
             reason: "discovery destination must use the HDHomeRun discovery port",
@@ -752,6 +754,56 @@ fn validate_endpoint(endpoint: &ProbeEndpoint) -> Result<(), DiscoveryError> {
     }
 
     Ok(())
+}
+
+/// The destination port every probe to `address` must use.
+///
+/// Production always uses the HDHomeRun discovery port. Test builds
+/// additionally redirect exactly `127.0.0.1` to one installed fake-device
+/// responder port, because a fixed port such as 65001 sits in the dynamic
+/// range that Windows can reserve; every other address keeps the fixed port,
+/// and replies are still accepted only from the probed address and port.
+#[cfg_attr(
+    not(all(test, feature = "desktop")),
+    expect(unused_variables, reason = "only fake-device test builds redirect")
+)]
+fn discovery_port(address: IpAddr) -> u16 {
+    #[cfg(all(test, feature = "desktop"))]
+    {
+        let port = TEST_DISCOVERY_PORT.load(Ordering::SeqCst);
+        if port != 0 && address == IpAddr::V4(Ipv4Addr::LOCALHOST) {
+            return port;
+        }
+    }
+    DISCOVERY_UDP_PORT
+}
+
+#[cfg(all(test, feature = "desktop"))]
+static TEST_DISCOVERY_PORT: AtomicU16 = AtomicU16::new(0);
+
+/// A process-wide test-only loopback discovery-port redirect.
+///
+/// The guard serializes nothing by itself; every holder must also serialize
+/// the fake device and probes it applies to. Restoring the prior value on
+/// drop keeps leaked references from silently weakening later tests.
+#[cfg(all(test, feature = "desktop"))]
+pub(crate) struct DiscoveryPortOverride {
+    prior: u16,
+}
+
+#[cfg(all(test, feature = "desktop"))]
+impl DiscoveryPortOverride {
+    pub(crate) fn install(port: u16) -> Self {
+        let prior = TEST_DISCOVERY_PORT.swap(port, Ordering::SeqCst);
+        Self { prior }
+    }
+}
+
+#[cfg(all(test, feature = "desktop"))]
+impl Drop for DiscoveryPortOverride {
+    fn drop(&mut self) {
+        TEST_DISCOVERY_PORT.store(self.prior, Ordering::SeqCst);
+    }
 }
 
 fn valid_ipv6_multicast_endpoint(
@@ -1029,6 +1081,47 @@ mod tests {
             validate_endpoint(&targeted_with_prefix),
             Err(DiscoveryError::InvalidEndpoint { .. })
         ));
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn fake_device_discovery_port_redirects_exactly_loopback_while_installed() {
+        let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let targeted = |destination: &str| ProbeEndpoint {
+            bind: "0.0.0.0:0".parse().unwrap(),
+            destination: destination.parse().unwrap(),
+            method: DiscoveryMethod::Targeted,
+            interface: None,
+            accepted_source_network: None,
+        };
+        let _ports = crate::hdhr::fake_device::hold_fake_device_ports();
+        assert_eq!(discovery_port(loopback), DISCOVERY_UDP_PORT);
+        assert!(validate_endpoint(&targeted("127.0.0.1:49151")).is_err());
+        {
+            let _redirect = DiscoveryPortOverride::install(49151);
+            assert_eq!(discovery_port(loopback), 49151);
+            assert_eq!(
+                discovery_port("192.0.2.10".parse().unwrap()),
+                DISCOVERY_UDP_PORT
+            );
+            assert_eq!(discovery_port("::1".parse().unwrap()), DISCOVERY_UDP_PORT);
+            assert!(validate_endpoint(&targeted("127.0.0.1:49151")).is_ok());
+            assert!(validate_endpoint(&targeted("127.0.0.1:65001")).is_err());
+            assert!(validate_endpoint(&targeted("192.0.2.10:49151")).is_err());
+            assert!(validate_endpoint(&targeted("192.0.2.10:65001")).is_ok());
+
+            let redirected = targeted("127.0.0.1:49151");
+            assert!(source_matches(
+                &redirected,
+                "127.0.0.1:49151".parse().unwrap()
+            ));
+            assert!(!source_matches(
+                &redirected,
+                "127.0.0.1:65001".parse().unwrap()
+            ));
+        }
+        assert_eq!(discovery_port(loopback), DISCOVERY_UDP_PORT);
+        assert!(validate_endpoint(&targeted("127.0.0.1:49151")).is_err());
     }
 
     #[test]
