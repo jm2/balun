@@ -87,6 +87,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   letting it probe the rest of its approved addresses first.
 - On Linux, routine IPv6 address refreshes no longer cancel device searches and routed approvals
   every few seconds, and a remembered device whose startup search was interrupted is tried again.
+- Keyboard focus, scroll position, and an open Forget menu in the device list no longer
+  reset when discovery or channel loading updates it, so arrow keys select the next device.
+- Reload channels keeps the highlighted channel and scrolls back to it once the lineup loads.
 - Losing one IPv6 address, such as a rotated temporary address, no longer removes tuners found over
   IPv4 or stops playback.
 - A tuner stream that ends before sending any data now shows the stream as unavailable

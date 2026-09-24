@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use balun::controller::{
-    ApplicationSnapshot, DiscoveryFailure, DiscoveryKind, DiscoveryStatus, NetworkChangeSummary,
-    OperationGeneration, RoutedAvailability, RoutedUnavailableReason,
+    ApplicationSnapshot, DeviceSummary, DiscoveryFailure, DiscoveryKind, DiscoveryStatus,
+    NetworkChangeSummary, OperationGeneration, RoutedAvailability, RoutedUnavailableReason,
 };
 
 use super::objects::DeviceRowObject;
@@ -21,7 +21,8 @@ const ANNOUNCEMENT_DURATION: Duration = Duration::from_secs(3);
 type DeviceContextHandler = dyn Fn(u32, &gtk::Widget, f64, f64);
 type SharedDeviceContextHandler = Rc<RefCell<Option<Box<DeviceContextHandler>>>>;
 /// Row widgets built by the factory and their list items, so the keyboard
-/// shortcut can find the focused row's position.
+/// shortcut can find the focused row's position and a row whose text
+/// changed in place can be redrawn.
 type BoundRows = Rc<
     RefCell<
         Vec<(
@@ -53,6 +54,7 @@ pub(crate) struct DeviceSidebar {
     routed_menu_button: gtk::MenuButton,
     refresh_button: gtk::Button,
     device_context: SharedDeviceContextHandler,
+    bound_rows: BoundRows,
     applying_snapshot: Rc<Cell<bool>>,
     /// The last network-change sequence shown, so the notice appears once
     /// per reconciliation and yields to the next publication.
@@ -158,17 +160,12 @@ impl DeviceSidebar {
         Rc::clone(&self.applying_snapshot)
     }
 
-    /// Replace every visible device and status field from one immutable,
-    /// URL-free controller publication.
+    /// Show every device and status field from one immutable, URL-free
+    /// controller publication.
     ///
     /// Numeric list positions are never retained. The authoritative DeviceID
-    /// is resolved in the replacement model before selection is restored.
+    /// is resolved in the updated model before selection is restored.
     pub(crate) fn apply_snapshot(&self, snapshot: &ApplicationSnapshot) {
-        let rows = snapshot
-            .devices()
-            .iter()
-            .map(DeviceRowObject::from_summary)
-            .collect::<Vec<_>>();
         let selected_position = snapshot.selected_device().and_then(|selected| {
             snapshot
                 .devices()
@@ -178,7 +175,19 @@ impl DeviceSidebar {
         });
 
         let _applying = SnapshotApplicationGuard::enter(Rc::clone(&self.applying_snapshot));
-        self.store.splice(0, self.store.n_items(), &rows);
+        // Replacing a row unparents its widget, so GTK moves keyboard focus
+        // to the first row and closes any popover on it. A listed device
+        // keeps its row object: a snapshot that lists the same devices (a
+        // lineup load, discovery progress) leaves the model alone, and GTK
+        // keeps the widgets of retained rows when a device comes or goes.
+        let current = (0..self.store.n_items())
+            .filter_map(|position| self.store.item(position).and_downcast::<DeviceRowObject>())
+            .collect::<Vec<_>>();
+        let (rows, refreshed) = reconcile_rows(&current, snapshot.devices());
+        if rows != current {
+            self.store.splice(0, self.store.n_items(), &rows);
+        }
+        redraw_rows(&self.bound_rows, &refreshed);
         self.selection
             .set_selected(selected_position.unwrap_or(gtk::INVALID_LIST_POSITION));
 
@@ -251,6 +260,32 @@ impl DeviceSidebar {
             DEVICE_LIST_PAGE_NAME
         });
     }
+}
+
+/// The rows for `devices` in snapshot order, reusing the object that already
+/// shows each DeviceID (its text updated in place), and the reused rows whose
+/// text changed. Only a newly listed device gets a new object.
+fn reconcile_rows(
+    current: &[DeviceRowObject],
+    devices: &[DeviceSummary],
+) -> (Vec<DeviceRowObject>, Vec<DeviceRowObject>) {
+    let mut refreshed = Vec::new();
+    let rows = devices
+        .iter()
+        .map(|device| {
+            let Some(row) = current
+                .iter()
+                .find(|row| row.device_id() == Some(device.device_id()))
+            else {
+                return DeviceRowObject::from_summary(device);
+            };
+            if row.refresh(device) {
+                refreshed.push(row.clone());
+            }
+            row.clone()
+        })
+        .collect();
+    (rows, refreshed)
 }
 
 const fn routed_search_visible(availability: RoutedAvailability) -> bool {
@@ -412,6 +447,7 @@ pub(crate) fn build() -> DeviceSidebar {
         routed_menu_button,
         refresh_button,
         device_context,
+        bound_rows,
         applying_snapshot: Rc::new(Cell::new(false)),
         network_sequence: Rc::new(Cell::new(0)),
         banner_epoch: Rc::new(Cell::new(0)),
@@ -583,32 +619,7 @@ fn device_factory(
             return;
         };
         reset_device_list_item(list_item);
-
-        let Some(model_row) = list_item.item().and_downcast::<DeviceRowObject>() else {
-            return;
-        };
-        let Some((row, icon, title, subtitle)) = device_row_widgets(list_item) else {
-            return;
-        };
-
-        let title_text = model_row.title();
-        let subtitle_text = model_row.subtitle();
-        icon.set_icon_name(Some("network-server-symbolic"));
-        icon.set_visible(true);
-        icon.set_tooltip_text(Some("HDHomeRun device"));
-        title.set_text(&title_text);
-        title.set_visible(true);
-        subtitle.set_text(&subtitle_text);
-        subtitle.set_visible(!subtitle_text.is_empty());
-        row.set_tooltip_text(Some(&format!("{title_text}\n{subtitle_text}")));
-        let label = if subtitle_text.is_empty() {
-            title_text.clone()
-        } else {
-            format!("{title_text}, {subtitle_text}")
-        };
-        list_item.set_accessible_label(&label);
-        list_item.set_selectable(true);
-        list_item.set_activatable(true);
+        present_device_row(list_item);
     });
     factory.connect_unbind(|_, object| {
         if let Some(list_item) = object.downcast_ref::<gtk::ListItem>() {
@@ -622,6 +633,61 @@ fn device_factory(
         }
     });
     factory
+}
+
+/// Show the bound row's device. Every field is set, so this also redraws a
+/// row whose text changed in place.
+fn present_device_row(list_item: &gtk::ListItem) {
+    let Some(model_row) = list_item.item().and_downcast::<DeviceRowObject>() else {
+        return;
+    };
+    let Some((row, icon, title, subtitle)) = device_row_widgets(list_item) else {
+        return;
+    };
+
+    let title_text = model_row.title();
+    let subtitle_text = model_row.subtitle();
+    icon.set_icon_name(Some("network-server-symbolic"));
+    icon.set_visible(true);
+    icon.set_tooltip_text(Some("HDHomeRun device"));
+    title.set_text(&title_text);
+    title.set_visible(true);
+    subtitle.set_text(&subtitle_text);
+    subtitle.set_visible(!subtitle_text.is_empty());
+    row.set_tooltip_text(Some(&format!("{title_text}\n{subtitle_text}")));
+    let label = if subtitle_text.is_empty() {
+        title_text.clone()
+    } else {
+        format!("{title_text}, {subtitle_text}")
+    };
+    list_item.set_accessible_label(&label);
+    list_item.set_selectable(true);
+    list_item.set_activatable(true);
+}
+
+/// Redraw the bound rows showing `refreshed`. GTK binds a row once per
+/// object and keeps the widget of a retained object, so it never rebinds
+/// text changed in place.
+fn redraw_rows(bound_rows: &BoundRows, refreshed: &[DeviceRowObject]) {
+    if refreshed.is_empty() {
+        return;
+    }
+    let list_items = {
+        let mut rows = bound_rows.borrow_mut();
+        rows.retain(|(bound, _)| bound.upgrade().is_some());
+        rows.iter()
+            .filter_map(|(_, item)| item.upgrade())
+            .collect::<Vec<_>>()
+    };
+    for list_item in list_items {
+        if list_item
+            .item()
+            .and_downcast::<DeviceRowObject>()
+            .is_some_and(|row| refreshed.contains(&row))
+        {
+            present_device_row(&list_item);
+        }
+    }
 }
 
 fn device_row_widgets(
@@ -1257,6 +1323,57 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn unchanged_devices_keep_their_rows_and_changed_ones_refresh_in_place() {
+        use balun::domain::DeviceId;
+
+        let device = |id, name: Option<&str>| {
+            DeviceSummary::new(
+                DeviceId::new(id).unwrap(),
+                name.map(str::to_owned),
+                None,
+                Some(2),
+                "192.0.2.10:65001".parse().unwrap(),
+                vec!["192.0.2.10:65001".parse().unwrap()],
+            )
+            .unwrap()
+        };
+        let listed = [device(0x105A_1232, None), device(0x105B_1233, None)];
+        let (rows, refreshed) = reconcile_rows(&[], &listed);
+        assert_eq!(rows.len(), 2);
+        assert!(refreshed.is_empty(), "new rows are drawn when bound");
+
+        let (same, refreshed) = reconcile_rows(&rows, &listed);
+        assert_eq!(same, rows, "the same devices keep the same row objects");
+        assert!(refreshed.is_empty());
+
+        // A loaded lineup names the selected device; its row keeps its
+        // object (and so its widget and focus) and is redrawn.
+        let named = [device(0x105A_1232, Some("Den")), listed[1].clone()];
+        let (same, refreshed) = reconcile_rows(&rows, &named);
+        assert_eq!(same, rows);
+        assert_eq!(refreshed, [rows[0].clone()]);
+        assert_eq!(rows[0].title(), "Den · 105A1232");
+
+        let added = [
+            named[0].clone(),
+            device(0x105A_1243, None),
+            named[1].clone(),
+        ];
+        let (grown, refreshed) = reconcile_rows(&rows, &added);
+        assert_eq!(grown.len(), 3);
+        assert_eq!(grown[0], rows[0]);
+        assert_eq!(grown[2], rows[1], "a retained device keeps its row");
+        assert_eq!(
+            grown[1].device_id(),
+            Some(DeviceId::new(0x105A_1243).unwrap())
+        );
+        assert!(refreshed.is_empty());
+
+        let (shrunk, _) = reconcile_rows(&grown, &added[1..]);
+        assert_eq!(shrunk, grown[1..]);
     }
 
     #[test]
