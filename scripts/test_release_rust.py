@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compiler drift regressions for the release workflow's explicit Rust inputs."""
+"""Compiler drift regressions for the release workflow's manifest-read Rust inputs."""
 
 import copy
 import os
@@ -10,6 +10,18 @@ import unittest
 import yaml
 
 import check_release_rust as policy
+
+
+def read_step():
+    """The reviewed manifest read a release job runs before installing Rust."""
+    return {"name": "Read the reviewed release compiler", "id": policy.READ_ID,
+            "shell": "bash", "run": policy.READ_SCRIPT}
+
+
+def install_step():
+    """The Rust action receiving the read step's output."""
+    return {"uses": "dtolnay/rust-toolchain@" + "a" * 40,
+            "with": {"toolchain": policy.TOOLCHAIN_INPUT}}
 
 
 class ReleaseRustTests(unittest.TestCase):
@@ -25,39 +37,56 @@ class ReleaseRustTests(unittest.TestCase):
             (self.root / relative).parent.mkdir(parents=True, exist_ok=True)
         (self.root / policy.MANIFEST).write_text('[toolchain]\nchannel = "1.98.0"\nprofile = "minimal"\n')
         (self.root / "Cargo.toml").write_text('[package]\nrust-version = "1.98"\n')
-        self.workflow = {"jobs": {
-            job: {"steps": [{"uses": "dtolnay/rust-toolchain@" + "a" * 40,
-                             "with": {"toolchain": "1.98.0"}}]}
-            for job in policy.JOBS}}
+        self.workflow = {"jobs": {job: {"steps": [read_step(), install_step()]}
+                                  for job in policy.JOBS}}
 
     def write_workflow(self, value=None):
         """Serialize a fixture without sharing mutable nested job definitions."""
         (self.root / policy.WORKFLOW).write_text(yaml.safe_dump(self.workflow if value is None else value))
 
-    def test_reviewed_release_and_separate_patch_update(self):
-        """A reviewed patch release may advance without rewriting the MSRV floor."""
+    def test_manifest_alone_advances_the_release(self):
+        """A Dependabot-style manifest bump needs no workflow or MSRV edit."""
         self.write_workflow()
         self.assertEqual(policy.check(self.root), "1.98.0")
         manifest = self.root / policy.MANIFEST
-        manifest.write_text(manifest.read_text().replace("1.98.0", "1.98.1"))
-        with self.assertRaises(policy.Invalid):
-            policy.check(self.root)
-        for definition in self.workflow["jobs"].values():
-            definition["steps"][0]["with"]["toolchain"] = "1.98.1"
-        self.write_workflow()
-        self.assertEqual(policy.check(self.root), "1.98.1")
+        for release in ("1.98.1", "1.99.0"):
+            manifest.write_text(f'[toolchain]\nchannel = "{release}"\nprofile = "minimal"\n')
+            self.assertEqual(policy.check(self.root), release)
         self.assertIn('rust-version = "1.98"', (self.root / "Cargo.toml").read_text())
 
-    def test_changed_mutable_missing_and_expression_inputs_reject(self):
-        """The action must receive exactly the recorded literal compiler release."""
-        for version in ("stable", "nightly", "1.99.0", "1.98", "${{ env.RUST_VERSION }}", None, 1.98):
+    def test_literal_mutable_missing_and_other_expression_inputs_reject(self):
+        """The action must receive exactly the manifest read step's output."""
+        for version in ("1.98.0", "stable", "nightly", "${{ env.RUST_VERSION }}",
+                        "${{ steps.other.outputs.toolchain }}", None, 1.98):
             with self.subTest(version=version):
                 value = copy.deepcopy(self.workflow)
-                options = value["jobs"]["macos"]["steps"][0]["with"]
+                options = value["jobs"]["macos"]["steps"][1]["with"]
                 if version is None:
                     options.clear()
                 else:
                     options["toolchain"] = version
+                self.write_workflow(value)
+                with self.assertRaises(policy.Invalid):
+                    policy.check(self.root)
+
+    def test_missing_late_changed_or_duplicate_reads_reject(self):
+        """The install must follow one exact reviewed manifest read in its own job."""
+        for mutation in ("missing", "after-install", "script", "shell", "duplicate", "stray"):
+            with self.subTest(mutation=mutation):
+                value = copy.deepcopy(self.workflow)
+                steps = value["jobs"]["windows"]["steps"]
+                if mutation == "missing":
+                    del steps[0]
+                elif mutation == "after-install":
+                    steps.reverse()
+                elif mutation == "script":
+                    steps[0]["run"] = 'echo "toolchain=stable" >> "$GITHUB_OUTPUT"\n'
+                elif mutation == "shell":
+                    steps[0]["shell"] = "pwsh"
+                elif mutation == "duplicate":
+                    steps.insert(0, read_step())
+                else:
+                    value["jobs"]["unrecorded"] = {"steps": [read_step()]}
                 self.write_workflow(value)
                 with self.assertRaises(policy.Invalid):
                     policy.check(self.root)
@@ -70,11 +99,11 @@ class ReleaseRustTests(unittest.TestCase):
                 if mutation == "missing-job":
                     del value["jobs"]["build"]
                 elif mutation == "missing-action":
-                    value["jobs"]["build"]["steps"].clear()
+                    del value["jobs"]["build"]["steps"][1]
                 elif mutation == "extra-job":
                     value["jobs"]["new-native-job"] = copy.deepcopy(value["jobs"]["build"])
                 else:
-                    value["jobs"]["build"]["steps"] *= 2
+                    value["jobs"]["build"]["steps"].append(install_step())
                 self.write_workflow(value)
                 with self.assertRaises(policy.Invalid):
                     policy.check(self.root)
@@ -97,9 +126,17 @@ class ReleaseRustTests(unittest.TestCase):
                 policy.check(self.root)
         self.write_workflow()
         path = self.root / policy.WORKFLOW
-        path.write_text(path.read_text().replace("toolchain: 1.98.0", "toolchain: stable\n        toolchain: 1.98.0", 1))
+        lines = path.read_text().splitlines(keepends=True)
+        index = next(i for i, line in enumerate(lines) if line.strip() == "shell: bash")
+        lines.insert(index, lines[index].replace("bash", "pwsh"))
+        path.write_text("".join(lines))
         with self.assertRaises(ValueError):
             policy.check(self.root)
+
+    def test_the_release_workflow_passes(self):
+        """The repository's own release workflow reads the manifest in every job."""
+        root = Path(__file__).resolve().parent.parent
+        self.assertEqual(policy.check(root), policy.selection(root))
 
 
 if __name__ == "__main__":
