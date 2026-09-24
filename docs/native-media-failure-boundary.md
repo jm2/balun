@@ -48,8 +48,9 @@ cargo test --locked --features desktop --lib native_failure_study -- --nocapture
 The application supplies GStreamer a constant internal source URI and owns the
 HTTP transport. This protects endpoint handling; it does not make decoder input
 trusted. GStreamer, plugins, codecs, graphics drivers, and sinks run inside the
-application process. Rust's prohibition on unsafe code in this crate does not
-isolate their memory access, crashes, or unbounded native execution.
+application process. Rust's unsafe-code lint in this crate, which forbids it
+everywhere except the Windows IP Helper notification module, does not isolate
+their memory access, crashes, or unbounded native execution.
 
 Transport connection, header, and idle-read timeouts cover network progress.
 Receiving the first body bytes starts the live source clock. Neither event proves

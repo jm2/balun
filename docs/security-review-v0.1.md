@@ -224,7 +224,10 @@ This closes the prior JSON diagnostic exception; it is not the broader H3.4 audi
 The maintainer accepted [in-process native decoding with explicit limits](native-media-failure-boundary.md).
 A native call can block the UI and close path before any timed wait is reached;
 the five-second teardown deadline is not a universal release guarantee. Native
-code shares application memory and is not confined by Rust's unsafe-code ban.
+code shares application memory and is not confined by Rust's unsafe-code lint.
+Since V2.8 (2026-09-24) the crate forbids unsafe code on Linux and macOS and in
+every other crate root; on Windows only the IP Helper network-change module
+allows it, for three registrations and their callbacks, each with a SAFETY note.
 Network progress and first body bytes do not establish useful-media progress.
 No independent useful-media deadline is currently enforced.
 
