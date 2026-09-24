@@ -38,6 +38,10 @@ broadcast elsewhere. Supported non-link-local IPv6 discovery is scoped to the
 eligible interface. Results are deduplicated by DeviceID while retaining each
 independently expiring locator and origin.
 
+[ADR-0003](adr-0003-retire-route-derived-discovery.md) retired route-derived
+discovery on 2026-09-24; this section and the route-derived limits it cites are
+historical. The typed-subnet amendment below governs user-entered subnets.
+
 Route-derived discovery proceeds from least to most expansive authority:
 
 1. probe exact cached, manually entered, or explicitly resolved targets;
@@ -64,8 +68,8 @@ Maintainer jm2 approved the separate V2.4
 [typed-subnet contract](../typed-subnet-discovery-proposal.md), selecting `/23`
 limits and confirmation before every search. That contract supersedes any
 application of the route-derived `/24` ceiling, fingerprint approval, or
-network-change reruns to user-entered subnets. Route-derived discovery retains
-the limits and provider requirements above.
+network-change reruns to user-entered subnets. Route-derived discovery retained
+the limits and provider requirements above until ADR-0003 retired it.
 
 Typed scope is one canonical private IPv4 prefix, `/23` through `/32`, with at
 most 510 candidates, two requests per candidate, 1,020 requests total,

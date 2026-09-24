@@ -46,7 +46,7 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Mutate packets and JSON, generate URL and approval properties
+      - name: Mutate packets and JSON, generate URL properties
         run: cargo test --locked --lib adversarial_ -- --nocapture
 
       - name: Mutate Mach-O headers and generate native dependency graphs

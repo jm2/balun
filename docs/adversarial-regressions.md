@@ -1,9 +1,13 @@
 # Sustained adversarial regression testing
 
 H4.1 adds deterministic mutation fuzzing and generated properties to the normal
-test suite. These tests call production parsers and pure policy transitions;
-they do not expose new public parsing or approval APIs. They do not contact a
-tuner, resolve a hostname, or execute an installer or extracted payload.
+test suite. These tests call production parsers and pure policy checks; they do
+not expose new public parsing APIs. They do not contact a tuner, resolve a
+hostname, or execute an installer or extracted payload.
+
+On 2026-09-24 V2.9 retired route-derived discovery
+([ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md)); its
+route-budget and approval-sequence properties were deleted with that code.
 
 This is bounded mutation fuzzing, not coverage-guided fuzzing. It supplements
 the existing forced concurrency, real-socket, native packaging, and malformed
@@ -17,8 +21,6 @@ still require actual packaged hardware and accessibility evidence.
 | Packets | The checked-in synthetic discovery golden reply; raw mutations, payload mutations inside a valid CRC frame, and generated unknown TLVs with both length encodings | Accepted identity remains concrete; frame/TLV work is bounded; iterators terminate and remain exhausted; unknown tags preserve identity |
 | Metadata and URLs | Sanitized `discover-hdhr4-2us.json`, valid generated tuner counts/ignored fields, wrong field types, and numeric/hostname/credential/query/path URL seeds | Accepted metadata keeps the expected identity; JSON errors omit private values; every accepted URL is HTTP, responder-pinned, and free of credentials, query and fragment |
 | Lineups | Sanitized `lineup-hdhr4-2us.json`, shuffled generated channel rows, duplicates, short limits and private mistyped fields | Accepted rows remain bounded, unique, sorted and responder-pinned; duplicate identity and excess rows fail; JSON diagnostics retain no private values |
-| Route budgets | Generated private `/24` through `/32` routes, more-specific blockers, reordered routes, down interfaces and multiple explicit ranges | A blocker cannot add authority; input order cannot change targets; down interfaces add none; the aggregate candidate cap holds |
-| Approval sequences | Two synthetic route fingerprints; 64 operations per case, including new/reused run IDs, stale/duplicate completions, rollback, expiry and explicit reapproval | Planning alone changes no authority; issued identities never repeat; active/cooldown reservations are respected; a topology change requires approval; stale work changes nothing |
 | Native packages | Generated valid thin/universal Mach-O headers, dependency graphs, external imports and byte mutations | Valid bundled graphs pass; external imports fail; malformed input is rejected by the parser's expected error boundary; accepted headers/references remain bounded |
 | Installer manifests | Generated file/directory records, permutations, missing/duplicate/unsafe/case-colliding entries, changed types/sizes/hashes | Record order is irrelevant; exact payload identity is required; invalid names and changed membership or content fail |
 
@@ -35,8 +37,8 @@ manifest cases. Its overall timeout is 20 minutes.
 
 [The extended workflow](../.github/workflows/adversarial.yml) runs daily at
 04:31 UTC and supports manual dispatch. Scheduled runs use the workflow run ID
-as a changing seed. Each of the five Rust properties and the native-package
-property gets 8,192 cases; installer manifests get 2,048. This totals 51,200
+as a changing seed. Each of the three Rust properties and the native-package
+property gets 8,192 cases; installer manifests get 2,048. This totals 34,816
 cases, with a 15-minute job timeout. Tests retain the same input bounds in
 extended runs; more cases do not expand network or package authority.
 

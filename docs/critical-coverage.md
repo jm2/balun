@@ -16,7 +16,7 @@ measurements help find omissions in that evidence.
 
 | Surface | Measurement | Recorded baseline |
 | --- | --- | --- |
-| Discovery admission and approval | Rust source regions in six modules | 79.77%–97.69%, with per-file counts rather than one project percentage |
+| Discovery admission | Rust source regions in two modules | 81.98%–97.69%, with per-file counts rather than one project percentage |
 | Resolver, controller, source retirement and transport | Rust source regions in four modules | 88.96%–94.97% |
 | Identity registry, device identity, protocol, metadata and lineup | Rust source regions in five modules | 84.62%–96.69% |
 | JSON failure conversion and logging setup | Rust source regions | 30/30 and 11/11 respectively |
@@ -114,6 +114,20 @@ Removing the unused friendly-name schema and API (#153) is a legitimate code
 removal: the settings schema measures 218/228 regions (95.61%), down from
 326/341. Its denominator floor drops with the deleted code and its uncovered
 ceiling tightens from 15 to 10.
+
+Retiring route-derived discovery (V2.9, #181) on 2026-09-24 removes four modules
+and their baselines from the scope: `discovery/approval.rs`,
+`discovery/approval/store.rs`, and `discovery/routed/linux.rs` are deleted, and
+`discovery/routes.rs` now only hosts the network-change monitor. This is a
+legitimate code removal. The controller runtime without its routed lane measures
+1641/1838 regions (89.28%), from 2030/2276, and the discovery client without the
+pinned routed probe measures 496/605 (81.98%), from 485/608. Both denominator
+floors drop with the deleted code; the uncovered ceilings tighten from 246 to 197
+and from 123 to 109. A same-host measurement of `main` showed which kept regions
+only the routed suites had reached. New assertions now cover report merging, a
+repeated reply, a refused send, the range-candidate probe, a registry rebuild
+over its device limit, and the production settings-directory lookup. Every other
+Rust threshold is unchanged.
 
 ## CI ratchet and review policy
 

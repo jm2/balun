@@ -2,40 +2,16 @@
   "schema": 1,
   "metrics": {
     "rust-regions:src/discovery/client.rs": {
-      "covered": 485,
-      "total": 608,
-      "uncovered": 123,
-      "percent": 79.77
+      "covered": 496,
+      "total": 605,
+      "uncovered": 109,
+      "percent": 81.98
     },
     "rust-regions:src/discovery/manual.rs": {
       "covered": 169,
       "total": 173,
       "uncovered": 4,
       "percent": 97.69
-    },
-    "rust-regions:src/discovery/routes.rs": {
-      "covered": 345,
-      "total": 358,
-      "uncovered": 13,
-      "percent": 96.37
-    },
-    "rust-regions:src/discovery/approval.rs": {
-      "covered": 691,
-      "total": 759,
-      "uncovered": 68,
-      "percent": 91.04
-    },
-    "rust-regions:src/discovery/approval/store.rs": {
-      "covered": 1295,
-      "total": 1557,
-      "uncovered": 262,
-      "percent": 83.17
-    },
-    "rust-regions:src/discovery/routed/linux.rs": {
-      "covered": 186,
-      "total": 223,
-      "uncovered": 37,
-      "percent": 83.41
     },
     "rust-regions:src/discovery/hostname/resolver.rs": {
       "covered": 49,
@@ -44,10 +20,10 @@
       "percent": 92.45
     },
     "rust-regions:src/controller/runtime.rs": {
-      "covered": 2030,
-      "total": 2276,
-      "uncovered": 246,
-      "percent": 89.19
+      "covered": 1641,
+      "total": 1838,
+      "uncovered": 197,
+      "percent": 89.28
     },
     "rust-regions:src/playback/source_policy.rs": {
       "covered": 404,

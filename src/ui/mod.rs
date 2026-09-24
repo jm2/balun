@@ -7,7 +7,5 @@ pub(crate) mod icons;
 pub(crate) mod idle_inhibitor;
 pub(crate) mod objects;
 pub(crate) mod player_view;
-pub(crate) mod routed_approval_dialog;
-pub(crate) mod routed_flow;
 pub(crate) mod settings_session;
 pub(crate) mod window;

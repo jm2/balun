@@ -32,8 +32,9 @@ const TRUST_REPORTED_PREFIX_LENGTH: bool = false;
 
 /// Enumerate standard discovery probes for active, non-tunnel interfaces.
 ///
-/// Point-to-point interfaces are intentionally excluded. Routed discovery
-/// has a separate approval and packet-budget path. IPv6 link-local interfaces
+/// Point-to-point interfaces are intentionally excluded; a tuner behind a
+/// tunnel is reached through an exact or hostname target, or the separately
+/// approved `balun-discover --approved-range` scan. IPv6 link-local interfaces
 /// are also excluded until the selected-device HTTP path supports scope IDs.
 pub fn local_probe_endpoints() -> io::Result<Vec<ProbeEndpoint>> {
     Ok(endpoints_from_interfaces(get_if_addrs()?))

@@ -42,8 +42,7 @@ address so you know which tuner failed.
 | Channel search and favorites-only filter | ✅ |
 | Fixed, endpoint-free playback error messages | ✅ |
 | Windows local discovery | ✅ |
-| Network-change handling | 🚧 Linux: stale addresses expire and routed scans stop when adapters or routes change, and nothing rescans on its own; macOS and Windows in a future release |
-| Route-table-derived tunnel discovery | 🚧 Linux: approve each route set once; authority and interface pin rechecked after socket readiness and on retries; macOS and Windows in a future release |
+| Network-change handling | 🚧 Linux: stale addresses expire when adapters or routes change, and nothing rescans on its own; macOS and Windows in a future release |
 | Program guide (in-band PSIP/EIT, XMLTV) | 🚧 Future release |
 | Hostname entry | ✅ Resolved to at most four unicast addresses; remembered by name; stuck name lookups cannot block closing the viewer |
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; live timing accounts for delayed media arrival; codec contract frozen, see the support matrix |
@@ -60,9 +59,8 @@ address so you know which tuner failed.
 | Light & dark mode | ✅ Automatic (libadwaita) |
 | i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Application menu, navigation, player controls/progress/startup, and About description; [remaining scope](docs/localization.md) |
 
-Route-table-derived tunnel discovery and network-change handling are the two Linux-only features
-today. Local broadcast and multicast discovery, exact IP or hostname discovery, and remembered
-targets work on Linux, macOS, and Windows.
+Network-change handling is Linux-only today. Local broadcast and multicast discovery, exact IP or
+hostname discovery, and remembered targets work on Linux, macOS, and Windows.
 
 Settings support a private local profile under the account's existing configuration parent,
 which may be group-writable only for the account's own user-private group.
@@ -384,9 +382,6 @@ cargo run --locked --bin balun-discover -- --target 192.168.50.20
 
 # Enumerate one explicitly approved private range:
 cargo run --locked --bin balun-discover -- --approved-range 10.42.7.0/24
-
-# Report route-provider availability and tunnel candidate counts without sending a packet:
-cargo run --locked --bin balun-discover -- --providers
 ```
 
 `--approved-range` accepts only RFC 1918 space no wider than `/24`, caps the scan at 256
@@ -604,11 +599,7 @@ src/
 │   ├── registry.rs         # Device registry with locator claims and expiry
 │   ├── changes.rs          # Debounced network-change coalescing and interface inventory
 │   ├── routed.rs           # Approved-range scan budgets and candidate limits
-│   ├── routed/linux.rs     # Interface-pinned UDP socket construction
-│   ├── routes.rs           # Route snapshot types and providers
-│   ├── routes/linux/       # rtnetlink route snapshots and change monitor
-│   ├── approval.rs         # Route-derived approval policy
-│   └── approval/           # Durable store, fresh-route gate, admission, observers
+│   └── routes/linux/       # rtnetlink change monitor
 ├── controller/
 │   ├── runtime.rs          # Controller thread, command ingress, snapshot publishing
 │   ├── state.rs            # Immutable URL-free device and channel projections
@@ -684,12 +675,6 @@ discovery** cancels either kind and any remaining launch probes.
 
 On Windows, local discovery uses the limited broadcast from each interface. If a host firewall
 blocks the replies, use **Find device by address** with the tuner's IPv4 address.
-
-On Linux, **Search routes behind your tunnel** can derive a bounded private-address proposal from
-an active tunnel route. Balun shows the address count and packet budget before the first run and
-searches only after approval; **Forget routed approvals** revokes the remembered route-set
-approval. This opt-in route-table provider and change monitor are the Linux-only feature. They are
-separate from the cross-platform exact address and hostname path above.
 
 ### Watching a channel
 

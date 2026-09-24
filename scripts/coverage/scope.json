@@ -3,10 +3,6 @@
   "rust": {
     "src/discovery/client.rs": "admission",
     "src/discovery/manual.rs": "admission",
-    "src/discovery/routes.rs": "admission",
-    "src/discovery/approval.rs": "admission",
-    "src/discovery/approval/store.rs": "admission",
-    "src/discovery/routed/linux.rs": "admission",
     "src/discovery/hostname/resolver.rs": "cancellation",
     "src/controller/runtime.rs": "cancellation",
     "src/playback/source_policy.rs": "cancellation",

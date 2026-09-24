@@ -341,6 +341,10 @@ lineup.
 
 ## Linux route-provider smoke
 
+Historical (2026-09-24): V2.9 retired the route-table provider and routed search
+([ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md)); this record
+remains as P2 evidence.
+
 The native Linux rtnetlink provider was exercised separately on the
 development host. It completed its bounded, deadline-protected double snapshot
 and normalization successfully. The smoke diagnostic reported only success;
@@ -352,6 +356,11 @@ configuration. It does not approve or exercise a route-derived scan, and it is
 not evidence yet for WireGuard or UniFi Site Magic discovery.
 
 ## Routed tunnel discovery and multi-site validation
+
+Historical (2026-09-24): V2.9 retired the routed search exercised here
+([ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md)). Exact-address
+and remembered-target results, multi-site identity separation, and network-change
+teardown remain current behaviour; the routed-scan steps are P2.5 evidence only.
 
 On 2026-09-04 the routed discovery runner and multi-site separation were
 exercised across a real layer-3 routed tunnel joining the primary site and the

@@ -9,11 +9,12 @@ This documentation change does not expand current scan behavior or complete V2.4
 The [authoritative plan](plan-v0.1.md#5-discovery-policy) and
 [ADR-0001 amendment](architecture/adr-0001-discovery-playback.md#typed-subnet-amendment--2026-09-18)
 adopt this separate typed-scope policy. Their former route-derived treatment of
-user-entered ranges is superseded; existing route-derived authority is unchanged.
+user-entered ranges is superseded. Route-derived discovery itself was retired on
+2026-09-24 ([ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md)).
 
 The existing CLI accepts one explicitly approved private `/24` or narrower
-range. The Linux route-derived proposal has a 256-candidate ceiling and a
-15-second default deadline. Both remain the current implementation baseline.
+range, with a 256-candidate ceiling and a 15-second default deadline. That
+remains the current implementation baseline.
 
 The first implementation slice is the side-effect-free `TypedSubnetScope` library
 value. It accepts only canonical private `/23`–`/32` text, supplies usable-host
@@ -26,7 +27,7 @@ display formatting retains canonical text for a future preview or preference.
 
 Portable fixtures cover each prefix at both ends of all three RFC 1918 blocks,
 `/23`, `/24`, `/30`, `/31`, and `/32` preview counts, noncanonical/invalid/private
-boundaries, diagnostic redaction, and the separate unchanged route-derived limits.
+boundaries, diagnostic redaction, and the separate unchanged approved-range limits.
 The maximum-jitter budget fits the approved deadline arithmetically; it does not
 establish actual send pacing or completion timing, which require runner evidence.
 
@@ -48,7 +49,7 @@ CLI `--approved-range`, persistence, and tests:
 | Requests | At most two outbound HDHomeRun UDP discovery requests per candidate, to the fixed discovery port |
 | Request budget | Exact candidate count times two, at most 1,020 outbound attempts; retries consume this same budget |
 | Outbound pacing | At least 15.625 ms between request attempts, including retries; nonnegative jitter may add at most 25% |
-| Concurrency | At most 16 targeted probes in flight; one typed or route-derived subnet scan per application process |
+| Concurrency | At most 16 targeted probes in flight; one subnet scan per application process |
 | Reply window | At most 200 ms per request attempt |
 | Receive budget | At most 16 received datagrams and one accepted device identity per candidate |
 | Result budget | At most 64 distinct accepted devices; reaching the limit reports an incomplete result |
@@ -129,7 +130,7 @@ stored prefix preference; remembering or restoring that text grants no authority
 
 Store only user-entered prefix preferences in the accepted private profile;
 do not persist typed-subnet authorization. Use a separate typed-scope policy
-identity so neither route-derived nor exact-address approvals can authorize it.
+identity so exact-address approvals cannot authorize it.
 Unknown/newer state remains preserved and grants no new authority. Persistence
 failure must not bypass confirmation for the current or a later search.
 
@@ -169,18 +170,17 @@ Revoke on detection; UI notification debounce must not delay that revocation.
 
 The current `default_network_change_source()` in `src/controller/runtime.rs`
 uses `UnavailableNetworkChangeSource` on macOS and Windows. Those platforms
-need working native change sources and cancellation evidence before typed scans
-can be enabled. The existing Linux source and its debounced controller stream
+need working native change sources (V2.8) and cancellation evidence before typed
+scans can be enabled. The existing Linux source and its debounced controller stream
 also need the readiness, health, and immediate-invalidation evidence above;
-their mere presence is not sufficient admission proof. This requirement is
-separate from route-derived provider availability and interface pinning.
+their mere presence is not sufficient admission proof.
 
 ## Integration and acceptance
 
-Keep Linux route-derived admission at its current limits and retain interface
-pinning, topology fingerprints, durable reservation ownership, and the H0.1
-post-readiness checks. Increasing a shared global constant would weaken that
-separate contract and is not permitted by this approval.
+Linux route-derived admission, with its interface pinning, topology
+fingerprints, and durable reservations, was retired on 2026-09-24 (V2.9). Until
+V2.4 moves the CLI onto this contract, `--approved-range` keeps its current
+`/24`, 256-candidate, and 15-second limits.
 
 The ordinary cross-platform socket path is appropriate only for the explicit
 typed range. Results retain their typed-search origin, and the registry's device

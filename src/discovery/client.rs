@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, btree_map::Entry};
 use std::fmt;
-use std::future::Future;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 #[cfg(all(test, feature = "desktop"))]
@@ -316,8 +315,8 @@ impl DiscoveryClient {
         .await
     }
 
-    /// Probe one routed IPv4 candidate while retaining its lower-confidence
-    /// routed provenance in accepted observations.
+    /// Probe one candidate of an approved range while retaining its
+    /// lower-confidence range provenance in accepted observations.
     pub(super) async fn discover_routed_target(
         &self,
         target: Ipv4Addr,
@@ -455,43 +454,11 @@ impl DiscoveryClient {
             .await
     }
 
-    /// Probe one routed IPv4 candidate through a socket the caller already
-    /// pinned to that candidate's fresh tunnel interface.
-    ///
-    /// The endpoint policy is identical to [`Self::discover_routed_target`];
-    /// only the socket's origin differs, so every send still passes through
-    /// the socket's own pre-send checks.
-    #[cfg(target_os = "linux")]
-    pub(super) async fn discover_routed_target_through<S: ProbeSocket + ?Sized>(
-        &self,
-        socket: &S,
-        target: Ipv4Addr,
-        cancellation: &CancellationToken,
-    ) -> Result<DiscoveryReport, DiscoveryError> {
-        let destination = SocketAddr::V4(SocketAddrV4::new(target, discovery_port(target.into())));
-        if invalid_target(destination) {
-            return Err(DiscoveryError::InvalidEndpoint {
-                endpoint: destination,
-                reason: "targeted discovery requires a unicast address",
-            });
-        }
-        let endpoint = ProbeEndpoint {
-            bind: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
-            destination,
-            method: DiscoveryMethod::RoutedTargeted,
-            interface: None,
-            accepted_source_network: None,
-        };
-        validate_endpoint(&endpoint)?;
-        self.probe_through_socket(socket, endpoint, None, cancellation)
-            .await
-    }
-
     /// Send the bounded discovery attempts for one validated endpoint through
     /// `socket` and collect identity-checked responses.
-    async fn probe_through_socket<S: ProbeSocket + ?Sized>(
+    async fn probe_through_socket(
         &self,
-        socket: &S,
+        socket: &UdpSocket,
         endpoint: ProbeEndpoint,
         expected_device: Option<DeviceId>,
         cancellation: &CancellationToken,
@@ -664,41 +631,6 @@ impl DiscoveryError {
             Self::Cancelled => ProbeFailureClass::Cancelled,
             Self::Protocol(_) => ProbeFailureClass::Protocol,
         }
-    }
-}
-
-/// One UDP socket a targeted probe sends through and receives from.
-///
-/// The client owns the request encoding, response validation, and every
-/// deadline; the socket owns only its transport and whatever pre-send checks
-/// its origin requires.
-pub(super) trait ProbeSocket: Sync {
-    fn send_to(
-        &self,
-        buffer: &[u8],
-        target: SocketAddr,
-    ) -> impl Future<Output = io::Result<usize>> + Send;
-
-    fn recv_from(
-        &self,
-        buffer: &mut [u8],
-    ) -> impl Future<Output = io::Result<(usize, SocketAddr)>> + Send;
-}
-
-impl ProbeSocket for UdpSocket {
-    fn send_to(
-        &self,
-        buffer: &[u8],
-        target: SocketAddr,
-    ) -> impl Future<Output = io::Result<usize>> + Send {
-        Self::send_to(self, buffer, target)
-    }
-
-    fn recv_from(
-        &self,
-        buffer: &mut [u8],
-    ) -> impl Future<Output = io::Result<(usize, SocketAddr)>> + Send {
-        Self::recv_from(self, buffer)
     }
 }
 
@@ -1273,6 +1205,149 @@ mod tests {
             report.observations[0].method,
             DiscoveryMethod::RoutedTargeted
         );
+    }
+
+    #[test]
+    fn merged_reports_keep_one_observation_per_device_and_source() {
+        let observation = |device: u32, source: &str| DiscoveryObservation {
+            device_id: DeviceId::new(device).unwrap(),
+            source: source.parse().unwrap(),
+            method: DiscoveryMethod::RoutedTargeted,
+            interface: None,
+            device_types: vec![1],
+            tuner_count: Some(2),
+            advertised_base_url: None,
+            advertised_lineup_url: None,
+        };
+        let issue = |destination: &str| ProbeIssue {
+            endpoint: ProbeEndpoint {
+                bind: "0.0.0.0:0".parse().unwrap(),
+                destination: destination.parse().unwrap(),
+                method: DiscoveryMethod::RoutedTargeted,
+                interface: None,
+                accepted_source_network: None,
+            },
+            class: ProbeFailureClass::Network,
+            message: "synthetic".to_owned(),
+        };
+        let mut report = DiscoveryReport {
+            observations: vec![observation(0x105A_1232, "10.0.0.2:65001")],
+            ..DiscoveryReport::default()
+        };
+        report.stats.datagrams_accepted = 1;
+        let mut other = DiscoveryReport {
+            observations: vec![
+                observation(0x105A_1243, "10.0.0.3:65001"),
+                observation(0x105A_1232, "10.0.0.2:65001"),
+            ],
+            issues: vec![issue("10.0.0.4:65001")],
+            ..DiscoveryReport::default()
+        };
+        other.stats.datagrams_accepted = 2;
+
+        report.merge(other);
+
+        assert_eq!(
+            report
+                .observations
+                .iter()
+                .map(|observation| (observation.device_id.get(), observation.source))
+                .collect::<Vec<_>>(),
+            vec![
+                (0x105A_1232, "10.0.0.2:65001".parse().unwrap()),
+                (0x105A_1243, "10.0.0.3:65001".parse().unwrap()),
+            ]
+        );
+        assert_eq!(report.stats.datagrams_accepted, 3);
+        assert_eq!(report.stats.duplicate_observations, 1);
+        assert_eq!(report.issues.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_repeated_reply_counts_as_one_observation() {
+        let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let server_address = server.local_addr().unwrap();
+        let server_task = tokio::spawn(async move {
+            let mut request = [0_u8; 64];
+            let (_, client) = server.recv_from(&mut request).await.unwrap();
+            for _ in 0..2 {
+                server
+                    .send_to(&GOLDEN_TUNER_RESPONSE, client)
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let config = ProbeConfig::new(1, Duration::from_millis(200), 8, 4).unwrap();
+        let endpoint = ProbeEndpoint {
+            bind: "0.0.0.0:0".parse().unwrap(),
+            destination: server_address,
+            method: DiscoveryMethod::Targeted,
+            interface: None,
+            accepted_source_network: None,
+        };
+        let report = DiscoveryClient::new(config)
+            // See the transport-test note above: production never bypasses
+            // the exact discovery-port validator.
+            .probe_validated_endpoint(endpoint, None, &CancellationToken::new())
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+
+        assert_eq!(report.observations.len(), 1);
+        assert_eq!(report.stats.datagrams_accepted, 2);
+        assert_eq!(report.stats.duplicate_observations, 1);
+    }
+
+    /// Linux refuses a UDP send to port zero, which stands in for any send
+    /// the operating system rejects.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_refused_send_is_a_network_failure() {
+        let endpoint = ProbeEndpoint {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            destination: "127.0.0.1:0".parse().unwrap(),
+            method: DiscoveryMethod::Targeted,
+            interface: None,
+            accepted_source_network: None,
+        };
+        let error = DiscoveryClient::default()
+            .probe_validated_endpoint(endpoint, None, &CancellationToken::new())
+            .await
+            .expect_err("the kernel refuses a send to port zero");
+
+        assert!(
+            matches!(
+                error,
+                DiscoveryError::Io {
+                    operation: "send discovery request",
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(error.class(), ProbeFailureClass::Network);
+    }
+
+    /// Each approved-range candidate goes through the production targeted
+    /// path with range provenance. The fake device answers on loopback
+    /// through the test-only discovery-port redirect.
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn range_candidate_probe_marks_range_provenance() {
+        let device = crate::hdhr::fake_device::FakeHdhrDevice::start(1, &[]);
+        let config = ProbeConfig::new(1, Duration::from_millis(200), 16, 4).unwrap();
+        let report = DiscoveryClient::new(config)
+            .discover_routed_target(Ipv4Addr::LOCALHOST, &CancellationToken::new())
+            .await
+            .expect("the fake responder answers the range probe");
+
+        assert_eq!(report.observations.len(), 1);
+        let observation = &report.observations[0];
+        assert_eq!(observation.device_id, device.device_id());
+        assert_eq!(observation.source, device.discovery_target());
+        assert_eq!(observation.method, DiscoveryMethod::RoutedTargeted);
+        assert_eq!(observation.interface, None);
     }
 
     #[tokio::test]
