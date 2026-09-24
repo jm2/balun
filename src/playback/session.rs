@@ -238,6 +238,8 @@ enum PipelineEvent {
     MediaProgress,
     Playing,
     Buffering(u8),
+    /// The stream's body ended and its buffered media drained. A live tuner
+    /// stream never ends on its own, so this is reduced to a failure.
     EndOfStream,
     Error(PlaybackPipelineFailure),
 }
@@ -653,15 +655,21 @@ impl<B: PipelineBackend> SessionCore<B> {
                 });
             }
             PipelineEvent::EndOfStream => {
-                if self.retire_active().is_ok() {
-                    self.publish_state(PlaybackSessionState::Stopped);
+                // The appsrc ends only when the tuner closes the body cleanly,
+                // for example after the tuner is reclaimed or the device
+                // reboots. That is not a Stop, so report the stream as
+                // unavailable once its buffered media has played out.
+                tracing::warn!(target: "balun::playback", "live stream ended");
+                let failure = if self.retire_active().is_ok() {
+                    PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Offline)
                 } else {
-                    self.publish_state(PlaybackSessionState::Failed {
-                        generation,
-                        channel_key,
-                        failure: PlaybackSessionFailure::PipelineTeardown,
-                    });
-                }
+                    PlaybackSessionFailure::PipelineTeardown
+                };
+                self.publish_state(PlaybackSessionState::Failed {
+                    generation,
+                    channel_key,
+                    failure,
+                });
             }
             PipelineEvent::Error(pipeline_failure) => {
                 let failure = if self.retire_active().is_ok() {
@@ -796,6 +804,48 @@ impl Drop for GstreamerPipeline {
     }
 }
 
+/// Reduce one bus message of the exact pipeline to a session event. Native
+/// text is never read; failures close to the fixed categories.
+fn pipeline_event(message: &gst::Message, pipeline: &gst::Pipeline) -> Option<PipelineEvent> {
+    let from_pipeline = message
+        .src()
+        .is_some_and(|source| source == pipeline.upcast_ref::<gst::Object>());
+    match message.view() {
+        gst::MessageView::Eos(_) => Some(PipelineEvent::EndOfStream),
+        gst::MessageView::Application(application)
+            if from_pipeline
+                && application
+                    .structure()
+                    .is_some_and(|structure| structure.name() == STREAM_STARTED_MESSAGE) =>
+        {
+            Some(PipelineEvent::StreamStarted)
+        }
+        gst::MessageView::Application(application)
+            if from_pipeline
+                && application
+                    .structure()
+                    .is_some_and(|structure| structure.name() == MEDIA_PROGRESS_MESSAGE) =>
+        {
+            Some(PipelineEvent::MediaProgress)
+        }
+        gst::MessageView::Error(_)
+        | gst::MessageView::Element(_)
+        | gst::MessageView::Application(_) => {
+            pipeline_failure::classify_pipeline_message(message, pipeline).map(PipelineEvent::Error)
+        }
+        gst::MessageView::Buffering(buffering) => {
+            let percent = buffering.percent().clamp(0, 100) as u8;
+            Some(PipelineEvent::Buffering(percent))
+        }
+        gst::MessageView::StateChanged(state_changed)
+            if from_pipeline && state_changed.current() == gst::State::Playing =>
+        {
+            Some(PipelineEvent::Playing)
+        }
+        _ => None,
+    }
+}
+
 fn clock_time_until(deadline: Instant) -> gst::ClockTime {
     let remaining = deadline.saturating_duration_since(Instant::now());
     gst::ClockTime::from_nseconds(remaining.as_nanos().min(u128::from(u64::MAX)) as u64)
@@ -839,45 +889,7 @@ impl PipelineBackend for GstreamerBackend {
         let watched_pipeline = pipeline.clone();
         let watch = move |_: &gst::Bus, message: &gst::Message| {
             pipeline_failure::log_pipeline_message(message);
-            let event = match message.view() {
-                gst::MessageView::Eos(_) => Some(PipelineEvent::EndOfStream),
-                gst::MessageView::Application(application)
-                    if message.src().is_some_and(|source| {
-                        source == watched_pipeline.upcast_ref::<gst::Object>()
-                    }) && application
-                        .structure()
-                        .is_some_and(|structure| structure.name() == STREAM_STARTED_MESSAGE) =>
-                {
-                    Some(PipelineEvent::StreamStarted)
-                }
-                gst::MessageView::Application(application)
-                    if message.src().is_some_and(|source| {
-                        source == watched_pipeline.upcast_ref::<gst::Object>()
-                    }) && application
-                        .structure()
-                        .is_some_and(|structure| structure.name() == MEDIA_PROGRESS_MESSAGE) =>
-                {
-                    Some(PipelineEvent::MediaProgress)
-                }
-                gst::MessageView::Error(_)
-                | gst::MessageView::Element(_)
-                | gst::MessageView::Application(_) => {
-                    pipeline_failure::classify_pipeline_message(message, &watched_pipeline)
-                        .map(PipelineEvent::Error)
-                }
-                gst::MessageView::Buffering(buffering) => {
-                    let percent = buffering.percent().clamp(0, 100) as u8;
-                    Some(PipelineEvent::Buffering(percent))
-                }
-                gst::MessageView::StateChanged(state_changed)
-                    if message.src().is_some_and(|source| {
-                        source == watched_pipeline.upcast_ref::<gst::Object>()
-                    }) && state_changed.current() == gst::State::Playing =>
-                {
-                    Some(PipelineEvent::Playing)
-                }
-                _ => None,
-            };
+            let event = pipeline_event(message, &watched_pipeline);
             if matches!(event, Some(PipelineEvent::Playing)) {
                 pipeline_failure::log_playing_diagnostics(watched_pipeline.upcast_ref());
             }
@@ -1310,6 +1322,7 @@ mod tests {
     use crate::domain::{DeviceId, GuideNumber};
     use crate::playback::test_support::{
         FixtureStreamServer, StreamBehavior, fixture_response, hold_decoder_selection,
+        mpeg2_decoder_available, prefer_software_mpeg2_decoders,
     };
     use gtk::prelude::*;
 
@@ -1769,8 +1782,9 @@ mod tests {
     ///
     /// The checked-in fixture is served by a loopback HTTP listener, so the
     /// real production session exercises the private transport, the exact
-    /// `appsrc` feed, decoding into the URI-opaque paintable, natural EOS, and
-    /// joined teardown without any external network or tuner.
+    /// `appsrc` feed, decoding into the URI-opaque paintable, the finite
+    /// body's end reported as the stream becoming unavailable, and joined
+    /// teardown without any external network or tuner.
     #[test]
     #[ignore = "requires the isolated display and complete playback runtime supplied by scripts/test-desktop-lifecycle.sh"]
     fn active_production_session_exposes_opaque_paintable_and_shuts_down() {
@@ -1862,7 +1876,13 @@ mod tests {
         );
 
         // Drive the default main context so the generation-scoped bus watch
-        // reduces the real Playing transition and the fixture's natural EOS.
+        // reduces the real Playing transition and the fixture's EOS. A live
+        // tuner stream never ends, so the finite body's end is a failure.
+        let ended = PlaybackSessionState::Failed {
+            generation: request_generation,
+            channel_key: channel_key.clone(),
+            failure: PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Offline),
+        };
         let mut observed_playing = false;
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         loop {
@@ -1875,7 +1895,10 @@ mod tests {
                         assert_eq!(generation, request_generation);
                         observed_playing = true;
                     }
-                    PlaybackSessionState::Stopped => break,
+                    state if state == ended => break,
+                    PlaybackSessionState::Stopped => {
+                        panic!("the end of a live stream must not look like Stop");
+                    }
                     PlaybackSessionState::Failed { failure, .. } => {
                         panic!("the loopback fixture tune failed: {failure}");
                     }
@@ -1895,7 +1918,7 @@ mod tests {
         assert!(media.observed(media_observation::MediaPhase::VideoSinkBuffer));
         assert!(media.observed(media_observation::MediaPhase::PaintableInvalidated));
         assert!(!media.observed(media_observation::MediaPhase::ObserverIncomplete));
-        assert_eq!(session.state().unwrap(), PlaybackSessionState::Stopped);
+        assert_eq!(session.state().unwrap(), ended);
         assert!(
             session.paintable().unwrap().is_none(),
             "EOS retirement settles the exact pipeline and its paintable"
@@ -2777,6 +2800,239 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn the_end_of_a_live_stream_is_offline_rather_than_stop() {
+        let output = tune_timing::tests::capture(|| {
+            for fail_stop in [false, true] {
+                let control = FakeControl::default();
+                let core = Rc::new(RefCell::new(SessionCore::new(control.backend())));
+                let mut states = core.borrow().subscribe_state();
+                let request = core
+                    .borrow_mut()
+                    .begin_tune(selection(&first_key(), 61))
+                    .unwrap();
+                let generation = request.generation();
+                core.borrow_mut()
+                    .complete_tune(request, Ok(handoff(&first_key(), 61)), events_for(&core))
+                    .unwrap();
+                control.emit(generation, PipelineEvent::StreamStarted);
+                control.emit(generation, PipelineEvent::Playing);
+                control.0.borrow_mut().fail_stop = fail_stop;
+
+                control.emit(generation, PipelineEvent::EndOfStream);
+                let failure = if fail_stop {
+                    PlaybackSessionFailure::PipelineTeardown
+                } else {
+                    PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Offline)
+                };
+                assert_eq!(
+                    states.borrow_and_update().clone(),
+                    PlaybackSessionState::Failed {
+                        generation,
+                        channel_key: first_key(),
+                        failure,
+                    }
+                );
+                // The retired or quarantined owner ignores a repeated end.
+                control.emit(generation, PipelineEvent::EndOfStream);
+                assert!(!states.has_changed().unwrap());
+                assert_eq!(
+                    control.calls(),
+                    vec![
+                        Call::Start(generation, first_key()),
+                        Call::Play(0),
+                        Call::Stop(0)
+                    ]
+                );
+                assert_eq!(core.borrow().active.is_some(), fail_stop);
+            }
+        });
+        assert_eq!(output.matches("outcome=\"failed\"").count(), 2, "{output}");
+        assert!(!output.contains("outcome=\"stopped\""), "{output}");
+    }
+
+    /// A display-free stand-in for [`GstreamerBackend`]: the same `playbin3`
+    /// video configuration, source policy, transport, and PAUSED hold, with
+    /// fake sinks in place of the GTK paintable sink.
+    struct HeadlessBackend;
+
+    struct HeadlessPipeline {
+        playbin: gst::Pipeline,
+        video_sink: gst::Element,
+        source_policy: SourcePolicy,
+    }
+
+    impl PipelineBackend for HeadlessBackend {
+        type Active = HeadlessPipeline;
+
+        fn start(
+            &mut self,
+            _generation: TuneGeneration,
+            handoff: StreamHandoff,
+            _audio: PlaybackAudioState,
+            _events: EventSink,
+            _timing: &mut TuneTiming,
+        ) -> Result<Self::Active, PipelineStartError<Self::Active>> {
+            let playbin = gst::ElementFactory::make("playbin3")
+                .build()
+                .expect("the clean-end regression requires playbin3")
+                .downcast::<gst::Pipeline>()
+                .unwrap();
+            let video_sink = gst::ElementFactory::make("fakesink")
+                .build()
+                .expect("the clean-end regression requires fakesink");
+            let audio_sink = gst::ElementFactory::make("fakesink").build().unwrap();
+            configure_playbin_video(&playbin, &video_sink).unwrap();
+            playbin.set_property("audio-sink", &audio_sink);
+            let source_policy =
+                SourcePolicy::install(&playbin, handoff, TransportConfig::PRODUCTION, None)
+                    .expect("install the appsrc policy");
+            playbin.set_property("uri", PIPELINE_URI);
+            playbin
+                .set_state(gst::State::Paused)
+                .expect("hold the pipeline at PAUSED");
+            Ok(HeadlessPipeline {
+                playbin,
+                video_sink,
+                source_policy,
+            })
+        }
+
+        fn set_audio(
+            &mut self,
+            _active: &mut Self::Active,
+            _audio: PlaybackAudioState,
+        ) -> Result<(), PlaybackSessionFailure> {
+            Ok(())
+        }
+
+        fn play(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure> {
+            active
+                .playbin
+                .set_state(gst::State::Playing)
+                .map(|_| ())
+                .map_err(|_| PlaybackSessionFailure::PipelineStart)
+        }
+
+        fn stop(&mut self, active: &mut Self::Active) -> Result<(), PlaybackSessionFailure> {
+            let deadline = Instant::now() + PIPELINE_TEARDOWN_TIMEOUT;
+            let mut transport = active.source_policy.retire();
+            let request = active.playbin.set_state(gst::State::Null);
+            let (transition, current, _) = active.playbin.state(clock_time_until(deadline));
+            let joined = transport
+                .as_mut()
+                .is_none_or(|transport| transport.join(deadline).is_ok());
+            if request.is_ok() && transition.is_ok() && current == gst::State::Null && joined {
+                Ok(())
+            } else {
+                Err(PlaybackSessionFailure::PipelineTeardown)
+            }
+        }
+    }
+
+    /// A live tuner stream never ends, so a body that ends cleanly after data
+    /// must fail as offline instead of settling like Stop. The production bus
+    /// reduction and session core drive a real `playbin3` through the PAUSED
+    /// hold: the finite fixture's frames render first, then its end retires
+    /// the exact owner, joining the transport, and reports the failure.
+    #[test]
+    fn playbin3_paused_hold_reports_a_clean_end_after_data_as_offline() {
+        gst::init().expect("initialize GStreamer");
+        assert!(
+            mpeg2_decoder_available(),
+            "the clean-end regression requires an MPEG-2 decoder"
+        );
+        let _decoders = prefer_software_mpeg2_decoders();
+        let server = FixtureStreamServer::start(fixture_response(), StreamBehavior::Close);
+        let core = Rc::new(RefCell::new(SessionCore::new(HeadlessBackend)));
+        let mut states = core.borrow().subscribe_state();
+        let request = core
+            .borrow_mut()
+            .begin_tune(selection(&first_key(), 81))
+            .unwrap();
+        let generation = request.generation();
+        let handoff = StreamHandoff::test_fixture(
+            first_key(),
+            OperationGeneration::new(81),
+            &server.stream_url(),
+        );
+        assert_eq!(
+            core.borrow_mut()
+                .complete_tune(request, Ok(handoff), events_for(&core)),
+            Ok(TuneCompletion::Applied)
+        );
+        let (playbin, video_sink) = {
+            let core = core.borrow();
+            let active = &core.active.as_ref().expect("an applied tune").pipeline;
+            (active.playbin.clone(), active.video_sink.clone())
+        };
+        let bus = playbin.bus().unwrap();
+        let rendered = || {
+            video_sink
+                .property::<gst::Structure>("stats")
+                .get::<u64>("rendered")
+                .unwrap_or(0)
+        };
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut reduced = Vec::new();
+        let mut published = Vec::new();
+        let mut rendered_at_end = None;
+        while !matches!(
+            core.borrow().state(),
+            PlaybackSessionState::Failed { .. } | PlaybackSessionState::Stopped
+        ) {
+            assert!(
+                Instant::now() < deadline,
+                "the finite fixture must end the tune: {reduced:?}"
+            );
+            let Some(message) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) else {
+                continue;
+            };
+            let Some(event) = pipeline_event(&message, &playbin) else {
+                continue;
+            };
+            if event == PipelineEvent::EndOfStream {
+                rendered_at_end = Some(rendered());
+            }
+            reduced.push(event);
+            core.borrow_mut().handle_event(generation, event);
+            if states.has_changed().unwrap() {
+                published.push(states.borrow_and_update().clone());
+            }
+        }
+
+        assert_eq!(
+            core.borrow().state(),
+            &PlaybackSessionState::Failed {
+                generation,
+                channel_key: first_key(),
+                failure: PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Offline),
+            }
+        );
+        assert!(
+            reduced.contains(&PipelineEvent::StreamStarted),
+            "{reduced:?}"
+        );
+        assert_eq!(reduced.last(), Some(&PipelineEvent::EndOfStream));
+        assert!(
+            published.iter().any(|state| matches!(
+                state,
+                PlaybackSessionState::Playing { generation: playing, .. } if *playing == generation
+            )),
+            "{published:?}"
+        );
+        assert!(!published.contains(&PlaybackSessionState::Stopped));
+        assert!(
+            rendered_at_end.is_some_and(|frames| frames >= 2),
+            "the buffered frames must play out before the failure: {rendered_at_end:?}"
+        );
+        assert!(core.borrow().active.is_none(), "the end retires the owner");
+        assert!(!core.borrow().teardown_failed, "the transport must join");
+        assert_eq!(playbin.state(gst::ClockTime::ZERO).1, gst::State::Null);
+        assert!(server.request(Duration::from_secs(3)).is_some());
     }
 
     #[test]

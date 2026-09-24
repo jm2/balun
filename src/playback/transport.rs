@@ -501,6 +501,8 @@ async fn stream_body(
                 return Err(ReaderStop::Failed(PlaybackPipelineFailure::Offline));
             }
             Ok(None) => {
+                // End the appsrc so the buffered media drains; the session
+                // then reports the end of this live stream as offline.
                 send_feed(feed, cancellation, FeedItem::End).await?;
                 return Ok(());
             }

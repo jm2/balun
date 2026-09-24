@@ -98,6 +98,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are missing, and subtitles are no longer burned into the video.
 - Discovery keeps working after a tuner's address passes to another tuner, one bad tuner count no
   longer hides every device or halts discovery, and re-probing the playing tuner no longer stops it.
+- A live stream that ends mid-playback, such as when its tuner is reclaimed, now shows the
+  stream as unavailable instead of returning to the idle page as if Stop was pressed.
 - Debian control/data and Arch payloads now receive bounded decoding and complete
   tar member preflight before extraction. Native parser isolation and extraction
   containment remain pending; only trusted local build output is admitted.

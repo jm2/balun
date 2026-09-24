@@ -68,9 +68,10 @@ is frozen.
 Process-isolated Linux tests prove the checked-in MPEG-2 fixture renders into a
 real GTK paintable, the real production session streams that fixture from a
 loopback HTTP listener through the transport and exact `appsrc` feed to
-PLAYING, natural EOS, and joined `NULL` settlement while exposing only the
-paintable, and `PlayerView` binds/clears an opaque paintable through its
-production widgets and Stop control. The Linux and macOS live-device results and budgets are in
+PLAYING, reports the finite body's end as the stream becoming unavailable, and
+settles to a joined `NULL` while exposing only the paintable, and `PlayerView`
+binds/clears an opaque paintable through its production widgets and Stop control.
+The Linux and macOS live-device results and budgets are in
 [`compatibility-v0.1.md`](compatibility-v0.1.md); packaged-runtime acceptance (P3) remains open.
 Additional isolated widget and Wayland smokes cover the audio-control state, exact ListView
 activation, and a real compositor-confirmed fullscreen round trip without adding a URI-forging
@@ -231,14 +232,17 @@ the session's exact default-main-context handle. Playing, buffering, EOS, and
 native error messages are deferred out of the native callback and reduced on
 that same context only when that generation still owns the active pipeline; a
 nested-loop reentry retries there instead of losing a terminal event. Native
-error/debug text is ignored. Terminal events, explicit Stop, replacement,
-terminal shutdown, and Drop all retire only the exact owner. Tests use an
-injected pipeline backend and custom main context to prove late resolution,
-late predecessor EOS/error, replacement ordering, clean and quarantined start
-failure, current and stale cancellation, synchronous native callbacks,
-generation-scoped buffering, teardown poison, explicit Stop, shutdown and
-active-owner Drop, handoff mismatch, and generation exhaustion without opening
-a network source.
+error/debug text is ignored. EOS means the tuner closed the body cleanly after
+data, for example when it was reclaimed or the device rebooted. A live stream
+never ends on its own, so once the buffered media drains the session reports
+the offline failure instead of settling to Stopped. Terminal events, explicit
+Stop, replacement, terminal shutdown, and Drop all retire only the exact owner.
+Tests use an injected pipeline backend and custom main context to prove late
+resolution, late predecessor EOS/error, EOS reported as offline, replacement
+ordering, clean and quarantined start failure, current and stale cancellation,
+synchronous native callbacks, generation-scoped buffering, teardown poison,
+explicit Stop, shutdown and active-owner Drop, handoff mismatch, and generation
+exhaustion without opening a network source.
 
 Audio state belongs to that same serialized owner. Its normalized finite range
 is `0.0..=1.0`, defaults to full volume and unmuted, and survives Stop,
@@ -332,7 +336,8 @@ read failures, including a stalled or truncated body, are offline, as is a
 sent through a bounded eight-slot channel to a dedicated blocking feeder
 thread, which pushes them through `appsrc`'s validated `push-buffer` action
 signal and emits `end-of-stream` only after a natural end of a body that
-carried data. Neither the GTK main context
+carried data, so the buffered media drains before the session reports the end
+as offline. Neither the GTK main context
 nor the controller runtime ever blocks on GStreamer backpressure: when
 `appsrc` is full the feeder blocks, the channel fills, and TCP flow control
 holds the device.
@@ -392,7 +397,10 @@ uncontacted target, refused, stalled, truncated, and empty streams, bounded chun
 splitting, bounded queue growth under a paused sink, cancellation while reads
 and pushes are blocked, rapid replacement, joined teardown, and `playbin3`
 resolving the constant URI to exact `appsrc` and decoding the checked-in
-fixture to EOS. A child-process trap proves that ambient `http_proxy` and
+fixture to EOS. A session-level regression reduces that `playbin3` bus through
+the production event mapping and session core across the `PAUSED` hold, and
+requires the fixture's frames to render before its end fails as offline with a
+joined transport. A child-process trap proves that ambient `http_proxy` and
 `all_proxy` configuration reaches a default client but never the transport.
 The macOS CI lane runs that same loopback suite, and the Linux, macOS, and
 Windows lanes run the helpers' `--probe-playback`/`-ProbePlayback` mode, which
@@ -466,7 +474,8 @@ application resource.
 Two separate ignored display smokes share the same harness. One drives
 the real production session with the checked-in fixture served by a loopback
 HTTP listener, verifies its opaque paintable, drives the main context through
-PLAYING and natural EOS, and proves joined terminal shutdown. The other
+PLAYING and the fixture's end, which must fail as offline rather than settle
+to Stopped, and proves joined terminal shutdown. The other
 exercises the production `PlayerView` paintable and Stop boundary with a
 one-pixel in-memory texture. Neither grants the desktop access to the
 pipeline, sink, or stream URI; the loopback URL enters only the library's
@@ -549,8 +558,9 @@ A separate display-backed lifecycle smoke runs the real production
 an open-ended channel reaches PLAYING, switching to a finite channel is
 admitted only after the predecessor's transport is joined and the fake
 observes its connection close, the successor's open is observed strictly
-after that release, natural EOS settles to Stopped with a cleared paintable,
-and an explicit Stop on a second live tune releases the observed connection.
+after that release, the finite channel's clean end fails as offline with a
+cleared paintable and an observed connection close, and an explicit Stop on a
+second live tune releases the observed connection.
 A second session-level smoke configures one lineup row whose stream path
 answers `404 Not Found`: the tune must fail as the exact channel-missing
 category, and the 404 connection itself must be observed closed before the
