@@ -353,6 +353,10 @@ pub(crate) struct CompletedRoutedRun {
     pub(crate) outcome: RoutedScanOutcome,
     /// The scan's own report or the transport-level reason it stopped.
     pub(crate) result: Result<DiscoveryReport, DiscoveryError>,
+    /// Whether a route or approval-store change revoked the scan's authority
+    /// while the caller still wanted it, so a cancelled result means the
+    /// network or approvals changed under it.
+    pub(crate) authority_lost: bool,
     /// How the store settled the reservation.
     #[allow(
         dead_code,
@@ -617,11 +621,12 @@ impl<F: ObserverPairFactory, P: RoutedTargetProber> MonitoredRoutedDiscovery<F, 
         let admitted =
             AdmittedRoutedScan::new(scan, absolute_deadline, request_cancellation, registration);
 
-        let (outcome, result) = execute(admitted, Arc::clone(&self.prober)).await?;
+        let (outcome, result, authority_lost) = execute(admitted, Arc::clone(&self.prober)).await?;
         let completion = completion.settle(outcome)?;
         Ok(MonitoredRoutedRun::Completed(CompletedRoutedRun {
             outcome,
             result,
+            authority_lost,
             completion,
         }))
     }
@@ -775,11 +780,19 @@ fn admit_published<C: RoutedAdmissionClock + ?Sized>(
     Ok((scan, sample))
 }
 
-/// Probe every admitted target, stopping at the first lost authority.
+/// Probe every admitted target, stopping at the first lost authority, and
+/// report whether authority was revoked while the request still stood.
 async fn execute<P: RoutedTargetProber>(
     admitted: AdmittedRoutedScan<RoutedAuthorityRegistration>,
     prober: Arc<P>,
-) -> Result<(RoutedScanOutcome, Result<DiscoveryReport, DiscoveryError>), MonitoredRoutedError> {
+) -> Result<
+    (
+        RoutedScanOutcome,
+        Result<DiscoveryReport, DiscoveryError>,
+        bool,
+    ),
+    MonitoredRoutedError,
+> {
     let scan = admitted.scan();
     let targets =
         ApprovedIpv4Targets::new(scan.targets().iter().map(RevalidatedRoutedTarget::address))
@@ -853,7 +866,9 @@ async fn execute<P: RoutedTargetProber>(
     drop(run_guard);
     let _joined = watcher.await;
     let outcome = classify(&result);
-    Ok((outcome, result))
+    let authority_lost = admitted.invalidation_cancellation().is_cancelled()
+        && !admitted.request_cancellation().is_cancelled();
+    Ok((outcome, result, authority_lost))
 }
 
 fn classify(result: &Result<DiscoveryReport, DiscoveryError>) -> RoutedScanOutcome {
@@ -1298,6 +1313,7 @@ mod tests {
             completed.completion,
             StoredCompletionDecision::Confirmed(_)
         ));
+        assert!(!completed.authority_lost);
         let report = completed.result.expect("the scan finished");
         assert_eq!(report.observations.len(), 1);
         assert_eq!(
@@ -1375,6 +1391,7 @@ mod tests {
         };
         assert_eq!(completed.outcome, RoutedScanOutcome::Indeterminate);
         assert!(matches!(completed.result, Err(DiscoveryError::Cancelled)));
+        assert!(!completed.authority_lost, "the caller cancelled the scan");
         assert!(matches!(
             completed.completion,
             StoredCompletionDecision::Confirmed(_)
@@ -1425,6 +1442,7 @@ mod tests {
         };
         assert_eq!(completed.outcome, RoutedScanOutcome::Indeterminate);
         assert!(matches!(completed.result, Err(DiscoveryError::Cancelled)));
+        assert!(completed.authority_lost, "a source change revoked the scan");
         let calls = fixture.prober.calls();
         assert_eq!(
             calls.len(),
