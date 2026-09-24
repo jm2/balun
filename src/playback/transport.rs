@@ -493,6 +493,13 @@ async fn stream_body(
                     .await?;
                 }
             }
+            Ok(None) if !body_observed => {
+                // No bytes means no stream-started notice, so the session would
+                // hold at PAUSED forever, where a live appsrc never delivers
+                // EOS. Fail without EOS instead; the response is released here.
+                tracing::warn!(target: "balun::playback", "stream ended before any data");
+                return Err(ReaderStop::Failed(PlaybackPipelineFailure::Offline));
+            }
             Ok(None) => {
                 send_feed(feed, cancellation, FeedItem::End).await?;
                 return Ok(());
@@ -884,27 +891,50 @@ mod tests {
         assert_eq!(fixture.stop(transport), Ok(()));
     }
 
+    /// A success response whose body ends before any byte never posts the
+    /// stream-started notice, so the session's PAUSED hold would wait forever:
+    /// a live `appsrc` does not deliver EOS while paused. The transport must
+    /// fail instead, in the paused hold and in `PLAYING` alike, and never EOS.
     #[test]
-    fn an_empty_success_response_has_no_body_or_buffer_observation() {
+    fn a_success_response_that_ends_before_any_data_is_offline() {
         let fixture = FeedFixture::new().expect("required appsrc and fakesink factories");
-        let server = FixtureStreamServer::start(
-            http_response("200 OK", &[("Content-Length", "0".to_owned())], b""),
-            StreamBehavior::Close,
-        );
-        let timing = Arc::new(TransportTiming::new(Instant::now()));
-        fixture.pipeline.set_state(gst::State::Playing).unwrap();
-        let transport = StreamTransport::start(
-            handoff(&server.stream_url()),
-            fixture.source.clone(),
-            &fixture.pipeline,
-            QUICK,
-            Some(Arc::clone(&timing)),
-        )
-        .unwrap();
-        assert_eq!(fixture.wait_terminal(Duration::from_secs(5)), Terminal::Eos);
-        assert_eq!(fixture.stop(transport), Ok(()));
-        let observed = timing.snapshot().map(|(_, value)| value.is_some());
-        assert_eq!(observed, [true, true, false, false]);
+        for (response, shape) in [
+            (
+                http_response("200 OK", &[("Content-Length", "0".to_owned())], b""),
+                "zero content length",
+            ),
+            (open_ended_response_head(), "open-ended head then close"),
+        ] {
+            for state in [gst::State::Paused, gst::State::Playing] {
+                let server = FixtureStreamServer::start(response.clone(), StreamBehavior::Close);
+                let timing = Arc::new(TransportTiming::new(Instant::now()));
+                fixture.pipeline.set_state(state).unwrap();
+                let transport = StreamTransport::start(
+                    handoff(&server.stream_url()),
+                    fixture.source.clone(),
+                    &fixture.pipeline,
+                    TransportConfig::PRODUCTION,
+                    Some(Arc::clone(&timing)),
+                )
+                .unwrap();
+                assert_eq!(
+                    fixture.wait_terminal(Duration::from_secs(5)),
+                    Terminal::Failure(PlaybackPipelineFailure::Offline),
+                    "{shape} in {state:?}"
+                );
+                assert_eq!(
+                    fixture.wait_terminal(Duration::from_millis(200)),
+                    Terminal::Timeout,
+                    "{shape} in {state:?}: no EOS or second failure follows"
+                );
+                assert!(server.request(Duration::from_secs(3)).is_some());
+                assert_eq!(fixture.stop(transport), Ok(()), "{shape} in {state:?}");
+                assert_eq!(fixture.started.get(), 0, "{shape} in {state:?}");
+                assert_eq!(fixture.rendered_buffers(), 0, "{shape} in {state:?}");
+                let observed = timing.snapshot().map(|(_, value)| value.is_some());
+                assert_eq!(observed, [true, true, false, false], "{shape} in {state:?}");
+            }
+        }
     }
 
     #[test]

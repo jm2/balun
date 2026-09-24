@@ -326,11 +326,13 @@ credential-free, query-free, numeric-host HTTP URL, so the request never
 resolves a name. Only the numeric status is interpreted: 200 streams, 503 is
 tuner busy, 404 is channel missing, and every other status, including
 redirects that are never followed, is HTTP rejection. Connect, header, and
-read failures, including a stalled or truncated body, are offline. Body
-chunks are split to at most 64 KiB buffers and sent through a bounded
-eight-slot channel to a dedicated blocking feeder thread, which pushes them
-through `appsrc`'s validated `push-buffer` action signal and emits
-`end-of-stream` only after a natural end of body. Neither the GTK main context
+read failures, including a stalled or truncated body, are offline, as is a
+200 body that ends before any data, which would otherwise hold the session's
+`PAUSED` start forever. Body chunks are split to at most 64 KiB buffers and
+sent through a bounded eight-slot channel to a dedicated blocking feeder
+thread, which pushes them through `appsrc`'s validated `push-buffer` action
+signal and emits `end-of-stream` only after a natural end of a body that
+carried data. Neither the GTK main context
 nor the controller runtime ever blocks on GStreamer backpressure: when
 `appsrc` is full the feeder blocks, the channel fills, and TCP flow control
 holds the device.
@@ -340,7 +342,10 @@ exact pipeline carrying a single bounded numeric category code. The
 generation-scoped bus watch reduces that marker, native missing-plugin,
 codec-not-found, and decryption errors, and the source-policy rejection marker
 into the seven fixed `PlaybackPipelineFailure` categories; malformed markers,
-foreign pipelines, and every other native condition close to internal.
+foreign pipelines, and every other native condition close to internal. A
+missing-plugin notice whose caps name only streams Balun never presents, such
+as teletext or subtitles, is logged with a closed label and does not end the
+tune; one naming audio, video, or image caps, or unreadable caps, still does.
 
 Teardown cancels the request first, so the device connection begins closing
 while the pipeline moves to `NULL`; the transport is then joined inside the
@@ -383,7 +388,7 @@ in the delayed case. This is synthetic evidence, not a new hardware trial.
 Network-free loopback tests cover accepted configuration, repeated, foreign,
 and retired source rejection, handoff zeroization, worker-thread
 `source-setup` delivery, every status category, redirect refusal with an
-uncontacted target, refused, stalled, and truncated streams, bounded chunk
+uncontacted target, refused, stalled, truncated, and empty streams, bounded chunk
 splitting, bounded queue growth under a paused sink, cancellation while reads
 and pushes are blocked, rapid replacement, joined teardown, and `playbin3`
 resolving the constant URI to exact `appsrc` and decoding the checked-in
@@ -398,6 +403,7 @@ packaged-runtime probes are P3 work.
 The pipeline-side visual contract is explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the
 pipeline is still `NULL`; enables playbin's adaptive `deinterlace` flag;
+clears its subtitle `text` flag, since Balun has no subtitle presentation;
 forces source aspect-ratio preservation; and installs the private GTK paintable
 sink with its own aspect preservation enabled plus the bus watch before copying
 the authorized URI into native storage. A factory-backed unit test proves the
