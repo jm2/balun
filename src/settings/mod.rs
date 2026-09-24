@@ -1,9 +1,9 @@
 //! Versioned, atomic, GTK-free persistence of Balun's user settings.
 //!
-//! The settings file holds only reviewed preferences: remembered exact-address
-//! discovery targets, user-assigned device names, and window state. It never
-//! holds credentials, `DeviceAuth`, stream URLs, lineups, or incidental
-//! network topology, and the types here cannot represent them.
+//! The settings file holds only reviewed preferences: remembered discovery
+//! targets and window state. It never holds credentials, `DeviceAuth`, stream
+//! URLs, lineups, or incidental network topology, and the types here cannot
+//! represent them.
 //!
 //! Reads fail closed. A malformed, oversized, symlinked, or newer-schema file
 //! is reported with a fixed, path-free error and left untouched, so a later
@@ -12,17 +12,16 @@
 //! previous file, so a crash never leaves a partial document. On Unix the
 //! file is readable and writable by its owner only.
 
-use std::collections::BTreeMap;
 use std::ffi::OsString;
 #[cfg(test)]
 use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
 use crate::discovery::{ExactDiscoveryTarget, HostnameTarget};
-use crate::domain::DeviceId;
 
 mod store;
 pub use store::SettingsStore;
@@ -35,10 +34,6 @@ pub const SETTINGS_FILE_NAME: &str = "settings.json";
 pub const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 /// Most remembered exact-address targets; matches the per-session probe cap.
 pub const MAX_REMEMBERED_TARGETS: usize = 32;
-/// Most user-assigned device names.
-pub const MAX_DEVICE_NAMES: usize = 64;
-/// Longest user-assigned device name in bytes.
-pub const MAX_DEVICE_NAME_BYTES: usize = 128;
 /// Smallest persisted window dimension in logical pixels.
 pub const MIN_WINDOW_DIMENSION: u32 = 200;
 /// Largest persisted window dimension in logical pixels.
@@ -114,17 +109,6 @@ impl Default for WindowState {
     }
 }
 
-/// Why a user-assigned device name was rejected.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum InvalidDeviceName {
-    #[error("device names are limited to {MAX_DEVICE_NAME_BYTES} bytes")]
-    TooLong,
-    #[error("device names cannot contain control characters")]
-    ControlCharacter,
-    #[error("at most {MAX_DEVICE_NAMES} devices can be named")]
-    TooMany,
-}
-
 /// One remembered discovery entry: a numeric address or a hostname that is
 /// resolved again at each launch.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -138,7 +122,6 @@ pub enum RememberedTarget {
 pub struct Settings {
     window: WindowState,
     remembered_targets: Vec<RememberedTarget>,
-    device_names: BTreeMap<DeviceId, String>,
 }
 
 impl Settings {
@@ -185,57 +168,6 @@ impl Settings {
         self.remembered_targets.retain(|known| known != target);
         self.remembered_targets.len() != before
     }
-
-    /// The user-assigned name for a device, if any.
-    #[must_use]
-    pub fn device_name(&self, device: DeviceId) -> Option<&str> {
-        self.device_names.get(&device).map(String::as_str)
-    }
-
-    /// Assign a name to a device. Surrounding whitespace is trimmed and an
-    /// empty name clears the assignment. Returns whether anything changed.
-    pub fn set_device_name(
-        &mut self,
-        device: DeviceId,
-        name: &str,
-    ) -> Result<bool, InvalidDeviceName> {
-        let Some(name) = validate_device_name(name)? else {
-            return Ok(self.clear_device_name(device));
-        };
-        if self.device_names.get(&device).map(String::as_str) == Some(name) {
-            return Ok(false);
-        }
-        if !self.device_names.contains_key(&device) && self.device_names.len() >= MAX_DEVICE_NAMES {
-            return Err(InvalidDeviceName::TooMany);
-        }
-        self.device_names.insert(device, name.to_owned());
-        Ok(true)
-    }
-
-    /// Remove a user-assigned device name; returns whether one existed.
-    pub fn clear_device_name(&mut self, device: DeviceId) -> bool {
-        self.device_names.remove(&device).is_some()
-    }
-
-    /// Number of user-assigned device names.
-    #[must_use]
-    pub fn device_name_count(&self) -> usize {
-        self.device_names.len()
-    }
-}
-
-fn validate_device_name(name: &str) -> Result<Option<&str>, InvalidDeviceName> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Ok(None);
-    }
-    if name.len() > MAX_DEVICE_NAME_BYTES {
-        return Err(InvalidDeviceName::TooLong);
-    }
-    if name.chars().any(char::is_control) {
-        return Err(InvalidDeviceName::ControlCharacter);
-    }
-    Ok(Some(name))
 }
 
 /// The step of a store operation that failed.
@@ -286,14 +218,6 @@ pub enum MalformedSettings {
     DuplicateTarget,
     #[error("more than {MAX_REMEMBERED_TARGETS} remembered targets")]
     TooManyTargets,
-    #[error("a device identifier is invalid")]
-    DeviceId,
-    #[error("a device identifier is listed twice")]
-    DuplicateDeviceId,
-    #[error("a device name is invalid")]
-    DeviceName,
-    #[error("more than {MAX_DEVICE_NAMES} device names")]
-    TooManyDeviceNames,
 }
 
 /// A settings load or save failure. Paths and file contents are never carried.
@@ -396,8 +320,8 @@ struct StoredSettingsV1 {
     window: StoredWindowV1,
     #[serde(default)]
     remembered_targets: Vec<StoredTargetV1>,
-    #[serde(default)]
-    device_names: BTreeMap<String, String>,
+    #[serde(default, rename = "device_names", skip_serializing)]
+    _retired_device_names: IgnoredAny,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -433,8 +357,10 @@ struct StoredSettingsV2 {
     window: StoredWindowV1,
     #[serde(default)]
     remembered_targets: Vec<StoredTargetV2>,
-    #[serde(default)]
-    device_names: BTreeMap<String, String>,
+    /// Retired friendly names. Earlier builds always wrote this map, so it is
+    /// still accepted, then ignored and no longer written.
+    #[serde(default, rename = "device_names", skip_serializing)]
+    _retired_device_names: IgnoredAny,
 }
 
 /// Exactly one of `address` or `host` is present.
@@ -460,7 +386,7 @@ impl From<StoredSettingsV1> for StoredSettingsV2 {
                     host: None,
                 })
                 .collect(),
-            device_names: stored.device_names,
+            _retired_device_names: IgnoredAny,
         }
     }
 }
@@ -519,11 +445,7 @@ impl From<&Settings> for StoredSettingsV2 {
                     },
                 })
                 .collect(),
-            device_names: settings
-                .device_names
-                .iter()
-                .map(|(device, name)| (device.to_string(), name.clone()))
-                .collect(),
+            _retired_device_names: IgnoredAny,
         }
     }
 }
@@ -559,39 +481,11 @@ impl TryFrom<StoredSettingsV2> for Settings {
             remembered_targets.push(target);
         }
 
-        if stored.device_names.len() > MAX_DEVICE_NAMES {
-            return Err(MalformedSettings::TooManyDeviceNames);
-        }
-        let mut device_names = BTreeMap::new();
-        for (key, name) in &stored.device_names {
-            let device = parse_device_id(key).ok_or(MalformedSettings::DeviceId)?;
-            let name = validate_device_name(name)
-                .ok()
-                .flatten()
-                .filter(|trimmed| *trimmed == name)
-                .ok_or(MalformedSettings::DeviceName)?;
-            // The key parser accepts either hexadecimal case, so two stored
-            // keys can name one device; merging them would drop a name.
-            if device_names.insert(device, name.to_owned()).is_some() {
-                return Err(MalformedSettings::DuplicateDeviceId);
-            }
-        }
-
         Ok(Self {
             window,
             remembered_targets,
-            device_names,
         })
     }
-}
-
-/// Parse the eight-hex-digit form produced by `DeviceId`'s `Display`.
-fn parse_device_id(text: &str) -> Option<DeviceId> {
-    if text.len() != 8 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let raw = u32::from_str_radix(text, 16).ok()?;
-    DeviceId::new(raw).ok()
 }
 
 #[cfg(test)]
@@ -612,20 +506,11 @@ mod tests {
         ExactDiscoveryTarget::parse(&format!("192.0.2.{last_octet}")).expect("valid target")
     }
 
-    fn device(raw: u32) -> DeviceId {
-        DeviceId::new(raw).expect("valid device id")
-    }
-
     fn populated() -> Settings {
         let mut settings = Settings::default();
         settings.set_window(WindowState::new(1_600, 900, true).expect("valid window"));
         assert!(settings.remember_target(RememberedTarget::Address(target(1))));
         assert!(settings.remember_target(RememberedTarget::Address(target(2))));
-        assert!(
-            settings
-                .set_device_name(device(0x105A_1232), "Living room")
-                .expect("valid name")
-        );
         settings
     }
 
@@ -721,17 +606,8 @@ mod tests {
             .keys()
             .map(String::as_str)
             .collect();
-        assert_eq!(
-            keys,
-            [
-                "device_names",
-                "remembered_targets",
-                "schema_version",
-                "window"
-            ]
-        );
+        assert_eq!(keys, ["remembered_targets", "schema_version", "window"]);
         assert_eq!(value["remembered_targets"][0]["address"], "192.0.2.1");
-        assert_eq!(value["device_names"]["105A1232"], "Living room");
         let lowered = text.to_ascii_lowercase();
         for forbidden in ["http", "url", "deviceauth", "auth", "lineup", "5004"] {
             assert!(
@@ -764,7 +640,7 @@ mod tests {
 
     #[test]
     fn malformed_documents_are_reported_and_left_untouched() {
-        let cases: [(&[u8], MalformedSettings); 10] = [
+        let cases: [(&[u8], MalformedSettings); 7] = [
             (b"{\"schema_version\":0}", MalformedSettings::ZeroSchemaVersion),
             (b"{\"schema_version\":1,\"extra\":1}", MalformedSettings::Json),
             (b"{\"schema_version\":1,", MalformedSettings::Json),
@@ -780,18 +656,6 @@ mod tests {
             (
                 b"{\"schema_version\":1,\"remembered_targets\":[{\"address\":\"192.0.2.1\"},{\"address\":\"192.0.2.1\"}]}",
                 MalformedSettings::DuplicateTarget,
-            ),
-            (
-                b"{\"schema_version\":1,\"device_names\":{\"nothex!\":\"Name\"}}",
-                MalformedSettings::DeviceId,
-            ),
-            (
-                b"{\"schema_version\":1,\"device_names\":{\"105A1232\":\"Bad\\u0007name\"}}",
-                MalformedSettings::DeviceName,
-            ),
-            (
-                b"{\"schema_version\":1,\"device_names\":{\"105A1232\":\"One\",\"105a1232\":\"Two\"}}",
-                MalformedSettings::DuplicateDeviceId,
             ),
         ];
 
@@ -809,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn too_many_targets_or_names_are_rejected() {
+    fn too_many_targets_are_rejected() {
         let (_directory, store) = test_store();
         let targets: Vec<String> = (1..=MAX_REMEMBERED_TARGETS + 1)
             .map(|index| format!("{{\"address\":\"10.0.{}.{}\"}}", index / 256, index % 256))
@@ -825,30 +689,6 @@ mod tests {
         assert_eq!(
             store.load(),
             Err(SettingsError::Malformed(MalformedSettings::TooManyTargets))
-        );
-
-        let names: Vec<String> = (0..=MAX_DEVICE_NAMES)
-            .map(|index| {
-                let mut raw = 0x1000_0000_u32 + (index as u32) * 16;
-                while DeviceId::new(raw).is_err() {
-                    raw += 1;
-                }
-                format!("\"{}\":\"Name\"", device(raw))
-            })
-            .collect();
-        write_raw(
-            &store,
-            format!(
-                "{{\"schema_version\":1,\"device_names\":{{{}}}}}",
-                names.join(",")
-            )
-            .as_bytes(),
-        );
-        assert_eq!(
-            store.load(),
-            Err(SettingsError::Malformed(
-                MalformedSettings::TooManyDeviceNames
-            ))
         );
     }
 
@@ -923,45 +763,6 @@ mod tests {
     }
 
     #[test]
-    fn device_names_are_trimmed_bounded_and_clearable() {
-        let mut settings = Settings::default();
-        let id = device(0x105A_1232);
-
-        assert!(settings.set_device_name(id, "  Basement  ").expect("valid"));
-        assert_eq!(settings.device_name(id), Some("Basement"));
-        assert!(!settings.set_device_name(id, "Basement").expect("valid"));
-        assert_eq!(
-            settings.set_device_name(id, "x".repeat(MAX_DEVICE_NAME_BYTES + 1).as_str()),
-            Err(InvalidDeviceName::TooLong)
-        );
-        assert_eq!(
-            settings.set_device_name(id, "tab\tname"),
-            Err(InvalidDeviceName::ControlCharacter)
-        );
-        assert!(settings.set_device_name(id, "   ").expect("blank clears"));
-        assert_eq!(settings.device_name(id), None);
-        assert!(!settings.clear_device_name(id));
-
-        let mut raw = 0x1000_0000_u32;
-        for _ in 0..MAX_DEVICE_NAMES {
-            while DeviceId::new(raw).is_err() {
-                raw += 1;
-            }
-            settings
-                .set_device_name(device(raw), "Name")
-                .expect("within limit");
-            raw += 1;
-        }
-        while DeviceId::new(raw).is_err() {
-            raw += 1;
-        }
-        assert_eq!(
-            settings.set_device_name(device(raw), "Name"),
-            Err(InvalidDeviceName::TooMany)
-        );
-    }
-
-    #[test]
     fn window_state_validates_its_range() {
         assert!(WindowState::new(MIN_WINDOW_DIMENSION, MIN_WINDOW_DIMENSION, false).is_ok());
         assert!(WindowState::new(MAX_WINDOW_DIMENSION, MAX_WINDOW_DIMENSION, true).is_ok());
@@ -973,14 +774,6 @@ mod tests {
             WindowState::new(1_200, MAX_WINDOW_DIMENSION + 1, false),
             Err(InvalidWindowState::DimensionOutOfRange)
         );
-    }
-
-    #[test]
-    fn device_id_text_round_trips_through_display() {
-        let id = device(0x105A_1232);
-        assert_eq!(parse_device_id(&id.to_string()), Some(id));
-        assert_eq!(parse_device_id("1051123"), None);
-        assert_eq!(parse_device_id("00000000"), None);
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -1072,6 +865,27 @@ mod tests {
         assert_eq!(value["schema_version"], SCHEMA_VERSION);
         assert_eq!(value["remembered_targets"][0]["address"], "192.0.2.1");
         assert!(value["remembered_targets"][0].get("host").is_none());
+    }
+
+    #[test]
+    fn retired_device_names_from_earlier_builds_load_and_are_not_rewritten() {
+        let mut expected = Settings::default();
+        assert!(expected.remember_target(RememberedTarget::Address(target(1))));
+        for raw in [
+            &b"{\"schema_version\":1,\"remembered_targets\":[{\"address\":\"192.0.2.1\"}],\"device_names\":{}}"[..],
+            b"{\"schema_version\":2,\"remembered_targets\":[{\"address\":\"192.0.2.1\"}],\"device_names\":{\"105A1232\":\"Living room\"}}",
+            b"{\"schema_version\":2,\"remembered_targets\":[{\"address\":\"192.0.2.1\"}],\"device_names\":{\"nothex!\":\"Bad\\u0007name\"}}",
+        ] {
+            let (_directory, store) = test_store();
+            write_raw(&store, raw);
+            let loaded = store.load().expect("load").expect("document");
+            assert_eq!(loaded, expected, "{}", String::from_utf8_lossy(raw));
+            store.save(&loaded).expect("save");
+            let value: serde_json::Value =
+                serde_json::from_slice(&raw_bytes(&store)).expect("json");
+            assert!(value.get("device_names").is_none());
+            assert_eq!(store.load(), Ok(Some(expected.clone())));
+        }
     }
 
     #[test]

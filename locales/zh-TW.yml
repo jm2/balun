@@ -89,3 +89,6 @@ failure:
   selected_device: "所選裝置"
   selected_channel: "所選頻道"
   channel_number: "頻道 %{number}"
+
+settings:
+  unavailable: "無法儲存設定；變更僅於本次工作階段有效。"

@@ -1,6 +1,7 @@
 //! Main-context owner of the loaded settings document and its saves.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::future::Future;
 use std::time::Duration;
 
 use adw::prelude::*;
@@ -13,6 +14,7 @@ use worker::{Backend, IO_WAIT, SettingsWriter};
 pub(crate) struct SettingsSession {
     settings: RefCell<Settings>,
     writer: Option<SettingsWriter>,
+    notice_taken: Cell<bool>,
 }
 
 /// A snapshot owns no I/O handles and writes nothing until queued.
@@ -33,6 +35,7 @@ impl SettingsSession {
             return Self {
                 settings: RefCell::new(Settings::default()),
                 writer: None,
+                notice_taken: Cell::new(false),
             };
         }
         gtk::glib::MainContext::new().block_on(Self::open_async(store))
@@ -42,6 +45,7 @@ impl SettingsSession {
         let mut session = Self {
             settings: RefCell::new(Settings::default()),
             writer: None,
+            notice_taken: Cell::new(false),
         };
         let Some((writer, loaded)) = backend.and_then(SettingsWriter::start) else {
             return session;
@@ -67,6 +71,23 @@ impl SettingsSession {
             }
         }
         session
+    }
+
+    /// Wait for persistence to become unavailable: at once when no store,
+    /// load, or worker was admitted, or later when a save fails. Resolves
+    /// `false` if the session ends normally. Only the first call gets a
+    /// waiter, so the window shows at most one notice per session.
+    pub(crate) fn take_unavailable_notice(&self) -> Option<impl Future<Output = bool> + 'static> {
+        if self.notice_taken.replace(true) {
+            return None;
+        }
+        let failure = self.writer.as_ref().map(SettingsWriter::failure);
+        Some(async move {
+            match failure {
+                Some(mut failure) => failure.wait_for(|failed| *failed).await.is_ok(),
+                None => true,
+            }
+        })
     }
 
     /// Keep at most one in-flight write and the newest queued snapshot.
@@ -494,15 +515,88 @@ mod tests {
     }
 
     #[test]
+    fn failed_or_missing_load_offers_one_unavailable_notice() {
+        let (_directory, store) = store();
+        fs::create_dir_all(store.directory()).expect("create directory");
+        fs::write(
+            store.directory().join(SETTINGS_FILE_NAME),
+            b"{\"schema_version\":99}",
+        )
+        .expect("write raw");
+        for session in [
+            SettingsSession::open(Some(store)),
+            SettingsSession::open(None),
+        ] {
+            let notice = session.take_unavailable_notice().expect("first offer");
+            assert!(
+                session.take_unavailable_notice().is_none(),
+                "one per session"
+            );
+            assert!(gtk::glib::MainContext::new().block_on(notice));
+        }
+    }
+
+    #[test]
+    fn a_normal_session_end_offers_no_notice() {
+        let (_directory, store) = store();
+        let session = SettingsSession::open(Some(store));
+        let notice = session.take_unavailable_notice().expect("first offer");
+        gtk::glib::MainContext::new().block_on(async move {
+            session.save(session.stage(|s| s.set_window(resized())).unwrap());
+            session.drain().await;
+            session.close().await;
+            drop(session);
+            let ended = tokio::select! {
+                biased;
+                offered = notice => Some(offered),
+                () = gtk::glib::timeout_future(Duration::from_secs(5)) => None,
+            };
+            assert_eq!(ended, Some(false), "the closed worker reports no failure");
+        });
+    }
+
+    struct PanickingBackend;
+
+    impl Backend for PanickingBackend {
+        fn load(&self) -> Result<Option<Settings>, SettingsError> {
+            Ok(None)
+        }
+
+        fn save(&self, _: &Settings, _: &AtomicBool) -> Result<(), SettingsError> {
+            panic!("injected settings worker panic");
+        }
+    }
+
+    #[test]
+    fn a_panicking_worker_disables_persistence_and_offers_the_notice() {
+        gtk::glib::MainContext::new().block_on(async {
+            let session = SettingsSession::open_backend(Some(PanickingBackend), IO_WAIT).await;
+            let notice = session.take_unavailable_notice().expect("first offer");
+            let first = session.stage(|s| s.set_window(resized())).expect("loaded");
+            let late = session
+                .stage(|s| s.set_window(sized(900, 600)))
+                .expect("writable");
+            session.save(first);
+            assert!(notice.await, "a worker panic offers the notice");
+            // A snapshot staged before the failure is discarded, not queued.
+            session.save(late);
+            assert!(session.stage(|s| s.set_window(sized(950, 600))).is_none());
+        });
+    }
+
+    #[test]
     fn failed_save_disables_future_persistence_and_preserves_newer_schema() {
         let (_directory, store) = store();
         store.save(&Settings::default()).unwrap();
         gtk::glib::MainContext::new().block_on(async {
             let session = SettingsSession::open_async(Some(store.clone())).await;
+            let notice = session.take_unavailable_notice().expect("first offer");
             let sentinel = b"{\"schema_version\":99}";
             fs::write(store.directory().join(SETTINGS_FILE_NAME), sentinel).unwrap();
             session.save(session.stage(|s| s.set_window(resized())).unwrap());
             session.drain().await;
+            assert!(notice.await, "a failed save offers the notice");
+            assert!(session.take_unavailable_notice().is_none());
             assert!(session.stage(|s| s.set_window(sized(900, 600))).is_none());
             assert_eq!(
                 fs::read(store.directory().join(SETTINGS_FILE_NAME)).unwrap(),

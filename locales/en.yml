@@ -114,3 +114,6 @@ failure:
   selected_device: "the selected device"
   selected_channel: "the selected channel"
   channel_number: "channel %{number}"
+
+settings:
+  unavailable: "Settings cannot be saved; changes apply to this session only."

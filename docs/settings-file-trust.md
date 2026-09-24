@@ -4,6 +4,9 @@ Status: maintainer-approved H3.2 contract, September 17, 2026. The maintainer
 accepted both the private-profile boundary and the two-second startup/close
 limits. The implementation and regressions below are staged in PR #109;
 completion takes effect only when CI and bot review are clean and the PR merges.
+The maintainer later amended it for #152: user-private-group directories,
+tightening that never adds permissions, and one in-app notice when persistence
+is unavailable.
 
 ## Implemented changes
 
@@ -43,19 +46,28 @@ Reject final-component aliases, non-regular documents, hard-linked documents,
 oversized or malformed content, and changed identities during an operation.
 Create the Balun directory and temporary files privately. On Unix, enforce the
 effective owner and owner-only permissions for the Balun directory/document;
-reject a writable-by-others parent. An existing owned profile with read/search
-permissions for others, such as the old 0755 directory, is tightened through its
-held handle to 0700 only after rejecting foreign ownership and group/other write
-permission. Existing documents must already be owner-only; their contents and
-permissions are not silently repaired. On Windows, require a normal private profile
-with a restrictive inherited DACL and retain that inheritance. Do not claim
-that Rust file mode checks attest Windows ACLs.
+reject a parent writable by another account. A world-writable directory is
+always rejected. Group write is accepted only on a directory the effective user owns
+whose group is that account's user-private group (UPG), as a 002 umask creates:
+the directory's group is the effective group, `getgrgid_r` names it exactly as
+`getpwuid_r` names the effective user, and it lists no other member. A failed,
+empty, or non-UTF-8 lookup rejects; the lookup runs only for group-writable
+directories. An existing owned profile with group or other permissions, such as
+the old 0755 directory or a UPG 0775 one, has only those bits cleared through its
+held handle after admission. Owner bits are never added, so a read-only 0500
+profile stays read-only and its saves fail. Existing documents must already be
+owner-only; their contents and permissions are not silently repaired. On
+Windows, require a normal private profile with a restrictive inherited DACL and
+retain that inheritance. Do not claim that Rust file mode checks attest Windows
+ACLs.
 
 Use a stable cooperative process lock for read/check/replace transactions.
 Re-read the existing document inside every save transaction; preserve an
 unsupported schema or malformed document rather than overwriting it. Failed
 admission disables persistence for that session, with a fixed value-free error.
-The application can continue with in-memory preferences.
+The application can continue with in-memory preferences. The window shows one
+localized notice per session when no profile, load, or worker is admitted, or a
+later save or the worker fails; a normal close shows none. The console keeps the fixed error.
 
 This accepted boundary excludes shared profiles, network filesystems, malicious
 same-account processes, and editors that race an active transaction without
@@ -98,12 +110,16 @@ are recorded in the PR; native CI must pass before merge.
   file, outside symlink, hard link, and Unix FIFO; hard-linked lock rejection;
   independent cooperative writers; newer/malformed schema preservation;
   profile rename containment; Unix lock loss and mode/owner rejection; private
-  directory migration. Windows fixtures require junction refusal and deny
-  removal of a held lock. Their results do not attest the inherited DACL.
+  directory migration; user-private-group admission with other-group,
+  failed-lookup, world-writable, and foreign-owner refusal; a read-only profile
+  that loses only group/other bits. Windows fixtures require junction refusal
+  and deny removal of a held lock. Their results do not attest the inherited DACL.
 - `src/ui/settings_session.rs`: blocked startup keeps the GLib context running;
   the late result is discarded; a blocked save retains only the latest queued
   snapshot on one worker; close reaches its deadline, drops queued work, and
-  disables later saves; a failed save preserves a newer schema.
+  disables later saves; a failed save preserves a newer schema. A failed or
+  missing load, a failed save, and a worker panic each offer one notice; a
+  normal close offers none.
 - Store fixtures pause at the write and flush boundaries, then cancel and
   resume. They verify that the prior complete document remains and temporary
   siblings are cleaned. These are deterministic boundary injections, not proof

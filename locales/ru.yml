@@ -119,3 +119,6 @@ failure:
   selected_device: "выбранное устройство"
   selected_channel: "выбранный канал"
   channel_number: "канал %{number}"
+
+settings:
+  unavailable: "Не удаётся сохранить настройки; изменения действуют только в этом сеансе."

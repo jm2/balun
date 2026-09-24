@@ -117,3 +117,6 @@ failure:
   selected_device: "het geselecteerde apparaat"
   selected_channel: "de geselecteerde zender"
   channel_number: "zender %{number}"
+
+settings:
+  unavailable: "Instellingen kunnen niet worden opgeslagen; wijzigingen gelden alleen voor deze sessie."

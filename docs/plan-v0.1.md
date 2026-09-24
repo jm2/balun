@@ -121,7 +121,7 @@ Built and tested:
   AC-4 ([compatibility notes](compatibility-v0.1.md)).
 - Versioned, atomic settings that remember the window size and maximized
   state and the exact addresses that answered, which are probed again at
-  launch; storage for user-assigned names is reserved.
+  launch.
 - Hostname entry resolved on the controller to a bounded set of unicast
   addresses, probed one at a time and remembered by name.
 - Windows x86_64 and ARM64 package profiles: a reviewed, capability-derived
@@ -348,7 +348,7 @@ unless the evidence demands it.
 
 Persisted state is atomic, versioned JSON:
 
-- Friendly device names and remembered exact or hostname targets.
+- Remembered exact or hostname targets.
 - Approved routed ranges and their fingerprints (Linux).
 - For V2.4, the user-entered subnet preference only; never its scan authorization.
 - Window geometry and UI preferences.

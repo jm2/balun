@@ -32,6 +32,8 @@ struct Shared {
     cancelled: AtomicBool,
     failed: AtomicBool,
     idle: watch::Sender<bool>,
+    /// Becomes true once a save or the worker fails after a successful load.
+    failure: watch::Sender<bool>,
 }
 
 type LoadResult = Result<Option<Settings>, SettingsError>;
@@ -45,12 +47,14 @@ impl SettingsWriter {
     pub(super) fn start(backend: impl Backend) -> Option<(Self, LoadReceiver)> {
         let (loaded, receiver) = oneshot::channel();
         let (idle, _) = watch::channel(false);
+        let (failure, _) = watch::channel(false);
         let shared = Arc::new(Shared {
             queued: Mutex::new(None),
             wake: Condvar::new(),
             cancelled: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             idle,
+            failure,
         });
         let worker = Arc::clone(&shared);
         // Dropping the join handle detaches this single worker. Shutdown never
@@ -58,15 +62,11 @@ impl SettingsWriter {
         if std::thread::Builder::new()
             .name("balun-settings".into())
             .spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    worker.run(backend, loaded);
-                }));
-                if result.is_err() {
-                    worker.failed.store(true, Ordering::Release);
-                    worker.cancelled.store(true, Ordering::Release);
-                    worker.idle.send_replace(true);
-                    eprintln!("Balun settings worker failed; persistence is disabled");
-                }
+                worker.finish(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                    || {
+                        worker.run(backend, loaded);
+                    },
+                )));
             })
             .is_err()
         {
@@ -79,6 +79,12 @@ impl SettingsWriter {
     pub(super) fn writable(&self) -> bool {
         !self.shared.cancelled.load(Ordering::Acquire)
             && !self.shared.failed.load(Ordering::Acquire)
+    }
+
+    /// Observe a later save or worker failure. The sender closes, without
+    /// reporting one, when the worker and this writer are both gone.
+    pub(super) fn failure(&self) -> watch::Receiver<bool> {
+        self.shared.failure.subscribe()
     }
 
     pub(super) fn save(&self, save: PendingSave) {
@@ -114,6 +120,18 @@ impl Drop for SettingsWriter {
 }
 
 impl Shared {
+    /// Disable persistence after a worker panic. Kept outside the generic
+    /// spawn closure so every backend's panic reaches the same code.
+    fn finish(&self, result: std::thread::Result<()>) {
+        if result.is_err() {
+            self.failed.store(true, Ordering::Release);
+            self.cancelled.store(true, Ordering::Release);
+            self.idle.send_replace(true);
+            self.failure.send_replace(true);
+            eprintln!("Balun settings worker failed; persistence is disabled");
+        }
+    }
+
     fn run(&self, backend: impl Backend, loaded: oneshot::Sender<LoadResult>) {
         let result = backend.load();
         let usable = result.is_ok();
@@ -141,6 +159,7 @@ impl Shared {
                 self.failed.store(true, Ordering::Release);
                 *queued = None;
                 self.idle.send_replace(true);
+                self.failure.send_replace(true);
                 eprintln!("Balun settings could not be saved; persistence is disabled: {error}");
                 return;
             }
