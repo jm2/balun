@@ -614,12 +614,15 @@ mod linux {
             }
             .map_err(failure)?;
             Ok(match run {
-                MonitoredRoutedRun::Completed(CompletedRoutedRun { result, .. }) => {
-                    RoutedRunOutcome::Report {
-                        report: result.map_err(scan_failure)?,
-                        interfaces,
-                    }
-                }
+                MonitoredRoutedRun::Completed(CompletedRoutedRun {
+                    result,
+                    authority_lost,
+                    ..
+                }) => RoutedRunOutcome::Report {
+                    report: result
+                        .map_err(|error| completed_scan_failure(error, authority_lost))?,
+                    interfaces,
+                },
                 MonitoredRoutedRun::NeedsApproval(_) => RoutedRunOutcome::NeedsApproval,
                 MonitoredRoutedRun::CoolingDown { remaining } => {
                     RoutedRunOutcome::CoolingDown { remaining }
@@ -749,6 +752,16 @@ mod linux {
         failure
     }
 
+    /// A scan cancelled because a route or approval change revoked its
+    /// authority stopped because the network changed under it, not because
+    /// of an internal error.
+    fn completed_scan_failure(error: DiscoveryError, authority_lost: bool) -> DiscoveryFailure {
+        match error {
+            DiscoveryError::Cancelled if authority_lost => DiscoveryFailure::RoutedProposalChanged,
+            error => scan_failure(error),
+        }
+    }
+
     fn scan_failure(error: DiscoveryError) -> DiscoveryFailure {
         match error {
             DiscoveryError::Interfaces(_) => DiscoveryFailure::InterfaceEnumeration,
@@ -773,6 +786,27 @@ mod linux {
             assert_eq!(observers.load(Ordering::SeqCst), OBSERVERS_LIVE);
             publish_observer_health(&observers, false);
             assert_eq!(observers.load(Ordering::SeqCst), OBSERVERS_FAILED);
+        }
+
+        #[test]
+        fn a_scan_cancelled_by_lost_authority_reports_a_changed_proposal() {
+            assert_eq!(
+                completed_scan_failure(DiscoveryError::Cancelled, true),
+                DiscoveryFailure::RoutedProposalChanged
+            );
+            assert_eq!(
+                completed_scan_failure(DiscoveryError::Cancelled, false),
+                DiscoveryFailure::Internal
+            );
+            let deadline = || DiscoveryError::RoutedScanDeadline {
+                deadline: std::time::Duration::from_secs(15),
+            };
+            for authority_lost in [false, true] {
+                assert_eq!(
+                    completed_scan_failure(deadline(), authority_lost),
+                    DiscoveryFailure::Network
+                );
+            }
         }
     }
 }

@@ -2,12 +2,15 @@
 //!
 //! A prepared observer subscribes before collecting a route snapshot, binds
 //! one exact coordinator baseline to that subscription, and moves the token
-//! only into the monitor's synchronous activation callback. The live session
-//! owns both the monitor task and its capacity-one reconciliation receiver.
+//! only into the monitor's synchronous activation callback. The collected
+//! snapshot also tells the subscribed observer which interfaces' IPv6 address
+//! changes cannot reach routed authority. The live session owns both the
+//! monitor task and its capacity-one reconciliation receiver.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use thiserror::Error;
 use tokio::runtime::Handle;
@@ -16,8 +19,9 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::discovery::routes::{
-    LinuxRouteEventMonitor, LinuxRouteMonitorError, LinuxRouteProvider, RouteMonitorObserver,
-    RouteProvider, RouteReconciliationRequired, RouteSnapshot,
+    InterfaceId, InterfaceKind, LinuxRouteEventMonitor, LinuxRouteMonitorError, LinuxRouteProvider,
+    NetworkInterface, NotificationKind, RouteMonitorObserver, RouteProvider,
+    RouteReconciliationRequired, RouteSnapshot,
 };
 
 use super::activation::RouteActivationCallback;
@@ -25,13 +29,73 @@ use super::{
     ObserverCoordinatorError, RouteBaselineToken, RouteObserverSink, RoutedObserverIncarnation,
 };
 
-impl RouteMonitorObserver for RouteObserverSink {
+/// The route monitor's view of one incarnation's routed authority.
+///
+/// Every notification invalidates, with one exception once the baseline
+/// snapshot is bound: an IPv6 address notification whose every message names
+/// an interface that the snapshot holds and never classifies as a tunnel.
+/// Routers refresh IPv6 address lifetimes every few seconds, and that change
+/// cannot reach routed authority. Candidate selection and the approval
+/// fingerprint read only IPv4 routes and addresses, except for the assigned
+/// prefixes of the tunnel a candidate is routed through, which include IPv6.
+/// Interface kind and state come from link attributes, and any link change is
+/// a link notification, which still invalidates.
+struct RouteAuthorityObserver {
+    sink: Arc<RouteObserverSink>,
+    /// Interfaces whose IPv6 address changes cannot affect the baseline.
+    ipv6_irrelevant: OnceLock<BTreeSet<InterfaceId>>,
+}
+
+impl RouteAuthorityObserver {
+    fn new(sink: Arc<RouteObserverSink>) -> Self {
+        Self {
+            sink,
+            ipv6_irrelevant: OnceLock::new(),
+        }
+    }
+
+    /// Bind the baseline snapshot this incarnation's authority derives from.
+    ///
+    /// An incarnation has exactly one baseline. A second binding cannot be
+    /// reconciled with notifications already judged, so it fails closed.
+    fn bind(&self, snapshot: &RouteSnapshot) {
+        let tunnels = snapshot
+            .interfaces()
+            .iter()
+            .filter(|interface| interface.kind() == InterfaceKind::Tunnel)
+            .map(NetworkInterface::id)
+            .collect::<BTreeSet<_>>();
+        let irrelevant = snapshot
+            .interfaces()
+            .iter()
+            .map(NetworkInterface::id)
+            .filter(|id| !tunnels.contains(id))
+            .collect();
+        if self.ipv6_irrelevant.set(irrelevant).is_err() {
+            self.sink.poison();
+        }
+    }
+}
+
+impl RouteMonitorObserver for RouteAuthorityObserver {
     fn invalidate(&self) {
-        RouteObserverSink::invalidate(self);
+        self.sink.invalidate();
     }
 
     fn poison(&self) {
-        RouteObserverSink::poison(self);
+        self.sink.poison();
+    }
+
+    fn requires_invalidation(&self, kind: NotificationKind, interfaces: &[u32]) -> bool {
+        if kind != NotificationKind::Ipv6Address || interfaces.is_empty() {
+            return true;
+        }
+        let Some(irrelevant) = self.ipv6_irrelevant.get() else {
+            return true;
+        };
+        !interfaces
+            .iter()
+            .all(|index| irrelevant.contains(&InterfaceId::new(u64::from(*index))))
     }
 }
 
@@ -76,9 +140,9 @@ impl PreparedLinuxRouteObserver {
     ) -> Result<(RouteSnapshot, Self), LinuxRouteObserverBridgeError> {
         let (snapshot, (monitor, reconciliation), sink, baseline) = Self::prepare_with(
             incarnation,
-            |sink| {
-                let monitor_sink: Arc<dyn RouteMonitorObserver> = sink;
-                LinuxRouteEventMonitor::subscribe(monitor_sink).map_err(Into::into)
+            |observer| {
+                let monitor_observer: Arc<dyn RouteMonitorObserver> = observer;
+                LinuxRouteEventMonitor::subscribe(monitor_observer).map_err(Into::into)
             },
             || {
                 LinuxRouteProvider::new().snapshot().map_err(|error| {
@@ -108,21 +172,25 @@ impl PreparedLinuxRouteObserver {
     /// deterministic under test without requiring a live rtnetlink socket.
     /// A subscription remains owned across the blocking snapshot await, so
     /// cancelling this future drops it and fails the source closed while the
-    /// read-only worker is allowed to finish without authority.
-    async fn prepare_with<S, R, Subscribe, Snapshot>(
+    /// read-only worker is allowed to finish without authority. The collected
+    /// snapshot is bound to the subscribed observer before it is returned.
+    async fn prepare_with<S, Subscribe, Snapshot>(
         incarnation: &mut RoutedObserverIncarnation,
         subscribe: Subscribe,
         snapshot: Snapshot,
-    ) -> Result<(R, S, Arc<RouteObserverSink>, RouteBaselineToken), LinuxRouteObserverBridgeError>
+    ) -> Result<
+        (RouteSnapshot, S, Arc<RouteObserverSink>, RouteBaselineToken),
+        LinuxRouteObserverBridgeError,
+    >
     where
         S: Send,
-        R: Send + 'static,
         Subscribe:
-            FnOnce(Arc<RouteObserverSink>) -> Result<S, LinuxRouteObserverBridgeError> + Send,
-        Snapshot: FnOnce() -> Result<R, ()> + Send + 'static,
+            FnOnce(Arc<RouteAuthorityObserver>) -> Result<S, LinuxRouteObserverBridgeError> + Send,
+        Snapshot: FnOnce() -> Result<RouteSnapshot, ()> + Send + 'static,
     {
         let sink = Arc::new(incarnation.take_route_sink()?);
-        let subscription = subscribe(Arc::clone(&sink))?;
+        let observer = Arc::new(RouteAuthorityObserver::new(Arc::clone(&sink)));
+        let subscription = subscribe(Arc::clone(&observer))?;
 
         // This token brackets the blocking snapshot. It cannot be replaced by
         // one minted after collection, and start() moves it directly into the
@@ -132,6 +200,7 @@ impl PreparedLinuxRouteObserver {
             .await
             .map_err(|_| LinuxRouteObserverBridgeError::SnapshotWorkerUnavailable)?
             .map_err(|()| LinuxRouteObserverBridgeError::SnapshotUnavailable)?;
+        observer.bind(&snapshot);
 
         Ok((snapshot, subscription, sink, baseline))
     }
@@ -358,12 +427,12 @@ mod tests {
     }
 
     struct FakeRouteSubscription {
-        sink: Arc<RouteObserverSink>,
+        observer: Arc<RouteAuthorityObserver>,
     }
 
     impl Drop for FakeRouteSubscription {
         fn drop(&mut self) {
-            self.sink.poison();
+            self.observer.poison();
         }
     }
 
@@ -378,6 +447,96 @@ mod tests {
         (coordinator, incarnation, sink)
     }
 
+    fn interface(id: u64, kind: InterfaceKind, is_up: bool) -> NetworkInterface {
+        let address = match kind {
+            InterfaceKind::Tunnel => "fd00:7::2/64",
+            InterfaceKind::Loopback | InterfaceKind::Other => "2001:db8::10/64",
+        };
+        NetworkInterface::new(
+            InterfaceId::new(id),
+            format!("if{id}"),
+            kind,
+            is_up,
+            [address.parse().unwrap()],
+        )
+    }
+
+    /// An Ethernet link, loopback, a down link, and up and down tunnels.
+    fn mixed_snapshot() -> RouteSnapshot {
+        RouteSnapshot::from_effective_routes(
+            vec![
+                interface(1, InterfaceKind::Loopback, true),
+                interface(2, InterfaceKind::Other, true),
+                interface(3, InterfaceKind::Other, false),
+                interface(7, InterfaceKind::Tunnel, true),
+                interface(8, InterfaceKind::Tunnel, false),
+            ],
+            vec![],
+        )
+    }
+
+    #[test]
+    fn authority_declines_only_ipv6_addresses_on_bound_non_tunnel_interfaces() {
+        let (_coordinator, _incarnation, sink) = route_sink_fixture();
+        let observer = RouteAuthorityObserver::new(sink);
+        let ipv6 = NotificationKind::Ipv6Address;
+
+        // Before a baseline is bound nothing is known to be irrelevant.
+        assert!(observer.requires_invalidation(ipv6, &[2]));
+
+        observer.bind(&mixed_snapshot());
+        assert!(!observer.requires_invalidation(ipv6, &[2]));
+        assert!(!observer.requires_invalidation(ipv6, &[1, 2, 3, 2]));
+        for interfaces in [&[7][..], &[8], &[2, 7], &[7, 2], &[42], &[2, 42], &[0], &[]] {
+            assert!(
+                observer.requires_invalidation(ipv6, interfaces),
+                "{interfaces:?}"
+            );
+        }
+        assert!(observer.requires_invalidation(NotificationKind::Ipv4Address, &[2]));
+        for kind in [
+            NotificationKind::Link,
+            NotificationKind::Ipv4Route,
+            NotificationKind::Ipv4Rule,
+        ] {
+            assert!(observer.requires_invalidation(kind, &[]), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn authority_observer_forwards_to_its_sink_and_refuses_a_second_baseline() {
+        let (_coordinator, incarnation, sink) = route_sink_fixture();
+        let observer = RouteAuthorityObserver::new(sink);
+        let baseline = incarnation.begin_route_baseline().unwrap();
+        observer.invalidate();
+        assert_eq!(
+            incarnation
+                .validate_route_baseline_current(&baseline)
+                .unwrap_err(),
+            ObserverCoordinatorError::StaleBaseline
+        );
+        observer.bind(&mixed_snapshot());
+        incarnation.begin_route_baseline().unwrap();
+
+        observer.bind(&RouteSnapshot::default());
+        assert_eq!(
+            incarnation.begin_route_baseline().unwrap_err(),
+            ObserverCoordinatorError::SourcePoisoned
+        );
+        assert!(
+            !observer.requires_invalidation(NotificationKind::Ipv6Address, &[2]),
+            "the first baseline stays bound"
+        );
+
+        let (_coordinator, incarnation, sink) = route_sink_fixture();
+        let observer = RouteAuthorityObserver::new(sink);
+        observer.poison();
+        assert_eq!(
+            incarnation.begin_route_baseline().unwrap_err(),
+            ObserverCoordinatorError::SourcePoisoned
+        );
+    }
+
     #[tokio::test]
     async fn preparation_subscribes_then_begins_baseline_before_snapshot_dispatch() {
         let coordinator = RoutedObserverCoordinator::new();
@@ -387,10 +546,13 @@ mod tests {
         let snapshot_phase = Arc::clone(&phase);
         let subscription_coordinator = Arc::clone(&coordinator.inner);
         let snapshot_coordinator = Arc::clone(&coordinator.inner);
+        let subscribed = Arc::new(Mutex::new(None));
+        let subscribed_observer = Arc::clone(&subscribed);
+        let unbound_observer = Arc::clone(&subscribed);
 
-        let ((), subscription, sink, _baseline) = PreparedLinuxRouteObserver::prepare_with(
+        let (snapshot, subscription, sink, _baseline) = PreparedLinuxRouteObserver::prepare_with(
             &mut incarnation,
-            move |sink| {
+            move |observer| {
                 assert_eq!(
                     subscription_coordinator
                         .state
@@ -404,7 +566,8 @@ mod tests {
                     subscription_phase.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst,),
                     Ok(0),
                 );
-                Ok(FakeRouteSubscription { sink })
+                *subscribed_observer.lock().unwrap() = Some(Arc::clone(&observer));
+                Ok(FakeRouteSubscription { observer })
             },
             move || {
                 assert_eq!(
@@ -416,13 +579,26 @@ mod tests {
                     snapshot_phase.compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst,),
                     Ok(1),
                 );
-                Ok(())
+                let observer = unbound_observer.lock().unwrap().clone().unwrap();
+                assert!(
+                    observer.requires_invalidation(NotificationKind::Ipv6Address, &[2]),
+                    "the observer is unbound while its snapshot is collected",
+                );
+                Ok(mixed_snapshot())
             },
         )
         .await
         .unwrap();
 
         assert_eq!(phase.load(Ordering::SeqCst), 2);
+        assert_eq!(snapshot, mixed_snapshot());
+        let observer = subscribed.lock().unwrap().take().unwrap();
+        assert!(
+            !observer.requires_invalidation(NotificationKind::Ipv6Address, &[2]),
+            "the collected snapshot is bound before it is returned",
+        );
+        assert!(observer.requires_invalidation(NotificationKind::Ipv6Address, &[7]));
+        drop(observer);
         drop(subscription);
         assert_eq!(
             incarnation.begin_route_baseline().unwrap_err(),
@@ -435,23 +611,23 @@ mod tests {
     async fn cancelling_snapshot_worker_fails_closed_and_worker_finishes_inertly() {
         let coordinator = RoutedObserverCoordinator::new();
         let mut incarnation = coordinator.start_incarnation().unwrap();
-        let retained_sink = Arc::new(Mutex::new(None));
-        let subscribed_sink = Arc::clone(&retained_sink);
+        let retained_observer = Arc::new(Mutex::new(None));
+        let subscribed_observer = Arc::clone(&retained_observer);
         let (started_sender, started) = oneshot::channel();
         let (release_sender, release) = std::sync::mpsc::channel();
         let (finished_sender, finished) = oneshot::channel();
 
         let mut preparation = Box::pin(PreparedLinuxRouteObserver::prepare_with(
             &mut incarnation,
-            move |sink| {
-                *subscribed_sink.lock().unwrap() = Some(Arc::clone(&sink));
-                Ok(FakeRouteSubscription { sink })
+            move |observer| {
+                *subscribed_observer.lock().unwrap() = Some(Arc::clone(&observer));
+                Ok(FakeRouteSubscription { observer })
             },
             move || {
                 let _ = started_sender.send(());
                 release.recv().unwrap();
                 let _ = finished_sender.send(());
-                Ok(())
+                Ok(RouteSnapshot::default())
             },
         ));
 
@@ -463,7 +639,7 @@ mod tests {
         }
         drop(preparation);
 
-        assert!(retained_sink.lock().unwrap().is_some());
+        assert!(retained_observer.lock().unwrap().is_some());
         assert_eq!(
             incarnation.begin_route_baseline().unwrap_err(),
             ObserverCoordinatorError::SourcePoisoned,
