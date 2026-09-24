@@ -238,15 +238,17 @@ Approved route-derived discovery (Linux):
 - Require remembered approval bound to a keyed, topology-redacted fingerprint
   of the targets, tunnel, routes, and budget; revoke it when that fingerprint,
   the route table, or the durable store changes.
-- Apply cooldown and exponential backoff after empty runs; rerun on a debounced
-  network change or explicit refresh, never on a timer.
+- Run only on explicit request: nothing reruns on its own, on a timer, or after
+  a network change (the unused automatic-rerun cooldown is removed, #160).
 - Run approved tunnel discovery even when a local tuner exists.
 
 Native providers: Linux uses rtnetlink and recognizes WireGuard and other
-unambiguous tunnel links. macOS and Windows providers stay unavailable with a
-fixed reason until a safe route-table wrapper, a provable routing domain, and a
-stable tunnel identity exist; exact and hostname targets are the supported path
-there.
+unambiguous tunnel links. macOS and Windows route-table providers stay
+unavailable with a fixed reason until a safe route-table wrapper, a provable
+routing domain, and a stable tunnel identity exist; exact and hostname targets
+are the supported path there. Network-change observation is separate: V2.8
+(#181) adds native macOS and Windows sources, which typed-subnet discovery
+(V2.4) requires on every platform.
 
 Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
 

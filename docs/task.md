@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **43/58 (74.1%)** records complete: historical P0–P4 **30/30**,
-hardening and assurance H0–H4 **13/21**, and roadmap V2 **0/7**. This is a
+Current status: **43/59 (72.9%)** records complete: historical P0–P4 **30/30**,
+hardening and assurance H0–H4 **13/21**, and roadmap V2 **0/8**. This is a
 dependency ledger, not an effort estimate.
 
 ## Current focus
@@ -181,8 +181,8 @@ Independent correctness fixes may continue.
   speculative extra-tuner allocation requires a separate approved design.
 
 - [ ] **V2.4 — Add explicitly approved subnet discovery ([#71]).** After
-  H0.1, implement the [approved traffic, consent, and delivery contract](typed-subnet-discovery-proposal.md);
-  confirm every search and preserve cross-platform cancellation.
+  H0.1 and V2.8, implement the [approved traffic, consent, and delivery contract](typed-subnet-discovery-proposal.md)
+  on every platform; confirm every search and preserve cross-platform cancellation.
 
 - [ ] **V2.5 — Complete deinterlacing quality evidence ([#78]).** Retain the
   implemented YADIF policy and diagnostics; measure mixed fields and CPU use,
@@ -195,6 +195,10 @@ Independent correctness fixes may continue.
 - [ ] **V2.7 — Prove mobile/TV prerequisites ([#64]).** After H0 and V2.1,
   validate GTK-free playback, sink/network boundaries, and each platform's
   feasibility; split proven platform milestones before implementing shells.
+
+- [ ] **V2.8 — Observe network changes natively on macOS and Windows ([#181]).**
+  Add macOS routing-socket and Windows IP Helper sources with Linux's baseline,
+  loss, and failure semantics, tested in each platform's CI lane.
 
 ## Historical v0.1.0 records
 
@@ -264,8 +268,8 @@ v0.1.1 packages.
   check, consume the sealed socket, and settle reservation completion.
 
 - [x] **P2.2 — Add routed-discovery UX.** Preview candidates and packet budget,
-  require explicit approval, and expose progress, cancel, cooldown, backoff,
-  and revocation.
+  require explicit approval, and expose progress, cancel, and revocation. The
+  unreachable automatic-rerun cooldown is removed under [#160].
 
 - [x] **P2.3 — Reconcile network changes.** Debounce adapter and route changes,
   expire stale evidence, cancel invalid authority synchronously, and keep
@@ -329,7 +333,8 @@ v0.1.1 packages.
 - Guide data: XMLTV, the HDHomeRun XMLTV API, and an in-band crawl of each
   full multiplex are v0.2 candidates; P0.8 ruled out now/next from the playing
   stream.
-- Native macOS and Windows route-table providers and observers.
+- Native macOS and Windows route-table providers for route-derived tunnel
+  discovery; V2.8 covers their network-change observers.
 - Code of conduct, support policy, and issue forms until there are
   contributors.
 - Decryption, DRM bypass, CableCARD protected-channel playback, or any
@@ -348,6 +353,8 @@ fake-device teardown-release proofs that closed the test-side half of M2.10
 are recorded there and in the changelog; P0.4 carries its live-device
 remainder.
 
+[#160]: https://github.com/jm2/balun/issues/160
+[#181]: https://github.com/jm2/balun/issues/181
 [#63]: https://github.com/jm2/balun/issues/63
 [#64]: https://github.com/jm2/balun/issues/64
 [#71]: https://github.com/jm2/balun/issues/71
