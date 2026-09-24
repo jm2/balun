@@ -377,6 +377,11 @@ jobs:
           "$RUNNER_TEMP/yamllint/bin/python" -B scripts/check_builder_images.py
           "$RUNNER_TEMP/yamllint/bin/python" -B scripts/test_builder_images.py
 
+      - name: Check reviewed release compiler selection
+        run: |
+          "$RUNNER_TEMP/yamllint/bin/python" -B scripts/check_release_rust.py
+          "$RUNNER_TEMP/yamllint/bin/python" -B scripts/test_release_rust.py
+
       - name: Lint GitHub Actions workflows
         run: |
           archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"

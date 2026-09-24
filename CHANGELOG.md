@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
+- Rustup-based release candidate jobs select reviewed Rust 1.98.0, with a separate
+  update manifest and CI rejection of changed or missing compiler selections.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
 - Locked the complete Markdown/TOML lint dependency tree with tarball integrity
   checks and disabled install scripts; CI no longer resolves fresh transitive

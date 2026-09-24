@@ -37,11 +37,19 @@ updates:
       interval: weekly
     open-pull-requests-limit: 1
     # This manifest proposes an X.Y compiler floor, tested at X.Y.0.
-    # Build jobs track stable independently and receive compiler patch fixes.
+    # Rolling CI tracks stable; release compiler updates are proposed separately.
     ignore:
       - dependency-name: "*"
         update-types:
           - version-update:semver-patch
+
+  # Release compiler selection is independent of the floor and includes patch fixes.
+  # A proposal must update the five literal action inputs and pass the complete CI.
+  - package-ecosystem: rust-toolchain
+    directory: /build-aux/release-toolchain
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
 
   - package-ecosystem: github-actions
     directory: /
