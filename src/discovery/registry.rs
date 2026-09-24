@@ -202,6 +202,17 @@ impl LocatorClaim {
         }
     }
 
+    /// Compare everything but freshness: the source, its origins, and the
+    /// advertised metadata.
+    fn same_evidence(&self, other: &Self) -> bool {
+        self.source == other.source
+            && self.origins.keys().eq(other.origins.keys())
+            && self.device_types == other.device_types
+            && self.tuner_count == other.tuner_count
+            && self.advertised_base_url == other.advertised_base_url
+            && self.advertised_lineup_url == other.advertised_lineup_url
+    }
+
     fn origin_preference(&self) -> u8 {
         self.origins
             .iter()
@@ -242,6 +253,20 @@ impl RegisteredDevice {
         self.locators.values().max_by(|left, right| {
             locator_preference(left, right).then_with(|| right.source.cmp(&left.source))
         })
+    }
+
+    /// Whether `other` holds the same locators, origins, and advertised
+    /// metadata, ignoring when each was seen. Re-observing an unchanged
+    /// device leaves its evidence the same.
+    #[must_use]
+    pub fn same_evidence(&self, other: &Self) -> bool {
+        self.device_id == other.device_id
+            && self.locators.len() == other.locators.len()
+            && self
+                .locators
+                .values()
+                .zip(other.locators.values())
+                .all(|(left, right)| left.same_evidence(right))
     }
 }
 
@@ -551,6 +576,15 @@ impl DeviceRegistry {
         Ok(self.sweep(|origin, _| !expires(origin)))
     }
 
+    /// Remove one device and release every locator it owned.
+    pub fn remove(&mut self, device_id: DeviceId) -> Option<RegisteredDevice> {
+        let device = self.devices.remove(&device_id)?;
+        for source in device.locators.keys() {
+            self.locator_owners.remove(source);
+        }
+        Some(device)
+    }
+
     /// Keep only the origins `retain` accepts, then drop empty locators and
     /// devices, reporting what was removed in stable order.
     fn sweep(
@@ -767,6 +801,59 @@ mod tests {
     }
 
     #[test]
+    fn same_evidence_ignores_freshness_but_not_origins_or_metadata() {
+        let id = DeviceId::new(FIRST_ID).unwrap();
+        let source = "192.0.2.10:65001";
+        let mut registry = DeviceRegistry::default();
+        registry
+            .observe(
+                observation(FIRST_ID, source, DiscoveryMethod::Targeted),
+                at(10),
+            )
+            .unwrap();
+        let before = registry.clone();
+
+        registry
+            .observe(
+                observation(FIRST_ID, source, DiscoveryMethod::Targeted),
+                at(20),
+            )
+            .unwrap();
+        let reprobed = registry.clone();
+        assert_ne!(reprobed.get(id), before.get(id));
+        assert!(
+            reprobed
+                .get(id)
+                .unwrap()
+                .same_evidence(before.get(id).unwrap())
+        );
+
+        let mut recounted = observation(FIRST_ID, source, DiscoveryMethod::Targeted);
+        recounted.tuner_count = Some(2);
+        registry.observe(recounted, at(30)).unwrap();
+        assert!(
+            !registry
+                .get(id)
+                .unwrap()
+                .same_evidence(before.get(id).unwrap())
+        );
+
+        let mut widened = reprobed.clone();
+        widened
+            .observe(
+                observation(FIRST_ID, source, DiscoveryMethod::Ipv4Broadcast),
+                at(30),
+            )
+            .unwrap();
+        assert!(
+            !widened
+                .get(id)
+                .unwrap()
+                .same_evidence(before.get(id).unwrap())
+        );
+    }
+
+    #[test]
     fn retains_exact_and_routed_targeted_origins_separately() {
         let id = DeviceId::new(FIRST_ID).unwrap();
         let source = "192.0.2.10:65001";
@@ -914,6 +1001,32 @@ mod tests {
         assert_eq!(outcome.reassigned_from, None);
         assert_eq!(registry.len(), 1);
         assert!(registry.get(second).is_some());
+    }
+
+    #[test]
+    fn removed_device_releases_its_locators() {
+        let first = DeviceId::new(FIRST_ID).unwrap();
+        let shared = "192.0.2.10:65001";
+        let mut registry = DeviceRegistry::default();
+        registry
+            .observe(
+                observation(FIRST_ID, shared, DiscoveryMethod::Targeted),
+                at(10),
+            )
+            .unwrap();
+
+        let removed = registry.remove(first).unwrap();
+
+        assert_eq!(removed.device_id(), first);
+        assert!(registry.is_empty());
+        assert!(registry.remove(first).is_none());
+        let outcome = registry
+            .observe(
+                observation(SECOND_ID, shared, DiscoveryMethod::Targeted),
+                at(20),
+            )
+            .unwrap();
+        assert_eq!(outcome.reassigned_from, None);
     }
 
     #[test]

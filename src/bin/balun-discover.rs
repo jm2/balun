@@ -458,6 +458,7 @@ fn write_inspection_issue(
     let reason = match kind {
         DeviceInspectionIssueKind::UnsupportedEndpoint => "is unsupported",
         DeviceInspectionIssueKind::SnapshotFailed => "snapshot failed",
+        DeviceInspectionIssueKind::LocatorConflict => "is claimed by another device",
     };
     writeln!(
         stderr,
