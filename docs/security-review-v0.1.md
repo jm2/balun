@@ -120,7 +120,7 @@ resolution, pixbuf imports, path escapes, architecture mismatch, and valid
 transitive closure. The native CI fixture compiles real Mach-O files, reproduces
 external/missing/pixbuf dependencies, proves the probe profile denies the vendor
 library, and launches the valid bundled case after deleting that external library.
-Physical packaged-tuner acceptance remains P4.1; archive containment remains H2.4.
+Physical packaged-tuner acceptance closed with P4.1 (v0.1.1); archive containment remains H2.4.
 
 ### 2026-09-17 Windows complete-tree probe receipt (H0.5)
 

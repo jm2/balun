@@ -267,15 +267,17 @@ application presented its window. `-InnoSetup -SkipBundle` then compiled a
 its version resource. No tuner was contacted; the Windows live-TV trial above
 used a development build.
 
-## Packaged live-tuner acceptance boundary
+## Packaged live-tuner acceptance
 
-The recorded Linux and Windows live-TV trials used development builds. The
-Windows package smoke exercised its staged runtime and synthetic fixture but
-contacted no tuner. `scripts/validate-packaged-hardware.sh` provides a macOS
-package-validation path, but this document contains no complete cross-platform
-packaged live-tuner result. P4.1 therefore remains open for Linux, macOS, and
-Windows package candidates, including the documented launch, discovery, tune,
-switch, close, startup, idle, and switch-budget evidence.
+The earlier Linux and Windows live-TV trials above used development builds. In
+September 2026 the maintainer tested the published v0.1.1 packages against real
+tuners on Linux, macOS, and Windows: launch, discovery, tuning with audio,
+channel switching, and close all worked. This completes P4.1. Startup, idle, and
+switch budgets were not re-measured for the packages; the development-build
+figures under [Tune and teardown budgets](#tune-and-teardown-budgets) stand, and
+the V2.1 re-take remains open. Linux coverage was brief: the IPv6 address-refresh
+discovery defect later found in review (#145) was not observed and is fixed for
+v0.1.2.
 
 ## In-band guide spike
 

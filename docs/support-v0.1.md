@@ -19,8 +19,8 @@ it is unsupported. Every ✅ is traceable to a section of the compatibility note
 The table names the `0.1.0` inventory built, inspected, reopened, and checksummed by the release
 workflow and published as "Balun v0.1.0 Alpha" on the
 [Releases](https://github.com/jm2/balun/releases) page on 2026-09-05. The
-Live TV column records development-build evidence, not packaged live-tuner acceptance. A macOS
-packaged-hardware validation path exists, but cross-platform packaged acceptance remains P4.1.
+Live TV column records development-build evidence. The maintainer separately accepted the v0.1.1
+packages on Linux, macOS, and Windows ([P4.1](compatibility-v0.1.md#packaged-live-tuner-acceptance)).
 Architecture-specific entries do not extend the physical-tuner evidence to every CPU and format.
 The Windows and macOS packages stage reviewed decoder closures; Flatpak uses its runtime, and the
 native Linux packages use the distribution's installed runtime.
@@ -107,7 +107,7 @@ nothing.
   [Linux live-TV acceptance](compatibility-v0.1.md#linux-live-tv-acceptance),
   [macOS live-TV acceptance](compatibility-v0.1.md#macos-live-tv-acceptance), and
   [Windows package smoke](compatibility-v0.1.md#windows-package-smoke); ledger P0.1 to P0.3 and
-  P3.2 to P3.4. Cross-platform packaged live-tuner acceptance remains P4.1.
+  P3.2 to P3.4; packaged live-tuner acceptance of v0.1.1 is P4.1.
 - Devices:
   [Primary metadata and lineup](compatibility-v0.1.md#primary-site-metadata-and-lineup-probe),
   [Secondary validation](compatibility-v0.1.md#secondary-site-metadata-and-playback-validation),
