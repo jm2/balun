@@ -2,9 +2,10 @@
 //!
 //! A network change is any adapter, address, or route event the platform can
 //! report. Bursts are coalesced so one reconciliation runs per burst, and the
-//! only thing a coalesced change carries is the set of interface names that
-//! disappeared, went down, or lost an address since the previous observation.
-//! Nothing here sends a packet, and no value defined here enters a snapshot.
+//! only thing a coalesced change carries is what each interface lost since the
+//! previous observation: the interface itself, an IPv4 address, an IPv6
+//! link-local address, or its last routable IPv6 address. Nothing here sends a
+//! packet, and no value defined here enters a snapshot.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -20,37 +21,108 @@ pub const NETWORK_CHANGE_QUIET_PERIOD: Duration = Duration::from_millis(500);
 /// Longest a continuing burst may be held before it is delivered anyway.
 pub const NETWORK_CHANGE_MAX_DELAY: Duration = Duration::from_secs(2);
 
+/// What one interface lost between two observations.
+///
+/// Each field names the discovery evidence that became stale: IPv4 broadcast
+/// and routed IPv4 replies, IPv6 link-local multicast replies, and IPv6
+/// site-local multicast replies. A removed interface loses all of them.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct InterfaceLoss {
+    ipv4: bool,
+    ipv6_link_local: bool,
+    ipv6_routable: bool,
+}
+
+impl InterfaceLoss {
+    /// The interface disappeared or is no longer up.
+    pub const REMOVED: Self = Self {
+        ipv4: true,
+        ipv6_link_local: true,
+        ipv6_routable: true,
+    };
+
+    /// Nothing observed through the interface became stale.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        !(self.ipv4 || self.ipv6_link_local || self.ipv6_routable)
+    }
+
+    /// The interface is gone or lost an IPv4 address.
+    #[must_use]
+    pub const fn ipv4(self) -> bool {
+        self.ipv4
+    }
+
+    /// The interface is gone or lost an IPv6 link-local address.
+    #[must_use]
+    pub const fn ipv6_link_local(self) -> bool {
+        self.ipv6_link_local
+    }
+
+    /// The interface is gone or no longer has any routable IPv6 address.
+    #[must_use]
+    pub const fn ipv6_routable(self) -> bool {
+        self.ipv6_routable
+    }
+
+    #[must_use]
+    const fn union(self, other: Self) -> Self {
+        Self {
+            ipv4: self.ipv4 || other.ipv4,
+            ipv6_link_local: self.ipv6_link_local || other.ipv6_link_local,
+            ipv6_routable: self.ipv6_routable || other.ipv6_routable,
+        }
+    }
+}
+
 /// One coalesced network change, as the controller reconciles it.
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct NetworkChange {
-    lost_interfaces: BTreeSet<String>,
+    lost_interfaces: BTreeMap<String, InterfaceLoss>,
     coalesced: usize,
 }
 
 impl NetworkChange {
-    /// A change that lost exactly these interfaces.
+    /// A change in which exactly these interfaces were removed.
     #[must_use]
     pub fn new(lost_interfaces: impl IntoIterator<Item = String>) -> Self {
         Self {
-            lost_interfaces: lost_interfaces.into_iter().collect(),
+            lost_interfaces: lost_interfaces
+                .into_iter()
+                .map(|name| (name, InterfaceLoss::REMOVED))
+                .collect(),
             coalesced: 1,
         }
     }
 
-    /// A change that stands for `coalesced` raw notifications.
+    /// A change that stands for `coalesced` raw notifications. Interfaces
+    /// that lost nothing are dropped.
     #[must_use]
-    pub fn coalesced(lost_interfaces: BTreeSet<String>, coalesced: usize) -> Self {
+    pub fn coalesced(
+        mut lost_interfaces: BTreeMap<String, InterfaceLoss>,
+        coalesced: usize,
+    ) -> Self {
+        lost_interfaces.retain(|_, loss| !loss.is_empty());
         Self {
             lost_interfaces,
             coalesced: coalesced.max(1),
         }
     }
 
-    /// Interfaces that disappeared, went down, or lost an address. Evidence
-    /// observed through them is stale; these names never enter a snapshot.
+    /// What each affected interface lost. Evidence observed through it in a
+    /// lost family is stale; these names never enter a snapshot.
     #[must_use]
-    pub const fn lost_interfaces(&self) -> &BTreeSet<String> {
+    pub const fn lost_interfaces(&self) -> &BTreeMap<String, InterfaceLoss> {
         &self.lost_interfaces
+    }
+
+    /// What `interface` lost; empty when it lost nothing.
+    #[must_use]
+    pub fn loss(&self, interface: &str) -> InterfaceLoss {
+        self.lost_interfaces
+            .get(interface)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// How many raw notifications this change stands for.
@@ -61,7 +133,10 @@ impl NetworkChange {
 
     /// Fold a later change into this one.
     pub fn merge(&mut self, later: Self) {
-        self.lost_interfaces.extend(later.lost_interfaces);
+        for (name, loss) in later.lost_interfaces {
+            let merged = self.loss(&name).union(loss);
+            self.lost_interfaces.insert(name, merged);
+        }
         self.coalesced = self.coalesced.saturating_add(later.coalesced);
     }
 }
@@ -158,21 +233,47 @@ impl InterfaceInventory {
         self.interfaces.is_empty()
     }
 
-    /// Interfaces present here that are gone, down, or missing one of their
-    /// addresses in `later`. An interface that only gained addresses is kept.
+    /// What each interface present here lost in `later`: the interface
+    /// itself (gone or down), any IPv4 address, any IPv6 link-local address,
+    /// or its last routable IPv6 address. Temporary IPv6 addresses rotate
+    /// routinely while a stable one remains, so losing one of several
+    /// routable IPv6 addresses is not a loss; neither is gaining addresses.
+    /// Interfaces that lost nothing are omitted.
     #[must_use]
-    pub fn lost_since(&self, later: &Self) -> BTreeSet<String> {
+    pub fn loss_since(&self, later: &Self) -> BTreeMap<String, InterfaceLoss> {
         self.interfaces
             .iter()
-            .filter(|(name, addresses)| {
-                later
+            .filter_map(|(name, before)| {
+                let loss = later
                     .interfaces
-                    .get(*name)
-                    .is_none_or(|current| !addresses.is_subset(current))
+                    .get(name)
+                    .map_or(InterfaceLoss::REMOVED, |after| address_loss(before, after));
+                (!loss.is_empty()).then(|| (name.clone(), loss))
             })
-            .map(|(name, _)| name.clone())
             .collect()
     }
+}
+
+fn address_loss(before: &BTreeSet<IpAddr>, after: &BTreeSet<IpAddr>) -> InterfaceLoss {
+    let gone = |family: fn(&IpAddr) -> bool| {
+        before
+            .iter()
+            .any(|address| family(address) && !after.contains(address))
+    };
+    let routable_v6 = |address: &IpAddr| is_ipv6(address) && !is_ipv6_link_local(address);
+    InterfaceLoss {
+        ipv4: gone(IpAddr::is_ipv4),
+        ipv6_link_local: gone(is_ipv6_link_local),
+        ipv6_routable: before.iter().any(routable_v6) && !after.iter().any(routable_v6),
+    }
+}
+
+const fn is_ipv6(address: &IpAddr) -> bool {
+    matches!(address, IpAddr::V6(_))
+}
+
+const fn is_ipv6_link_local(address: &IpAddr) -> bool {
+    matches!(address, IpAddr::V6(address) if address.is_unicast_link_local())
 }
 
 impl fmt::Debug for InterfaceInventory {
@@ -189,8 +290,9 @@ pub use linux::{LinuxNetworkChangeWatcher, NetworkChangeWatchError};
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::collections::BTreeSet;
+    use std::collections::BTreeMap;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use thiserror::Error;
     use tokio::runtime::Handle;
@@ -199,7 +301,7 @@ mod linux {
 
     use super::{Coalesced, InterfaceInventory, NetworkChange, coalesce_burst};
     use crate::discovery::routes::{
-        LinuxRouteEventMonitor, LinuxRouteMonitorError, RouteMonitorObserver,
+        LinuxRouteEventMonitor, LinuxRouteMonitorError, NotificationKind, RouteMonitorObserver,
     };
 
     /// A topology-redacted reason one observation attempt ended.
@@ -219,12 +321,45 @@ mod linux {
 
     /// The watcher holds no discovery authority, so route events have nothing
     /// to invalidate or poison; they only feed the coalesced change stream.
-    struct InertObserver;
+    /// It records whether anything other than an address notification
+    /// arrived, so a burst of address-lifetime refreshes can be recognized.
+    #[derive(Default)]
+    struct EventKinds {
+        beyond_addresses: AtomicBool,
+    }
 
-    impl RouteMonitorObserver for InertObserver {
+    impl EventKinds {
+        /// Whether a link, route, or rule notification arrived since the last
+        /// call. The monitor records a kind before queuing its reconciliation,
+        /// so every notification of a delivered burst is already counted.
+        fn take_beyond_addresses(&self) -> bool {
+            self.beyond_addresses.swap(false, Ordering::AcqRel)
+        }
+    }
+
+    impl RouteMonitorObserver for EventKinds {
         fn invalidate(&self) {}
 
         fn poison(&self) {}
+
+        fn observed(&self, kind: NotificationKind) {
+            if !kind.is_address() {
+                self.beyond_addresses.store(true, Ordering::Release);
+            }
+        }
+    }
+
+    /// Whether a delivered burst can matter to discovery evidence or routed
+    /// authority. Routers refresh address lifetimes every few seconds on
+    /// many IPv6 networks; a burst of only address notifications that left
+    /// every interface and address unchanged is such a refresh and is
+    /// dropped. Link, route, and rule notifications are always delivered.
+    pub(super) fn burst_matters(
+        previous: &InterfaceInventory,
+        latest: &InterfaceInventory,
+        beyond_addresses: bool,
+    ) -> bool {
+        beyond_addresses || previous != latest
     }
 
     /// Debounced Linux network-change observation over rtnetlink.
@@ -249,9 +384,10 @@ mod linux {
         ) -> Result<(), NetworkChangeWatchError> {
             let runtime =
                 Handle::try_current().map_err(|_| NetworkChangeWatchError::RuntimeUnavailable)?;
-            let (monitor, mut reconciliation) =
-                LinuxRouteEventMonitor::subscribe(Arc::new(InertObserver))
-                    .map_err(|_| NetworkChangeWatchError::MonitorUnavailable)?;
+            let kinds = Arc::new(EventKinds::default());
+            let observer: Arc<dyn RouteMonitorObserver> = kinds.clone();
+            let (monitor, mut reconciliation) = LinuxRouteEventMonitor::subscribe(observer)
+                .map_err(|_| NetworkChangeWatchError::MonitorUnavailable)?;
             let (baseline, baseline_receiver) = oneshot::channel();
             let monitor_task =
                 AbortOnDropHandle::new(runtime.spawn(monitor.run_continuously(move || {
@@ -271,7 +407,7 @@ mod linux {
                 }
             };
             if let Some(previous) = inventory.replace(current.clone()) {
-                let lost = previous.lost_since(&current);
+                let lost = previous.loss_since(&current);
                 if changes
                     .send(NetworkChange::coalesced(lost, 1))
                     .await
@@ -290,16 +426,23 @@ mod linux {
                 let Some(Coalesced { count, .. }) = burst else {
                     break;
                 };
+                // Take the kinds before reading the inventory: a notification
+                // after this point belongs to the next burst, and the kernel
+                // state it reports is already visible to the read below.
+                let beyond_addresses = kinds.take_beyond_addresses();
                 let lost = match tokio::task::spawn_blocking(InterfaceInventory::current).await {
                     Ok(Ok(latest)) => {
-                        let lost = current.lost_since(&latest);
+                        if !burst_matters(&current, &latest, beyond_addresses) {
+                            continue;
+                        }
+                        let lost = current.loss_since(&latest);
                         current = latest;
                         *inventory = Some(current.clone());
                         lost
                     }
                     // The change is still real; authority is cancelled even
                     // when nothing can be attributed.
-                    Ok(Err(_)) | Err(_) => BTreeSet::new(),
+                    Ok(Err(_)) | Err(_) => BTreeMap::new(),
                 };
                 if changes
                     .send(NetworkChange::coalesced(lost, count))
@@ -361,6 +504,54 @@ mod linux {
                     | NetworkChangeWatchError::BaselineChanged,
                 ) => {}
                 Err(error) => panic!("unexpected observation failure {error:?}"),
+            }
+        }
+
+        fn inventory(entries: &[(&str, &str)]) -> InterfaceInventory {
+            InterfaceInventory::from_addresses(
+                entries
+                    .iter()
+                    .map(|(name, ip)| ((*name).to_owned(), ip.parse().unwrap())),
+            )
+        }
+
+        #[test]
+        fn address_lifetime_refreshes_are_not_changes() {
+            let before = inventory(&[("eth0", "192.0.2.10"), ("eth0", "2001:db8::10")]);
+            let same = before.clone();
+            let gained = inventory(&[
+                ("eth0", "192.0.2.10"),
+                ("eth0", "2001:db8::10"),
+                ("eth0", "2001:db8::11"),
+            ]);
+
+            // Only address notifications, and nothing changed: a refresh.
+            assert!(!burst_matters(&before, &same, false));
+            // Any added or removed address is delivered.
+            assert!(burst_matters(&before, &gained, false));
+            assert!(burst_matters(&gained, &before, false));
+            // Link, route, and rule notifications are always delivered even
+            // though the interface inventory cannot show what they changed.
+            assert!(burst_matters(&before, &same, true));
+        }
+
+        #[test]
+        fn only_link_route_and_rule_notifications_go_beyond_addresses() {
+            let kinds = EventKinds::default();
+            kinds.observed(NotificationKind::Ipv6Address);
+            kinds.observed(NotificationKind::Ipv4Address);
+            assert!(!kinds.take_beyond_addresses());
+
+            for kind in [
+                NotificationKind::Link,
+                NotificationKind::Ipv4Route,
+                NotificationKind::Ipv4Rule,
+            ] {
+                kinds.observed(NotificationKind::Ipv6Address);
+                kinds.observed(kind);
+                assert!(kinds.take_beyond_addresses(), "{kind:?}");
+                // Taking clears the record for the next burst.
+                assert!(!kinds.take_beyond_addresses());
             }
         }
 
@@ -472,7 +663,8 @@ mod tests {
             first
                 .value
                 .lost_interfaces()
-                .is_disjoint(second.value.lost_interfaces())
+                .keys()
+                .all(|name| !second.value.lost_interfaces().contains_key(name))
         );
     }
 
@@ -495,56 +687,99 @@ mod tests {
     }
 
     #[test]
-    fn lost_interfaces_are_those_gone_down_or_missing_an_address() {
+    fn interfaces_lose_what_disappeared_per_address_family() {
         let before = inventory(&[
             ("eth0", "192.0.2.10"),
             ("eth0", "fd12:3456::10"),
             ("wlan0", "198.51.100.20"),
             ("wg0", "10.250.0.2"),
             ("eth1", "203.0.113.5"),
+            ("eth3", "fe80::3"),
         ]);
         let after = inventory(&[
-            // eth0 lost its IPv6 address but kept IPv4.
+            // eth0 lost its only routable IPv6 address but kept IPv4.
             ("eth0", "192.0.2.10"),
             // wlan0 moved to another network.
             ("wlan0", "198.51.100.99"),
-            // wg0 is unchanged; eth1 is gone; eth2 is new.
+            // wg0 is unchanged; eth1 is gone; eth2 is new; eth3 lost its
+            // link-local address and gained a routable one.
             ("wg0", "10.250.0.2"),
             ("eth2", "192.0.2.77"),
+            ("eth3", "2001:db8::3"),
         ]);
 
-        let lost = before.lost_since(&after);
+        let lost = before.loss_since(&after);
 
+        let families = |name: &str| {
+            let loss = lost[name];
+            [loss.ipv4(), loss.ipv6_link_local(), loss.ipv6_routable()]
+        };
         assert_eq!(
-            lost,
-            ["eth0", "eth1", "wlan0"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect()
+            lost.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["eth0", "eth1", "eth3", "wlan0"]
         );
-        assert!(after.lost_since(&after).is_empty());
-        assert_eq!(after.len(), 4);
+        assert_eq!(families("eth0"), [false, false, true]);
+        assert_eq!(lost["eth1"], InterfaceLoss::REMOVED);
+        assert_eq!(families("eth3"), [false, true, false]);
+        assert_eq!(families("wlan0"), [true, false, false]);
+        assert!(after.loss_since(&after).is_empty());
+        assert_eq!(after.len(), 5);
         assert!(!after.is_empty());
+    }
+
+    #[test]
+    fn a_rotated_temporary_ipv6_address_is_not_a_loss() {
+        let before = inventory(&[
+            ("eth0", "192.0.2.10"),
+            ("eth0", "fe80::10"),
+            ("eth0", "2001:db8::10"),
+            ("eth0", "2001:db8::beef"),
+        ]);
+        let after = inventory(&[
+            ("eth0", "192.0.2.10"),
+            ("eth0", "fe80::10"),
+            ("eth0", "2001:db8::10"),
+            ("eth0", "2001:db8::cafe"),
+        ]);
+        assert!(before.loss_since(&after).is_empty());
     }
 
     #[test]
     fn an_interface_that_only_gained_addresses_is_not_lost() {
         let before = inventory(&[("eth0", "192.0.2.10")]);
         let after = inventory(&[("eth0", "192.0.2.10"), ("eth0", "192.0.2.11")]);
-        assert!(before.lost_since(&after).is_empty());
+        assert!(before.loss_since(&after).is_empty());
     }
 
     #[test]
-    fn merging_changes_unions_interfaces_and_sums_counts() {
-        let mut merged = change(&["eth0"]);
-        merged.merge(change(&["eth0", "wg0"]));
-        merged.merge(NetworkChange::coalesced(BTreeSet::new(), 3));
+    fn merging_changes_unions_losses_and_sums_counts() {
+        let ipv4_only =
+            inventory(&[("eth0", "192.0.2.10")]).loss_since(&inventory(&[("eth0", "192.0.2.11")]));
+        let mut merged = NetworkChange::coalesced(ipv4_only, 1);
+        let link_local_only =
+            inventory(&[("eth0", "fe80::1")]).loss_since(&inventory(&[("eth0", "192.0.2.11")]));
+        merged.merge(NetworkChange::coalesced(link_local_only, 1));
+        merged.merge(change(&["wg0"]));
+        merged.merge(NetworkChange::coalesced(BTreeMap::new(), 3));
 
         assert_eq!(merged.lost_interfaces().len(), 2);
-        assert_eq!(merged.coalesced_count(), 5);
+        let eth0 = merged.loss("eth0");
+        assert!(eth0.ipv4() && eth0.ipv6_link_local() && !eth0.ipv6_routable());
+        assert_eq!(merged.loss("wg0"), InterfaceLoss::REMOVED);
+        assert!(merged.loss("eth9").is_empty());
+        assert_eq!(merged.coalesced_count(), 6);
         assert_eq!(
-            NetworkChange::coalesced(BTreeSet::new(), 0).coalesced_count(),
+            NetworkChange::coalesced(BTreeMap::new(), 0).coalesced_count(),
             1
+        );
+        // An interface that lost nothing is not recorded.
+        let unchanged = [("eth0".to_owned(), InterfaceLoss::default())]
+            .into_iter()
+            .collect();
+        assert!(
+            NetworkChange::coalesced(unchanged, 1)
+                .lost_interfaces()
+                .is_empty()
         );
     }
 
@@ -565,7 +800,7 @@ mod tests {
         let Ok(inventory) = InterfaceInventory::current() else {
             return;
         };
-        let lost = inventory.lost_since(&inventory);
+        let lost = inventory.loss_since(&inventory);
         assert!(lost.is_empty());
         assert!(!format!("{inventory:?}").contains("127.0.0.1"));
     }

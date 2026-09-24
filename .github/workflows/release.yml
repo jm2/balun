@@ -172,10 +172,18 @@ jobs:
         shell: pwsh
         run: ./scripts/test-build-windows-routing.ps1
 
+      - name: Read the reviewed release compiler
+        id: release-rust
+        shell: bash
+        run: |
+          toolchain="$(sed -n 's/^channel = "\([0-9.]*\)"$/\1/p' build-aux/release-toolchain/rust-toolchain.toml)"
+          test -n "$toolchain"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          toolchain: stable
+          toolchain: ${{ steps.release-rust.outputs.toolchain }}
 
       - name: Test tagged source
         run: cargo test --all-targets --locked
@@ -240,12 +248,16 @@ jobs:
 
       - name: Install the pinned cargo-source generator dependencies
         run: |
-          python3 -m pip install --requirement build-aux/flatpak/generator-requirements.txt \
-            --break-system-packages \
-            || python3 -m pip install --requirement build-aux/flatpak/generator-requirements.txt
+          unset PYTHONPATH PYTHONHOME
+          python3 -m venv --without-pip "$RUNNER_TEMP/flatpak-generator"
+          python3 -m pip --python "$RUNNER_TEMP/flatpak-generator/bin/python" install \
+            --require-hashes --only-binary=:all: \
+            --requirement build-aux/flatpak/generator-lock-requirements.txt
 
       - name: Generate cargo-sources.json from the tagged lockfile
-        run: bash build-aux/flatpak/generate-cargo-sources.sh
+        run: |
+          unset PYTHONPATH PYTHONHOME
+          PYTHON="$RUNNER_TEMP/flatpak-generator/bin/python" bash build-aux/flatpak/generate-cargo-sources.sh
 
       - name: Build the Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
@@ -293,10 +305,18 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: '1'
         run: brew install create-dmg gstreamer gtk4 libadwaita adwaita-icon-theme pkgconf
 
+      - name: Read the reviewed release compiler
+        id: release-rust
+        shell: bash
+        run: |
+          toolchain="$(sed -n 's/^channel = "\([0-9.]*\)"$/\1/p' build-aux/release-toolchain/rust-toolchain.toml)"
+          test -n "$toolchain"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          toolchain: stable
+          toolchain: ${{ steps.release-rust.outputs.toolchain }}
           targets: aarch64-apple-darwin
 
       - name: Build, sign, probe, and reopen the macOS disk image
@@ -381,10 +401,18 @@ jobs:
             ${{ matrix.mingw_package_prefix }}-pkg-config
             ${{ matrix.mingw_package_prefix }}-toolchain
 
+      - name: Read the reviewed release compiler
+        id: release-rust
+        shell: bash
+        run: |
+          toolchain="$(sed -n 's/^channel = "\([0-9.]*\)"$/\1/p' build-aux/release-toolchain/rust-toolchain.toml)"
+          test -n "$toolchain"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          toolchain: stable
+          toolchain: ${{ steps.release-rust.outputs.toolchain }}
           targets: ${{ matrix.rust_target }}
 
       - name: Build the Windows desktop through the helper
@@ -469,10 +497,18 @@ jobs:
           ref: ${{ needs.prepare.outputs.build_ref }}
           persist-credentials: false
 
+      - name: Read the reviewed release compiler
+        id: release-rust
+        shell: bash
+        run: |
+          toolchain="$(sed -n 's/^channel = "\([0-9.]*\)"$/\1/p' build-aux/release-toolchain/rust-toolchain.toml)"
+          test -n "$toolchain"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          toolchain: stable
+          toolchain: ${{ steps.release-rust.outputs.toolchain }}
 
       - name: Install the reviewed Debian package builder
         run: cargo install cargo-deb --version 3.7.0 --locked
@@ -518,10 +554,18 @@ jobs:
           ref: ${{ needs.prepare.outputs.build_ref }}
           persist-credentials: false
 
+      - name: Read the reviewed release compiler
+        id: release-rust
+        shell: bash
+        run: |
+          toolchain="$(sed -n 's/^channel = "\([0-9.]*\)"$/\1/p' build-aux/release-toolchain/rust-toolchain.toml)"
+          test -n "$toolchain"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          toolchain: stable
+          toolchain: ${{ steps.release-rust.outputs.toolchain }}
 
       - name: Install the reviewed RPM package builder
         run: cargo install cargo-generate-rpm --version 0.21.0 --locked

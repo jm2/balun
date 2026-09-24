@@ -60,6 +60,50 @@ const RECONCILIATION_CAPACITY: usize = 1;
 pub(in crate::discovery) trait RouteMonitorObserver: Send + Sync {
     fn invalidate(&self);
     fn poison(&self);
+
+    /// Called with the kind of each validated notification, before
+    /// [`Self::requires_invalidation`] and any `invalidate`.
+    fn observed(&self, _kind: NotificationKind) {}
+
+    /// Whether a validated notification must invalidate this observer and
+    /// request reconciliation. `interfaces` holds the interface index of every
+    /// message in an address notification and is empty for every other kind.
+    ///
+    /// The default always requires it. An observer may decline only a
+    /// notification it can prove cannot change what it guards. A declined
+    /// notification still counts as a change to a post-snapshot barrier.
+    fn requires_invalidation(&self, _kind: NotificationKind, _interfaces: &[u32]) -> bool {
+        true
+    }
+}
+
+/// The rtnetlink group that carried one validated notification.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::discovery) enum NotificationKind {
+    Link,
+    Ipv4Address,
+    Ipv6Address,
+    Ipv4Route,
+    Ipv4Rule,
+}
+
+impl NotificationKind {
+    /// Whether the notification reported an interface address, which covers
+    /// the lifetime refreshes routers trigger for addresses that already exist.
+    pub(in crate::discovery) const fn is_address(self) -> bool {
+        matches!(self, Self::Ipv4Address | Self::Ipv6Address)
+    }
+
+    const fn from_group(group: u32) -> Option<Self> {
+        match group {
+            RTNLGRP_LINK => Some(Self::Link),
+            RTNLGRP_IPV4_IFADDR => Some(Self::Ipv4Address),
+            RTNLGRP_IPV6_IFADDR => Some(Self::Ipv6Address),
+            RTNLGRP_IPV4_ROUTE => Some(Self::Ipv4Route),
+            RTNLGRP_IPV4_RULE => Some(Self::Ipv4Rule),
+            _ => None,
+        }
+    }
 }
 
 /// A coalesced request for the controller to debounce and rebuild its baseline.
@@ -329,14 +373,21 @@ impl MonitorCore {
         source_pid: u32,
         source_groups: &Groups,
     ) -> Result<(), LinuxRouteMonitorError> {
-        if let Err(error) = validate_notification(bytes, source_pid, source_groups) {
-            return self.fail(error);
-        }
+        let (kind, interfaces) = match validate_notification(bytes, source_pid, source_groups) {
+            Ok(notification) => notification,
+            Err(error) => return self.fail(error),
+        };
 
-        // This is deliberately sticky for the lifetime of the subscription.
-        // A cancelled or repeated baseline barrier can therefore never turn a
-        // previously invalidated incarnation healthy again.
+        // This is deliberately sticky for the lifetime of the subscription,
+        // and set even for a notification the observer declines below. A
+        // cancelled or repeated baseline barrier can therefore never turn a
+        // previously invalidated incarnation healthy again, and any change
+        // while a baseline is being established still rejects it.
         self.notification_seen = true;
+        self.observer.observed(kind);
+        if !self.observer.requires_invalidation(kind, &interfaces) {
+            return Ok(());
+        }
         // Invalidate before notification. A full channel only coalesces work;
         // it never delays or suppresses authority invalidation.
         self.observer.invalidate();
@@ -568,11 +619,13 @@ where
     Ok(())
 }
 
+/// Validate one datagram, returning its kind and, for an address
+/// notification, the interface index of every message it carries.
 fn validate_notification(
     bytes: &[u8],
     source_pid: u32,
     source_groups: &Groups,
-) -> Result<(), LinuxRouteMonitorError> {
+) -> Result<(NotificationKind, Vec<u32>), LinuxRouteMonitorError> {
     // Only the sender sockaddr is kernel-authenticated. The nlmsg_pid header is
     // ordinary datagram content and can be forged by a userspace netlink peer.
     if source_pid != 0 {
@@ -583,7 +636,14 @@ fn validate_notification(
         return Err(LinuxRouteMonitorError::UnsupportedNotification);
     }
 
-    validate_netlink_frames(bytes, groups.as_slice())
+    let interfaces = validate_netlink_frames(bytes, groups.as_slice())?;
+    // Every message was checked against exactly this one source group.
+    match groups.as_slice() {
+        [group] => NotificationKind::from_group(*group)
+            .map(|kind| (kind, interfaces))
+            .ok_or(LinuxRouteMonitorError::UnsupportedNotification),
+        _ => Err(LinuxRouteMonitorError::UnsupportedNotification),
+    }
 }
 
 const NETLINK_HEADER_BYTES: usize = 16;
@@ -598,12 +658,15 @@ fn aligned_netlink_length(length: usize) -> Option<usize> {
 /// neli 0.7.4 subtracts the header size from `nl_len` while decoding. Feeding
 /// it a short length can panic in debug builds or wrap into an enormous
 /// allocation in optimized builds, so this pass is a required parser boundary.
+///
+/// Returns the interface index of every address message, in datagram order.
 fn validate_netlink_frames(
     bytes: &[u8],
     source_groups: &[u32],
-) -> Result<(), LinuxRouteMonitorError> {
+) -> Result<Vec<u32>, LinuxRouteMonitorError> {
     let mut offset = 0_usize;
     let mut messages = 0_usize;
+    let mut interfaces = Vec::new();
 
     while offset < bytes.len() {
         let header_end = offset
@@ -649,10 +712,11 @@ fn validate_netlink_frames(
         let payload = bytes
             .get(payload_start..message_end)
             .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
-        let expected_group = validate_rtnl_payload(message_type, payload)?;
+        let (expected_group, address_interface) = validate_rtnl_payload(message_type, payload)?;
         if source_groups != [expected_group] {
             return Err(LinuxRouteMonitorError::UnsupportedNotification);
         }
+        interfaces.extend(address_interface);
         let padded =
             aligned_netlink_length(declared).ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
         offset = offset
@@ -669,7 +733,7 @@ fn validate_netlink_frames(
     if messages == 0 || offset != bytes.len() {
         return Err(LinuxRouteMonitorError::InvalidDatagram);
     }
-    Ok(())
+    Ok(interfaces)
 }
 
 fn preflight_route_attributes(
@@ -716,16 +780,29 @@ fn preflight_route_attributes(
     Ok(())
 }
 
-fn validate_rtnl_payload(message_type: u16, bytes: &[u8]) -> Result<u32, LinuxRouteMonitorError> {
+/// Validate one message payload, returning the source group it must arrive
+/// on and, for an address message, the index of the interface it names.
+fn validate_rtnl_payload(
+    message_type: u16,
+    bytes: &[u8],
+) -> Result<(u32, Option<u32>), LinuxRouteMonitorError> {
     if message_type == u16::from(Rtm::Newlink) || message_type == u16::from(Rtm::Dellink) {
         preflight_route_attributes(bytes, 16)?;
-        Ok(RTNLGRP_LINK)
+        Ok((RTNLGRP_LINK, None))
     } else if message_type == u16::from(Rtm::Newaddr) || message_type == u16::from(Rtm::Deladdr) {
+        // struct ifaddrmsg: u8 family, prefixlen, flags, and scope, then the
+        // interface index as a native-endian u32, followed by rtattrs.
+        let &[family, _, _, _, i0, i1, i2, i3, ..] = bytes else {
+            return Err(LinuxRouteMonitorError::InvalidDatagram);
+        };
         preflight_route_attributes(bytes, 8)?;
-        match bytes.first().copied() {
-            Some(family) if family == u8::from(RtAddrFamily::Inet) => Ok(RTNLGRP_IPV4_IFADDR),
-            Some(family) if family == u8::from(RtAddrFamily::Inet6) => Ok(RTNLGRP_IPV6_IFADDR),
-            Some(_) | None => Err(LinuxRouteMonitorError::UnsupportedNotification),
+        let index = u32::from_ne_bytes([i0, i1, i2, i3]);
+        if family == u8::from(RtAddrFamily::Inet) {
+            Ok((RTNLGRP_IPV4_IFADDR, Some(index)))
+        } else if family == u8::from(RtAddrFamily::Inet6) {
+            Ok((RTNLGRP_IPV6_IFADDR, Some(index)))
+        } else {
+            Err(LinuxRouteMonitorError::UnsupportedNotification)
         }
     } else {
         // Linux fib_rule_hdr and rtmsg are both a 12-byte fixed header
@@ -735,9 +812,9 @@ fn validate_rtnl_payload(message_type: u16, bytes: &[u8]) -> Result<u32, LinuxRo
             return Err(LinuxRouteMonitorError::UnsupportedNotification);
         }
         if message_type == u16::from(Rtm::Newroute) || message_type == u16::from(Rtm::Delroute) {
-            Ok(RTNLGRP_IPV4_ROUTE)
+            Ok((RTNLGRP_IPV4_ROUTE, None))
         } else {
-            Ok(RTNLGRP_IPV4_RULE)
+            Ok((RTNLGRP_IPV4_RULE, None))
         }
     }
 }
@@ -775,6 +852,10 @@ mod tests {
     struct FakeObserver {
         invalidations: AtomicUsize,
         poisons: AtomicUsize,
+        kinds: std::sync::Mutex<Vec<(NotificationKind, usize)>>,
+        /// Decline every IPv6 address notification.
+        decline_ipv6_addresses: bool,
+        decisions: std::sync::Mutex<Vec<(NotificationKind, Vec<u32>)>>,
     }
 
     impl RouteMonitorObserver for FakeObserver {
@@ -785,6 +866,28 @@ mod tests {
         fn poison(&self) {
             self.poisons.fetch_add(1, Ordering::SeqCst);
         }
+
+        fn observed(&self, kind: NotificationKind) {
+            let invalidations = self.invalidations.load(Ordering::SeqCst);
+            self.kinds.lock().unwrap().push((kind, invalidations));
+        }
+
+        fn requires_invalidation(&self, kind: NotificationKind, interfaces: &[u32]) -> bool {
+            self.decisions
+                .lock()
+                .unwrap()
+                .push((kind, interfaces.to_vec()));
+            !(self.decline_ipv6_addresses && kind == NotificationKind::Ipv6Address)
+        }
+    }
+
+    /// The default decision, as every observer except routed authority keeps.
+    struct DefaultObserver;
+
+    impl RouteMonitorObserver for DefaultObserver {
+        fn invalidate(&self) {}
+
+        fn poison(&self) {}
     }
 
     enum FakeReceive {
@@ -898,6 +1001,23 @@ mod tests {
         bytes.into_inner()
     }
 
+    /// One address message naming interface `index`, followed by an
+    /// `IFA_CACHEINFO` attribute as a router's lifetime refresh carries.
+    fn address_datagram(message_type: Rtm, group: u32, index: u32) -> Vec<u8> {
+        const IFA_CACHEINFO: u16 = 6;
+        let family = if group == RTNLGRP_IPV6_IFADDR {
+            RtAddrFamily::Inet6
+        } else {
+            RtAddrFamily::Inet
+        };
+        let mut payload = vec![u8::from(family), 64, 0, 0];
+        payload.extend_from_slice(&index.to_ne_bytes());
+        payload.extend_from_slice(&20_u16.to_ne_bytes());
+        payload.extend_from_slice(&IFA_CACHEINFO.to_ne_bytes());
+        payload.extend_from_slice(&[0_u8; 16]);
+        datagram_with_payload(u16::from(message_type), &payload)
+    }
+
     fn raw_netlink_frame(declared_length: u32, message_type: u16) -> Vec<u8> {
         let mut bytes = vec![0_u8; NETLINK_HEADER_BYTES];
         bytes[0..4].copy_from_slice(&declared_length.to_ne_bytes());
@@ -952,6 +1072,206 @@ mod tests {
         assert_eq!(observer.poisons.load(Ordering::SeqCst), 0);
         assert_eq!(receiver.try_recv(), Ok(RouteReconciliationRequired));
         assert_eq!(receiver.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+    }
+
+    #[test]
+    fn each_notification_reports_its_kind_before_invalidating() {
+        let events = [
+            (Rtm::Newlink, RTNLGRP_LINK, NotificationKind::Link),
+            (
+                Rtm::Newaddr,
+                RTNLGRP_IPV4_IFADDR,
+                NotificationKind::Ipv4Address,
+            ),
+            (
+                Rtm::Newaddr,
+                RTNLGRP_IPV6_IFADDR,
+                NotificationKind::Ipv6Address,
+            ),
+            (
+                Rtm::Newroute,
+                RTNLGRP_IPV4_ROUTE,
+                NotificationKind::Ipv4Route,
+            ),
+            (Rtm::Newrule, RTNLGRP_IPV4_RULE, NotificationKind::Ipv4Rule),
+        ];
+        let (mut core, observer, _receiver) = core();
+
+        for (message_type, group, _) in events {
+            let bytes = datagram(u16::from(message_type), group);
+            core.notification(&bytes, 0, &Groups::new_groups(&[group]))
+                .unwrap();
+        }
+
+        let kinds = observer.kinds.lock().unwrap().clone();
+        let expected = events
+            .iter()
+            .enumerate()
+            .map(|(index, (_, _, kind))| (*kind, index))
+            .collect::<Vec<_>>();
+        // Each kind arrives while the invalidation count still excludes its
+        // own notification: the report precedes, and never replaces, it.
+        assert_eq!(kinds, expected);
+        assert_eq!(observer.invalidations.load(Ordering::SeqCst), events.len());
+        assert!(NotificationKind::Ipv4Address.is_address());
+        assert!(NotificationKind::Ipv6Address.is_address());
+        for kind in [
+            NotificationKind::Link,
+            NotificationKind::Ipv4Route,
+            NotificationKind::Ipv4Rule,
+        ] {
+            assert!(!kind.is_address());
+        }
+    }
+
+    #[test]
+    fn address_notifications_carry_the_interface_index_of_every_message() {
+        let ipv6 = Groups::new_groups(&[RTNLGRP_IPV6_IFADDR]);
+        let mut burst = address_datagram(Rtm::Newaddr, RTNLGRP_IPV6_IFADDR, 3);
+        burst.extend(address_datagram(
+            Rtm::Deladdr,
+            RTNLGRP_IPV6_IFADDR,
+            0x0102_0304,
+        ));
+        burst.extend(address_datagram(Rtm::Newaddr, RTNLGRP_IPV6_IFADDR, 3));
+        assert_eq!(
+            validate_notification(&burst, 0, &ipv6),
+            Ok((NotificationKind::Ipv6Address, vec![3, 0x0102_0304, 3]))
+        );
+
+        let ipv4 = address_datagram(Rtm::Newaddr, RTNLGRP_IPV4_IFADDR, 9);
+        assert_eq!(
+            validate_notification(&ipv4, 0, &Groups::new_groups(&[RTNLGRP_IPV4_IFADDR])),
+            Ok((NotificationKind::Ipv4Address, vec![9]))
+        );
+
+        for (message_type, group, kind) in [
+            (Rtm::Newlink, RTNLGRP_LINK, NotificationKind::Link),
+            (
+                Rtm::Newroute,
+                RTNLGRP_IPV4_ROUTE,
+                NotificationKind::Ipv4Route,
+            ),
+            (Rtm::Newrule, RTNLGRP_IPV4_RULE, NotificationKind::Ipv4Rule),
+        ] {
+            let mut bytes = datagram(u16::from(message_type), group);
+            bytes.extend(datagram(u16::from(message_type), group));
+            assert_eq!(
+                validate_notification(&bytes, 0, &Groups::new_groups(&[group])),
+                Ok((kind, Vec::new()))
+            );
+        }
+
+        // A later message of the other family can never hide behind the first.
+        let mut mixed = address_datagram(Rtm::Newaddr, RTNLGRP_IPV6_IFADDR, 3);
+        mixed.extend(address_datagram(Rtm::Newaddr, RTNLGRP_IPV4_IFADDR, 3));
+        for group in [RTNLGRP_IPV6_IFADDR, RTNLGRP_IPV4_IFADDR] {
+            assert_eq!(
+                validate_notification(&mixed, 0, &Groups::new_groups(&[group])),
+                Err(LinuxRouteMonitorError::UnsupportedNotification)
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_decision_always_requires_invalidation() {
+        for kind in [
+            NotificationKind::Link,
+            NotificationKind::Ipv4Address,
+            NotificationKind::Ipv6Address,
+            NotificationKind::Ipv4Route,
+            NotificationKind::Ipv4Rule,
+        ] {
+            assert!(DefaultObserver.requires_invalidation(kind, &[]));
+            assert!(DefaultObserver.requires_invalidation(kind, &[1, 2]));
+        }
+    }
+
+    #[test]
+    fn a_declined_notification_neither_invalidates_nor_requests_reconciliation() {
+        let observer = Arc::new(FakeObserver {
+            decline_ipv6_addresses: true,
+            ..FakeObserver::default()
+        });
+        let (sender, mut receiver) = mpsc::channel(RECONCILIATION_CAPACITY);
+        let trait_observer: Arc<dyn RouteMonitorObserver> = observer.clone();
+        let mut core = MonitorCore::new(trait_observer, sender);
+
+        let mut refresh = address_datagram(Rtm::Newaddr, RTNLGRP_IPV6_IFADDR, 4);
+        refresh.extend(address_datagram(Rtm::Newaddr, RTNLGRP_IPV6_IFADDR, 5));
+        core.notification(&refresh, 0, &Groups::new_groups(&[RTNLGRP_IPV6_IFADDR]))
+            .unwrap();
+        assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
+        assert_eq!(receiver.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+        assert_eq!(
+            observer.kinds.lock().unwrap().as_slice(),
+            [(NotificationKind::Ipv6Address, 0)],
+            "a declined notification is still observed"
+        );
+        assert!(core.notification_seen, "and still counts for a barrier");
+
+        // IPv4 address, link, route, and rule notifications still invalidate.
+        let events = [
+            (
+                address_datagram(Rtm::Deladdr, RTNLGRP_IPV4_IFADDR, 4),
+                RTNLGRP_IPV4_IFADDR,
+            ),
+            (
+                datagram(u16::from(Rtm::Newlink), RTNLGRP_LINK),
+                RTNLGRP_LINK,
+            ),
+            (
+                datagram(u16::from(Rtm::Delroute), RTNLGRP_IPV4_ROUTE),
+                RTNLGRP_IPV4_ROUTE,
+            ),
+            (
+                datagram(u16::from(Rtm::Newrule), RTNLGRP_IPV4_RULE),
+                RTNLGRP_IPV4_RULE,
+            ),
+        ];
+        for (index, (bytes, group)) in events.iter().enumerate() {
+            core.notification(bytes, 0, &Groups::new_groups(&[*group]))
+                .unwrap();
+            assert_eq!(observer.invalidations.load(Ordering::SeqCst), index + 1);
+            assert_eq!(receiver.try_recv(), Ok(RouteReconciliationRequired));
+        }
+        assert_eq!(
+            observer.decisions.lock().unwrap().as_slice(),
+            [
+                (NotificationKind::Ipv6Address, vec![4, 5]),
+                (NotificationKind::Ipv4Address, vec![4]),
+                (NotificationKind::Link, Vec::new()),
+                (NotificationKind::Ipv4Route, Vec::new()),
+                (NotificationKind::Ipv4Rule, Vec::new()),
+            ]
+        );
+        assert_eq!(observer.poisons.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_declined_notification_still_rejects_a_snapshot_handoff() {
+        let observer = Arc::new(FakeObserver {
+            decline_ipv6_addresses: true,
+            ..FakeObserver::default()
+        });
+        let (sender, _receiver) = mpsc::channel(RECONCILIATION_CAPACITY);
+        let trait_observer: Arc<dyn RouteMonitorObserver> = observer.clone();
+        let mut core = MonitorCore::new(trait_observer, sender);
+        let mut source = FakeSource::new([
+            event(Rtm::Newaddr, RTNLGRP_IPV6_IFADDR),
+            FakeReceive::Error(io::ErrorKind::WouldBlock.into()),
+        ]);
+        let mut buffer = vec![0_u8; RECEIVE_BUFFER_BYTES];
+
+        assert_eq!(
+            complete_snapshot_handoff(&mut source, &mut core, &mut buffer, || {
+                panic!("a changed barrier must not activate")
+            })
+            .await,
+            Err(LinuxRouteMonitorError::ChangedDuringSnapshot)
+        );
+        assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
+        assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
     }
 
     #[test]
