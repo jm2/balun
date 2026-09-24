@@ -26,7 +26,8 @@ root; `npx --yes markdownlint-cli2@0.18.1 "**/*.md"` reproduces the Markdown che
   finding and resolve its thread.
 - Keep a pull request to one ledger record where possible. Split a large record into reviewable
   slices rather than weakening a contract to make it fit.
-- The repository owner merges.
+- The repository owner merges. Dependabot's minor and patch updates merge automatically once the
+  required CI checks pass; major updates wait for review.
 
 ## Ledger discipline
 
@@ -70,13 +71,12 @@ Model names, firmware versions, and counts are fine. Fixtures follow the same ru
 
 ## Rust toolchain
 
-The minimum supported Rust version is declared in `Cargo.toml`, mirrored in the README and the
-MSRV CI job, and proposed by Dependabot through `build-aux/toolchain/rust-toolchain.toml`. Run
+The minimum supported Rust version is declared in `Cargo.toml`, mirrored in the README, the
+MSRV CI job, and `build-aux/toolchain/rust-toolchain.toml`. Run
 `python3 scripts/sync_rust_toolchain.py --check` after touching any of them, and raise the floor
-only through that helper.
-The proposal stays at the first patch release (`X.Y.0`) so CI tests the declared
-minimum. Dependabot ignores patch-only proposals for this manifest; ordinary build
-jobs track stable Rust and receive compiler patch fixes independently.
+deliberately through that helper; Dependabot does not propose it.
+The floor stays at the first patch release (`X.Y.0`) so CI tests the declared minimum;
+ordinary build jobs track stable Rust and receive compiler patch fixes independently.
 
 ## License
 

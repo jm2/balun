@@ -471,7 +471,8 @@ mod tests {
         for secret in ["/auto/", "5004", "http://"] {
             assert!(!rendered_snapshot.contains(secret), "{rendered_snapshot}");
         }
-        for secret in ["/auto/", "5004", "65001", "127.0.0.1", "http://"] {
+        let discovery_port = format!(":{}", device.discovery_target().port());
+        for secret in ["/auto/", "5004", &discovery_port, "127.0.0.1", "http://"] {
             assert!(!handoff_debug.contains(secret), "{handoff_debug}");
         }
 

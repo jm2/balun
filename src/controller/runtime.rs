@@ -34,7 +34,8 @@ use super::{
 use crate::discovery::{
     DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryMethod, DiscoveryObservation,
     DiscoveryReport, ExactDiscoveryTarget, ExpirationOutcome, HostnameResolutionError,
-    HostnameResolver, HostnameTarget, LocatorOrigin, NetworkChange, ProbeConfig, RegistryInstant,
+    HostnameResolver, HostnameTarget, InterfaceLoss, LocatorOrigin, NetworkChange, ProbeConfig,
+    RegistryError, RegistryInstant,
 };
 use crate::discovery::{MAX_ROUTED_CANDIDATES, RoutedProposalOriginSummary, RoutedScanTrigger};
 use crate::domain::{ChannelKey, DeviceId};
@@ -863,15 +864,26 @@ impl ControllerActor {
         change: NetworkChange,
     ) -> Result<(), ControllerRuntimeError> {
         // (1) Cancel before the first await so no datagram leaves on the old
-        // authority; joining afterwards keeps the lanes deterministic.
-        let cancelled_scope = self.active_discovery.as_ref().map(|active| active.scope);
-        if let Some(active) = &self.active_discovery {
-            active.cancellation.cancel();
-        }
+        // authority; joining afterwards keeps the lanes deterministic. A local
+        // or exact probe holds no authority, and a change that lost nothing
+        // (a route change, a new address) cannot make its replies stale, so it
+        // keeps running; a routed scan always stops.
+        let cancelled_scope = match &self.active_discovery {
+            Some(active)
+                if matches!(active.scope, DiscoveryScope::Routed(_))
+                    || !change.lost_interfaces().is_empty() =>
+            {
+                active.cancellation.cancel();
+                Some(active.scope)
+            }
+            _ => None,
+        };
         if let Some(control) = &self.active_routed_control {
             control.cancellation.cancel();
         }
-        self.cancel_active_discovery().await;
+        if cancelled_scope.is_some() {
+            self.cancel_active_discovery().await;
+        }
         self.cancel_active_routed_control().await;
         if self.shutdown.is_cancelled() {
             return Ok(());
@@ -891,9 +903,7 @@ impl ControllerActor {
         // locator survives. A selected device whose evidence changed goes
         // through the same clearing path as any other evidence mutation.
         let (mut update, expired) = self.build_reconciliation(&change)?;
-        let selected_changed = self.selected_device.is_some_and(|device_id| {
-            self.registry.get(device_id) != update.registry.get(device_id)
-        });
+        let selected_changed = self.selected_evidence_changed(&update.registry);
         if selected_changed {
             self.cancel_active_selection().await;
             if self.shutdown.is_cancelled() {
@@ -945,14 +955,14 @@ impl ControllerActor {
         &self,
         change: &NetworkChange,
     ) -> Result<(DiscoveryUpdate, ExpirationOutcome), ControllerRuntimeError> {
-        let lost = change.lost_interfaces();
+        // Routed discovery is IPv4-only.
         let routed_lost = self.routed_batch.as_ref().is_some_and(|batch| {
             batch
                 .interfaces
                 .iter()
-                .any(|interface| lost.contains(interface))
+                .any(|interface| change.loss(interface).ipv4())
         });
-        let expires = |origin: &LocatorOrigin| origin_expires(origin, lost, routed_lost);
+        let expires = |origin: &LocatorOrigin| origin_expires(origin, change, routed_lost);
 
         let local_batch = self.local_batch.as_ref().and_then(|batch| {
             batch.retain(|observation| {
@@ -972,8 +982,9 @@ impl ControllerActor {
         let expired = registry
             .expire_origins(now, expires)
             .map_err(|_| ControllerRuntimeError::RegistryInvariant)?;
-        let devices =
-            project_devices(&registry).map_err(|()| ControllerRuntimeError::RegistryInvariant)?;
+        // A surviving locator can promote evidence that cannot be shown; that
+        // device leaves the list rather than stopping the controller.
+        let (devices, unlisted) = project_devices(&mut registry);
         Ok((
             DiscoveryUpdate {
                 local_batch,
@@ -981,6 +992,7 @@ impl ControllerActor {
                 exact_sources: self.exact_sources.clone(),
                 registry,
                 devices,
+                ignored: u16::try_from(unlisted).unwrap_or(u16::MAX),
             },
             expired,
         ))
@@ -1404,6 +1416,7 @@ impl ControllerActor {
                                 }
                             }
 
+                            let issue_count = issue_count.saturating_add(update.ignored);
                             self.commit_discovery_update(update);
                             self.discovery = DiscoveryState::ready_for(
                                 self.discovery_generation,
@@ -1423,9 +1436,7 @@ impl ControllerActor {
                         }
                         DiscoveryScope::Exact(_) | DiscoveryScope::Routed(_) => {
                             let kind = completion.scope.kind();
-                            let selected_changed = self.selected_device.is_some_and(|device_id| {
-                                self.registry.get(device_id) != update.registry.get(device_id)
-                            });
+                            let selected_changed = self.selected_evidence_changed(&update.registry);
                             if selected_changed {
                                 self.cancel_active_selection().await;
                                 if self.shutdown.is_cancelled() {
@@ -1439,6 +1450,7 @@ impl ControllerActor {
                                 )?;
                             }
 
+                            let issue_count = issue_count.saturating_add(update.ignored);
                             self.commit_discovery_update(update);
                             self.discovery = if no_response {
                                 DiscoveryState::no_response_for(
@@ -1535,15 +1547,16 @@ impl ControllerActor {
             },
         }
 
-        let registry =
+        let (mut registry, contradicted) =
             rebuild_registry(local_batch.as_ref(), routed_batch.as_ref(), &exact_sources)?;
-        let devices = project_devices(&registry)?;
+        let (devices, unlisted) = project_devices(&mut registry);
         Ok(DiscoveryUpdate {
             local_batch,
             routed_batch,
             exact_sources,
             registry,
             devices,
+            ignored: u16::try_from(contradicted + unlisted).unwrap_or(u16::MAX),
         })
     }
 
@@ -1553,6 +1566,18 @@ impl ControllerActor {
         self.exact_sources = update.exact_sources;
         self.registry = update.registry;
         self.devices = update.devices;
+    }
+
+    /// Whether `candidate` changes the selected device's evidence. Freshness
+    /// is ignored, so re-probing an unchanged tuner keeps its selection.
+    fn selected_evidence_changed(&self, candidate: &DeviceRegistry) -> bool {
+        self.selected_device.is_some_and(|device_id| {
+            match (self.registry.get(device_id), candidate.get(device_id)) {
+                (Some(current), Some(next)) => !current.same_evidence(next),
+                // The device appeared or disappeared.
+                (current, next) => current.is_some() != next.is_some(),
+            }
+        })
     }
 
     fn expected_device_for_exact_target(&self, target: ExactDiscoveryTarget) -> Option<DeviceId> {
@@ -2006,11 +2031,18 @@ fn preserve_device_summary(
     Ok(())
 }
 
+/// Replay the retained batches in time order and count the observations left
+/// out.
+///
+/// An observation newer than the claim it contradicts proves the address
+/// changed hands, so it takes the address over. An equally fresh
+/// contradiction, such as two tuners answering from one address behind
+/// overlapping subnets, is ambiguous: the first claim stands.
 fn rebuild_registry(
     local_batch: Option<&RetainedDiscoveryBatch>,
     routed_batch: Option<&RetainedDiscoveryBatch>,
     exact_sources: &BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
-) -> Result<DeviceRegistry, ()> {
+) -> Result<(DeviceRegistry, usize), ()> {
     let mut batches = Vec::with_capacity(2 + exact_sources.len());
     if let Some(batch) = local_batch {
         batches.push((batch.seen_at, DiscoveryScope::Local, batch));
@@ -2031,14 +2063,36 @@ fn rebuild_registry(
     batches.sort_by_key(|(seen_at, scope, _)| (*seen_at, *scope));
 
     let mut registry = DeviceRegistry::default();
+    let mut contradicted = 0;
     for (seen_at, _, batch) in batches {
         for observation in &batch.observations {
-            registry
-                .observe(observation.clone(), seen_at)
-                .map_err(|_| ())?;
+            let replayed = match registry.observe(observation.clone(), seen_at) {
+                Err(RegistryError::LocatorConflict {
+                    locator,
+                    current_owner,
+                    ..
+                }) => {
+                    let superseded = registry
+                        .get(current_owner)
+                        .and_then(|device| {
+                            device.locators().find(|claim| claim.source() == locator)
+                        })
+                        .is_some_and(|claim| claim.last_seen() < seen_at);
+                    if superseded {
+                        registry
+                            .confirm_reassignment(observation.clone(), seen_at)
+                            .map(drop)
+                    } else {
+                        contradicted += 1;
+                        Ok(())
+                    }
+                }
+                other => other.map(drop),
+            };
+            replayed.map_err(|_| ())?;
         }
     }
-    Ok(registry)
+    Ok((registry, contradicted))
 }
 
 /// A routed batch may hold many devices, but every observation must be a
@@ -2081,27 +2135,36 @@ async fn recv_optional<T>(receiver: Option<&mut mpsc::Receiver<T>>) -> Option<T>
 /// Whether one locator origin depended on something a network change lost.
 ///
 /// Exact and hostname targets are user data and never expire here. Local
-/// broadcast and multicast origins expire with their interface. Routed
-/// origins carry no interface of their own; they expire together when the
-/// tunnel the routed batch was bound to is lost.
-fn origin_expires(origin: &LocatorOrigin, lost: &BTreeSet<String>, routed_lost: bool) -> bool {
+/// broadcast and multicast origins expire when their interface lost the
+/// address family they were observed through, so an IPv6 address rotation
+/// leaves IPv4 evidence in place. Routed origins carry no interface of their
+/// own; they expire together when the tunnel the routed batch was bound to is
+/// lost.
+fn origin_expires(origin: &LocatorOrigin, change: &NetworkChange, routed_lost: bool) -> bool {
+    let loss = |family: fn(InterfaceLoss) -> bool| {
+        origin
+            .interface
+            .as_deref()
+            .is_some_and(|interface| family(change.loss(interface)))
+    };
     match origin.method {
         DiscoveryMethod::Targeted => false,
         DiscoveryMethod::RoutedTargeted => routed_lost,
-        DiscoveryMethod::Ipv4Broadcast
-        | DiscoveryMethod::Ipv6LinkLocalMulticast
-        | DiscoveryMethod::Ipv6SiteLocalMulticast => origin
-            .interface
-            .as_deref()
-            .is_some_and(|interface| lost.contains(interface)),
+        DiscoveryMethod::Ipv4Broadcast => loss(InterfaceLoss::ipv4),
+        DiscoveryMethod::Ipv6LinkLocalMulticast => loss(InterfaceLoss::ipv6_link_local),
+        DiscoveryMethod::Ipv6SiteLocalMulticast => loss(InterfaceLoss::ipv6_routable),
     }
 }
 
-fn project_devices(registry: &DeviceRegistry) -> Result<Vec<DeviceSummary>, ()> {
-    registry
-        .devices()
-        .map(|device| {
-            let preferred = device.preferred_locator().ok_or(())?;
+/// Project each registered device on its own and count the devices left out.
+///
+/// A device whose evidence cannot be shown is also removed from `registry`,
+/// so selection and streaming never reach a device the list omits.
+fn project_devices(registry: &mut DeviceRegistry) -> (Vec<DeviceSummary>, usize) {
+    let mut devices = Vec::with_capacity(registry.len());
+    let mut unlisted = Vec::new();
+    for device in registry.devices() {
+        let projected = device.preferred_locator().map(|preferred| {
             DeviceSummary::new(
                 device.device_id(),
                 None,
@@ -2110,9 +2173,22 @@ fn project_devices(registry: &DeviceRegistry) -> Result<Vec<DeviceSummary>, ()> 
                 preferred.source(),
                 device.locators().map(|claim| claim.source()).collect(),
             )
-            .map_err(|_| ())
-        })
-        .collect()
+        });
+        match projected {
+            Some(Ok(summary)) => devices.push(summary),
+            // A registered device always has a preferred locator; either way
+            // it cannot be listed.
+            unusable => {
+                let error = unusable.and_then(Result::err);
+                tracing::warn!(?error, "discovered device not listed");
+                unlisted.push(device.device_id());
+            }
+        }
+    }
+    for device_id in &unlisted {
+        registry.remove(*device_id);
+    }
+    (devices, unlisted.len())
 }
 
 fn project_resolution_failure(
@@ -2300,6 +2376,8 @@ struct DiscoveryUpdate {
     exact_sources: BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
     registry: DeviceRegistry,
     devices: Vec<DeviceSummary>,
+    /// Observations and devices the rebuild left out, counted as issues.
+    ignored: u16,
 }
 
 struct ActiveDiscovery {
@@ -2797,7 +2875,7 @@ mod tests {
             .registry
             .observe(observation, RegistryInstant::from_duration(Duration::ZERO))
             .unwrap();
-        actor.devices = project_devices(&actor.registry).unwrap();
+        actor.devices = project_devices(&mut actor.registry).0;
         actor.selection_generation = OperationGeneration::new(1);
         actor.selected_device = Some(first_id());
         actor
@@ -3107,7 +3185,9 @@ mod tests {
             ),
         ]);
 
-        let registry = rebuild_registry(Some(&local_batch), None, &exact_sources).unwrap();
+        let (registry, contradicted) =
+            rebuild_registry(Some(&local_batch), None, &exact_sources).unwrap();
+        assert_eq!(contradicted, 0);
         assert_eq!(registry.clock(), Some(newer_at));
         let device = registry.get(first_id()).unwrap();
         let tied_source = exact_report(tied_target, first_id(), 4).observations[0].source;
@@ -3132,6 +3212,61 @@ mod tests {
             device.preferred_locator().map(|claim| claim.source()),
             Some(exact_report(newer_target, first_id(), 8).observations[0].source)
         );
+    }
+
+    #[test]
+    fn newer_batches_take_over_a_contradicted_address_and_ties_keep_the_first_claim() {
+        let target = exact_target(6);
+        let older_at = RegistryInstant::from_duration(Duration::from_secs(10));
+        let newer_at = RegistryInstant::from_duration(Duration::from_secs(20));
+        let exact_sources = |seen_at| {
+            BTreeMap::from([(
+                target,
+                RetainedExactSource {
+                    bound_device: Some(first_id()),
+                    batch: RetainedDiscoveryBatch::new(
+                        seen_at,
+                        exact_report(target, first_id(), 4).observations,
+                    ),
+                },
+            )])
+        };
+        let mut replacement = exact_report(target, second_id(), 2)
+            .observations
+            .pop()
+            .unwrap();
+        replacement.method = DiscoveryMethod::Ipv4Broadcast;
+        replacement.interface = Some("eth0".to_owned());
+        let address = replacement.source;
+
+        // A tuner added by address, then a refresh finds another tuner there.
+        let local = RetainedDiscoveryBatch::new(newer_at, vec![replacement.clone()]).unwrap();
+        let (registry, contradicted) =
+            rebuild_registry(Some(&local), None, &exact_sources(older_at)).unwrap();
+        assert_eq!(contradicted, 0);
+        assert!(registry.get(first_id()).is_none());
+        let device = registry.get(second_id()).unwrap();
+        assert_eq!(device.locators().next().unwrap().source(), address);
+
+        // A newer exact probe takes the address back the same way.
+        let local = RetainedDiscoveryBatch::new(older_at, vec![replacement.clone()]).unwrap();
+        let (registry, contradicted) =
+            rebuild_registry(Some(&local), None, &exact_sources(newer_at)).unwrap();
+        assert_eq!(contradicted, 0);
+        assert!(registry.get(second_id()).is_none());
+        assert!(registry.get(first_id()).is_some());
+
+        // Overlapping subnets: two tuners answer from one address at once.
+        let mut first_on_eth1 = replacement.clone();
+        first_on_eth1.device_id = first_id();
+        first_on_eth1.interface = Some("eth1".to_owned());
+        let local =
+            RetainedDiscoveryBatch::new(newer_at, vec![replacement, first_on_eth1]).unwrap();
+        let (registry, contradicted) =
+            rebuild_registry(Some(&local), None, &BTreeMap::new()).unwrap();
+        assert_eq!(contradicted, 1);
+        assert_eq!(registry.len(), 1);
+        assert!(registry.get(first_id()).is_some());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3808,6 +3943,88 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn one_invalid_tuner_count_is_skipped_without_hiding_other_devices() {
+        let mut invalid = broadcast_observation(second_id(), "192.0.2.20:65001", "eth0");
+        invalid.tuner_count = Some(0);
+        let (discovery, starts) =
+            ScriptedService::new([ServiceStep::Immediate(Ok(report_of(vec![
+                broadcast_observation(first_id(), "192.0.2.10:65001", "eth0"),
+                invalid,
+            ])))]);
+        let (selection, _selection_starts) = ScriptedSelectionService::new([]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() != DiscoveryStatus::Refreshing
+                && snapshot.discovery_generation() == OperationGeneration::new(1)
+        })
+        .await;
+        assert_eq!(ready.discovery().status(), DiscoveryStatus::Ready);
+        assert_eq!(ready.discovery().issue_count(), 1);
+        assert_eq!(
+            ready
+                .devices()
+                .iter()
+                .map(DeviceSummary::device_id)
+                .collect::<Vec<_>>(),
+            vec![first_id()]
+        );
+
+        // The unlisted device cannot be selected either.
+        handle
+            .try_send(ControllerCommand::SelectDevice(second_id()))
+            .unwrap();
+        let unselected = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selection_generation() == OperationGeneration::new(1)
+        })
+        .await;
+        assert_eq!(unselected.selected_device(), None);
+        assert_eq!(observed_selection.calls(), 0);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn overlapping_subnet_replies_keep_the_first_claim_and_count_an_issue() {
+        let (service, starts) =
+            ScriptedService::new([ServiceStep::Immediate(Ok(report_of(vec![
+                broadcast_observation(second_id(), "192.0.2.10:65001", "eth1"),
+                broadcast_observation(first_id(), "192.0.2.10:65001", "eth0"),
+            ])))]);
+        let controller = ControllerRuntime::start(service).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() != DiscoveryStatus::Refreshing
+                && snapshot.discovery_generation() == OperationGeneration::new(1)
+        })
+        .await;
+
+        assert_eq!(ready.discovery().status(), DiscoveryStatus::Ready);
+        assert_eq!(ready.discovery().issue_count(), 1);
+        assert_eq!(ready.devices().len(), 1);
+        assert_eq!(ready.devices()[0].device_id(), first_id());
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn exact_discovery_binds_identity_and_rejects_a_mismatched_completion() {
         let target = exact_target(7);
         let (service, starts) = ScriptedService::new([
@@ -3936,6 +4153,51 @@ mod tests {
                 && snapshot.discovery().status() == DiscoveryStatus::NoResponse
         })
         .await;
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn refresh_after_a_same_address_replacement_lists_the_new_tuner() {
+        let target = exact_target(9);
+        let address = exact_report(target, first_id(), 4).observations[0].source;
+        let replacement = || Ok(report(second_id(), &address.to_string(), 2));
+        let (service, starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(exact_report(target, first_id(), 4))),
+            ServiceStep::Immediate(replacement()),
+            ServiceStep::Immediate(replacement()),
+        ]);
+        let controller = ControllerRuntime::start(service).unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(1)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        // The retained exact batch never expires, so every later refresh
+        // replays it before the newer reply that contradicts it.
+        for generation in [2, 3] {
+            handle
+                .try_send(ControllerCommand::RefreshLocalDiscovery)
+                .unwrap();
+            recv_start(&starts);
+            let refreshed = wait_for_snapshot(&mut snapshots, |snapshot| {
+                snapshot.discovery_generation() == OperationGeneration::new(generation)
+                    && snapshot.discovery().status() != DiscoveryStatus::Refreshing
+            })
+            .await;
+            assert_eq!(refreshed.discovery().status(), DiscoveryStatus::Ready);
+            assert_eq!(refreshed.discovery().issue_count(), 0);
+            assert_eq!(refreshed.devices().len(), 1);
+            assert_eq!(refreshed.devices()[0].device_id(), second_id());
+            assert_eq!(refreshed.devices()[0].preferred_locator(), address);
+        }
         controller.shutdown().unwrap();
     }
 
@@ -4316,6 +4578,76 @@ mod tests {
             exact_ready.devices()[0].friendly_name(),
             Some("private fixture name")
         );
+        assert_eq!(observed_selection.calls(), 1);
+        assert!(selection_starts.try_recv().is_err());
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn identical_exact_reprobe_keeps_the_selection_without_http() {
+        let target = exact_target(24);
+        let (discovery, discovery_starts) = ScriptedService::new([
+            ServiceStep::Immediate(Ok(exact_report(target, first_id(), 4))),
+            ServiceStep::Immediate(Ok(exact_report(target, first_id(), 4))),
+        ]);
+        let (selection, selection_starts) =
+            ScriptedSelectionService::new([SelectionStep::Immediate(Ok(
+                ResolvedDeviceSnapshot::controller_test_fixture(first_id()),
+            ))]);
+        let observed_selection = selection.clone();
+        let controller = ControllerRuntime::start_with_test_services(
+            discovery,
+            selection,
+            unavailable_routed(),
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        recv_start(&discovery_starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        let selected = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+
+        handle
+            .try_send(ControllerCommand::DiscoverExact(target))
+            .unwrap();
+        assert_eq!(
+            recv_start(&discovery_starts).request,
+            DiscoveryRequest::Exact {
+                target,
+                expected_device: Some(first_id()),
+            }
+        );
+        let reprobed = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        assert_eq!(reprobed.selected_device(), Some(first_id()));
+        assert_eq!(
+            reprobed.selected_lineup().status(),
+            SelectedLineupStatus::Ready
+        );
+        assert_eq!(
+            reprobed.selection_generation(),
+            selected.selection_generation()
+        );
+        assert_eq!(reprobed.devices(), selected.devices());
         assert_eq!(observed_selection.calls(), 1);
         assert!(selection_starts.try_recv().is_err());
         controller.shutdown().unwrap();
@@ -5549,6 +5881,78 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn identical_routed_rerun_keeps_the_selection_and_its_stream() {
+        let routed = ScriptedRoutedService::new(Vec::new());
+        for _ in 0..2 {
+            routed.script_run(RoutedStep::Immediate(Ok(routed_outcome(
+                vec![routed_observation(first_id(), "127.0.0.1:65001")],
+                &["wg0"],
+            ))));
+        }
+        let (controller, _starts, selection_starts, selection, _changes) = start_with_changes(
+            [],
+            [SelectionStep::Immediate(Ok(
+                ResolvedDeviceSnapshot::controller_stream_test_fixture(
+                    first_id(),
+                    false,
+                    "127.0.0.1".parse().unwrap(),
+                ),
+            ))],
+            routed,
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        handle
+            .try_send(ControllerCommand::SelectDevice(first_id()))
+            .unwrap();
+        recv_selection_start(&selection_starts);
+        let selected = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.selected_lineup().status() == SelectedLineupStatus::Ready
+        })
+        .await;
+        let key = selected.selected_lineup().channels()[0].key().clone();
+
+        handle
+            .try_send(ControllerCommand::RunRoutedDiscovery(
+                RoutedScanTrigger::ExplicitRefresh,
+            ))
+            .unwrap();
+        let rerun = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery_generation() == OperationGeneration::new(2)
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+
+        assert_eq!(rerun.selected_device(), Some(first_id()));
+        assert_eq!(
+            rerun.selection_generation(),
+            selected.selection_generation()
+        );
+        let handoff = handle
+            .try_request_stream(StreamSelection::new(key, selected.selection_generation()))
+            .unwrap()
+            .receive()
+            .await
+            .unwrap();
+        assert_eq!(
+            handoff.selection_generation(),
+            selected.selection_generation()
+        );
+        assert_eq!(selection.calls(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn routed_run_shares_the_single_superseding_discovery_lane() {
         let routed = ScriptedRoutedService::new(Vec::new());
         let (started, started_rx) = std_mpsc::channel();
@@ -5974,7 +6378,7 @@ mod tests {
 
     #[test]
     fn origin_expiry_spares_exact_targets_and_binds_routed_evidence_to_its_tunnel() {
-        let lost = ["eth0".to_owned()].into_iter().collect::<BTreeSet<_>>();
+        let lost = lost(&["eth0"]);
         let exact = LocatorOrigin {
             method: DiscoveryMethod::Targeted,
             interface: None,
@@ -5998,6 +6402,51 @@ mod tests {
         assert!(origin_expires(&multicast, &lost, false));
         assert!(origin_expires(&routed, &lost, true));
         assert!(!origin_expires(&routed, &lost, false));
+    }
+
+    #[test]
+    fn origin_expiry_follows_the_address_family_an_interface_lost() {
+        let origin = |method| LocatorOrigin {
+            method,
+            interface: Some("eth0".to_owned()),
+        };
+        let ipv4 = origin(DiscoveryMethod::Ipv4Broadcast);
+        let link_local = origin(DiscoveryMethod::Ipv6LinkLocalMulticast);
+        let site_local = origin(DiscoveryMethod::Ipv6SiteLocalMulticast);
+        let inventory = |addresses: &[&str]| {
+            crate::discovery::InterfaceInventory::from_addresses(
+                addresses
+                    .iter()
+                    .map(|address| ("eth0".to_owned(), address.parse().unwrap())),
+            )
+        };
+        let change_between = |before: &[&str], after: &[&str]| {
+            NetworkChange::coalesced(inventory(before).loss_since(&inventory(after)), 1)
+        };
+        let full = ["192.0.2.10", "fe80::10", "2001:db8::10", "2001:db8::beef"];
+        let expired = |change: &NetworkChange| {
+            [&ipv4, &link_local, &site_local].map(|origin| origin_expires(origin, change, false))
+        };
+
+        // A temporary IPv6 address expires while a stable one remains:
+        // nothing observed through the interface is stale.
+        let rotation = change_between(&full, &["192.0.2.10", "fe80::10", "2001:db8::10"]);
+        assert!(rotation.lost_interfaces().is_empty());
+        assert_eq!(expired(&rotation), [false, false, false]);
+        // IPv4 renumbering expires only IPv4 broadcast evidence.
+        let renumbered = change_between(
+            &full,
+            &["192.0.2.99", "fe80::10", "2001:db8::10", "2001:db8::beef"],
+        );
+        assert_eq!(expired(&renumbered), [true, false, false]);
+        // The last routable IPv6 address going away expires site-local
+        // multicast evidence; the link-local address still reaches the LAN.
+        let no_routable = change_between(&full, &["192.0.2.10", "fe80::10"]);
+        assert_eq!(expired(&no_routable), [false, false, true]);
+        let no_link_local = change_between(&full, &["192.0.2.10", "2001:db8::10"]);
+        assert_eq!(expired(&no_link_local), [false, true, false]);
+        // A removed interface loses everything.
+        assert_eq!(expired(&lost(&["eth0"])), [true, true, true]);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -6347,6 +6796,61 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn network_change_unlists_a_device_whose_surviving_evidence_is_invalid() {
+        let mut invalid = broadcast_observation(first_id(), "192.0.2.20:65001", "eth1");
+        invalid.tuner_count = Some(0);
+        let (controller, starts, _selection_starts, _selection, changes) = start_with_changes(
+            [
+                ServiceStep::Immediate(Ok(report_of(vec![
+                    broadcast_observation(first_id(), "192.0.2.10:65001", "eth0"),
+                    invalid,
+                ]))),
+                ServiceStep::Immediate(Ok(report_of(vec![broadcast_observation(
+                    second_id(),
+                    "192.0.2.30:65001",
+                    "eth1",
+                )]))),
+            ],
+            [],
+            unavailable_routed(),
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        // The valid locator is preferred, so the device is listed at first.
+        assert_eq!(ready.devices().len(), 1);
+        assert_eq!(ready.devices()[0].tuner_count(), Some(2));
+
+        changes.try_send(lost(&["eth0"])).unwrap();
+        let reconciled = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 1
+        })
+        .await;
+        assert!(reconciled.devices().is_empty());
+
+        // The controller is still running and admits the next refresh.
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        let refreshed = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+                && snapshot.devices().len() == 1
+                && snapshot.devices()[0].device_id() == second_id()
+        })
+        .await;
+        assert_eq!(refreshed.network().sequence(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn network_change_cancels_an_in_flight_local_refresh_into_idle() {
         let (_release, release_rx) = oneshot::channel();
         let (cancelled, cancelled_rx) = std_mpsc::channel();
@@ -6402,6 +6906,65 @@ mod tests {
         );
         assert_eq!(reconciled.devices().len(), 1, "unrelated evidence stays");
         assert_eq!(reconciled.network().expired_locators(), 0);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn network_change_that_lost_nothing_keeps_an_in_flight_local_refresh() {
+        let (release, release_rx) = oneshot::channel();
+        let (cancelled, cancelled_rx) = std_mpsc::channel();
+        let (controller, starts, _selection_starts, _selection, changes) = start_with_changes(
+            [ServiceStep::Gated {
+                release: release_rx,
+                cancelled,
+                cancellation_result: Err(DiscoveryFailure::Internal),
+            }],
+            [],
+            unavailable_routed(),
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        let refreshing = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+
+        // A route change or a new address loses nothing a local probe used.
+        changes
+            .try_send(NetworkChange::coalesced(BTreeMap::new(), 3))
+            .unwrap();
+        let reconciled = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 1
+        })
+        .await;
+
+        assert!(
+            cancelled_rx.try_recv().is_err(),
+            "the local refresh must keep running"
+        );
+        assert_eq!(reconciled.discovery().kind(), DiscoveryKind::Local);
+        assert_eq!(reconciled.discovery().status(), DiscoveryStatus::Refreshing);
+        assert_eq!(
+            reconciled.discovery_generation(),
+            refreshing.discovery_generation()
+        );
+
+        release
+            .send(Ok(report_of(vec![broadcast_observation(
+                first_id(),
+                "192.0.2.10:65001",
+                "eth0",
+            )])))
+            .unwrap();
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(ready.devices().len(), 1);
         controller.shutdown().unwrap();
     }
 }

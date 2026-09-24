@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Catalog assembly, embedded-component ownership/license evidence,
   remaining final-artifact adapters, and release attachment remain
   pending; current packages do not yet include these reports.
+- [Flatpak Cargo-source generation](docs/flatpak-generator-inputs.md) installs its
+  full Python dependency closure from reviewed wheel hashes into a private environment in CI and
+  release jobs, with source-build fallback disabled.
 - Critical admission, cancellation, identity, privacy, and package gates have measured
   coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
 - Python package-gate coverage installs now require reviewed wheel hashes and
@@ -58,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
+- Rustup-based release candidate jobs select reviewed Rust 1.98.0, with a separate
+  update manifest and CI rejection of changed or missing compiler selections.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
 - Locked the complete Markdown/TOML lint dependency tree with tarball integrity
   checks and disabled install scripts; CI no longer resolves fresh transitive
@@ -76,12 +81,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A live stream that ends mid-playback, such as when its tuner is reclaimed, now shows the
-  stream as unavailable instead of returning to the idle page as if Stop was pressed.
+- On Linux, routed searches keep running through routine IPv6 address refreshes, and a search
+  stopped by a network change now says so instead of reporting an internal error.
+- On Linux, routine IPv6 address refreshes no longer cancel device searches and routed approvals
+  every few seconds, and a remembered device whose startup search was interrupted is tried again.
+- Losing one IPv6 address, such as a rotated temporary address, no longer removes tuners found over
+  IPv4 or stops playback.
 - A tuner stream that ends before sending any data now shows the stream as unavailable
   instead of staying on "Connecting…" until Stop.
 - Channels carrying teletext or DVB subtitles no longer fail to play when those decoders
   are missing, and subtitles are no longer burned into the video.
+- Discovery keeps working after a tuner's address passes to another tuner, one bad tuner count no
+  longer hides every device or halts discovery, and re-probing the playing tuner no longer stops it.
+- A live stream that ends mid-playback, such as when its tuner is reclaimed, now shows the
+  stream as unavailable instead of returning to the idle page as if Stop was pressed.
 - Debian control/data and Arch payloads now receive bounded decoding and complete
   tar member preflight before extraction. Native parser isolation and extraction
   containment remain pending; only trusted local build output is admitted.

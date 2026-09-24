@@ -1,7 +1,8 @@
 //! Loopback fake HDHomeRun device for end-to-end tests.
 //!
-//! One fake owns the fixed discovery responder port (65_001), the fixed
-//! MPEG-TS stream port (5_004), and one ephemeral metadata port, so at most
+//! One fake owns an ephemeral discovery responder port, the fixed MPEG-TS
+//! stream port (5_004), and one ephemeral metadata port, and installs the
+//! process-wide test-only discovery and metadata port overrides, so at most
 //! one [`FakeHdhrDevice`] can exist per process at a time. Test runs in
 //! separate processes must be serialized by the caller; `cargo test` runs
 //! every test in one process, where the in-file port lock is sufficient.
@@ -21,18 +22,18 @@ use super::protocol::{
     TAG_DEVICE_TYPE, TAG_LINEUP_URL, TAG_TUNER_COUNT, TYPE_DISCOVER_REPLY, TYPE_DISCOVER_REQUEST,
 };
 use super::test_support::response;
+use crate::discovery::DiscoveryPortOverride;
 use crate::domain::DeviceId;
 
-/// Serializes possession of the fixed discovery (65_001) and stream (5_004)
-/// ports across every test in this process for each fake device's lifetime.
-/// Cross-process test runs must be serialized by the caller; `cargo test`
-/// executes every test in one process, where this lock suffices.
+/// Serializes possession of the fixed stream port (5_004) and the
+/// process-wide discovery and metadata port overrides across every test in
+/// this process for each fake device's lifetime. Cross-process test runs must
+/// be serialized by the caller; `cargo test` executes every test in one
+/// process, where this lock suffices.
 static FAKE_DEVICE_PORTS: Mutex<()> = Mutex::new(());
 
 const LOOPBACK: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-const DISCOVERY_PORT: u16 = 65_001;
 const STREAM_PORT: u16 = 5_004;
-const DISCOVERY_TARGET: SocketAddr = SocketAddr::new(LOOPBACK, DISCOVERY_PORT);
 const STREAM_TARGET: SocketAddr = SocketAddr::new(LOOPBACK, STREAM_PORT);
 
 const UDP_READ_TIMEOUT: Duration = Duration::from_millis(50);
@@ -126,9 +127,9 @@ pub(crate) struct StreamEvent {
     pub(crate) at: Instant,
 }
 
-/// A loopback fake HDHomeRun device: a UDP discovery responder on
-/// `127.0.0.1:65_001`, an HTTP metadata server on an ephemeral loopback port,
-/// and an HTTP MPEG-TS stream server on `127.0.0.1:5_004`.
+/// A loopback fake HDHomeRun device: a UDP discovery responder on an
+/// ephemeral loopback port, an HTTP metadata server on an ephemeral loopback
+/// port, and an HTTP MPEG-TS stream server on `127.0.0.1:5_004`.
 pub(crate) struct FakeHdhrDevice {
     device_id: DeviceId,
     discovery_target: SocketAddr,
@@ -140,21 +141,25 @@ pub(crate) struct FakeHdhrDevice {
     stream_accept_worker: Option<JoinHandle<()>>,
     stream_workers: Arc<Mutex<Vec<JoinHandle<()>>>>,
     _port_override: MetadataPortOverride,
+    _discovery_port_override: DiscoveryPortOverride,
     _port_lock: MutexGuard<'static, ()>,
 }
 
 impl FakeHdhrDevice {
-    /// Bind the fixed discovery (65_001) and stream (5_004) ports plus one
-    /// ephemeral metadata port, and install the test-only metadata-port
-    /// override for the device's lifetime. Panics when either fixed port is
-    /// already held inside this process; the in-file lock serializes
+    /// Bind the fixed stream port (5_004) plus ephemeral discovery and
+    /// metadata ports, and install the test-only discovery- and metadata-port
+    /// overrides for the device's lifetime. Panics when the fixed stream port
+    /// is already held inside this process; the in-file lock serializes
     /// concurrent tests, and cross-process runs must be serialized by the
     /// caller.
     pub(crate) fn start(tuner_count: u8, channels: &[FakeChannelSpec]) -> Self {
         let port_lock = hold_fake_device_ports();
 
         let discovery_socket =
-            UdpSocket::bind(DISCOVERY_TARGET).expect("bind the fake discovery responder");
+            UdpSocket::bind((LOOPBACK, 0)).expect("bind the fake discovery responder");
+        let discovery_target = discovery_socket
+            .local_addr()
+            .expect("read the fake discovery address");
         let metadata_listener =
             TcpListener::bind((LOOPBACK, 0)).expect("bind the fake metadata server");
         metadata_listener
@@ -171,6 +176,7 @@ impl FakeHdhrDevice {
             .expect("make the fake stream listener nonblocking");
 
         let port_override = MetadataPortOverride::install(metadata_port);
+        let discovery_port_override = DiscoveryPortOverride::install(discovery_target.port());
         let reply = encode_discover_reply(
             FAKE_DEVICE_ID,
             tuner_count,
@@ -220,7 +226,7 @@ impl FakeHdhrDevice {
 
         Self {
             device_id: fake_device_id(),
-            discovery_target: DISCOVERY_TARGET,
+            discovery_target,
             stop,
             events,
             metadata_paths,
@@ -229,6 +235,7 @@ impl FakeHdhrDevice {
             stream_accept_worker: Some(stream_accept_worker),
             stream_workers,
             _port_override: port_override,
+            _discovery_port_override: discovery_port_override,
             _port_lock: port_lock,
         }
     }
@@ -238,7 +245,8 @@ impl FakeHdhrDevice {
         self.device_id
     }
 
-    /// Always `127.0.0.1:65_001`; pass to `DiscoveryClient::discover_target`.
+    /// The bound `127.0.0.1:<ephemeral>` responder; pass to
+    /// `DiscoveryClient::discover_target`.
     pub(crate) fn discovery_target(&self) -> SocketAddr {
         self.discovery_target
     }

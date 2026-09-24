@@ -158,11 +158,11 @@ artifact. Every staged closure remains subject to completed-tree/import
 inspection and the shared libdvdcss, optical-disc, DRM, and circumvention deny
 policy.
 
-The compiler proposal manifest lives at
-`build-aux/toolchain/rust-toolchain.toml`. Dependabot supports a configured
-subdirectory, and this non-privileged location avoids both a repository-wide
-rustup override and GitHub's rejected attempt to update the original copy under
-`.github`.
+The compiler floor manifest lives at `build-aux/toolchain/rust-toolchain.toml`.
+This non-privileged location avoids both a repository-wide rustup override and
+GitHub's rejected attempt to update the original copy under `.github`. The floor
+is raised deliberately with `scripts/sync_rust_toolchain.py`; Dependabot proposes
+only the separate release compiler in `build-aux/release-toolchain`.
 
 ## Package-file port ledger
 
