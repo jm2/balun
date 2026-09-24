@@ -51,14 +51,14 @@ root; `npx --yes markdownlint-cli2@0.18.1 "**/*.md"` reproduces the Markdown che
 ## Contracts a change must not weaken
 
 - **Network admission** — Discovery replies are accepted only from the probed prefix and port,
-  device HTTP goes only to an accepted responder on the observed ports, and every routed scan
+  device HTTP goes only to an accepted responder on the observed ports, and every range scan
   needs explicit approval and stays inside its packet budget.
 - **DeviceID identity** — One validated DeviceID per tuner; every channel is scoped to exactly
   one device, and lineups are never merged.
 - **Tuner release** — Every switch, Stop, device change, and window close releases the stream
   inside the bound in [`docs/playback.md`](docs/playback.md).
 - **Privacy** — `DeviceAuth` is never parsed, stored, or printed; stream URLs never reach the
-  user interface; settings and approvals hold no credentials or raw topology.
+  user interface; settings hold no credentials or raw topology.
 - **Package inspection** — The [release component policy](docs/release-component-policy.md) and
   the artifact validators stay fail-closed.
 

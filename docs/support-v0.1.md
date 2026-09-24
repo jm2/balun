@@ -1,12 +1,16 @@
 # Balun v0.1 support matrix
 
 - Status: v0.1.0 Alpha published 2026-09-05
-- Last updated: 2026-09-05
+- Last updated: 2026-09-24
 
 This matrix is derived from the sanitized evidence in
 [`compatibility-v0.1.md`](compatibility-v0.1.md) and the ledger in [`task.md`](task.md). A cell
 that reads "not yet verified" means no evidence has been recorded for that combination, not that
 it is unsupported. Every ✅ is traceable to a section of the compatibility notes.
+
+Note (2026-09-24): V2.9 retired the Linux route-table-derived tunnel search
+([ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md)). Its routed-scan evidence
+below is historical; remote tuners are now added by exact address or hostname.
 
 ## Platforms
 
@@ -48,14 +52,13 @@ The deferred HDHR5-4DT is an Australian unit; no regional or DVB-T support is cl
 | Hostname | Covered by tests and exact unicast target proofs | One name, resolved to at most four unicast addresses |
 | Remembered targets | ✅ Re-probed across launches; secondary tuners rediscovered | Nothing after the first successful probe |
 | Approved private range (`balun-discover` only) | ✅ Diagnostic only | One RFC 1918 range no wider than `/24` that you own or administer |
-| Opt-in route-table-derived tunnel search (Linux) | ✅ Verified over routed tunnel; candidate preview, approval, and traffic budget measured | Explicit approval of the previewed candidates and packet budget; the host's policy rules must be the default `local`/`main`/`default` chain |
-| Route-table-derived tunnel search (macOS, Windows) | ❌ Not in v0.1 | Use an exact address or hostname instead |
+| Route-table-derived tunnel search | Verified on Linux in v0.1.0 and v0.1.1; retired 2026-09-24 (V2.9) | Use an exact address, a hostname, or `balun-discover --approved-range` instead |
 
 Local discovery runs once at launch and then only on request; remembered targets are probed after
 it settles. Local broadcast and
 multicast, exact IP and hostname targets, and remembered targets work on every supported platform;
-only the opt-in route-table provider and route-change monitor are Linux-only. The approved-range
-scan is a diagnostic for a network you administer, not a desktop feature.
+only the network-change monitor is Linux-only. The approved-range scan is a diagnostic for a
+network you administer, not a desktop feature.
 
 ## Codecs
 
@@ -95,11 +98,8 @@ nothing.
 - No recording, timeshift, transcoding, or tuner configuration.
 - Lineups are never merged across devices.
 - ATSC 3.0 AC-4 playback is not guaranteed on any platform.
-- The route-table-derived search fails closed on a host whose policy-routing rules are not the
-  default `local`/`main`/`default` chain, which wg-quick, Tailscale, and most VPN clients change;
-  the log names the cause, and an exact address or hostname still works there.
-- The opt-in route-table-derived tunnel search is Linux-only; macOS and Windows still support
-  local, exact-address, hostname, and remembered-target discovery.
+- There is no in-app subnet or tunnel search until typed-subnet search (V2.4) lands; use an exact
+  address or hostname, or `balun-discover --approved-range` for a private range you administer.
 
 ## Evidence
 

@@ -5,6 +5,11 @@ The fixes below are implemented in this change. On September 17, 2026, the
 maintainer accepted both bounded exceptions below, including their ownership
 and review triggers. H3.3 completes when this change lands on `main`.
 
+Note (2026-09-24): V2.9 retired route-derived discovery and its approval store
+([ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md)). The
+approval-store and fingerprint-key dispositions below are historical; the
+jitter and CLI admission corrections still apply to `balun-discover --approved-range`.
+
 ## Implemented corrections
 
 Routed discovery adds independently sampled, positive jitter of zero to 25%

@@ -22,12 +22,12 @@ value is not.
 
 ## What is in scope
 
-- Network admission: the discovery prefix and port checks, the per-operation and routed-scan
-  packet budgets, and the approval store that gates route-derived discovery.
+- Network admission: the discovery prefix and port checks and the per-operation and
+  approved-range packet budgets.
 - Credential handling: `DeviceAuth` must never be parsed, persisted, or printed, and advertised
   URLs must never be followed as given.
-- Persisted state: the contents of `settings.json` and the approval store, which must hold no
-  credentials, stream URLs, or raw topology.
+- Persisted state: the contents of `settings.json`, which must hold no credentials, stream URLs,
+  or raw topology.
 - The stream transport: its refusal of proxies, redirects, DNS, and URL credentials, and the
   bounded size and time limits on device HTTP.
 - Package contents and the release component policy.
