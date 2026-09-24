@@ -40,6 +40,11 @@ pub(super) enum ChangeKind {
     Address,
     /// A route or routing rule changed.
     Route,
+    /// A parameter of an existing interface or route was updated, such as a
+    /// lifetime refreshed by a router advertisement. Like an address
+    /// notification, it matters only when the inventory changed.
+    #[cfg(any(windows, test))]
+    Refresh,
 }
 
 /// The watcher holds no discovery authority, so notifications have nothing
@@ -55,7 +60,7 @@ impl EventKinds {
     /// Record one notification. A platform records the kind before it wakes
     /// the watcher, so every notification of a delivered burst is counted.
     pub(super) fn record(&self, kind: ChangeKind) {
-        if kind != ChangeKind::Address {
+        if matches!(kind, ChangeKind::Link | ChangeKind::Route) {
             self.beyond_addresses.store(true, Ordering::Release);
         }
     }
@@ -203,7 +208,7 @@ mod tests {
     fn only_link_and_route_kinds_go_beyond_addresses() {
         let kinds = EventKinds::default();
         kinds.record(ChangeKind::Address);
-        kinds.record(ChangeKind::Address);
+        kinds.record(ChangeKind::Refresh);
         assert!(!kinds.take_beyond_addresses());
 
         for kind in [ChangeKind::Link, ChangeKind::Route] {

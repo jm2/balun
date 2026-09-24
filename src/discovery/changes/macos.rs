@@ -15,8 +15,9 @@ use super::route_socket::route_message_kinds;
 use super::watch::{EventKinds, NetworkChangeWatchError, deliver_bursts};
 use super::{InterfaceInventory, NetworkChange};
 
-/// Large enough for any single routing message, which the kernel never
-/// splits across reads.
+/// Each read returns one whole routing message: a header of at most a few
+/// hundred bytes and at most `RTAX_MAX` (8) socket addresses, each at most
+/// 255 bytes long. A truncated read is rejected as malformed.
 const READ_BUFFER_BYTES: usize = 8 * 1024;
 /// The kernel drops messages silently when this fills; a read error or a
 /// malformed message is the only failure the socket can report.

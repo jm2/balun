@@ -72,14 +72,10 @@ fn classify(message: &[u8]) -> Result<Option<ChangeKind>, MalformedRouteMessage>
     let [_, _, version, message_type, ..] = *message else {
         return Err(MalformedRouteMessage);
     };
-    // The layout after the prefix is defined by this version only.
-    if version != RTM_VERSION {
-        return Err(MalformedRouteMessage);
-    }
     Ok(match message_type {
         RTM_IFINFO | RTM_IFINFO2 => Some(ChangeKind::Link),
         RTM_NEWADDR | RTM_DELADDR => Some(ChangeKind::Address),
-        RTM_ADD | RTM_DELETE | RTM_CHANGE => route_change(message)?,
+        RTM_ADD | RTM_DELETE | RTM_CHANGE => route_change(version, message)?,
         _ => None,
     })
 }
@@ -87,7 +83,11 @@ fn classify(message: &[u8]) -> Result<Option<ChangeKind>, MalformedRouteMessage>
 /// A route message changes the table unless it reports a failed request or
 /// a neighbour-cache or cloned host entry. Those entries come and go with
 /// ordinary traffic and say nothing about the network's shape.
-fn route_change(message: &[u8]) -> Result<Option<ChangeKind>, MalformedRouteMessage> {
+fn route_change(version: u8, message: &[u8]) -> Result<Option<ChangeKind>, MalformedRouteMessage> {
+    // Only this version defines where the fields after the prefix are.
+    if version != RTM_VERSION {
+        return Err(MalformedRouteMessage);
+    }
     let header = message
         .get(..ROUTE_HEADER_BYTES)
         .ok_or(MalformedRouteMessage)?;
@@ -220,13 +220,17 @@ mod tests {
         stub = message(RTM_ADD, ROUTE_HEADER_BYTES);
         assert_eq!(route_message_kinds(&stub), Ok(vec![ChangeKind::Route]));
 
-        // Another version's layout is unknown.
-        let mut other_version = valid;
+        // Another version's route layout is unknown; its common prefix,
+        // which is all other messages need, is not.
+        let mut other_version = route(RTM_ADD, 0, 0);
         other_version[2] = RTM_VERSION + 1;
         assert_eq!(
             route_message_kinds(&other_version),
             Err(MalformedRouteMessage)
         );
+        let mut other_link = valid;
+        other_link[2] = RTM_VERSION + 1;
+        assert_eq!(route_message_kinds(&other_link), Ok(vec![ChangeKind::Link]));
     }
 
     #[test]

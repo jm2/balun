@@ -61,8 +61,9 @@ address so you know which tuner failed.
 | i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Application menu, navigation, player controls/progress/startup, and About description; [remaining scope](docs/localization.md) |
 
 Route-table-derived tunnel discovery is the only Linux-only feature today. Local broadcast and
-multicast discovery, exact IP or hostname discovery, remembered targets, and network-change
-handling work on Linux, macOS, and Windows.
+multicast discovery, exact IP or hostname discovery, and remembered targets work on Linux, macOS,
+and Windows; network-change handling also runs on all three, pending real-network confirmation on
+macOS and Windows.
 
 Settings support a private local profile under the account's existing configuration parent,
 which may be group-writable only for the account's own user-private group.
