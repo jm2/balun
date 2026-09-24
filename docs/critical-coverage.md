@@ -21,7 +21,7 @@ measurements help find omissions in that evidence.
 | Identity registry, device identity, protocol, metadata and lineup | Rust source regions in five modules | 84.62%–96.69% |
 | JSON failure conversion and logging setup | Rust source regions | 30/30 and 11/11 respectively |
 | Native playback failure classification and diagnostics | Rust source regions | 420/495 (84.85%); display-backed diagnostics remain a visible gap |
-| Settings schema and pinned profile transactions | Rust source regions | 326/341 (95.60%) and 546/687 (79.48%) |
+| Settings schema and pinned profile transactions | Rust source regions | 218/228 (95.61%) and 546/687 (79.48%) |
 | Settings session and bounded worker | Rust source regions | 106/142 (74.65%) and 160/181 (88.40%); window geometry needs a display |
 | Mach-O closure parser and CLI | Python executable lines and branch edges | 202/205 lines (98.54%); 54/58 branches (93.10%) |
 | Windows policy snapshots and whole-tree receipts | PowerShell executable lines in ten selected gate functions | 78.57%–100%, reported independently per function |
@@ -109,6 +109,11 @@ The configuration-parent compatibility correction removes a redundant rejection
 predicate and three instrumented regions. Existing-parent and alias/navigation
 regressions measure 546/687 store regions (79.48%), tightening the uncovered
 ceiling from 157 to 141. Other coverage thresholds remain unchanged.
+
+Removing the unused friendly-name schema and API (#153) is a legitimate code
+removal: the settings schema measures 218/228 regions (95.61%), down from
+326/341. Its denominator floor drops with the deleted code and its uncovered
+ceiling tightens from 15 to 10.
 
 ## CI ratchet and review policy
 
