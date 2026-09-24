@@ -464,8 +464,8 @@ mod tests {
     use crate::domain::{ChannelKey, DeviceId, GuideNumber};
     use crate::playback::pipeline_failure::{PlaybackPipelineFailure, classify_pipeline_message};
     use crate::playback::test_support::{
-        FIXTURE_BYTES, FixtureStreamServer, StreamBehavior, fixture_response,
-        hold_decoder_selection, http_response, open_ended_response_head,
+        FIXTURE_BYTES, FixtureStreamServer, StreamBehavior, fixture_response, http_response,
+        mpeg2_decoder_available, open_ended_response_head, prefer_software_mpeg2_decoders,
     };
     use crate::playback::transport::{PIPELINE_URI, STREAM_STARTED_MESSAGE};
 
@@ -497,66 +497,6 @@ mod tests {
 
     fn unreachable_handoff() -> StreamHandoff {
         handoff("http://127.0.0.1:9/auto/v5.1")
-    }
-
-    /// Whether a software MPEG-2 decoder can decode the checked-in fixture.
-    fn mpeg2_decoder_available() -> bool {
-        ["avdec_mpeg2video", "mpeg2dec"]
-            .into_iter()
-            .any(|factory| gst::ElementFactory::find(factory).is_some())
-    }
-
-    /// Holds the shared decoder-selection lock and restores the original rank
-    /// of every demoted decoder factory when dropped, on every exit path
-    /// including a panicking assertion, so a later pipeline in the same
-    /// process autoplugs from the registry it started with.
-    struct DecoderRankGuard {
-        original: Vec<(gst::PluginFeature, gst::Rank)>,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl Drop for DecoderRankGuard {
-        /// Restore the recorded ranks before releasing the override lock.
-        fn drop(&mut self) {
-            for (feature, rank) in self.original.drain(..) {
-                feature.set_rank(rank);
-            }
-        }
-    }
-
-    /// Hosted CI virtual machines register hardware MPEG-2 decoders (Apple
-    /// VideoToolbox, Direct3D, NVIDIA, Intel, AMD, VA-API) that cannot open a
-    /// decoding session without a GPU. This test proves the `appsrc` feed and
-    /// demux contract, not hardware decoding, so demote those factories for
-    /// the duration of the returned guard and let `decodebin3` choose the
-    /// software decoders.
-    fn prefer_software_mpeg2_decoders() -> DecoderRankGuard {
-        let lock = hold_decoder_selection();
-        let registry = gst::Registry::get();
-        let mut original = Vec::new();
-        for name in [
-            "vtdec_hw",
-            "vtdec",
-            "d3d11mpeg2dec",
-            "d3d12mpeg2dec",
-            "nvmpeg2videodec",
-            "nvmpeg2dec",
-            "qsvmpeg2dec",
-            "msdkmpeg2dec",
-            "amfmpeg2dec",
-            "vampeg2dec",
-            "vaapimpeg2dec",
-            "v4l2slmpeg2dec",
-        ] {
-            if let Some(feature) = registry.lookup_feature(name) {
-                original.push((feature.clone(), feature.rank()));
-                feature.set_rank(gst::Rank::NONE);
-            }
-        }
-        DecoderRankGuard {
-            original,
-            _lock: lock,
-        }
     }
 
     /// Endpoint-free diagnostics for a failed contract run: the native error

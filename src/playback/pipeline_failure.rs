@@ -141,7 +141,7 @@ pub enum PlaybackPipelineFailure {
     #[error("the tuner rejected the stream request")]
     HttpRejected,
     /// The stream request could not connect, receive headers, or keep reading,
-    /// or its body ended before any stream data.
+    /// or its body ended: a live tuner stream never ends on its own.
     #[error("the selected tuner is offline or unreachable")]
     Offline,
     /// GStreamer reported an exact missing codec or plugin condition that can

@@ -76,6 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A live stream that ends mid-playback, such as when its tuner is reclaimed, now shows the
+  stream as unavailable instead of returning to the idle page as if Stop was pressed.
 - A tuner stream that ends before sending any data now shows the stream as unavailable
   instead of staying on "Connecting…" until Stop.
 - Channels carrying teletext or DVB subtitles no longer fail to play when those decoders

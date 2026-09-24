@@ -1,4 +1,4 @@
-//! Loopback HTTP fixtures for transport tests.
+//! Loopback HTTP fixtures and decoder-selection guards for playback tests.
 //!
 //! Every server binds `127.0.0.1:0`, serves exactly one client connection, and
 //! records the raw request plus the instant the client disconnected. Nothing
@@ -12,6 +12,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use gst::prelude::*;
+use gstreamer as gst;
+
 /// Serializes every test that decodes through `playbin3` autoplugging with
 /// every test that overrides registry decoder ranks, so a temporary rank
 /// demotion can never be observed by another pipeline in the same process.
@@ -24,6 +27,66 @@ pub(super) fn hold_decoder_selection() -> MutexGuard<'static, ()> {
     DECODER_SELECTION
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Whether a software MPEG-2 decoder can decode the checked-in fixture.
+pub(super) fn mpeg2_decoder_available() -> bool {
+    ["avdec_mpeg2video", "mpeg2dec"]
+        .into_iter()
+        .any(|factory| gst::ElementFactory::find(factory).is_some())
+}
+
+/// Holds the shared decoder-selection lock and restores the original rank
+/// of every demoted decoder factory when dropped, on every exit path
+/// including a panicking assertion, so a later pipeline in the same
+/// process autoplugs from the registry it started with.
+pub(super) struct DecoderRankGuard {
+    pub(super) original: Vec<(gst::PluginFeature, gst::Rank)>,
+    _lock: MutexGuard<'static, ()>,
+}
+
+impl Drop for DecoderRankGuard {
+    /// Restore the recorded ranks before releasing the override lock.
+    fn drop(&mut self) {
+        for (feature, rank) in self.original.drain(..) {
+            feature.set_rank(rank);
+        }
+    }
+}
+
+/// Hosted CI virtual machines register hardware MPEG-2 decoders (Apple
+/// VideoToolbox, Direct3D, NVIDIA, Intel, AMD, VA-API) that cannot open a
+/// decoding session without a GPU. Tests that prove the `appsrc` feed and
+/// demux contract, not hardware decoding, demote those factories for the
+/// duration of the returned guard and let `decodebin3` choose the software
+/// decoders.
+pub(super) fn prefer_software_mpeg2_decoders() -> DecoderRankGuard {
+    let lock = hold_decoder_selection();
+    let registry = gst::Registry::get();
+    let mut original = Vec::new();
+    for name in [
+        "vtdec_hw",
+        "vtdec",
+        "d3d11mpeg2dec",
+        "d3d12mpeg2dec",
+        "nvmpeg2videodec",
+        "nvmpeg2dec",
+        "qsvmpeg2dec",
+        "msdkmpeg2dec",
+        "amfmpeg2dec",
+        "vampeg2dec",
+        "vaapimpeg2dec",
+        "v4l2slmpeg2dec",
+    ] {
+        if let Some(feature) = registry.lookup_feature(name) {
+            original.push((feature.clone(), feature.rank()));
+            feature.set_rank(gst::Rank::NONE);
+        }
+    }
+    DecoderRankGuard {
+        original,
+        _lock: lock,
+    }
 }
 
 /// The checked-in, video-only synthetic MPEG-2 transport stream.

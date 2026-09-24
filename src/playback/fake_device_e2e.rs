@@ -250,31 +250,6 @@ mod tests {
         }
     }
 
-    fn pump_until_stopped(
-        main_context: &gst::glib::MainContext,
-        states: &mut watch::Receiver<PlaybackSessionState>,
-        timeout: Duration,
-    ) {
-        let deadline = Instant::now() + timeout;
-        loop {
-            pump_context(main_context);
-            if states.has_changed().unwrap_or(false) {
-                match states.borrow_and_update().clone() {
-                    PlaybackSessionState::Stopped => return,
-                    PlaybackSessionState::Failed { failure, .. } => {
-                        panic!("the finite fake-device tune failed: {failure}");
-                    }
-                    _ => {}
-                }
-            }
-            assert!(
-                Instant::now() < deadline,
-                "the finite fake-device tune must settle to Stopped within the bound"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-
     fn pump_until_failed(
         main_context: &gst::glib::MainContext,
         states: &mut watch::Receiver<PlaybackSessionState>,
@@ -294,14 +269,14 @@ mod tests {
                         return failure;
                     }
                     PlaybackSessionState::Stopped | PlaybackSessionState::ShutDown => {
-                        panic!("the missing-channel fake-device tune settled without failing");
+                        panic!("the fake-device tune settled without failing");
                     }
                     _ => {}
                 }
             }
             assert!(
                 Instant::now() < deadline,
-                "the missing-channel fake-device tune must fail within the bound"
+                "the fake-device tune must fail within the bound"
             );
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -511,7 +486,8 @@ mod tests {
     /// The fake loopback device supplies discovery, metadata, and stream
     /// endpoints, so the real controller, the real generation-owned session,
     /// and the real transport exercise tuning, synchronous channel switching
-    /// with tuner release ordering, natural EOS, and explicit Stop.
+    /// with tuner release ordering, a finite stream's end reported as the
+    /// stream becoming unavailable, and explicit Stop.
     #[test]
     #[ignore = "requires the isolated display and complete playback runtime supplied by scripts/test-desktop-lifecycle.sh"]
     fn fake_device_production_session_tunes_switches_and_releases_the_tuner() {
@@ -651,10 +627,17 @@ mod tests {
             second_generation,
             Duration::from_secs(10),
         );
-        pump_until_stopped(&main_context, &mut states, Duration::from_secs(10));
+        // A live tuner stream never ends, so the finite channel's clean end
+        // must fail as unavailable rather than look like Stop.
+        let ended = pump_until_failed(
+            &main_context,
+            &mut states,
+            second_generation,
+            Duration::from_secs(10),
+        );
         assert_eq!(
-            session.state().expect("read the session state"),
-            PlaybackSessionState::Stopped
+            ended,
+            PlaybackSessionFailure::Pipeline(PlaybackPipelineFailure::Offline)
         );
         assert!(
             session
@@ -662,6 +645,16 @@ mod tests {
                 .expect("read the URI-opaque paintable")
                 .is_none(),
             "EOS retirement settles the exact pipeline and its paintable"
+        );
+        let ended_stream_released =
+            device.wait_for_stream_events(Duration::from_secs(5), |events| {
+                events.iter().any(|event| {
+                    event.path == "/auto/v5.2" && matches!(event.kind, StreamEventKind::Closed)
+                })
+            });
+        assert!(
+            ended_stream_released,
+            "the ended stream's connection must be closed after the failure"
         );
 
         let third_generation =
