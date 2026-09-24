@@ -83,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - On Linux, routed searches keep running through routine IPv6 address refreshes, and a search
   stopped by a network change now says so instead of reporting an internal error.
+- **Forget routed approvals** now stops a routed search that is already running instead of
+  letting it probe the rest of its approved addresses first.
 - On Linux, routine IPv6 address refreshes no longer cancel device searches and routed approvals
   every few seconds, and a remembered device whose startup search was interrupted is tried again.
 - Losing one IPv6 address, such as a rotated temporary address, no longer removes tuners found over
