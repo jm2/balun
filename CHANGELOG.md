@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Catalog assembly, embedded-component ownership/license evidence,
   remaining final-artifact adapters, and release attachment remain
   pending; current packages do not yet include these reports.
+- [Flatpak Cargo-source generation](docs/flatpak-generator-inputs.md) installs its
+  full Python dependency closure from reviewed wheel hashes into a private environment in CI and
+  release jobs, with source-build fallback disabled.
 - Critical admission, cancellation, identity, privacy, and package gates have measured
   coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
 - Python package-gate coverage installs now require reviewed wheel hashes and
