@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- macOS and Windows now notice adapter, address, and route changes natively, so addresses
+  observed through a lost adapter expire there as they already did on Linux.
 - Find device and Forget device dialogs now use all thirteen supported locales,
   including validation, launcher accessibility copy, and read-only-settings notices.
 - Reviewed digest pins for all six CI/release job containers, with a workflow

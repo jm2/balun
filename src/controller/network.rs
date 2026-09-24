@@ -1,10 +1,11 @@
-//! The network-change lane's service boundary and its Linux source.
+//! The network-change lane's service boundary and its native source.
 //!
-//! The controller actor never touches netlink or enumerates interfaces
-//! itself. A [`NetworkChangeSource`] hands it one channel of already
-//! debounced [`NetworkChange`]s, produced on a dedicated thread on Linux and
-//! absent everywhere else, so the actor's behaviour with no source is exactly
-//! its behaviour on a platform without one.
+//! The controller actor never touches platform notifications or enumerates
+//! interfaces itself. A [`NetworkChangeSource`] hands it one channel of
+//! already debounced [`NetworkChange`]s, produced on a dedicated thread on
+//! Linux, macOS, and Windows and absent everywhere else, so the actor's
+//! behaviour with no source is exactly its behaviour on a platform without
+//! one.
 
 use tokio::sync::mpsc;
 
@@ -33,8 +34,8 @@ impl NetworkChangeSource for UnavailableNetworkChangeSource {
     }
 }
 
-#[cfg(target_os = "linux")]
-mod linux {
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+mod native {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
@@ -45,7 +46,13 @@ mod linux {
     use tokio_util::sync::CancellationToken;
 
     use super::NetworkChangeSource;
-    use crate::discovery::{InterfaceInventory, LinuxNetworkChangeWatcher, NetworkChange};
+    #[cfg(target_os = "linux")]
+    use crate::discovery::LinuxNetworkChangeWatcher as PlatformWatcher;
+    #[cfg(target_os = "macos")]
+    use crate::discovery::MacosNetworkChangeWatcher as PlatformWatcher;
+    #[cfg(windows)]
+    use crate::discovery::WindowsNetworkChangeWatcher as PlatformWatcher;
+    use crate::discovery::{InterfaceInventory, NetworkChange};
 
     const WATCHER_THREAD_NAME: &str = "balun-network";
     const CHANGE_CAPACITY: usize = 4;
@@ -58,18 +65,19 @@ mod linux {
     /// controller continues without one.
     const MAX_CONSECUTIVE_FAILURES: u8 = 8;
 
-    /// The production change source: one thread owning the rtnetlink
-    /// subscription, the debouncer, and the interface inventory.
+    /// The production change source: one thread owning the platform
+    /// subscription (rtnetlink on Linux, a routing socket on macOS, IP Helper
+    /// notifications on Windows), the debouncer, and the interface inventory.
     ///
     /// Constructing it does nothing. The first `subscribe` spawns the thread;
     /// dropping the source stops and joins it.
-    pub struct LinuxNetworkChangeSource {
+    pub struct NativeNetworkChangeSource {
         shutdown: CancellationToken,
         thread: Mutex<Option<thread::JoinHandle<()>>>,
         subscribed: AtomicBool,
     }
 
-    impl LinuxNetworkChangeSource {
+    impl NativeNetworkChangeSource {
         #[must_use]
         pub fn new() -> Self {
             Self {
@@ -80,13 +88,13 @@ mod linux {
         }
     }
 
-    impl Default for LinuxNetworkChangeSource {
+    impl Default for NativeNetworkChangeSource {
         fn default() -> Self {
             Self::new()
         }
     }
 
-    impl NetworkChangeSource for LinuxNetworkChangeSource {
+    impl NetworkChangeSource for NativeNetworkChangeSource {
         fn subscribe(&self) -> Option<mpsc::Receiver<NetworkChange>> {
             if self.subscribed.swap(true, Ordering::SeqCst) {
                 return None;
@@ -109,7 +117,7 @@ mod linux {
         }
     }
 
-    impl Drop for LinuxNetworkChangeSource {
+    impl Drop for NativeNetworkChangeSource {
         fn drop(&mut self) {
             self.shutdown.cancel();
             if let Ok(mut thread) = self.thread.lock()
@@ -120,9 +128,9 @@ mod linux {
         }
     }
 
-    impl std::fmt::Debug for LinuxNetworkChangeSource {
+    impl std::fmt::Debug for NativeNetworkChangeSource {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("LinuxNetworkChangeSource(<redacted>)")
+            formatter.write_str("NativeNetworkChangeSource(<redacted>)")
         }
     }
 
@@ -137,7 +145,7 @@ mod linux {
             let outcome = tokio::select! {
                 biased;
                 () = shutdown.cancelled() => return,
-                outcome = LinuxNetworkChangeWatcher::observe(&changes, &mut inventory) => outcome,
+                outcome = PlatformWatcher::observe(&changes, &mut inventory) => outcome,
             };
             if outcome.is_ok() {
                 return;
@@ -164,7 +172,7 @@ mod linux {
 
         #[test]
         fn construction_is_inert_and_subscription_is_single_use() {
-            let source = LinuxNetworkChangeSource::new();
+            let source = NativeNetworkChangeSource::new();
             assert!(source.thread.lock().unwrap().is_none());
 
             let receiver = source.subscribe();
@@ -179,8 +187,8 @@ mod linux {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub use linux::LinuxNetworkChangeSource;
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub use native::NativeNetworkChangeSource;
 
 #[cfg(test)]
 mod tests {

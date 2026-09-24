@@ -642,6 +642,10 @@ jobs:
           ./scripts/build-windows.ps1 -Clippy
           ./scripts/build-windows.ps1 -Clippy -Diagnostic
 
+      - name: Test GTK-free library on macOS
+        if: runner.os == 'macOS'
+        run: cargo test --lib --locked
+
       - name: Test playback transport on macOS
         if: runner.os == 'macOS'
         run: "cargo test --locked --features desktop --lib playback::"
