@@ -1,8 +1,9 @@
 # Balun v0.1 implementation plan
 
-- Status: v0.1.0 Alpha published 2026-09-05
-- Target: v0.1.0
-- Last updated: 2026-09-18
+- Status: v0.1.1 Alpha published 2026-09-05; packaged acceptance complete;
+  v0.1.2 in preparation
+- Target: v0.1.x
+- Last updated: 2026-09-24
 
 This is the scope, architecture, and delivery-order contract for the first
 alpha. The countable ledger is [`task.md`](task.md); sanitized hardware
@@ -143,9 +144,8 @@ Built and tested:
   environment, transitive dynamic library resolution, and isolated runtime
   probe loopback (P3.4).
 - Package and runtime gates cover the configured artifacts, and macOS has a
-  dedicated packaged-hardware validation path. The recorded Linux and Windows
-  live-tuner runs used development builds, so cross-platform packaged
-  acceptance remains open (P4.1).
+  dedicated packaged-hardware validation path. The maintainer accepted the
+  v0.1.1 packages on Linux, macOS, and Windows against real tuners (P4.1).
 
 ## 4. Architecture
 

@@ -96,4 +96,5 @@ Both Windows CI lanes now compile the current installer, perform the complete
 inspection and runtime-probe sequence, and upload the ZIP and installer only
 after it succeeds. Those checks and clean bot review are required before this
 change merges. Running the installer and validating installed live playback
-remain in P4.1; copying bytes correctly does not establish installed behavior.
+are covered by P4.1's packaged acceptance; copying bytes correctly does not
+establish installed behavior.

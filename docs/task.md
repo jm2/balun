@@ -23,8 +23,8 @@ decisions or physical-platform evidence without counting those as completed.
 ## How to use this file
 
 - Start with H0, then eligible H1/H3 work. H2/H4 are beta assurance tracks;
-  V2 work follows its stated prerequisites. P4.1 remains the single packaged
-  live-tuner acceptance record. Work the earliest eligible record in a track.
+  V2 work follows its stated prerequisites. Work the earliest eligible record
+  in a track.
 - A top-level checkbox is one countable outcome. Check it only when its code,
   deterministic tests, relevant documentation, and changelog entry have
   landed on `main`.
@@ -43,18 +43,19 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **42/58 (72.4%)** records complete: historical P0–P4 **29/30**,
+Current status: **43/58 (74.1%)** records complete: historical P0–P4 **30/30**,
 hardening and assurance H0–H4 **13/21**, and roadmap V2 **0/7**. This is a
-dependency ledger, not an effort estimate. P4.1 is carried forward once.
+dependency ledger, not an effort estimate.
 
 ## Current focus
 
-The 2026-09-23 holistic review filed [#145–#188](https://github.com/jm2/balun/issues?q=is%3Aissue+145..188).
-Its user-facing defects come first, then P4.1's packaged hardware pass on candidate
-builds, collecting H4.3 accessibility evidence and the V2.1 timing re-take in the same
-pass. H0 is complete. By maintainer direction on 2026-09-24, the remaining assurance
-work in H1.4, H2.2, and H2.4 is deferred until after that pass; landed slices stay.
-Development-build evidence does not complete P4.1.
+The 2026-09-23 holistic review filed issues #145–#188
+([list](https://github.com/jm2/balun/issues?q=is%3Aissue+created%3A2026-09-23)); its
+user-facing fixes ship as v0.1.2, which is the next release to cut. The maintainer
+accepted the published v0.1.1 packages on Linux, macOS, and Windows (P4.1); the
+IPv6 discovery defect fixed for v0.1.2 surfaced later in review. H0 is complete. By
+maintainer direction on 2026-09-24, H1.4, the rest of H2.2, and H2.4 are deferred;
+landed slices stay. H4.3 accessibility evidence and the V2.1 timing re-take remain open.
 
 P4.5 records publication of "Balun v0.1.0 Alpha" on 2026-09-05 with the
 12-artifact inventory and `SHA256SUMS.txt`. The initial tag was unsigned by
@@ -99,7 +100,7 @@ use unsigned annotated tags until H2.1 resumes.
   versions, source identities, licenses, and hashes to final artifact members;
   emit an SBOM and distinguish bundled code from externally managed runtimes.
 
-Maintainer direction on 2026-09-24: H1.4 is deferred until after the P4.1 pass.
+Maintainer direction on 2026-09-24: H1.4 is deferred.
 
 - [ ] **H1.4 — Establish native advisory response ([#91]).** After H1.3,
   record applicability, exception owners/expiry, and rebuild expectations;
@@ -110,8 +111,8 @@ Maintainer direction on 2026-09-24: H1.4 is deferred until after the P4.1 pass.
 Maintainer direction on 2026-09-17: hold all new signing and provenance work.
 No trusted signing identities are designated; H2.1 and H2.3 remain unchecked
 and paused. On 2026-09-24 the maintainer kept signing deferred and also deferred
-the rest of H2.2 ([#184]) and H2.4 ([#186]) until after the P4.1 pass; their
-landed slices stay. Independent correctness fixes may continue.
+the rest of H2.2 ([#184]) and H2.4 ([#186]); their landed slices stay.
+Independent correctness fixes may continue.
 
 - [ ] **H2.1 — Enforce release source identity.** Define trusted signers and
   reviewed-source ancestry, enforce the chosen tag policy before building,
@@ -198,7 +199,8 @@ landed slices stay. Independent correctness fixes may continue.
 ## Historical v0.1.0 records
 
 Completed outcomes below remain historical evidence; the H records track
-newly discovered defects. P4.1 remains open and is not counted again above.
+newly discovered defects. P4.1 closed with the maintainer's acceptance of the
+v0.1.1 packages.
 
 ## P0 — Evidence and contract
 
@@ -302,9 +304,9 @@ newly discovered defects. P4.1 remains open and is not counted again above.
 
 ## P4 — v0.1.0
 
-- [ ] **P4.1 — Validate packaged artifacts on every platform.** Record
-  launch, discover, tune, switch, and close on Linux (Wayland and X11), macOS,
-  and Windows candidates, with startup, idle, and switch budgets.
+- [x] **P4.1 — Validate packaged artifacts on every platform.** Maintainer
+  [acceptance](compatibility-v0.1.md#packaged-live-tuner-acceptance) of the v0.1.1
+  packages on Linux, macOS, and Windows; package budgets were not re-measured.
 
 - [x] **P4.2 — Complete the sanitized hardware matrix.** Cover the accessible
   primary-site and secondary-site devices; defer the Australian units without

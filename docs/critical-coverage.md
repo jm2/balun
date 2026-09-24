@@ -171,7 +171,8 @@ pairs. This does not pin the host Python, pip/venv bootstrap, or PowerShell/Pest
 This is a Linux instrumented-test and portable-package baseline. It does not
 measure Windows native C# interop, Apple loader internals, decoder code, shell
 or external tool internals, or display/hardware tests that are ignored in the
-ordinary suite. The native CI lanes and P4.1/H4.3 remain separate requirements.
+ordinary suite. The native CI lanes, packaged acceptance (P4.1), and H4.3 are
+separate requirements.
 No native-platform result is inferred from a portable PowerShell line hit.
 
 In particular, the 100% JSON conversion result says every measured region ran;
