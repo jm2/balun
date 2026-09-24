@@ -119,3 +119,6 @@ failure:
   selected_device: "das ausgewählte Gerät"
   selected_channel: "der ausgewählte Kanal"
   channel_number: "Kanal %{number}"
+
+settings:
+  unavailable: "Einstellungen können nicht gespeichert werden; Änderungen gelten nur für diese Sitzung."

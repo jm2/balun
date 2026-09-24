@@ -200,7 +200,7 @@ fn options(write: bool) -> OpenOptions {
     options
 }
 
-fn open_directory(parent: &Dir, name: &Path) -> Result<Dir, SettingsError> {
+fn open_directory(parent: &Dir, name: &Path) -> Result<(Dir, Metadata), SettingsError> {
     let mut opts = options(false);
     opts.maybe_dir(true);
     #[cfg(windows)]
@@ -216,7 +216,7 @@ fn open_directory(parent: &Dir, name: &Path) -> Result<Dir, SettingsError> {
         .metadata()
         .map_err(|e| SettingsError::io(SettingsOperation::Inspect, &e))?;
     check_directory(&metadata, true)?;
-    Ok(Dir::from_std_file(file.into_std()))
+    Ok((Dir::from_std_file(file.into_std()), metadata))
 }
 
 impl Profile {
@@ -284,20 +284,27 @@ impl Profile {
                     ));
                 }
             }
-            let next = open_directory(&parent, Path::new(&name))?;
-            // Older Balun created owned 0755 profile directories. Tightening
-            // read/search permission is safe after rejecting foreign owners and
-            // any group/other write permission. No file bytes are changed.
+            let (next, metadata) = open_directory(&parent, Path::new(&name))?;
+            // Older Balun created owned 0755 profile directories, and a 002
+            // umask can add user-private-group write. Clearing group/other bits
+            // is safe after admission; owner bits are never added, so a
+            // read-only profile stays read-only. No file bytes are changed.
             #[cfg(unix)]
             {
+                use cap_std::fs::MetadataExt;
                 use std::os::unix::fs::PermissionsExt;
-                next.try_clone()
-                    .and_then(|dir| {
-                        dir.into_std_file()
-                            .set_permissions(std::fs::Permissions::from_mode(0o700))
-                    })
-                    .map_err(|e| SettingsError::io(SettingsOperation::Inspect, &e))?;
+                let mode = metadata.mode();
+                if mode & 0o077 != 0 {
+                    next.try_clone()
+                        .and_then(|dir| {
+                            dir.into_std_file()
+                                .set_permissions(std::fs::Permissions::from_mode(mode & 0o700))
+                        })
+                        .map_err(|e| SettingsError::io(SettingsOperation::Inspect, &e))?;
+                }
             }
+            #[cfg(not(unix))]
+            let _ = metadata;
             parents.push(parent);
             parent = next;
         }
@@ -506,14 +513,61 @@ fn check_directory(metadata: &Metadata, owned: bool) -> Result<(), SettingsError
     #[cfg(unix)]
     {
         use cap_std::fs::MetadataExt;
-        let owner = rustix::process::geteuid().as_raw();
-        if metadata.mode() & 0o022 != 0 || (owned && metadata.uid() != owner) {
-            return Err(SettingsError::Permissions);
-        }
+        check_unix_directory(
+            metadata.mode(),
+            metadata.uid(),
+            metadata.gid(),
+            owned,
+            user_private_group,
+        )?;
     }
     #[cfg(not(unix))]
     let _ = owned;
     Ok(())
+}
+
+/// Refuse a world-writable directory and, when `owned`, a foreign owner.
+///
+/// Group write is admitted only for a directory the effective user owns whose
+/// group is that account's user-private group, as a 002 umask creates. The
+/// group lookup runs only for such a directory; a failed lookup refuses.
+#[cfg(unix)]
+fn check_unix_directory(
+    mode: u32,
+    uid: u32,
+    gid: u32,
+    owned: bool,
+    account_group: impl FnOnce() -> Option<u32>,
+) -> Result<(), SettingsError> {
+    let foreign = uid != rustix::process::geteuid().as_raw();
+    if mode & 0o002 != 0 || (owned && foreign) {
+        return Err(SettingsError::Permissions);
+    }
+    if mode & 0o020 != 0 && (foreign || account_group() != Some(gid)) {
+        return Err(SettingsError::Permissions);
+    }
+    Ok(())
+}
+
+/// The effective group ID when it is the account's user-private group (UPG).
+///
+/// Conservative UPG convention: `getgrgid_r(getegid())` names the group exactly
+/// as `getpwuid_r(geteuid())` names the user, and the group lists no member
+/// other than that user. A failed lookup or unrepresentable name is `None`.
+#[cfg(unix)]
+fn user_private_group() -> Option<u32> {
+    use nix::unistd::{Group, User, getegid, geteuid};
+    let user = User::from_uid(geteuid()).ok().flatten();
+    let group = Group::from_gid(getegid()).ok().flatten();
+    private_group(user.map(|user| user.name).as_deref(), group.as_ref())
+}
+
+#[cfg(unix)]
+fn private_group(user: Option<&str>, group: Option<&nix::unistd::Group>) -> Option<u32> {
+    let (user, group) = (user?, group?);
+    let named = !user.is_empty() && !user.contains(char::REPLACEMENT_CHARACTER);
+    (named && group.name == user && group.mem.iter().all(|member| member == user))
+        .then_some(group.gid.as_raw())
 }
 
 fn check_file(metadata: &Metadata) -> Result<(), SettingsError> {
@@ -960,6 +1014,136 @@ mod tests {
                 Err(SettingsError::Permissions)
             );
         }
+    }
+
+    #[cfg(unix)]
+    fn group(name: &str, gid: u32, members: &[&str]) -> nix::unistd::Group {
+        nix::unistd::Group {
+            name: name.to_owned(),
+            passwd: std::ffi::CString::default(),
+            gid: nix::unistd::Gid::from_raw(gid),
+            mem: members.iter().map(|member| (*member).to_owned()).collect(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_user_private_group_needs_the_user_name_and_no_other_members() {
+        let upg = group("alice", 1_000, &[]);
+        assert_eq!(private_group(Some("alice"), Some(&upg)), Some(1_000));
+        let listed = group("alice", 1_000, &["alice"]);
+        assert_eq!(private_group(Some("alice"), Some(&listed)), Some(1_000));
+        for (user, group) in [
+            (None, Some(upg.clone())),
+            (Some("alice"), None),
+            (Some("bob"), Some(upg.clone())),
+            (Some("alice"), Some(group("users", 1_000, &[]))),
+            (
+                Some("alice"),
+                Some(group("alice", 1_000, &["alice", "bob"])),
+            ),
+            (Some(""), Some(group("", 1_000, &[]))),
+            (Some("\u{FFFD}"), Some(group("\u{FFFD}", 1_000, &[]))),
+        ] {
+            assert_eq!(private_group(user, group.as_ref()), None, "{user:?}");
+        }
+        // The account lookup itself only ever reports the effective group.
+        if let Some(gid) = user_private_group() {
+            assert_eq!(gid, rustix::process::getegid().as_raw());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_write_is_admitted_only_for_an_owned_user_private_group() {
+        let me = rustix::process::geteuid().as_raw();
+        let other = me.wrapping_add(1);
+        for owned in [false, true] {
+            let upg = || Some(1_000);
+            assert_eq!(check_unix_directory(0o775, me, 1_000, owned, upg), Ok(()));
+            assert_eq!(check_unix_directory(0o770, me, 1_000, owned, upg), Ok(()));
+            // Private modes never consult the account database.
+            let unused = || -> Option<u32> { panic!("group lookup for a private mode") };
+            assert_eq!(
+                check_unix_directory(0o755, me, 1_000, owned, unused),
+                Ok(())
+            );
+            for (mode, uid, gid, lookup) in [
+                (0o775, me, 1_001, Some(1_000)),
+                (0o775, me, 1_000, None),
+                (0o775, other, 1_000, Some(1_000)),
+                (0o777, me, 1_000, Some(1_000)),
+                (0o757, me, 1_000, Some(1_000)),
+            ] {
+                assert_eq!(
+                    check_unix_directory(mode, uid, gid, owned, || lookup),
+                    Err(SettingsError::Permissions),
+                    "{mode:o} {owned}"
+                );
+            }
+        }
+        // A foreign but unwritable configuration parent stays trusted; the
+        // Balun directory itself must be owned.
+        let unused = || -> Option<u32> { panic!("group lookup for a private mode") };
+        assert_eq!(check_unix_directory(0o755, other, 0, false, unused), Ok(()));
+        assert_eq!(
+            check_unix_directory(0o700, other, 0, true, unused),
+            Err(SettingsError::Permissions)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_group_writable_configuration_follows_the_account_group_policy() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().join("config");
+        fs::create_dir(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o770)).unwrap();
+        // The result depends on this account's group database, so compare the
+        // real lookup with the created directory rather than assuming a host.
+        let private = user_private_group() == Some(fs::metadata(&parent).unwrap().gid());
+        let store = SettingsStore::new(parent.join("balun"));
+        if private {
+            store.save(&Settings::default()).unwrap();
+            fs::set_permissions(store.directory(), fs::Permissions::from_mode(0o770)).unwrap();
+            let reopened = SettingsStore::new(store.directory().to_owned());
+            assert!(reopened.load().unwrap().is_some());
+            let mode = fs::metadata(store.directory()).unwrap().mode();
+            assert_eq!(mode & 0o777, 0o700, "user-private group write is removed");
+        } else {
+            assert_eq!(store.load(), Err(SettingsError::Permissions));
+            assert!(!store.directory().exists());
+        }
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o777)).unwrap();
+        let shared = SettingsStore::new(parent.join("balun"));
+        assert_eq!(shared.load(), Err(SettingsError::Permissions));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_profile_is_tightened_without_becoming_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, store) = store();
+        let before = fs::read(store.path()).unwrap();
+        fs::set_permissions(store.directory(), fs::Permissions::from_mode(0o550)).unwrap();
+        let reopened = SettingsStore::new(store.directory().to_owned());
+        assert!(reopened.load().unwrap().is_some());
+        let mode = || {
+            fs::metadata(store.directory())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode(), 0o500, "only group/other bits are cleared");
+        // An unprivileged owner cannot create the temporary sibling; root can.
+        if !rustix::process::geteuid().is_root() {
+            assert!(reopened.save(&Settings::default()).is_err());
+            assert_eq!(fs::read(store.path()).unwrap(), before);
+        }
+        assert_eq!(mode(), 0o500);
+        fs::set_permissions(store.directory(), fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     #[test]

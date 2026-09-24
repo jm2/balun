@@ -89,3 +89,6 @@ failure:
   selected_device: "所选设备"
   selected_channel: "所选频道"
   channel_number: "频道 %{number}"
+
+settings:
+  unavailable: "无法保存设置；更改仅在本次会话中有效。"

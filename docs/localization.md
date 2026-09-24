@@ -58,9 +58,10 @@ env -u LANGUAGE -u LC_ALL -u LC_MESSAGES LANG=de_DE.UTF-8 \
 
 The application menu, About description, navigation titles, player controls, and
 playback progress, startup status, and session errors are translated, along with
-Find device and Forget device dialogs. Routed approval dialogs and
-other window copy still contain English. The native GTK/libadwaita
-controls also depend on the platform's own translations and locale setup.
+Find device and Forget device dialogs and the unsaved-settings notice. Routed
+approval dialogs and other window copy still contain English. The native
+GTK/libadwaita controls also depend on the platform's own translations and
+locale setup.
 
 ## Adding presentation text
 

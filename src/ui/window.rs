@@ -344,6 +344,7 @@ pub(crate) fn build(
 
     let toasts = adw::ToastOverlay::new();
     toasts.set_child(Some(&device_and_content));
+    connect_settings_notice(&settings, &toasts);
     let window = adw::ApplicationWindow::builder()
         .application(application)
         .title("Balun")
@@ -480,6 +481,24 @@ pub(crate) fn build(
     connect_joined_shutdown(&window, controller, player_view, settings, shutdown_failed);
 
     window
+}
+
+/// Show one toast when this session's preferences cannot be loaded or saved.
+/// Console diagnostics alone are invisible in Windows GUI builds.
+fn connect_settings_notice(settings: &SettingsSession, toasts: &adw::ToastOverlay) {
+    let Some(unavailable) = settings.take_unavailable_notice() else {
+        return;
+    };
+    let toasts = toasts.downgrade();
+    gtk::glib::MainContext::default().spawn_local(async move {
+        if unavailable.await
+            && let Some(toasts) = toasts.upgrade()
+        {
+            toasts.add_toast(adw::Toast::new(
+                &balun::localization::settings_unavailable_notice(),
+            ));
+        }
+    });
 }
 
 fn connect_channel_activation(

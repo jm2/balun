@@ -119,6 +119,11 @@ pub fn application_description() -> Cow<'static, str> {
     rust_i18n::t!("app.description")
 }
 
+/// Notice shown once when this session's preferences cannot be loaded or saved.
+pub fn settings_unavailable_notice() -> Cow<'static, str> {
+    rust_i18n::t!("settings.unavailable")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

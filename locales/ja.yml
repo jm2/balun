@@ -95,3 +95,6 @@ failure:
   selected_device: "選択したデバイス"
   selected_channel: "選択したチャンネル"
   channel_number: "チャンネル %{number}"
+
+settings:
+  unavailable: "設定を保存できません。変更はこのセッションでのみ有効です。"

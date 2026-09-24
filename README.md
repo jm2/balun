@@ -55,7 +55,7 @@ address so you know which tuner failed.
 | Windows package validation | ✅ Pinned policy and full-tree probe receipt; completed installer payload independently extracted, compared, checked, and runtime-probed |
 | Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
 | Native playback log privacy | ✅ Closed error and media labels retain useful diagnostics without plugin error text, arbitrary caps values, or stream identifiers |
-| Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved |
+| Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved; a notice appears when settings cannot be saved |
 | Native runtime inventory tooling | 🛠️ Reopened DMG content binding, macOS native copy ownership, installed Homebrew metadata, and native-scope SBOM generation; [catalog assembly, embedded-resource representation, remaining artifact adapters, and release attachment remain pending](docs/native-inventory.md) |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 | i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Application menu, navigation, player controls/progress/startup, and About description; [remaining scope](docs/localization.md) |
@@ -64,7 +64,8 @@ Route-table-derived tunnel discovery and network-change handling are the two Lin
 today. Local broadcast and multicast discovery, exact IP or hostname discovery, and remembered
 targets work on Linux, macOS, and Windows.
 
-Settings support a private local profile under the account's existing configuration parent.
+Settings support a private local profile under the account's existing configuration parent,
+which may be group-writable only for the account's own user-private group.
 Windows retains that parent's inherited permissions; shared or network profiles are outside the
 contract. A load timeout uses defaults with persistence disabled for that session. A save timeout
 allows closing with the newest preferences potentially unsaved; an OS publication already in

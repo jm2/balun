@@ -120,3 +120,6 @@ failure:
   selected_device: "wybrane urządzenie"
   selected_channel: "wybrany kanał"
   channel_number: "kanał %{number}"
+
+settings:
+  unavailable: "Nie można zapisać ustawień; zmiany obowiązują tylko w tej sesji."

@@ -126,3 +126,6 @@ failure:
   selected_device: "le périphérique sélectionné"
   selected_channel: "la chaîne sélectionnée"
   channel_number: "chaîne %{number}"
+
+settings:
+  unavailable: "Impossible d’enregistrer les paramètres ; les modifications ne s’appliquent qu’à cette session."

@@ -60,6 +60,8 @@ nix = { version = "0.31", default-features = false, features = ["socket", "uio"]
 socket2 = { version = "0.6", features = ["all"] }
 
 [target.'cfg(unix)'.dependencies]
+# getpwuid_r/getgrgid_r for the settings user-private-group check.
+nix = { version = "0.31", default-features = false, features = ["user"] }
 rustix = { version = "1.1", features = ["fs", "process"] }
 
 [target.'cfg(unix)'.dev-dependencies]
