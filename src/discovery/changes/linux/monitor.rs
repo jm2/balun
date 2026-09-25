@@ -1,16 +1,23 @@
 //! Fail-closed Linux rtnetlink change observation.
 //!
+//! The monitor subscribes to link, IPv4 and IPv6 address, IPv4 route, and
+//! IPv4 rule notifications for the network-change watcher. It validates each
+//! one, reports its kind to an [`RtnetlinkObserver`], and wakes the watcher,
+//! which debounces the wake-ups and re-reads the interface inventory. A
+//! failed, overflowing, or malformed subscription poisons the observer.
+//!
 //! This module deliberately uses neli's low-level socket rather than
 //! `NlRouter`'s multicast receiver. In neli 0.7.4 the router can route a
 //! socket-level overflow only to an outstanding request, which is unsuitable
-//! for a passive authority-invalidation source.
+//! for a passive change source that must fail closed.
 //!
-//! A controller creates a fresh monitor before taking a route snapshot, then
-//! consumes it with [`RtnetlinkMonitor::run_continuously`]. That handoff
-//! drains the post-snapshot barrier and synchronously activates the baseline
-//! before entering the live loop. A changed barrier means the snapshot must be
-//! discarded. Reconciliation after a live notification should replace this
-//! monitor with a fresh subscribed instance and repeat the same sequence.
+//! The watcher subscribes a fresh monitor before it takes its baseline
+//! snapshot of the interfaces, then consumes it with
+//! [`RtnetlinkMonitor::run_continuously`]. That handoff drains the
+//! post-snapshot barrier and synchronously activates the baseline before
+//! entering the live loop. A changed barrier means the baseline must be
+//! discarded; the next observation attempt subscribes a fresh monitor and
+//! repeats the same sequence.
 
 use std::fmt;
 use std::io::{self, IoSliceMut};
@@ -52,11 +59,12 @@ const MAX_BARRIER_DATAGRAMS: usize = 256;
 const MAX_BARRIER_BYTES: usize = 16 * 1024 * 1024;
 const RECONCILIATION_CAPACITY: usize = 1;
 
-/// Synchronous, topology-free hooks owned by one route-observer incarnation.
+/// Synchronous, topology-free hooks owned by one monitor incarnation.
 ///
-/// Both methods must be idempotent and must not panic. `poison` must prevent a
-/// later stale observer from publishing a healthy epoch. Dropping the monitor
-/// calls `poison`, including when its task is aborted.
+/// Both methods must be idempotent and must not panic. `poison` must revoke
+/// whatever readiness the observer guards, so a failed monitor never leaves
+/// observation looking healthy. Dropping the monitor calls `poison`, including
+/// when its task is aborted.
 pub(super) trait RtnetlinkObserver: Send + Sync {
     fn invalidate(&self);
     fn poison(&self);
@@ -106,61 +114,62 @@ impl NotificationKind {
     }
 }
 
-/// A coalesced request for the controller to debounce and rebuild its baseline.
+/// A coalesced request for the watcher to debounce and re-read its baseline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct ReconciliationRequired;
 
-/// Result of draining all notifications queued after a route snapshot.
+/// Result of draining every notification queued since the subscription,
+/// which covers the caller's baseline snapshot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PostSnapshotBarrier {
     /// The subscribed socket reached `EAGAIN` without observing a change.
     Clean,
-    /// At least one change was queued; the caller must discard its snapshot.
+    /// At least one change was queued; the caller must discard its baseline.
     Changed,
 }
 
 /// A topology-redacted terminal monitor failure.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub(super) enum RtnetlinkMonitorError {
-    #[error("the Linux route-event socket could not be opened")]
+    #[error("the Linux rtnetlink socket could not be opened")]
     SocketUnavailable,
-    #[error("the Linux route-event receive buffer could not be bounded")]
+    #[error("the Linux rtnetlink receive buffer could not be bounded")]
     ReceiveBufferUnavailable,
-    #[error("the Linux route-event socket could not be made nonblocking")]
+    #[error("the Linux rtnetlink socket could not be made nonblocking")]
     NonblockingUnavailable,
-    #[error("the Linux route-event groups could not be subscribed")]
+    #[error("the Linux rtnetlink groups could not be subscribed")]
     SubscriptionUnavailable,
-    #[error("the Linux route-event group subscription could not be verified")]
+    #[error("the Linux rtnetlink group subscription could not be verified")]
     MembershipMismatch,
-    #[error("the Linux route-event socket could not join the async runtime")]
+    #[error("the Linux rtnetlink socket could not join the async runtime")]
     RuntimeRegistrationFailed,
-    #[error("the Linux route-event receive queue overflowed")]
+    #[error("the Linux rtnetlink receive queue overflowed")]
     ReceiveOverflow,
-    #[error("the Linux route-event socket closed")]
+    #[error("the Linux rtnetlink socket closed")]
     SocketClosed,
-    #[error("the Linux route-event socket failed")]
+    #[error("the Linux rtnetlink socket failed")]
     ReceiveFailed,
-    #[error("a Linux route-event datagram was malformed")]
+    #[error("a Linux rtnetlink datagram was malformed")]
     InvalidDatagram,
-    #[error("a Linux route-event notification was unsupported")]
+    #[error("a Linux rtnetlink notification was unsupported")]
     UnsupportedNotification,
-    #[error("the Linux route-event reconciler is unavailable")]
+    #[error("the Linux rtnetlink reconciler is unavailable")]
     ReconcilerUnavailable,
-    #[error("the Linux route-event post-snapshot barrier exceeded its bound")]
+    #[error("the Linux rtnetlink post-snapshot barrier exceeded its bound")]
     BarrierLimitExceeded,
-    #[error("the Linux route-event post-snapshot barrier was not completed")]
+    #[error("the Linux rtnetlink post-snapshot barrier was not completed")]
     BarrierRequired,
-    #[error("Linux route events changed during the route snapshot")]
+    #[error("Linux rtnetlink reported a change during the baseline snapshot")]
     ChangedDuringSnapshot,
-    #[error("Linux route-observer activation was rejected")]
+    #[error("the Linux rtnetlink baseline activation was rejected")]
     ActivationRejected,
 }
 
-/// One subscribed, non-cloneable rtnetlink observer.
+/// One subscribed, non-cloneable rtnetlink monitor.
 ///
 /// Construction must occur on a Tokio runtime with I/O enabled. Successful
-/// construction is the subscription point: callers take their route snapshot
-/// only after this value has been returned.
+/// construction is the subscription point: callers take their baseline
+/// snapshot only after this value has been returned.
 pub(super) struct RtnetlinkMonitor {
     socket: AsyncFd<NlSocket>,
     core: MonitorCore,
@@ -169,8 +178,8 @@ pub(super) struct RtnetlinkMonitor {
 }
 
 impl RtnetlinkMonitor {
-    /// Subscribe to every kernel source which can alter Balun's Linux route
-    /// fingerprint, returning a capacity-one reconciliation receiver.
+    /// Subscribe to the link, address, route, and rule groups, returning a
+    /// capacity-one reconciliation receiver.
     pub(super) fn subscribe(
         observer: Arc<dyn RtnetlinkObserver>,
     ) -> Result<(Self, mpsc::Receiver<ReconciliationRequired>), RtnetlinkMonitorError> {
@@ -207,14 +216,15 @@ impl RtnetlinkMonitor {
         ))
     }
 
-    /// Close the handoff from a caller-owned snapshot into live observation.
+    /// Close the handoff from a caller-owned baseline into live observation.
     ///
-    /// This value must have been subscribed before the caller took its route
-    /// snapshot. The callback runs synchronously after a final bounded drain to
-    /// `EAGAIN`, with no await after that clean boundary. It should install only
-    /// the healthy epoch derived from that snapshot. The future then owns and
-    /// continuously polls this monitor; cancellation, a rejected activation,
-    /// or a changed barrier drops the monitor and poisons its incarnation.
+    /// This value must have been subscribed before the caller took its
+    /// baseline snapshot. The callback runs synchronously after a final bounded
+    /// drain to `EAGAIN`, with no await after that clean boundary, so it can
+    /// take or install that baseline without missing a change. The future then
+    /// owns and continuously polls this monitor; cancellation, a rejected
+    /// activation, or a changed barrier drops the monitor and poisons its
+    /// incarnation.
     pub(super) async fn run_continuously<F>(
         mut self,
         activate: F,
@@ -389,7 +399,7 @@ impl MonitorCore {
             return Ok(());
         }
         // Invalidate before notification. A full channel only coalesces work;
-        // it never delays or suppresses authority invalidation.
+        // it never delays or suppresses invalidation.
         self.observer.invalidate();
         match self.reconciliation.try_send(ReconciliationRequired) {
             Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
@@ -881,7 +891,7 @@ mod tests {
         }
     }
 
-    /// The default decision, as every observer except routed authority keeps.
+    /// The default decision, which the network-change watcher keeps.
     struct DefaultObserver;
 
     impl RtnetlinkObserver for DefaultObserver {

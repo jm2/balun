@@ -23,7 +23,7 @@ pub struct TypedSubnetScope {
 }
 
 impl TypedSubnetScope {
-    /// Distinguishes typed-scope budgets from route-derived or exact-target authority.
+    /// Distinguishes typed-scope budgets from exact-target authority.
     pub const POLICY_ID: &str = "typed-subnet-rfc1918-v1";
     /// Longest canonical IPv4 CIDR text, including a two-digit prefix length.
     pub const MAX_TEXT_BYTES: usize = 18;

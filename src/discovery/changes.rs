@@ -24,8 +24,9 @@ pub const NETWORK_CHANGE_MAX_DELAY: Duration = Duration::from_secs(2);
 /// What one interface lost between two observations.
 ///
 /// Each field names the discovery evidence that became stale: IPv4 broadcast
-/// and routed IPv4 replies, IPv6 link-local multicast replies, and IPv6
-/// site-local multicast replies. A removed interface loses all of them.
+/// replies (and typed-subnet replies, whose path names no interface), IPv6
+/// link-local multicast replies, and IPv6 site-local multicast replies. A
+/// removed interface loses all of them.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct InterfaceLoss {
     ipv4: bool,
@@ -232,7 +233,8 @@ impl InterfaceInventory {
     }
 
     /// Enumerate the system's up, non-loopback interfaces. Tunnels are
-    /// included so a lost tunnel can expire routed evidence.
+    /// included so a lost tunnel can expire typed-subnet evidence that may
+    /// have reached Balun through it.
     pub fn current() -> io::Result<Self> {
         let interfaces = if_addrs::get_if_addrs()?;
         Ok(Self::from_addresses(
