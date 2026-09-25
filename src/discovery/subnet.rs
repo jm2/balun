@@ -29,7 +29,10 @@
 //!   deadline, the remaining budget, and that the destination is a usable
 //!   host of the scope;
 //! - sockets keep broadcasting disabled, and a send the operating system
-//!   refuses, as it refuses a broadcast destination, is never retried.
+//!   refuses, as it refuses a broadcast destination, is never retried. A
+//!   local interface's directed broadcast is refused the same way before it
+//!   reaches the socket, because Windows would send it without the broadcast
+//!   option.
 //!
 //! Only validated responders reach the report, so HTTP metadata enrichment
 //! stays a separate, responder-only step.
@@ -243,14 +246,31 @@ pub async fn discover_typed_subnet(
     permit: SubnetScanPermit,
     cancellation: &CancellationToken,
 ) -> Result<SubnetScanReport, SubnetScanError> {
+    let plan = ScanPlan::typed(permit.scope).with_local_broadcasts(local_directed_broadcasts());
     scan(
         SubnetScanLane::process(),
         &SystemTransport,
-        ScanPlan::typed(permit.scope),
+        plan,
         permit.authority,
         cancellation,
     )
     .await
+}
+
+/// Every local interface's IPv4 directed-broadcast address, or none when the
+/// interfaces cannot be read, leaving the operating system's own refusal.
+fn local_directed_broadcasts() -> BTreeSet<Ipv4Addr> {
+    if_addrs::get_if_addrs()
+        .map(|interfaces| {
+            interfaces
+                .into_iter()
+                .filter_map(|interface| match interface.addr {
+                    if_addrs::IfAddr::V4(address) => address.broadcast,
+                    if_addrs::IfAddr::V6(_) => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The observation generation a search stays bound to.
@@ -396,11 +416,12 @@ impl SubnetSocket for UdpSocket {
 }
 
 /// What one search probes: the entered network, its candidates in order,
-/// and the destination port.
+/// the destination port, and the local broadcast addresses never sent to.
 struct ScanPlan {
     network: Ipv4Net,
     candidates: Vec<Ipv4Addr>,
     port: u16,
+    local_broadcasts: BTreeSet<Ipv4Addr>,
 }
 
 impl ScanPlan {
@@ -409,7 +430,19 @@ impl ScanPlan {
             network: scope.network(),
             candidates: scope.candidates().collect(),
             port: DISCOVERY_UDP_PORT,
+            local_broadcasts: BTreeSet::new(),
         }
+    }
+
+    fn with_local_broadcasts(mut self, local_broadcasts: BTreeSet<Ipv4Addr>) -> Self {
+        self.local_broadcasts = local_broadcasts;
+        self
+    }
+
+    /// Whether `destination` is a local interface's directed broadcast.
+    fn is_local_broadcast(&self, destination: SocketAddr) -> bool {
+        matches!(destination, SocketAddr::V4(destination)
+            if self.local_broadcasts.contains(destination.ip()))
     }
 
     /// Whether `destination` is a usable host of the entered network on the
@@ -527,7 +560,13 @@ impl ScanContext {
                 self.halt(reason);
                 return SendOutcome::Halted;
             }
-            let result = socket.try_send_to(&self.request, destination);
+            // A local directed broadcast is refused as a broadcast-capable
+            // platform refuses it, so every platform behaves the same.
+            let result = if self.plan.is_local_broadcast(destination) {
+                Err(io::ErrorKind::PermissionDenied.into())
+            } else {
+                socket.try_send_to(&self.request, destination)
+            };
             if matches!(&result, Err(error) if error.kind() == io::ErrorKind::WouldBlock) {
                 continue;
             }

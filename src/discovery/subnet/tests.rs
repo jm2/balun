@@ -760,6 +760,42 @@ async fn refused_sends_are_never_retried_and_refusing_hosts_end_quietly() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_local_directed_broadcast_is_refused_before_the_socket_on_every_platform() {
+    let local = Ipv4Addr::new(10, 8, 0, 255);
+    let network = Arc::new(FakeNetwork::silent());
+    let (_gate, authority) = ready();
+    let plan = ScanPlan::typed(scope("10.8.0.0/23")).with_local_broadcasts([local].into());
+    let report = run(
+        &network,
+        &lane(0),
+        plan,
+        authority,
+        &CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(report.outcome, SubnetScanOutcome::Complete);
+    assert!(
+        network.sends_to(at(local)).is_empty(),
+        "never handed to the socket"
+    );
+    assert_eq!(report.refused_sends, 1);
+    assert_eq!(
+        report.requests_attempted,
+        1_020 - 1,
+        "refused once, never retried"
+    );
+    assert_eq!(network.sends().len(), 1_020 - 2);
+    assert_eq!(report.report.issues.len(), 1);
+    assert_eq!(report.report.issues[0].endpoint.destination, at(local));
+    assert!(
+        local_directed_broadcasts()
+            .iter()
+            .all(|address| !address.is_loopback())
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn failed_sockets_are_issues_and_other_candidates_continue() {
     struct Failing;
     impl SubnetTransport for Failing {
@@ -914,6 +950,7 @@ fn usable_hosts_follow_the_entered_prefix() {
         network: "255.255.255.255/32".parse().unwrap(),
         candidates: vec![Ipv4Addr::BROADCAST],
         port: DISCOVERY_UDP_PORT,
+        local_broadcasts: BTreeSet::new(),
     };
     assert!(
         !limited.admits(at(Ipv4Addr::BROADCAST)),
@@ -1054,6 +1091,7 @@ mod native {
                 network: Ipv4Net::new(*address.ip(), 32).unwrap(),
                 candidates: vec![*address.ip()],
                 port: address.port(),
+                local_broadcasts: BTreeSet::new(),
             }
         }
 
@@ -1249,8 +1287,10 @@ mod native {
     /// The operating system refuses a broadcast destination on a socket that
     /// never enabled broadcasting, and the refusal widens nothing. The
     /// limited broadcast is refused everywhere (macOS reports it
-    /// unreachable); a local directed broadcast, sent through the scan core
-    /// as an ordinary candidate, is refused once and never retried.
+    /// unreachable). Windows sends a directed broadcast without the option,
+    /// so the runner refuses a local one itself: offered as an ordinary
+    /// candidate, it is refused once, never reaches the socket, and is never
+    /// retried, on every platform.
     #[tokio::test]
     async fn native_broadcast_sends_are_refused_with_broadcast_disabled() {
         let socket = open_system_socket().unwrap();
@@ -1272,11 +1312,21 @@ mod native {
         let Some(broadcast) = local_directed_broadcast() else {
             return;
         };
+        // Linux and macOS refuse it themselves; Windows would send it.
+        #[cfg(not(windows))]
+        {
+            let error = socket
+                .send_to(b"balun", SocketAddr::from((broadcast, 9)))
+                .await
+                .expect_err("a directed broadcast needs broadcasting enabled");
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{error:?}");
+        }
         let plan = ScanPlan {
             // Any network that holds the address as an interior host.
             network: Ipv4Net::new(broadcast, 1).unwrap().trunc(),
             candidates: vec![broadcast],
             port: 9,
+            local_broadcasts: local_directed_broadcasts(),
         };
         assert!(plan.admits(SocketAddr::from((broadcast, 9))));
         let (_gate, authority) = ready();
@@ -1288,7 +1338,10 @@ mod native {
         assert_eq!(report.requests_attempted, 1, "refused once, never retried");
         assert_eq!(report.refused_sends, 1, "{:?}", report.report.issues);
         assert_eq!(report.report.stats.datagrams_sent, 0);
-        assert_eq!(hooked.sends.lock().unwrap().len(), 1);
+        assert!(
+            hooked.sends.lock().unwrap().is_empty(),
+            "it never reached the socket"
+        );
         assert!(report.report.issues[0].message.contains("not retried"));
     }
 }
