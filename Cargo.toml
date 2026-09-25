@@ -55,9 +55,8 @@ name = "balun-discover"
 path = "src/bin/balun-discover.rs"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-neli = { version = "0.7.4", default-features = false, features = ["async"] }
+neli = { version = "0.7.4", default-features = false }
 nix = { version = "0.31", default-features = false, features = ["socket", "uio"] }
-socket2 = { version = "0.6", features = ["all"] }
 
 [target.'cfg(unix)'.dependencies]
 # getpwuid_r/getgrgid_r for the settings user-private-group check.
