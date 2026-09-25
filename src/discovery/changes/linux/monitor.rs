@@ -6,7 +6,7 @@
 //! for a passive authority-invalidation source.
 //!
 //! A controller creates a fresh monitor before taking a route snapshot, then
-//! consumes it with [`LinuxRouteEventMonitor::run_continuously`]. That handoff
+//! consumes it with [`RtnetlinkMonitor::run_continuously`]. That handoff
 //! drains the post-snapshot barrier and synchronously activates the baseline
 //! before entering the live loop. A changed barrier means the snapshot must be
 //! discarded. Reconciliation after a live notification should replace this
@@ -57,7 +57,7 @@ const RECONCILIATION_CAPACITY: usize = 1;
 /// Both methods must be idempotent and must not panic. `poison` must prevent a
 /// later stale observer from publishing a healthy epoch. Dropping the monitor
 /// calls `poison`, including when its task is aborted.
-pub(super) trait RouteMonitorObserver: Send + Sync {
+pub(super) trait RtnetlinkObserver: Send + Sync {
     fn invalidate(&self);
     fn poison(&self);
 
@@ -108,7 +108,7 @@ impl NotificationKind {
 
 /// A coalesced request for the controller to debounce and rebuild its baseline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct RouteReconciliationRequired;
+pub(super) struct ReconciliationRequired;
 
 /// Result of draining all notifications queued after a route snapshot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -121,7 +121,7 @@ pub(super) enum PostSnapshotBarrier {
 
 /// A topology-redacted terminal monitor failure.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub(super) enum LinuxRouteMonitorError {
+pub(super) enum RtnetlinkMonitorError {
     #[error("the Linux route-event socket could not be opened")]
     SocketUnavailable,
     #[error("the Linux route-event receive buffer could not be bounded")]
@@ -161,25 +161,25 @@ pub(super) enum LinuxRouteMonitorError {
 /// Construction must occur on a Tokio runtime with I/O enabled. Successful
 /// construction is the subscription point: callers take their route snapshot
 /// only after this value has been returned.
-pub(super) struct LinuxRouteEventMonitor {
+pub(super) struct RtnetlinkMonitor {
     socket: AsyncFd<NlSocket>,
     core: MonitorCore,
     receive_buffer: Box<[u8]>,
     barrier_complete: bool,
 }
 
-impl LinuxRouteEventMonitor {
+impl RtnetlinkMonitor {
     /// Subscribe to every kernel source which can alter Balun's Linux route
     /// fingerprint, returning a capacity-one reconciliation receiver.
     pub(super) fn subscribe(
-        observer: Arc<dyn RouteMonitorObserver>,
-    ) -> Result<(Self, mpsc::Receiver<RouteReconciliationRequired>), LinuxRouteMonitorError> {
+        observer: Arc<dyn RtnetlinkObserver>,
+    ) -> Result<(Self, mpsc::Receiver<ReconciliationRequired>), RtnetlinkMonitorError> {
         // AsyncFd's public constructors panic without a current reactor. Check
         // before opening the socket so this API fails closed and without even
         // briefly subscribing when called from synchronous code.
         if Handle::try_current().is_err() {
             observer.poison();
-            return Err(LinuxRouteMonitorError::RuntimeRegistrationFailed);
+            return Err(RtnetlinkMonitorError::RuntimeRegistrationFailed);
         }
         let socket = match subscribed_socket() {
             Ok(socket) => socket,
@@ -192,7 +192,7 @@ impl LinuxRouteEventMonitor {
             Ok(socket) => socket,
             Err(_) => {
                 observer.poison();
-                return Err(LinuxRouteMonitorError::RuntimeRegistrationFailed);
+                return Err(RtnetlinkMonitorError::RuntimeRegistrationFailed);
             }
         };
         let (reconciliation, receiver) = mpsc::channel(RECONCILIATION_CAPACITY);
@@ -218,7 +218,7 @@ impl LinuxRouteEventMonitor {
     pub(super) async fn run_continuously<F>(
         mut self,
         activate: F,
-    ) -> Result<(), LinuxRouteMonitorError>
+    ) -> Result<(), RtnetlinkMonitorError>
     where
         F: FnOnce() -> Result<(), ()>,
     {
@@ -245,20 +245,20 @@ impl LinuxRouteEventMonitor {
     /// A caller must first establish a clean post-snapshot barrier. Each
     /// scheduler turn is bounded, but a busy socket remains invalidated and is
     /// drained again after yielding.
-    async fn run(mut self) -> Result<(), LinuxRouteMonitorError> {
+    async fn run(mut self) -> Result<(), RtnetlinkMonitorError> {
         require_completed_barrier(&mut self.core, self.barrier_complete)?;
 
         loop {
             let reconciliation = self.core.reconciliation.clone();
             let readiness = tokio::select! {
                 _ = reconciliation.closed() => {
-                    return self.core.fail(LinuxRouteMonitorError::ReconcilerUnavailable);
+                    return self.core.fail(RtnetlinkMonitorError::ReconcilerUnavailable);
                 }
                 readiness = self.socket.readable() => readiness,
             };
             let mut readiness = match readiness {
                 Ok(readiness) => readiness,
-                Err(_) => return self.core.fail(LinuxRouteMonitorError::ReceiveFailed),
+                Err(_) => return self.core.fail(RtnetlinkMonitorError::ReceiveFailed),
             };
 
             let mut source = NeliDatagramSource::new(self.socket.get_ref());
@@ -290,74 +290,74 @@ impl LinuxRouteEventMonitor {
 fn require_completed_barrier(
     core: &mut MonitorCore,
     barrier_complete: bool,
-) -> Result<(), LinuxRouteMonitorError> {
+) -> Result<(), RtnetlinkMonitorError> {
     if barrier_complete {
         Ok(())
     } else {
-        core.fail(LinuxRouteMonitorError::BarrierRequired)
+        core.fail(RtnetlinkMonitorError::BarrierRequired)
     }
 }
 
-impl Drop for LinuxRouteEventMonitor {
+impl Drop for RtnetlinkMonitor {
     fn drop(&mut self) {
         self.core.poison();
     }
 }
 
-impl fmt::Debug for LinuxRouteEventMonitor {
+impl fmt::Debug for RtnetlinkMonitor {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("LinuxRouteEventMonitor(<redacted>)")
+        formatter.write_str("RtnetlinkMonitor(<redacted>)")
     }
 }
 
-fn subscribed_socket() -> Result<NlSocket, LinuxRouteMonitorError> {
+fn subscribed_socket() -> Result<NlSocket, RtnetlinkMonitorError> {
     let socket =
-        NlSocket::new(NlFamily::Route).map_err(|_| LinuxRouteMonitorError::SocketUnavailable)?;
+        NlSocket::new(NlFamily::Route).map_err(|_| RtnetlinkMonitorError::SocketUnavailable)?;
     socket
         .set_recv_buffer_size(SOCKET_RECEIVE_BUFFER_BYTES)
-        .map_err(|_| LinuxRouteMonitorError::ReceiveBufferUnavailable)?;
+        .map_err(|_| RtnetlinkMonitorError::ReceiveBufferUnavailable)?;
     socket
         .nonblock()
-        .map_err(|_| LinuxRouteMonitorError::NonblockingUnavailable)?;
+        .map_err(|_| RtnetlinkMonitorError::NonblockingUnavailable)?;
     socket
         .bind(None, Groups::new_groups(&MONITORED_GROUPS))
-        .map_err(|_| LinuxRouteMonitorError::SubscriptionUnavailable)?;
+        .map_err(|_| RtnetlinkMonitorError::SubscriptionUnavailable)?;
 
     let memberships = socket
         .list_mcast_membership()
-        .map_err(|_| LinuxRouteMonitorError::MembershipMismatch)?;
+        .map_err(|_| RtnetlinkMonitorError::MembershipMismatch)?;
     if memberships.to_vec() != MONITORED_GROUPS {
-        return Err(LinuxRouteMonitorError::MembershipMismatch);
+        return Err(RtnetlinkMonitorError::MembershipMismatch);
     }
     Ok(socket)
 }
 
 /// Register an fd for readable readiness without allowing Tokio's documented
 /// missing-I/O-driver panic to escape this security boundary.
-fn register_readable<T: AsRawFd>(inner: T) -> Result<AsyncFd<T>, LinuxRouteMonitorError> {
+fn register_readable<T: AsRawFd>(inner: T) -> Result<AsyncFd<T>, RtnetlinkMonitorError> {
     if Handle::try_current().is_err() {
-        return Err(LinuxRouteMonitorError::RuntimeRegistrationFailed);
+        return Err(RtnetlinkMonitorError::RuntimeRegistrationFailed);
     }
 
     match catch_unwind(AssertUnwindSafe(|| {
         AsyncFd::try_with_interest(inner, Interest::READABLE)
     })) {
         Ok(Ok(registered)) => Ok(registered),
-        Ok(Err(_)) | Err(_) => Err(LinuxRouteMonitorError::RuntimeRegistrationFailed),
+        Ok(Err(_)) | Err(_) => Err(RtnetlinkMonitorError::RuntimeRegistrationFailed),
     }
 }
 
 struct MonitorCore {
-    observer: Arc<dyn RouteMonitorObserver>,
-    reconciliation: mpsc::Sender<RouteReconciliationRequired>,
+    observer: Arc<dyn RtnetlinkObserver>,
+    reconciliation: mpsc::Sender<ReconciliationRequired>,
     poisoned: bool,
     notification_seen: bool,
 }
 
 impl MonitorCore {
     fn new(
-        observer: Arc<dyn RouteMonitorObserver>,
-        reconciliation: mpsc::Sender<RouteReconciliationRequired>,
+        observer: Arc<dyn RtnetlinkObserver>,
+        reconciliation: mpsc::Sender<ReconciliationRequired>,
     ) -> Self {
         Self {
             observer,
@@ -372,7 +372,7 @@ impl MonitorCore {
         bytes: &[u8],
         source_pid: u32,
         source_groups: &Groups,
-    ) -> Result<(), LinuxRouteMonitorError> {
+    ) -> Result<(), RtnetlinkMonitorError> {
         let (kind, interfaces) = match validate_notification(bytes, source_pid, source_groups) {
             Ok(notification) => notification,
             Err(error) => return self.fail(error),
@@ -391,15 +391,15 @@ impl MonitorCore {
         // Invalidate before notification. A full channel only coalesces work;
         // it never delays or suppresses authority invalidation.
         self.observer.invalidate();
-        match self.reconciliation.try_send(RouteReconciliationRequired) {
+        match self.reconciliation.try_send(ReconciliationRequired) {
             Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                self.fail(LinuxRouteMonitorError::ReconcilerUnavailable)
+                self.fail(RtnetlinkMonitorError::ReconcilerUnavailable)
             }
         }
     }
 
-    fn fail<T>(&mut self, error: LinuxRouteMonitorError) -> Result<T, LinuxRouteMonitorError> {
+    fn fail<T>(&mut self, error: RtnetlinkMonitorError) -> Result<T, RtnetlinkMonitorError> {
         self.poison();
         Err(error)
     }
@@ -474,7 +474,7 @@ fn drain_available<S: NonblockingDatagramSource + ?Sized>(
     receive_buffer: &mut [u8],
     max_datagrams: usize,
     max_bytes: usize,
-) -> Result<DrainOutcome, LinuxRouteMonitorError> {
+) -> Result<DrainOutcome, RtnetlinkMonitorError> {
     let mut datagrams = 0_usize;
     let mut bytes = 0_usize;
     let mut changed = false;
@@ -514,18 +514,18 @@ fn drain_available<S: NonblockingDatagramSource + ?Sized>(
             Err(error)
                 if error.raw_os_error() == Some(rustix::io::Errno::NOBUFS.raw_os_error()) =>
             {
-                return core.fail(LinuxRouteMonitorError::ReceiveOverflow);
+                return core.fail(RtnetlinkMonitorError::ReceiveOverflow);
             }
-            Err(_) => return core.fail(LinuxRouteMonitorError::ReceiveFailed),
+            Err(_) => return core.fail(RtnetlinkMonitorError::ReceiveFailed),
         };
 
         if received.length == 0 {
-            return core.fail(LinuxRouteMonitorError::SocketClosed);
+            return core.fail(RtnetlinkMonitorError::SocketClosed);
         }
         if received.length > receive_capacity {
             // MSG_TRUNC reports the complete datagram length even though only
             // the fixed prefix was copied. Never parse that incomplete prefix.
-            return core.fail(LinuxRouteMonitorError::ReceiveOverflow);
+            return core.fail(RtnetlinkMonitorError::ReceiveOverflow);
         }
 
         core.notification(
@@ -535,11 +535,11 @@ fn drain_available<S: NonblockingDatagramSource + ?Sized>(
         )?;
         datagrams = match datagrams.checked_add(1) {
             Some(datagrams) => datagrams,
-            None => return core.fail(LinuxRouteMonitorError::ReceiveOverflow),
+            None => return core.fail(RtnetlinkMonitorError::ReceiveOverflow),
         };
         bytes = match bytes.checked_add(received.length) {
             Some(bytes) => bytes,
-            None => return core.fail(LinuxRouteMonitorError::ReceiveOverflow),
+            None => return core.fail(RtnetlinkMonitorError::ReceiveOverflow),
         };
         changed = true;
     }
@@ -549,9 +549,9 @@ async fn drain_post_snapshot<S: NonblockingDatagramSource + ?Sized>(
     source: &mut S,
     core: &mut MonitorCore,
     receive_buffer: &mut [u8],
-) -> Result<PostSnapshotBarrier, LinuxRouteMonitorError> {
+) -> Result<PostSnapshotBarrier, RtnetlinkMonitorError> {
     if core.reconciliation.is_closed() {
-        return core.fail(LinuxRouteMonitorError::ReconcilerUnavailable);
+        return core.fail(RtnetlinkMonitorError::ReconcilerUnavailable);
     }
 
     let mut total_datagrams = 0_usize;
@@ -559,18 +559,18 @@ async fn drain_post_snapshot<S: NonblockingDatagramSource + ?Sized>(
     let mut changed = core.notification_seen;
     loop {
         if total_datagrams >= MAX_BARRIER_DATAGRAMS || total_bytes >= MAX_BARRIER_BYTES {
-            return core.fail(LinuxRouteMonitorError::BarrierLimitExceeded);
+            return core.fail(RtnetlinkMonitorError::BarrierLimitExceeded);
         }
         let turn_datagrams = MAX_DATAGRAMS_PER_TURN.min(MAX_BARRIER_DATAGRAMS - total_datagrams);
         let turn_bytes = MAX_BYTES_PER_TURN.min(MAX_BARRIER_BYTES - total_bytes);
         let outcome = drain_available(source, core, receive_buffer, turn_datagrams, turn_bytes)?;
         total_datagrams = match total_datagrams.checked_add(outcome.datagrams) {
             Some(total) => total,
-            None => return core.fail(LinuxRouteMonitorError::BarrierLimitExceeded),
+            None => return core.fail(RtnetlinkMonitorError::BarrierLimitExceeded),
         };
         total_bytes = match total_bytes.checked_add(outcome.bytes) {
             Some(total) => total,
-            None => return core.fail(LinuxRouteMonitorError::BarrierLimitExceeded),
+            None => return core.fail(RtnetlinkMonitorError::BarrierLimitExceeded),
         };
         changed |= outcome.changed;
 
@@ -585,7 +585,7 @@ async fn drain_post_snapshot<S: NonblockingDatagramSource + ?Sized>(
             DrainStop::BudgetExhausted
                 if total_datagrams == MAX_BARRIER_DATAGRAMS || total_bytes == MAX_BARRIER_BYTES =>
             {
-                return core.fail(LinuxRouteMonitorError::BarrierLimitExceeded);
+                return core.fail(RtnetlinkMonitorError::BarrierLimitExceeded);
             }
             DrainStop::BudgetExhausted => tokio::task::yield_now().await,
         }
@@ -601,7 +601,7 @@ async fn complete_snapshot_handoff<S, F>(
     core: &mut MonitorCore,
     receive_buffer: &mut [u8],
     activate: F,
-) -> Result<(), LinuxRouteMonitorError>
+) -> Result<(), RtnetlinkMonitorError>
 where
     S: NonblockingDatagramSource + ?Sized,
     F: FnOnce() -> Result<(), ()>,
@@ -609,12 +609,12 @@ where
     match drain_post_snapshot(source, core, receive_buffer).await? {
         PostSnapshotBarrier::Clean => {}
         PostSnapshotBarrier::Changed => {
-            return core.fail(LinuxRouteMonitorError::ChangedDuringSnapshot);
+            return core.fail(RtnetlinkMonitorError::ChangedDuringSnapshot);
         }
     }
 
     if activate().is_err() {
-        return core.fail(LinuxRouteMonitorError::ActivationRejected);
+        return core.fail(RtnetlinkMonitorError::ActivationRejected);
     }
     Ok(())
 }
@@ -625,15 +625,15 @@ fn validate_notification(
     bytes: &[u8],
     source_pid: u32,
     source_groups: &Groups,
-) -> Result<(NotificationKind, Vec<u32>), LinuxRouteMonitorError> {
+) -> Result<(NotificationKind, Vec<u32>), RtnetlinkMonitorError> {
     // Only the sender sockaddr is kernel-authenticated. The nlmsg_pid header is
     // ordinary datagram content and can be forged by a userspace netlink peer.
     if source_pid != 0 {
-        return Err(LinuxRouteMonitorError::InvalidDatagram);
+        return Err(RtnetlinkMonitorError::InvalidDatagram);
     }
     let groups = source_groups.as_groups();
     if groups.is_empty() || groups.iter().any(|group| !MONITORED_GROUPS.contains(group)) {
-        return Err(LinuxRouteMonitorError::UnsupportedNotification);
+        return Err(RtnetlinkMonitorError::UnsupportedNotification);
     }
 
     let interfaces = validate_netlink_frames(bytes, groups.as_slice())?;
@@ -641,8 +641,8 @@ fn validate_notification(
     match groups.as_slice() {
         [group] => NotificationKind::from_group(*group)
             .map(|kind| (kind, interfaces))
-            .ok_or(LinuxRouteMonitorError::UnsupportedNotification),
-        _ => Err(LinuxRouteMonitorError::UnsupportedNotification),
+            .ok_or(RtnetlinkMonitorError::UnsupportedNotification),
+        _ => Err(RtnetlinkMonitorError::UnsupportedNotification),
     }
 }
 
@@ -663,7 +663,7 @@ fn aligned_netlink_length(length: usize) -> Option<usize> {
 fn validate_netlink_frames(
     bytes: &[u8],
     source_groups: &[u32],
-) -> Result<Vec<u32>, LinuxRouteMonitorError> {
+) -> Result<Vec<u32>, RtnetlinkMonitorError> {
     let mut offset = 0_usize;
     let mut messages = 0_usize;
     let mut interfaces = Vec::new();
@@ -671,67 +671,67 @@ fn validate_netlink_frames(
     while offset < bytes.len() {
         let header_end = offset
             .checked_add(NETLINK_HEADER_BYTES)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         let header = bytes
             .get(offset..header_end)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         let declared = u32::from_ne_bytes(
             header[0..4]
                 .try_into()
-                .map_err(|_| LinuxRouteMonitorError::InvalidDatagram)?,
+                .map_err(|_| RtnetlinkMonitorError::InvalidDatagram)?,
         ) as usize;
         if declared < NETLINK_HEADER_BYTES {
-            return Err(LinuxRouteMonitorError::InvalidDatagram);
+            return Err(RtnetlinkMonitorError::InvalidDatagram);
         }
         let message_end = offset
             .checked_add(declared)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         if message_end > bytes.len() {
-            return Err(LinuxRouteMonitorError::InvalidDatagram);
+            return Err(RtnetlinkMonitorError::InvalidDatagram);
         }
         let message_type = u16::from_ne_bytes(
             header[4..6]
                 .try_into()
-                .map_err(|_| LinuxRouteMonitorError::InvalidDatagram)?,
+                .map_err(|_| RtnetlinkMonitorError::InvalidDatagram)?,
         );
         if message_type != u16::from(Nlmsg::Overrun) && !is_supported_notification(message_type) {
             // Reject neli's specially decoded ERROR/DONE forms, as well as all
             // unrelated types, before third-party payload parsing begins.
-            return Err(LinuxRouteMonitorError::UnsupportedNotification);
+            return Err(RtnetlinkMonitorError::UnsupportedNotification);
         }
         // nlmsg_seq and nlmsg_pid are unauthenticated message content. Kernel
         // multicast reports may copy them from the request which caused a
         // notification, so neither is an origin check. The recvmsg sockaddr
         // PID validated above is the only sender-authentication boundary.
         if message_type == u16::from(Nlmsg::Overrun) {
-            return Err(LinuxRouteMonitorError::ReceiveOverflow);
+            return Err(RtnetlinkMonitorError::ReceiveOverflow);
         }
         let payload_start = offset
             .checked_add(NETLINK_HEADER_BYTES)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         let payload = bytes
             .get(payload_start..message_end)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         let (expected_group, address_interface) = validate_rtnl_payload(message_type, payload)?;
         if source_groups != [expected_group] {
-            return Err(LinuxRouteMonitorError::UnsupportedNotification);
+            return Err(RtnetlinkMonitorError::UnsupportedNotification);
         }
         interfaces.extend(address_interface);
         let padded =
-            aligned_netlink_length(declared).ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            aligned_netlink_length(declared).ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         offset = offset
             .checked_add(padded)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         if offset > bytes.len() {
-            return Err(LinuxRouteMonitorError::InvalidDatagram);
+            return Err(RtnetlinkMonitorError::InvalidDatagram);
         }
         messages = messages
             .checked_add(1)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
     }
 
     if messages == 0 || offset != bytes.len() {
-        return Err(LinuxRouteMonitorError::InvalidDatagram);
+        return Err(RtnetlinkMonitorError::InvalidDatagram);
     }
     Ok(interfaces)
 }
@@ -739,43 +739,43 @@ fn validate_netlink_frames(
 fn preflight_route_attributes(
     bytes: &[u8],
     fixed_header_bytes: usize,
-) -> Result<(), LinuxRouteMonitorError> {
+) -> Result<(), RtnetlinkMonitorError> {
     if bytes.len() < fixed_header_bytes {
-        return Err(LinuxRouteMonitorError::InvalidDatagram);
+        return Err(RtnetlinkMonitorError::InvalidDatagram);
     }
     let mut offset = fixed_header_bytes;
     while offset < bytes.len() {
         let header_end = offset
             .checked_add(ROUTE_ATTRIBUTE_HEADER_BYTES)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         let header = bytes
             .get(offset..header_end)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         let declared = u16::from_ne_bytes(
             header[0..2]
                 .try_into()
-                .map_err(|_| LinuxRouteMonitorError::InvalidDatagram)?,
+                .map_err(|_| RtnetlinkMonitorError::InvalidDatagram)?,
         ) as usize;
         if declared < ROUTE_ATTRIBUTE_HEADER_BYTES {
-            return Err(LinuxRouteMonitorError::InvalidDatagram);
+            return Err(RtnetlinkMonitorError::InvalidDatagram);
         }
         let attribute_end = offset
             .checked_add(declared)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         if attribute_end > bytes.len() {
-            return Err(LinuxRouteMonitorError::InvalidDatagram);
+            return Err(RtnetlinkMonitorError::InvalidDatagram);
         }
         let padded =
-            aligned_netlink_length(declared).ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            aligned_netlink_length(declared).ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         offset = offset
             .checked_add(padded)
-            .ok_or(LinuxRouteMonitorError::InvalidDatagram)?;
+            .ok_or(RtnetlinkMonitorError::InvalidDatagram)?;
         if offset > bytes.len() {
-            return Err(LinuxRouteMonitorError::InvalidDatagram);
+            return Err(RtnetlinkMonitorError::InvalidDatagram);
         }
     }
     if offset != bytes.len() {
-        return Err(LinuxRouteMonitorError::InvalidDatagram);
+        return Err(RtnetlinkMonitorError::InvalidDatagram);
     }
     Ok(())
 }
@@ -785,7 +785,7 @@ fn preflight_route_attributes(
 fn validate_rtnl_payload(
     message_type: u16,
     bytes: &[u8],
-) -> Result<(u32, Option<u32>), LinuxRouteMonitorError> {
+) -> Result<(u32, Option<u32>), RtnetlinkMonitorError> {
     if message_type == u16::from(Rtm::Newlink) || message_type == u16::from(Rtm::Dellink) {
         preflight_route_attributes(bytes, 16)?;
         Ok((RTNLGRP_LINK, None))
@@ -793,7 +793,7 @@ fn validate_rtnl_payload(
         // struct ifaddrmsg: u8 family, prefixlen, flags, and scope, then the
         // interface index as a native-endian u32, followed by rtattrs.
         let &[family, _, _, _, i0, i1, i2, i3, ..] = bytes else {
-            return Err(LinuxRouteMonitorError::InvalidDatagram);
+            return Err(RtnetlinkMonitorError::InvalidDatagram);
         };
         preflight_route_attributes(bytes, 8)?;
         let index = u32::from_ne_bytes([i0, i1, i2, i3]);
@@ -802,14 +802,14 @@ fn validate_rtnl_payload(
         } else if family == u8::from(RtAddrFamily::Inet6) {
             Ok((RTNLGRP_IPV6_IFADDR, Some(index)))
         } else {
-            Err(LinuxRouteMonitorError::UnsupportedNotification)
+            Err(RtnetlinkMonitorError::UnsupportedNotification)
         }
     } else {
         // Linux fib_rule_hdr and rtmsg are both a 12-byte fixed header
         // followed by rtattrs. Their first byte is the address family.
         preflight_route_attributes(bytes, 12)?;
         if bytes.first().copied() != Some(u8::from(RtAddrFamily::Inet)) {
-            return Err(LinuxRouteMonitorError::UnsupportedNotification);
+            return Err(RtnetlinkMonitorError::UnsupportedNotification);
         }
         if message_type == u16::from(Rtm::Newroute) || message_type == u16::from(Rtm::Delroute) {
             Ok((RTNLGRP_IPV4_ROUTE, None))
@@ -858,7 +858,7 @@ mod tests {
         decisions: std::sync::Mutex<Vec<(NotificationKind, Vec<u32>)>>,
     }
 
-    impl RouteMonitorObserver for FakeObserver {
+    impl RtnetlinkObserver for FakeObserver {
         fn invalidate(&self) {
             self.invalidations.fetch_add(1, Ordering::SeqCst);
         }
@@ -884,7 +884,7 @@ mod tests {
     /// The default decision, as every observer except routed authority keeps.
     struct DefaultObserver;
 
-    impl RouteMonitorObserver for DefaultObserver {
+    impl RtnetlinkObserver for DefaultObserver {
         fn invalidate(&self) {}
 
         fn poison(&self) {}
@@ -1039,11 +1039,11 @@ mod tests {
     fn core() -> (
         MonitorCore,
         Arc<FakeObserver>,
-        mpsc::Receiver<RouteReconciliationRequired>,
+        mpsc::Receiver<ReconciliationRequired>,
     ) {
         let observer = Arc::new(FakeObserver::default());
         let (sender, receiver) = mpsc::channel(RECONCILIATION_CAPACITY);
-        let trait_observer: Arc<dyn RouteMonitorObserver> = observer.clone();
+        let trait_observer: Arc<dyn RtnetlinkObserver> = observer.clone();
         (MonitorCore::new(trait_observer, sender), observer, receiver)
     }
 
@@ -1070,7 +1070,7 @@ mod tests {
 
         assert_eq!(observer.invalidations.load(Ordering::SeqCst), events.len());
         assert_eq!(observer.poisons.load(Ordering::SeqCst), 0);
-        assert_eq!(receiver.try_recv(), Ok(RouteReconciliationRequired));
+        assert_eq!(receiver.try_recv(), Ok(ReconciliationRequired));
         assert_eq!(receiver.try_recv(), Err(mpsc::error::TryRecvError::Empty));
     }
 
@@ -1168,7 +1168,7 @@ mod tests {
         for group in [RTNLGRP_IPV6_IFADDR, RTNLGRP_IPV4_IFADDR] {
             assert_eq!(
                 validate_notification(&mixed, 0, &Groups::new_groups(&[group])),
-                Err(LinuxRouteMonitorError::UnsupportedNotification)
+                Err(RtnetlinkMonitorError::UnsupportedNotification)
             );
         }
     }
@@ -1194,7 +1194,7 @@ mod tests {
             ..FakeObserver::default()
         });
         let (sender, mut receiver) = mpsc::channel(RECONCILIATION_CAPACITY);
-        let trait_observer: Arc<dyn RouteMonitorObserver> = observer.clone();
+        let trait_observer: Arc<dyn RtnetlinkObserver> = observer.clone();
         let mut core = MonitorCore::new(trait_observer, sender);
 
         let mut refresh = address_datagram(Rtm::Newaddr, RTNLGRP_IPV6_IFADDR, 4);
@@ -1233,7 +1233,7 @@ mod tests {
             core.notification(bytes, 0, &Groups::new_groups(&[*group]))
                 .unwrap();
             assert_eq!(observer.invalidations.load(Ordering::SeqCst), index + 1);
-            assert_eq!(receiver.try_recv(), Ok(RouteReconciliationRequired));
+            assert_eq!(receiver.try_recv(), Ok(ReconciliationRequired));
         }
         assert_eq!(
             observer.decisions.lock().unwrap().as_slice(),
@@ -1255,7 +1255,7 @@ mod tests {
             ..FakeObserver::default()
         });
         let (sender, _receiver) = mpsc::channel(RECONCILIATION_CAPACITY);
-        let trait_observer: Arc<dyn RouteMonitorObserver> = observer.clone();
+        let trait_observer: Arc<dyn RtnetlinkObserver> = observer.clone();
         let mut core = MonitorCore::new(trait_observer, sender);
         let mut source = FakeSource::new([
             event(Rtm::Newaddr, RTNLGRP_IPV6_IFADDR),
@@ -1268,7 +1268,7 @@ mod tests {
                 panic!("a changed barrier must not activate")
             })
             .await,
-            Err(LinuxRouteMonitorError::ChangedDuringSnapshot)
+            Err(RtnetlinkMonitorError::ChangedDuringSnapshot)
         );
         assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
         assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
@@ -1280,22 +1280,22 @@ mod tests {
             (
                 datagram(u16::from(Nlmsg::Overrun), RTNLGRP_LINK),
                 Groups::new_groups(&[RTNLGRP_LINK]),
-                LinuxRouteMonitorError::ReceiveOverflow,
+                RtnetlinkMonitorError::ReceiveOverflow,
             ),
             (
                 vec![1, 2, 3],
                 Groups::new_groups(&[RTNLGRP_LINK]),
-                LinuxRouteMonitorError::InvalidDatagram,
+                RtnetlinkMonitorError::InvalidDatagram,
             ),
             (
                 datagram(u16::from(Rtm::Newlink), RTNLGRP_LINK),
                 Groups::empty(),
-                LinuxRouteMonitorError::UnsupportedNotification,
+                RtnetlinkMonitorError::UnsupportedNotification,
             ),
             (
                 datagram(u16::from(Rtm::Newneigh), RTNLGRP_LINK),
                 Groups::new_groups(&[RTNLGRP_LINK]),
-                LinuxRouteMonitorError::UnsupportedNotification,
+                RtnetlinkMonitorError::UnsupportedNotification,
             ),
         ];
 
@@ -1314,7 +1314,7 @@ mod tests {
 
         assert_eq!(
             core.notification(&bytes, 41, &Groups::new_groups(&[RTNLGRP_LINK])),
-            Err(LinuxRouteMonitorError::InvalidDatagram)
+            Err(RtnetlinkMonitorError::InvalidDatagram)
         );
         assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
         assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
@@ -1333,7 +1333,7 @@ mod tests {
         );
         assert_eq!(observer.invalidations.load(Ordering::SeqCst), 1);
         assert_eq!(observer.poisons.load(Ordering::SeqCst), 0);
-        assert_eq!(receiver.try_recv(), Ok(RouteReconciliationRequired));
+        assert_eq!(receiver.try_recv(), Ok(ReconciliationRequired));
     }
 
     #[test]
@@ -1357,8 +1357,8 @@ mod tests {
             let (result, poisons) = outcome.expect("framing validation must return");
             assert!(matches!(
                 result,
-                Err(LinuxRouteMonitorError::InvalidDatagram)
-                    | Err(LinuxRouteMonitorError::UnsupportedNotification)
+                Err(RtnetlinkMonitorError::InvalidDatagram)
+                    | Err(RtnetlinkMonitorError::UnsupportedNotification)
             ));
             assert_eq!(poisons, 1);
         }
@@ -1378,7 +1378,7 @@ mod tests {
             let (mut core, observer, _receiver) = core();
             assert_eq!(
                 core.notification(&bytes, 0, &Groups::new_groups(&[group])),
-                Err(LinuxRouteMonitorError::InvalidDatagram)
+                Err(RtnetlinkMonitorError::InvalidDatagram)
             );
             assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
             assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
@@ -1391,7 +1391,7 @@ mod tests {
         let (mut core, observer, _receiver) = core();
         assert_eq!(
             core.notification(&bytes, 0, &Groups::new_groups(&[RTNLGRP_LINK])),
-            Err(LinuxRouteMonitorError::InvalidDatagram)
+            Err(RtnetlinkMonitorError::InvalidDatagram)
         );
         assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
     }
@@ -1421,7 +1421,7 @@ mod tests {
             let (mut core, observer, _receiver) = core();
             assert_eq!(
                 core.notification(&bytes, 0, &Groups::new_groups(&groups)),
-                Err(LinuxRouteMonitorError::UnsupportedNotification)
+                Err(RtnetlinkMonitorError::UnsupportedNotification)
             );
             assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
             assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
@@ -1431,15 +1431,15 @@ mod tests {
     #[test]
     fn subscribe_without_a_runtime_fails_closed_without_panicking() {
         let observer = Arc::new(FakeObserver::default());
-        let trait_observer: Arc<dyn RouteMonitorObserver> = observer.clone();
+        let trait_observer: Arc<dyn RtnetlinkObserver> = observer.clone();
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            LinuxRouteEventMonitor::subscribe(trait_observer)
+            RtnetlinkMonitor::subscribe(trait_observer)
         }));
 
         assert!(outcome.is_ok());
         assert!(matches!(
             outcome.expect("subscription must not unwind"),
-            Err(LinuxRouteMonitorError::RuntimeRegistrationFailed)
+            Err(RtnetlinkMonitorError::RuntimeRegistrationFailed)
         ));
         assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
     }
@@ -1454,14 +1454,14 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(LinuxRouteMonitorError::RuntimeRegistrationFailed)
+            Err(RtnetlinkMonitorError::RuntimeRegistrationFailed)
         ));
     }
 
     #[test]
     fn production_runner_monitor_api_typechecks() {
-        let _subscribe = LinuxRouteEventMonitor::subscribe;
-        let _continuous = LinuxRouteEventMonitor::run_continuously::<fn() -> Result<(), ()>>;
+        let _subscribe = RtnetlinkMonitor::subscribe;
+        let _continuous = RtnetlinkMonitor::run_continuously::<fn() -> Result<(), ()>>;
     }
 
     #[test]
@@ -1475,7 +1475,7 @@ mod tests {
                     source_pid: 0,
                     groups: vec![RTNLGRP_LINK],
                 },
-                LinuxRouteMonitorError::SocketClosed,
+                RtnetlinkMonitorError::SocketClosed,
             ),
             (
                 FakeReceive::Datagram {
@@ -1484,17 +1484,17 @@ mod tests {
                     source_pid: 0,
                     groups: vec![RTNLGRP_LINK],
                 },
-                LinuxRouteMonitorError::ReceiveOverflow,
+                RtnetlinkMonitorError::ReceiveOverflow,
             ),
             (
                 FakeReceive::Error(io::Error::from_raw_os_error(
                     rustix::io::Errno::NOBUFS.raw_os_error(),
                 )),
-                LinuxRouteMonitorError::ReceiveOverflow,
+                RtnetlinkMonitorError::ReceiveOverflow,
             ),
             (
                 FakeReceive::Error(io::Error::new(io::ErrorKind::BrokenPipe, "synthetic")),
-                LinuxRouteMonitorError::ReceiveFailed,
+                RtnetlinkMonitorError::ReceiveFailed,
             ),
         ];
 
@@ -1550,7 +1550,7 @@ mod tests {
             observer.invalidations.load(Ordering::SeqCst),
             MAX_DATAGRAMS_PER_TURN + 1
         );
-        assert_eq!(receiver.try_recv(), Ok(RouteReconciliationRequired));
+        assert_eq!(receiver.try_recv(), Ok(ReconciliationRequired));
         assert_eq!(receiver.try_recv(), Err(mpsc::error::TryRecvError::Empty));
     }
 
@@ -1627,7 +1627,7 @@ mod tests {
             Ok(PostSnapshotBarrier::Changed)
         );
         assert_eq!(changed_observer.invalidations.load(Ordering::SeqCst), 2);
-        assert_eq!(receiver.try_recv(), Ok(RouteReconciliationRequired));
+        assert_eq!(receiver.try_recv(), Ok(ReconciliationRequired));
     }
 
     #[tokio::test]
@@ -1674,7 +1674,7 @@ mod tests {
                 Ok(())
             })
             .await,
-            Err(LinuxRouteMonitorError::ChangedDuringSnapshot)
+            Err(RtnetlinkMonitorError::ChangedDuringSnapshot)
         );
         assert_eq!(activation_calls.load(Ordering::SeqCst), 0);
         assert_eq!(observer.invalidations.load(Ordering::SeqCst), 1);
@@ -1695,7 +1695,7 @@ mod tests {
                 Err(())
             })
             .await,
-            Err(LinuxRouteMonitorError::ActivationRejected)
+            Err(RtnetlinkMonitorError::ActivationRejected)
         );
         assert_eq!(activation_calls.load(Ordering::SeqCst), 1);
         assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
@@ -1708,7 +1708,7 @@ mod tests {
 
         assert_eq!(
             require_completed_barrier(&mut core, false),
-            Err(LinuxRouteMonitorError::BarrierRequired)
+            Err(RtnetlinkMonitorError::BarrierRequired)
         );
         assert_eq!(observer.invalidations.load(Ordering::SeqCst), 0);
         assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
@@ -1745,7 +1745,7 @@ mod tests {
 
         assert_eq!(
             drain_post_snapshot(&mut source, &mut core, &mut buffer).await,
-            Err(LinuxRouteMonitorError::BarrierLimitExceeded)
+            Err(RtnetlinkMonitorError::BarrierLimitExceeded)
         );
         assert_eq!(
             observer.invalidations.load(Ordering::SeqCst),
@@ -1762,7 +1762,7 @@ mod tests {
 
         assert_eq!(
             core.notification(&bytes, 0, &Groups::new_groups(&[RTNLGRP_IPV4_RULE]),),
-            Err(LinuxRouteMonitorError::ReconcilerUnavailable)
+            Err(RtnetlinkMonitorError::ReconcilerUnavailable)
         );
         assert_eq!(observer.invalidations.load(Ordering::SeqCst), 1);
         assert_eq!(observer.poisons.load(Ordering::SeqCst), 1);
@@ -1771,9 +1771,9 @@ mod tests {
     #[test]
     fn errors_and_debug_output_are_topology_redacted() {
         for error in [
-            LinuxRouteMonitorError::InvalidDatagram,
-            LinuxRouteMonitorError::ChangedDuringSnapshot,
-            LinuxRouteMonitorError::ActivationRejected,
+            RtnetlinkMonitorError::InvalidDatagram,
+            RtnetlinkMonitorError::ChangedDuringSnapshot,
+            RtnetlinkMonitorError::ActivationRejected,
         ] {
             let rendered = format!("{error:?} {error}");
             assert!(!rendered.contains("192.168"));
