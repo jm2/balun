@@ -201,7 +201,10 @@ fn banner_in(locale: &str, status: DiscoveryStatus) -> Option<Cow<'static, str>>
         DiscoveryStatus::Incomplete(DiscoveryIncomplete::DeviceLimit) => {
             "subnet_search.banner_device_limit"
         }
-        DiscoveryStatus::Incomplete(DiscoveryIncomplete::Unprobed) => "subnet_search.failed",
+        // Its replies are kept, so it reads as incomplete, never as failed.
+        DiscoveryStatus::Incomplete(DiscoveryIncomplete::Unprobed) => {
+            "subnet_search.incomplete_title"
+        }
         DiscoveryStatus::Failed(DiscoveryFailure::NetworkChanged) => "subnet_search.banner_changed",
         DiscoveryStatus::Failed(DiscoveryFailure::SubnetConfirmationStale) => {
             "subnet_search.banner_stale"
@@ -307,6 +310,24 @@ mod tests {
             validation_in("en", InvalidTypedSubnetScope::TooWide),
             "Enter a subnet from /23 through /32."
         );
+    }
+
+    /// A search that could not probe every address keeps its replies, so it
+    /// reads as incomplete in every locale, never as a failed search.
+    #[test]
+    fn an_unprobed_search_reads_as_incomplete_not_failed() {
+        let unprobed = DiscoveryStatus::Incomplete(DiscoveryIncomplete::Unprobed);
+        let deadline = DiscoveryStatus::Incomplete(DiscoveryIncomplete::Deadline);
+        let failed = DiscoveryStatus::Failed(DiscoveryFailure::Internal);
+        for locale in SUPPORTED_LOCALES {
+            assert_eq!(status_in(locale, unprobed).0, status_in(locale, deadline).0);
+            assert_ne!(status_in(locale, unprobed).0, status_in(locale, failed).0);
+            assert_eq!(
+                banner_in(locale, unprobed),
+                Some(status_in(locale, deadline).0),
+                "{locale}"
+            );
+        }
     }
 
     #[test]
