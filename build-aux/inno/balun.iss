@@ -16,10 +16,10 @@
 ;   TargetArch        — "x64" or "arm64"
 
 #ifndef AppVersion
-  #define AppVersion "0.1.2"
+  #define AppVersion "0.2.0"
 #endif
 #ifndef AppNumericVersion
-  #define AppNumericVersion "0.1.2.0"
+  #define AppNumericVersion "0.2.0.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\..\dist\balun-windows"
