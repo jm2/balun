@@ -73,6 +73,10 @@ device_dialogs:
   forget: "Forget"
   forgotten: "Device forgotten."
   forgotten_session: "Device forgotten for this session only; settings are read-only."
+  remember_menu: "Remember device"
+  remembered: "Device remembered."
+  remembered_session: "Device remembered for this session only; settings are read-only."
+  remember_unavailable: "This device's address cannot be remembered."
 
 subnet_search:
   button: "Search a subnet"

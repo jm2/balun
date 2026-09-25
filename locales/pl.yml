@@ -75,6 +75,10 @@ device_dialogs:
   forget: "Zapomnij"
   forgotten: "Zapomniano urządzenie."
   forgotten_session: "Zapomniano urządzenie tylko na czas tej sesji; ustawienia są tylko do odczytu."
+  remember_menu: "Zapamiętaj urządzenie"
+  remembered: "Zapamiętano urządzenie."
+  remembered_session: "Zapamiętano urządzenie tylko na czas tej sesji; ustawienia są tylko do odczytu."
+  remember_unavailable: "Nie można zapamiętać adresu tego urządzenia."
 
 subnet_search:
   button: "Przeszukaj podsieć"

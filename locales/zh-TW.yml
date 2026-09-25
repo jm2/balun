@@ -64,6 +64,10 @@ device_dialogs:
   forget: "忘記"
   forgotten: "已忘記裝置。"
   forgotten_session: "僅於本次工作階段忘記裝置；設定為唯讀。"
+  remember_menu: "記住裝置"
+  remembered: "已記住裝置。"
+  remembered_session: "僅於本次工作階段記住裝置；設定為唯讀。"
+  remember_unavailable: "無法記住此裝置的位址。"
 
 subnet_search:
   button: "搜尋子網路"

@@ -61,6 +61,31 @@ impl ForgetLabels {
     }
 }
 
+/// Action and result copy for remembering a device found without an entry.
+pub struct RememberLabels {
+    pub menu: Cow<'static, str>,
+    pub remembered: Cow<'static, str>,
+    pub remembered_session: Cow<'static, str>,
+    pub unavailable: Cow<'static, str>,
+}
+
+impl RememberLabels {
+    /// Resolve the action and result labels using the current locale.
+    pub fn current() -> Self {
+        Self::for_locale(&rust_i18n::locale())
+    }
+
+    /// Keep the persistent and session-only outcomes distinct in one locale.
+    fn for_locale(locale: &str) -> Self {
+        Self {
+            menu: rust_i18n::t!("device_dialogs.remember_menu", locale = locale),
+            remembered: rust_i18n::t!("device_dialogs.remembered", locale = locale),
+            remembered_session: rust_i18n::t!("device_dialogs.remembered_session", locale = locale),
+            unavailable: rust_i18n::t!("device_dialogs.remember_unavailable", locale = locale),
+        }
+    }
+}
+
 /// Interpolate the display name once; callers must render the result as plain text.
 pub fn forget_description(device: &str) -> Cow<'static, str> {
     forget_description_in(&rust_i18n::locale(), device)
@@ -187,5 +212,31 @@ mod tests {
             "Gerät über Adresse suchen"
         );
         assert_eq!(ForgetLabels::for_locale("fr").forget, "Oublier");
+    }
+
+    /// Remember reads as its own action and outcome, translated in every catalog.
+    #[test]
+    fn remember_labels_are_translated_and_distinguish_session_only_remembering() {
+        let english = RememberLabels::for_locale("en");
+        for locale in SUPPORTED_LOCALES {
+            let remember = RememberLabels::for_locale(locale);
+            assert_ne!(remember.menu, ForgetLabels::for_locale(locale).menu);
+            assert_ne!(remember.remembered, remember.remembered_session, "{locale}");
+            if locale != "en" {
+                for (text, english) in [
+                    (&remember.menu, &english.menu),
+                    (&remember.remembered, &english.remembered),
+                    (&remember.remembered_session, &english.remembered_session),
+                    (&remember.unavailable, &english.unavailable),
+                ] {
+                    assert_ne!(text, english, "{locale}");
+                }
+            }
+        }
+        assert_eq!(english.menu, "Remember device");
+        assert_eq!(
+            RememberLabels::for_locale("de").remembered,
+            "Gerät gespeichert."
+        );
     }
 }

@@ -74,6 +74,10 @@ device_dialogs:
   forget: "Esquecer"
   forgotten: "Dispositivo esquecido."
   forgotten_session: "Dispositivo esquecido apenas nesta sessão; as configurações são somente leitura."
+  remember_menu: "Lembrar dispositivo"
+  remembered: "Dispositivo lembrado."
+  remembered_session: "Dispositivo lembrado apenas nesta sessão; as configurações são somente leitura."
+  remember_unavailable: "Não é possível lembrar o endereço deste dispositivo."
 
 subnet_search:
   button: "Buscar em uma sub-rede"

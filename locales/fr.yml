@@ -80,6 +80,10 @@ device_dialogs:
   forget: "Oublier"
   forgotten: "Appareil oublié."
   forgotten_session: "Appareil oublié pour cette session uniquement ; les paramètres sont en lecture seule."
+  remember_menu: "Mémoriser l’appareil"
+  remembered: "Appareil mémorisé."
+  remembered_session: "Appareil mémorisé pour cette session uniquement ; les paramètres sont en lecture seule."
+  remember_unavailable: "L’adresse de cet appareil ne peut pas être mémorisée."
 
 subnet_search:
   button: "Rechercher dans un sous-réseau"

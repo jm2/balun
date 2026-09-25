@@ -67,6 +67,10 @@ device_dialogs:
   forget: "지우기"
   forgotten: "기기를 지웠습니다."
   forgotten_session: "이번 세션에서만 기기를 지웠습니다. 설정은 읽기 전용입니다."
+  remember_menu: "기기 저장"
+  remembered: "기기를 저장했습니다."
+  remembered_session: "이번 세션에서만 기기를 저장했습니다. 설정은 읽기 전용입니다."
+  remember_unavailable: "이 기기의 주소는 저장할 수 없습니다."
 
 subnet_search:
   button: "서브넷 검색"
