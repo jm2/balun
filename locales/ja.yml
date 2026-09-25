@@ -67,6 +67,10 @@ device_dialogs:
   forget: "登録を解除"
   forgotten: "デバイスの登録を解除しました。"
   forgotten_session: "このセッションでのみデバイスの登録を解除しました。設定は読み取り専用です。"
+  remember_menu: "デバイスを登録"
+  remembered: "デバイスを登録しました。"
+  remembered_session: "このセッションでのみデバイスを登録しました。設定は読み取り専用です。"
+  remember_unavailable: "このデバイスのアドレスは登録できません。"
 
 subnet_search:
   button: "サブネットを検索"

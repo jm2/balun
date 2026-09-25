@@ -31,8 +31,8 @@ impl ExactDiscoveryTarget {
     }
 
     /// Accept an already-parsed address under the same unicast rules as
-    /// typed text; used for resolver results.
-    pub(crate) fn from_ip(address: IpAddr) -> Result<Self, InvalidExactDiscoveryTarget> {
+    /// typed text; used for resolver results and discovered devices.
+    pub fn from_ip(address: IpAddr) -> Result<Self, InvalidExactDiscoveryTarget> {
         validate_address(address)?;
         Ok(Self { address })
     }
