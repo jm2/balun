@@ -23,7 +23,9 @@
 //!   16 datagrams and accepts one identity, after which it sends no retry;
 //! - reaching 64 distinct devices, the 30-second deadline, cancellation, or a
 //!   network change stops the search, joins every probe, and reports the
-//!   search incomplete, never as a completed empty one;
+//!   search incomplete, never as a completed empty one. A probe socket that
+//!   cannot be opened stops it the same way, and a candidate that no request
+//!   reached, because a send was refused or failed, leaves it incomplete;
 //! - after write readiness and immediately before every nonblocking send, the
 //!   search re-checks cancellation, the live observation generation, the
 //!   deadline, the remaining budget, and that the destination is a usable
@@ -32,7 +34,8 @@
 //!   refuses, as it refuses a broadcast destination, is never retried. A
 //!   local interface's directed broadcast is refused the same way before it
 //!   reaches the socket, because Windows would send it without the broadcast
-//!   option, and a search whose local interfaces cannot be read never starts.
+//!   option; that deliberate refusal is not a gap in the search. A search
+//!   whose local interfaces cannot be read never starts.
 //!
 //! Only validated responders reach the report, so HTTP metadata enrichment
 //! stays a separate, responder-only step.
@@ -206,6 +209,10 @@ pub enum SubnetScanIncomplete {
     NetworkChanged,
     /// The search was cancelled.
     Cancelled,
+    /// A probe socket could not be opened, or the operating system refused
+    /// or failed a candidate's only sent request, so part of the scope was
+    /// never probed.
+    Unprobed,
 }
 
 /// The result of one subnet search.
@@ -588,6 +595,18 @@ struct CandidateResult {
     candidate: Ipv4Addr,
     report: DiscoveryReport,
     issue: Option<String>,
+    /// No request reached the candidate although the search went on: a gap.
+    unprobed: bool,
+}
+
+impl CandidateResult {
+    /// End the candidate at an attempt that was not sent. Unless an earlier
+    /// attempt reached it or the refusal was deliberate, it was never probed.
+    fn unsent(mut self, deliberate: bool, issue: String) -> Self {
+        self.unprobed = !deliberate && self.report.stats.datagrams_sent == 0;
+        self.issue = Some(issue);
+        self
+    }
 }
 
 fn subnet_endpoint(destination: SocketAddr) -> ProbeEndpoint {
@@ -613,6 +632,7 @@ async fn probe(
         candidate,
         report: DiscoveryReport::default(),
         issue: None,
+        unprobed: false,
     };
     result.report.stats.probes_started = 1;
     let mut buffer = [0_u8; MAX_PACKET_SIZE + 1];
@@ -621,23 +641,24 @@ async fn probe(
             SendOutcome::Sent(sent_at) => sent_at,
             SendOutcome::Halted => return result,
             SendOutcome::OutOfScope => {
-                result.issue =
-                    Some("the destination is not a usable host of the confirmed subnet".into());
-                return result;
+                return result.unsent(
+                    false,
+                    "the destination is not a usable host of the confirmed subnet".into(),
+                );
             }
             SendOutcome::BudgetSpent => {
-                result.issue = Some("no outbound request budget was left".into());
-                return result;
+                return result.unsent(false, "no outbound request budget was left".into());
             }
             SendOutcome::Refused(kind) => {
-                result.issue = Some(format!(
-                    "the operating system refused the send ({kind:?}); it was not retried"
-                ));
-                return result;
+                // Refusing a local directed broadcast is the search's own
+                // decision, not a gap in it.
+                return result.unsent(
+                    context.plan.is_local_broadcast(destination),
+                    format!("the operating system refused the send ({kind:?}); it was not retried"),
+                );
             }
             SendOutcome::Failed(kind) => {
-                result.issue = Some(format!("the discovery request failed ({kind:?})"));
-                return result;
+                return result.unsent(false, format!("the discovery request failed ({kind:?})"));
             }
         };
         result.report.stats.datagrams_sent += 1;
@@ -692,6 +713,8 @@ async fn probe(
 struct Aggregate {
     report: DiscoveryReport,
     devices: BTreeSet<DeviceId>,
+    /// Whether some candidate was never probed.
+    unprobed: bool,
 }
 
 impl Aggregate {
@@ -707,6 +730,7 @@ impl Aggregate {
         let result = match joined {
             Ok(result) => result,
             Err(_) => {
+                self.unprobed = true;
                 self.report.issues.push(ProbeIssue {
                     endpoint: subnet_endpoint(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))),
                     class: ProbeFailureClass::Task,
@@ -715,6 +739,7 @@ impl Aggregate {
                 return;
             }
         };
+        self.unprobed |= result.unprobed;
         let mut report = result.report;
         let mut dropped = false;
         report.observations.retain(|observation| {
@@ -791,11 +816,16 @@ async fn scan(
                 Ok(socket) => {
                     tasks.spawn(probe(Arc::clone(&context), socket, candidate));
                 }
-                Err(error) => aggregate.issue(
-                    candidate,
-                    ProbeFailureClass::Network,
-                    format!("a probe socket could not be opened ({:?})", error.kind()),
-                ),
+                // Later sockets are unlikely to open either, and this
+                // candidate is a gap: stop rather than report a full search.
+                Err(error) => {
+                    aggregate.issue(
+                        candidate,
+                        ProbeFailureClass::Network,
+                        format!("a probe socket could not be opened ({:?})", error.kind()),
+                    );
+                    context.halt(SubnetScanIncomplete::Unprobed);
+                }
             }
         }
         if context.stop.is_cancelled() || tasks.is_empty() {
@@ -822,6 +852,7 @@ async fn scan(
         report: aggregate.report,
         outcome: context
             .reason()
+            .or(aggregate.unprobed.then_some(SubnetScanIncomplete::Unprobed))
             .map_or(SubnetScanOutcome::Complete, SubnetScanOutcome::Incomplete),
         requests_attempted: context.attempted.load(Ordering::Acquire),
         refused_sends: context.refused.load(Ordering::Acquire),
@@ -829,4 +860,4 @@ async fn scan(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

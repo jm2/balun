@@ -490,6 +490,7 @@ async fn devices_beyond_the_limit_from_late_probes_are_dropped() {
                 candidate,
                 report,
                 issue: None,
+                unprobed: false,
             }),
             &context,
         );
@@ -744,7 +745,12 @@ async fn refused_sends_are_never_retried_and_refusing_hosts_end_quietly() {
     )
     .await;
 
-    assert_eq!(report.outcome, SubnetScanOutcome::Complete);
+    // The refused host was never probed, so the search is not complete; the
+    // host that reset was probed and simply is not a tuner.
+    assert_eq!(
+        report.outcome,
+        SubnetScanOutcome::Incomplete(SubnetScanIncomplete::Unprobed)
+    );
     assert_eq!(network.sends_to(at(refused)).len(), 1);
     assert_eq!(network.sends_to(at(resetting)).len(), 1);
     assert_eq!(report.refused_sends, 1);
@@ -835,31 +841,67 @@ async fn unreadable_interfaces_refuse_the_search_before_any_send() {
     assert_eq!(network.sends().len(), 4);
 }
 
-#[tokio::test(start_paused = true)]
-async fn failed_sockets_are_issues_and_other_candidates_continue() {
-    struct Failing;
-    impl SubnetTransport for Failing {
-        fn open(&self) -> io::Result<Box<dyn SubnetSocket>> {
-            Err(io::ErrorKind::AddrNotAvailable.into())
+/// Fails every open after the first `opened` sockets.
+struct Exhausted {
+    network: Arc<FakeNetwork>,
+    opened: usize,
+    opens: AtomicUsize,
+}
+
+impl SubnetTransport for Exhausted {
+    fn open(&self) -> io::Result<Box<dyn SubnetSocket>> {
+        if self.opens.fetch_add(1, Ordering::SeqCst) < self.opened {
+            FakeTransport(Arc::clone(&self.network)).open()
+        } else {
+            Err(io::Error::other("too many open files"))
         }
     }
-    let (_gate, authority) = ready();
-    let report = scan(
-        lane(0),
-        &Failing,
-        ScanPlan::typed(scope("10.6.0.0/30")),
-        authority.clone(),
-        &CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(report.outcome, SubnetScanOutcome::Complete);
-    assert_eq!(report.requests_attempted, 0);
-    assert_eq!(report.report.issues.len(), 2);
+}
 
+/// A candidate whose socket cannot be opened was never probed, and later
+/// sockets would fail too, so the search stops there as incomplete and joins
+/// the probes it already admitted.
+#[tokio::test(start_paused = true)]
+async fn a_socket_that_cannot_be_opened_stops_the_search_as_incomplete() {
+    for opened in [0, 2] {
+        let network = Arc::new(FakeNetwork::silent());
+        let transport = Exhausted {
+            network: Arc::clone(&network),
+            opened,
+            opens: AtomicUsize::new(0),
+        };
+        let (_gate, authority) = ready();
+        let report = scan(
+            lane(0),
+            &transport,
+            ScanPlan::typed(scope("10.6.0.0/24")),
+            authority,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            report.outcome,
+            SubnetScanOutcome::Incomplete(SubnetScanIncomplete::Unprobed)
+        );
+        assert_eq!(transport.opens.load(Ordering::SeqCst), opened + 1);
+        assert_eq!(report.requests_attempted, 0, "admitted probes stopped");
+        assert!(network.sends().is_empty());
+        assert_eq!(network.open.load(Ordering::SeqCst), 0, "every probe joined");
+        assert_eq!(report.report.issues.len(), 1);
+        assert!(report.report.issues[0].message.contains("opened"));
+    }
+}
+
+/// A send that fails before any request reached its candidate leaves a gap;
+/// a failure after one request went out does not, since that candidate was
+/// probed and given its reply window.
+#[tokio::test(start_paused = true)]
+async fn only_a_candidate_no_request_reached_leaves_the_search_incomplete() {
     let mut network = FakeNetwork::silent();
     network.send_error = Box::new(|_| Some(io::ErrorKind::HostUnreachable));
     let network = Arc::new(network);
+    let (_gate, authority) = ready();
     let report = run(
         &network,
         &lane(0),
@@ -868,6 +910,10 @@ async fn failed_sockets_are_issues_and_other_candidates_continue() {
         &CancellationToken::new(),
     )
     .await;
+    assert_eq!(
+        report.outcome,
+        SubnetScanOutcome::Incomplete(SubnetScanIncomplete::Unprobed)
+    );
     assert_eq!(report.refused_sends, 0);
     assert_eq!(report.requests_attempted, 2);
     assert!(
@@ -878,6 +924,28 @@ async fn failed_sockets_are_issues_and_other_candidates_continue() {
             .all(|issue| issue.message.contains("HostUnreachable"))
     );
 
+    // The retry is refused after the first request went out.
+    let mut network = FakeNetwork::silent();
+    let attempts = AtomicUsize::new(0);
+    network.send_error = Box::new(move |_| {
+        (attempts.fetch_add(1, Ordering::SeqCst) > 0).then_some(io::ErrorKind::PermissionDenied)
+    });
+    let network = Arc::new(network);
+    let (_gate, authority) = ready();
+    let report = run(
+        &network,
+        &lane(0),
+        ScanPlan::typed(scope("10.6.0.4/32")),
+        authority,
+        &CancellationToken::new(),
+    )
+    .await;
+    assert_eq!(report.outcome, SubnetScanOutcome::Complete);
+    assert_eq!(report.refused_sends, 1);
+    assert_eq!(report.report.stats.datagrams_sent, 1);
+    assert!(report.report.issues[0].message.contains("not retried"));
+
+    // A failed receive ends a candidate that was already probed.
     let network = Arc::new(FakeNetwork::replying(|_, _| {
         vec![Reply::Error {
             delay: Duration::from_millis(1),
@@ -893,8 +961,58 @@ async fn failed_sockets_are_issues_and_other_candidates_continue() {
         &CancellationToken::new(),
     )
     .await;
+    assert_eq!(report.outcome, SubnetScanOutcome::Complete);
     assert_eq!(report.report.issues.len(), 1);
     assert!(report.report.issues[0].message.contains("receiving"));
+}
+
+/// A fault a search through the scripted transport meets.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ScriptedFault {
+    /// Every candidate answers as this device.
+    Answer(DeviceId),
+    /// No probe socket can be opened, as when descriptors run out.
+    OpenFails,
+    /// The operating system refuses every send, as a firewall would.
+    SendRefused,
+}
+
+/// Spend `permit` on a search through the scripted transport, so callers
+/// beyond this module see the scanner's real outcome for `fault`.
+pub(crate) async fn scripted_search(
+    permit: SubnetScanPermit,
+    cancellation: &CancellationToken,
+    fault: ScriptedFault,
+) -> Result<SubnetScanReport, SubnetScanError> {
+    let mut network = FakeNetwork::replying(move |destination, _| match fault {
+        ScriptedFault::Answer(device) => vec![Reply::Datagram {
+            delay: Duration::from_millis(1),
+            source: destination,
+            bytes: reply_frame(device.get()),
+        }],
+        ScriptedFault::OpenFails | ScriptedFault::SendRefused => Vec::new(),
+    });
+    if matches!(fault, ScriptedFault::SendRefused) {
+        network.send_error = Box::new(|_| Some(io::ErrorKind::PermissionDenied));
+    }
+    let network = Arc::new(network);
+    let transport = Exhausted {
+        opened: if matches!(fault, ScriptedFault::OpenFails) {
+            0
+        } else {
+            usize::MAX
+        },
+        network,
+        opens: AtomicUsize::new(0),
+    };
+    search(
+        lane(0),
+        &transport,
+        permit,
+        cancellation,
+        Ok(BTreeSet::new()),
+    )
+    .await
 }
 
 fn test_context(authority: Authority, plan: ScanPlan, budget: usize) -> ScanContext {
@@ -980,6 +1098,29 @@ async fn every_send_rechecks_scope_budget_and_each_authority_condition() {
         Some(SubnetScanIncomplete::NetworkChanged)
     );
     assert_eq!(network.sends().len(), 1);
+}
+
+/// A candidate the send guards turn away was never probed, so it is a gap
+/// in the search, as a refused or failed first send is.
+#[tokio::test(start_paused = true)]
+async fn a_candidate_the_send_guards_turn_away_is_a_gap() {
+    let network = Arc::new(FakeNetwork::silent());
+    let (_gate, authority) = ready();
+    for (budget, candidate, issue) in [
+        (0, Ipv4Addr::new(10, 7, 0, 1), "budget"),
+        (4, Ipv4Addr::new(10, 7, 0, 9), "usable host"),
+    ] {
+        let context = test_context(
+            authority.clone(),
+            ScanPlan::typed(scope("10.7.0.0/30")),
+            budget,
+        );
+        let socket = FakeTransport(Arc::clone(&network)).open().unwrap();
+        let result = probe(Arc::new(context), socket, candidate).await;
+        assert!(result.unprobed, "{issue}");
+        assert!(result.issue.unwrap().contains(issue));
+    }
+    assert!(network.sends().is_empty());
 }
 
 #[test]

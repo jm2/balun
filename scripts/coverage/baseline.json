@@ -14,10 +14,10 @@
       "percent": 97.69
     },
     "rust-regions:src/discovery/subnet.rs": {
-      "covered": 593,
-      "total": 623,
-      "uncovered": 30,
-      "percent": 95.18
+      "covered": 618,
+      "total": 643,
+      "uncovered": 25,
+      "percent": 96.11
     },
     "rust-regions:src/discovery/hostname/resolver.rs": {
       "covered": 49,

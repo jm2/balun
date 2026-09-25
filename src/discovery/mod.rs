@@ -45,6 +45,8 @@ pub use registry::{
     RegisteredDevice, RegistryError, RegistryInstant,
 };
 #[cfg(test)]
+pub(crate) use subnet::tests::{ScriptedFault, scripted_search};
+#[cfg(test)]
 pub(crate) use subnet::{PROCESS_LANE_TESTS, claim_process_lane};
 pub use subnet::{
     SubnetAdmissionError, SubnetScanError, SubnetScanIncomplete, SubnetScanOutcome,

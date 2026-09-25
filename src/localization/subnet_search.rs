@@ -166,6 +166,9 @@ fn status_in(locale: &str, status: DiscoveryStatus) -> (Cow<'static, str>, Cow<'
             "subnet_search.incomplete_title",
             "subnet_search.device_limit",
         ),
+        DiscoveryStatus::Incomplete(DiscoveryIncomplete::Unprobed) => {
+            ("subnet_search.incomplete_title", "subnet_search.failed")
+        }
         DiscoveryStatus::Failed(DiscoveryFailure::SubnetUnavailable) => (
             "subnet_search.unavailable_title",
             "subnet_search.unavailable_status",
@@ -198,6 +201,7 @@ fn banner_in(locale: &str, status: DiscoveryStatus) -> Option<Cow<'static, str>>
         DiscoveryStatus::Incomplete(DiscoveryIncomplete::DeviceLimit) => {
             "subnet_search.banner_device_limit"
         }
+        DiscoveryStatus::Incomplete(DiscoveryIncomplete::Unprobed) => "subnet_search.failed",
         DiscoveryStatus::Failed(DiscoveryFailure::NetworkChanged) => "subnet_search.banner_changed",
         DiscoveryStatus::Failed(DiscoveryFailure::SubnetConfirmationStale) => {
             "subnet_search.banner_stale"
@@ -223,6 +227,7 @@ mod tests {
             DiscoveryStatus::NoResponse,
             DiscoveryStatus::Incomplete(DiscoveryIncomplete::Deadline),
             DiscoveryStatus::Incomplete(DiscoveryIncomplete::DeviceLimit),
+            DiscoveryStatus::Incomplete(DiscoveryIncomplete::Unprobed),
         ];
         statuses.extend(
             [

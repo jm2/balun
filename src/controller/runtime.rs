@@ -1989,6 +1989,9 @@ fn subnet_completion(
         SubnetScanOutcome::Incomplete(SubnetScanIncomplete::DeviceLimit) => {
             (Ok(scan.report), Some(DiscoveryIncomplete::DeviceLimit))
         }
+        SubnetScanOutcome::Incomplete(SubnetScanIncomplete::Unprobed) => {
+            (Ok(scan.report), Some(DiscoveryIncomplete::Unprobed))
+        }
         SubnetScanOutcome::Incomplete(SubnetScanIncomplete::NetworkChanged) => {
             (Err(DiscoveryFailure::NetworkChanged), None)
         }
@@ -2371,7 +2374,10 @@ mod tests {
 
     use super::super::network::NetworkSubscription;
     use super::*;
-    use crate::discovery::{DiscoveryMethod, DiscoveryObservation, LocatorOrigin, ObservationGate};
+    use crate::discovery::{
+        DiscoveryMethod, DiscoveryObservation, LocatorOrigin, ObservationGate, ScriptedFault,
+        scripted_search,
+    };
 
     /// Upper bound on every positive wait in these tests. It only shortens a
     /// failing run, so it is generous: on the Windows CI runners a scripted
@@ -2501,6 +2507,8 @@ mod tests {
             cancellation_observed: std_mpsc::Sender<()>,
             finish_cancellation: oneshot::Receiver<()>,
         },
+        /// Spend the permit on the real scanner over a scripted transport.
+        Transport(ScriptedFault),
     }
 
     #[derive(Clone)]
@@ -2658,6 +2666,9 @@ mod tests {
                         let _ = finish_cancellation.await;
                         Err(DiscoveryFailure::Internal)
                     }
+                    SubnetStep::Transport(fault) => scripted_search(permit, &cancellation, fault)
+                        .await
+                        .map_err(subnet_scan_failure),
                 }
             })
         }
@@ -6301,6 +6312,57 @@ mod tests {
         // A complete search replaces everything earlier searches found.
         let replaced = search(far, DiscoveryStatus::Ready).await;
         assert_eq!(listed(&replaced), [third]);
+        controller.shutdown().unwrap();
+    }
+
+    /// A search that never probed some address, because a probe socket would
+    /// not open or the system refused a send, is incomplete, so it keeps what
+    /// an earlier complete search of the subnet found. The real scanner runs
+    /// over a scripted transport.
+    #[tokio::test(flavor = "current_thread")]
+    async fn unprobed_addresses_never_retire_what_an_earlier_search_found() {
+        let scope = subnet("10.0.0.7/32");
+        let (controller, starts, _observed, gate, _changes) = start_subnet_controller(
+            [],
+            [
+                SubnetStep::Transport(ScriptedFault::Answer(first_id())),
+                SubnetStep::Transport(ScriptedFault::OpenFails),
+                SubnetStep::Transport(ScriptedFault::SendRefused),
+            ],
+            true,
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.observation().generation().is_some()
+        })
+        .await;
+        let mut search = async |expected: DiscoveryStatus| {
+            let generation = snapshots.borrow().discovery_generation();
+            handle
+                .try_search_subnet(subnet_consent(scope, &gate))
+                .unwrap();
+            recv_start(&starts);
+            wait_for_snapshot(&mut snapshots, |snapshot| {
+                snapshot.discovery_generation() > generation
+                    && snapshot.discovery().kind() == DiscoveryKind::Subnet
+                    && snapshot.discovery().status() == expected
+            })
+            .await
+            .devices()
+            .iter()
+            .map(DeviceSummary::device_id)
+            .collect::<Vec<_>>()
+        };
+
+        assert_eq!(search(DiscoveryStatus::Ready).await, [first_id()]);
+        // Socket exhaustion, then a firewall refusing every send.
+        for _ in 0..2 {
+            assert_eq!(
+                search(DiscoveryStatus::Incomplete(DiscoveryIncomplete::Unprobed)).await,
+                [first_id()]
+            );
+        }
         controller.shutdown().unwrap();
     }
 

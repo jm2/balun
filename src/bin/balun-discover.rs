@@ -323,6 +323,7 @@ fn incomplete_reason(outcome: SubnetScanOutcome) -> Option<&'static str> {
             SubnetScanIncomplete::DeviceLimit => "the 64-device limit was reached",
             SubnetScanIncomplete::NetworkChanged => "the network changed",
             SubnetScanIncomplete::Cancelled => "it was cancelled",
+            SubnetScanIncomplete::Unprobed => "some addresses could not be probed",
         }),
     }
 }
@@ -746,6 +747,12 @@ mod tests {
             Some("the network changed")
         );
         assert_eq!(incomplete_reason(SubnetScanOutcome::Complete), None);
+        assert_eq!(
+            incomplete_reason(SubnetScanOutcome::Incomplete(
+                SubnetScanIncomplete::Unprobed
+            )),
+            Some("some addresses could not be probed")
+        );
 
         // Consent from an earlier generation is refused, even once the
         // network is observed again.

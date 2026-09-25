@@ -248,6 +248,9 @@ pub enum DiscoveryIncomplete {
     Deadline,
     /// The search reached its limit of distinct devices.
     DeviceLimit,
+    /// Some addresses could not be probed: a probe socket could not be
+    /// opened, or the operating system refused or failed a request.
+    Unprobed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

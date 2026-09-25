@@ -1309,6 +1309,7 @@ mod tests {
         let incomplete = [
             DiscoveryStatus::Incomplete(DiscoveryIncomplete::Deadline),
             DiscoveryStatus::Incomplete(DiscoveryIncomplete::DeviceLimit),
+            DiscoveryStatus::Incomplete(DiscoveryIncomplete::Unprobed),
         ];
         let complete = discovery_presentation(DiscoveryKind::Subnet, DiscoveryStatus::Ready, 0);
         let empty = discovery_presentation(DiscoveryKind::Subnet, DiscoveryStatus::NoResponse, 0);
