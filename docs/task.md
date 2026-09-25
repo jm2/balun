@@ -51,9 +51,9 @@ dependency ledger, not an effort estimate.
 
 The 2026-09-23 holistic review filed issues #145–#188
 ([list](https://github.com/jm2/balun/issues?q=is%3Aissue+created%3A2026-09-23)); its
-user-facing fixes ship as v0.1.2, which is the next release to cut. The maintainer
+user-facing fixes ship as v0.2.0, which is the next release to cut. The maintainer
 accepted the published v0.1.1 packages on Linux, macOS, and Windows (P4.1); the
-IPv6 discovery defect fixed for v0.1.2 surfaced later in review. H0 is complete. By
+IPv6 discovery defect fixed for v0.2.0 surfaced later in review. H0 is complete. By
 maintainer direction on 2026-09-24, H1.4, the rest of H2.2, and H2.4 are deferred;
 landed slices stay. H4.3 accessibility evidence and the V2.1 timing re-take remain open.
 
