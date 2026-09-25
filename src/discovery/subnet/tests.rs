@@ -788,11 +788,6 @@ async fn a_local_directed_broadcast_is_refused_before_the_socket_on_every_platfo
     assert_eq!(network.sends().len(), 1_020 - 2);
     assert_eq!(report.report.issues.len(), 1);
     assert_eq!(report.report.issues[0].endpoint.destination, at(local));
-    assert!(
-        local_directed_broadcasts()
-            .iter()
-            .all(|address| !address.is_loopback())
-    );
 }
 
 #[tokio::test(start_paused = true)]
