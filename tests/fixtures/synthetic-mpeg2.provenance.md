@@ -24,9 +24,9 @@ Integrity:
 - BLAKE3: `78a4a8a94c2f928609427ffb8f69274c03bdb1f833ce2ae13e201735a09719c2`
 
 This fixture exists for the display-backed development/CI playback test and
-for the hidden packaged-runtime probe that the Windows packaging helper runs
-against a staged package, which embeds these bytes in the desktop executable
-for that purpose only. It is not a runtime application resource and must not
+for the hidden packaged-runtime probe that the Windows and macOS packaging
+helpers run against a staged package, which embeds these bytes in the desktop
+executable for that purpose only. It is not a runtime application resource and must not
 be staged as a separate file in any application package; source and test
 archives may retain it as test data. The encoder used to create it is
 likewise a development tool, not a Balun runtime or packaging requirement.

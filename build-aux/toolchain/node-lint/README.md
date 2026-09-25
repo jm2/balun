@@ -46,8 +46,8 @@ changed transitive version/URL/integrity field, then perform a fresh `npm ci`
 and run both tools plus `npm audit --package-lock-only`. Check ordinary TOML
 configuration loading when changing the parser override. Keep package lifecycle
 scripts disabled. Dependabot proposes weekly grouped updates for this directory;
-normal CI/review approval still
-governs adoption.
+minor and patch updates merge automatically once the required checks pass, and
+major updates wait for review.
 
 The initial validation also removed a transitive lock entry and replaced a
 tarball's integrity value in separate temporary copies. Installation rejected

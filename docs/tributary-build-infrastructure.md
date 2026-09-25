@@ -56,9 +56,9 @@ The artifact validators above are active package gates, not a substitute for a
 successful native build or runtime probe. Linux completed-tree inspection is
 bounded, rejects unsafe links and unsupported entry types, and compares
 hidden-inclusive metadata-and-content snapshots. The v0.1 native and Flatpak
-jobs accept only artifacts they just built locally; archive-member preflight,
-extractor-specific containment, and hostile-bundle resource budgets remain
-future hardening. Debian/RPM/Arch inspectors now use a
+jobs accept only artifacts they just built locally. Debian/RPM/Arch archive-member
+preflight has landed; extractor-specific containment and hostile-bundle resource
+budgets remain future hardening. Debian/RPM/Arch inspectors now use a
 [bounded private source snapshot](linux-archive-snapshots.md); Flatpak source
 snapshotting remains separate work.
 
@@ -75,7 +75,7 @@ snapshotting remains separate work.
 | `sync_fuzz_lock.py` | Defer until Balun has a separate fuzz workspace and lockfile |
 | `test-macos-icon-bundle-policy.sh` | Adapted synthetic test for the icon helper |
 | `test-macos-package-policy.sh` | Adapted synthetic test; denied fixtures are derived from the shared policy |
-| `test_dependency_update_policy.py` | Split by feature: the applicable compiler portion is `test_rust_toolchain_policy.py`; fuzz and automerge tests remain deferred or inapplicable until their owners exist |
+| `test_dependency_update_policy.py` | Split by feature: the applicable compiler portion is `test_rust_toolchain_policy.py`; fuzz tests remain deferred until a fuzz workspace exists, and no automerge test is ported yet for `dependabot-auto-merge.yml` |
 | `hooks/pre-commit` (repository root, outside `scripts/`) | Ported without Tributary's fuzz-manifest formatting check; opt in with `git config core.hooksPath hooks` |
 
 Balun additionally has deterministic command-routing tests for the Linux,
@@ -176,7 +176,7 @@ only the separate release compiler in `build-aux/release-toolchain`.
 | `flatpak/validate-permissions.sh` | Adapted to Balun's exact permission allowlist and invoked against the real manifest before bundle construction |
 | `inno/tributary.iss` | Landed as `build-aux/inno/balun.iss`: a deterministic UUID version 5 application GUID, `bin\balun.exe` shortcut and uninstall targets, exact x64/ARM64 architecture selection, a numeric `VersionInfoVersion` beside the textual package version, and the product, description, and copyright fields reopened after compiling |
 | `arch/PKGBUILD` | Landed as `build-aux/arch/PKGBUILD` for the x86_64 release artifact; `release_check.py` binds its literal `pkgver` to the tag. |
-| `rpm/tributary.spec` | Not copied: Balun's x86_64/aarch64 RPM assets and requirements are declared through `Cargo.toml`'s `generate-rpm` metadata. Debian amd64/arm64 metadata lives beside it. |
+| `rpm/tributary.spec` | Landed as `build-aux/rpm/balun.spec` for the Fedora COPR (Packit) build; the release's x86_64/aarch64 RPM assets are still declared through `Cargo.toml`'s `generate-rpm` metadata, with Debian amd64/arm64 metadata beside it. |
 
 Balun's Flatpak baseline needs Wayland, fallback X11, IPC, PulseAudio, and
 network access for local HDHomeRun discovery and HTTP. It

@@ -89,7 +89,7 @@ Establish that observation before displaying desktop confirmation or consuming
 CLI consent, and bind consent and admission to the same observed generation.
 Platform enablement requires native evidence under the
 [network-change admission contract](../typed-subnet-discovery-proposal.md#network-change-admission).
-V2.4 stays open until its implementation and acceptance evidence land.
+V2.4 shipped this contract in [#206](https://github.com/jm2/balun/pull/206) on 2026-09-25.
 
 ### Playback
 
@@ -127,8 +127,8 @@ cancellation, rapid-replacement, and joined-teardown tests plus a `playbin3`
 decode of the checked-in fixture from the constant URI on Linux. The macOS
 lane runs the same loopback suite, and all three lanes run the helpers'
 installed-runtime probes for the constant-URI `appsrc` contract, so the
-transport record (archived M2.9) is complete; packaged-runtime probes are P3
-work in [`task.md`](../task.md).
+transport record (archived M2.9) is complete; P3 later added the packaged-runtime
+probes recorded in [`task.md`](../task.md).
 
 ## Consequences and required evidence
 

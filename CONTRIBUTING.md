@@ -15,7 +15,8 @@ git config core.hooksPath hooks
 ```
 
 Markdown, TOML, YAML, and workflow files are linted in CI with the configs at the repository
-root; `npx --yes markdownlint-cli2@0.18.1 "**/*.md"` reproduces the Markdown check locally.
+root; the [locked lint tools](build-aux/toolchain/node-lint/README.md) reproduce the Markdown and
+TOML checks locally.
 
 ## Pull requests
 

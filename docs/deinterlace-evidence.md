@@ -33,8 +33,8 @@ be satisfied by merely reporting progressive output caps or producing a
 minimum frame count. It does not claim correct startup or EOS cadence.
 
 The passing fixtures are ordinary desktop tests on the native CI matrix. Local
-execution passed all five normal deinterlacing tests. Native CI is still required
-before merging; a local Linux run is not evidence for macOS or Windows output.
+execution passed all five normal deinterlacing tests, and native CI passed before
+merging; a local Linux run is not evidence for macOS or Windows output.
 
 ## Unresolved transition reproducer
 

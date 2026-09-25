@@ -57,8 +57,8 @@ This is a budget calculation, not a promise that every host will answer or that
 a stalled OS operation can be interrupted. Deadline expiry reports incomplete
 work; it must never be represented as a completed empty search.
 
-The current runner spaces candidate starts using attempts per target. That is a
-nominal request rate, not an independently enforced wire limit for every retry.
+The former routed runner spaced candidate starts using attempts per target. That
+was a nominal request rate, not an independently enforced wire limit for every retry.
 The new lane must enforce the approved pacing at the actual send boundary and
 recheck cancellation, scope, remaining budget, and deadline after readiness and
 before each nonblocking send attempt. A successor cannot inherit an old permit.

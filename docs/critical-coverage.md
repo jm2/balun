@@ -16,13 +16,13 @@ measurements help find omissions in that evidence.
 
 | Surface | Measurement | Recorded baseline |
 | --- | --- | --- |
-| Discovery admission | Rust source regions in two modules | 81.98%–97.69%, with per-file counts rather than one project percentage |
-| Resolver, controller, source retirement and transport | Rust source regions in four modules | 88.96%–94.97% |
+| Discovery admission | Rust source regions in three modules | 81.74%–97.69%, with per-file counts rather than one project percentage |
+| Resolver, controller, source retirement and transport | Rust source regions in four modules | 91.18%–94.97% |
 | Identity registry, device identity, protocol, metadata and lineup | Rust source regions in five modules | 84.62%–96.69% |
 | JSON failure conversion and logging setup | Rust source regions | 30/30 and 11/11 respectively |
 | Native playback failure classification and diagnostics | Rust source regions | 420/495 (84.85%); display-backed diagnostics remain a visible gap |
-| Settings schema and pinned profile transactions | Rust source regions | 218/228 (95.61%) and 546/687 (79.48%) |
-| Settings session and bounded worker | Rust source regions | 106/142 (74.65%) and 160/181 (88.40%); window geometry needs a display |
+| Settings schema and pinned profile transactions | Rust source regions | 234/244 (95.90%) and 701/842 (83.25%) |
+| Settings session and bounded worker | Rust source regions | 156/192 (81.25%) and 217/238 (91.18%); window geometry needs a display |
 | Mach-O closure parser and CLI | Python executable lines and branch edges | 202/205 lines (98.54%); 54/58 branches (93.10%) |
 | Windows policy snapshots and whole-tree receipts | PowerShell executable lines in ten selected gate functions | 78.57%–100%, reported independently per function |
 | Installer tool admission, paths, manifests and final gate | PowerShell executable lines in five selected gate functions | 93.94%–100%, reported independently per function |
@@ -118,8 +118,9 @@ ceiling tightens from 15 to 10.
 Retiring route-derived discovery (V2.9, #181) on 2026-09-24 removes four modules
 and their baselines from the scope: `discovery/approval.rs`,
 `discovery/approval/store.rs`, and `discovery/routed/linux.rs` are deleted, and
-`discovery/routes.rs` now only hosts the network-change monitor. This is a
-legitimate code removal. The controller runtime without its routed lane measures
+`discovery/routes.rs` kept only the network-change monitor, which #208 later moved
+to `discovery/changes/linux/monitor.rs`. This is a legitimate code removal.
+The controller runtime without its routed lane measures
 1641/1838 regions (89.28%), from 2030/2276, and the discovery client without the
 pinned routed probe measures 496/605 (81.98%), from 485/608. Both denominator
 floors drop with the deleted code; the uncovered ceilings tighten from 246 to 197

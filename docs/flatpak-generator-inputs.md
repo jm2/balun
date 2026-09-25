@@ -1,7 +1,8 @@
 # Flatpak generator dependency lock
 
-H2.2 remains open. The CI and release Flatpak jobs install the vendored Cargo
-source generator's complete default Python dependency closure from
+H2.2 is deferred (maintainer direction, 2026-09-24). The CI and release Flatpak
+jobs install the vendored Cargo source generator's complete default Python
+dependency closure from
 [`generator-lock-requirements.txt`](../build-aux/flatpak/generator-lock-requirements.txt).
 The existing direct pins, aiohttp 3.14.3 and tomlkit 0.15.1, are unchanged.
 Their separate requirements file remains the generator helper's direct-version

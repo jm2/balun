@@ -105,7 +105,7 @@ every member with the validated staging manifest, repeat native/resource checks,
 and probe the extracted runtime. This H1.1 gate closes the earlier documented
 version-resource-only reopening gap. The
 [inspection procedure](windows-installer-inspection.md) records limits and tool
-inputs; P4.1 still installs and exercises the result with a live tuner.
+inputs; P4.1's packaged acceptance installed and exercised the result with a live tuner.
 The generic `libbluray` that `avformat` imports remains allowed under the
 distinction above.
 
@@ -114,8 +114,8 @@ distinction above.
 Linux Debian/RPM/Arch inspection first freezes a
 [bounded private archive snapshot](linux-archive-snapshots.md), so separate
 metadata and payload tools cannot observe different versions of the input path.
-This remains a trusted-local-output gate: member preflight, expansion budgets,
-and native extractor containment are still pending H2.4 work.
+This remains a trusted-local-output gate: member preflight and expansion budgets
+have landed, while native extractor containment is deferred H2.4 work.
 
 Adding any self-contained GTK/GStreamer package also adds all of these
 platform-specific fail-closed gates in the same change; source/input validation

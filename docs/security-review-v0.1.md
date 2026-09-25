@@ -12,6 +12,22 @@ Contracts audited: [`plan-v0.1.md`](plan-v0.1.md) §5-§8,
 checked in. The default and `desktop` test suites, strict Clippy, and
 `cargo audit` pass with the fixes applied; the live-hardware tests were not run.
 
+## 2026-09-25 typed-subnet search (V2.4)
+
+V2.4 ([#206](https://github.com/jm2/balun/pull/206)) added the desktop's **Search a
+subnet** and moved `balun-discover --approved-range` onto the same
+[typed-subnet contract](typed-subnet-discovery-proposal.md). A search admits one
+canonical RFC 1918 `/23`–`/32` scope only through a consent that is bound to a
+ready network-change observation generation and consumed once
+(`SubnetSearchConsent::admit`, `src/discovery/subnet.rs`). Readiness comes only
+from a reconciled baseline and is revoked on detection; a change cancels and
+joins the search. Limits: at most 510 candidates and 1,020 requests, 15.625 ms
+pacing plus up to 25% jitter at the send boundary, 16 probes in flight, 200 ms
+per attempt, 64 devices, and 30 seconds; sockets keep broadcast disabled. The
+last admitted prefix is stored in `<profile>/subnet-prefix` (at most 64 bytes)
+under the settings file's pinned-profile checks. It never authorizes a search,
+and `settings.json` stays at schema 2. The pending H3.4 refresh covers this surface.
+
 ## 2026-09-24 route-derived discovery retired (V2.9)
 
 V2.9 ([#181](https://github.com/jm2/balun/issues/181)) removed route-table-derived
@@ -19,10 +35,10 @@ tunnel discovery under [ADR-0003](architecture/adr-0003-retire-route-derived-dis
 The route providers, approval policy and store, fresh-route gate, monitored
 runner, and interface-pinned sender reviewed below and in the H0.1 correction no
 longer exist. Findings about them are historical and need no further action. The
-approved-range scanner in `src/discovery/routed.rs` and `balun-discover
---approved-range` keep their private `/24`, 256-candidate, pacing, deadline, and
-cancellation bounds. Balun no longer reads or writes the `routed-approvals/`
-profile directory. The pending H3.4 refresh covers the reduced surface.
+approved-range scanner kept at the time was replaced a day later by V2.4's
+typed-subnet search (above), which `balun-discover --approved-range` now uses.
+Balun no longer reads or writes the `routed-approvals/` profile directory. The
+pending H3.4 refresh covers the reduced surface.
 
 ## 2026-09-17 playback description correction
 
@@ -244,7 +260,7 @@ Routed positive jitter, stricter CLI admission/reply budgets, and a distinct
 newer-schema quarantine supersede the corresponding historical findings below.
 The maintainer accepted the library-loopback and sibling-key boundaries on
 September 17, 2026, with `jm2` as owner and the linked review triggers. H3.3
-completes when these corrections and dispositions land on `main`.
+completed when these corrections and dispositions landed on `main`.
 
 H0.2 / [#88](https://github.com/jm2/balun/issues/88) also has a targeted
 [startup/retirement correction](playback.md#source-startup-and-retirement-correction-2026-09-17):
@@ -653,13 +669,14 @@ Still open:
 
 ## Follow-ups
 
-- Add jitter to the routed pacing or amend plan §5 and ADR-0001 (P2).
-- Refuse loopback in `DiscoveryClient` `invalid_target` so `balun-discover
-  --target` cannot probe it.
+- Routed pacing jitter was added by H3.3 on 2026-09-17; the routed sender was
+  removed by V2.9 on 2026-09-24.
+- Loopback: `balun-discover --target` refuses it since H3.3 on 2026-09-17; the
+  library `DiscoveryClient` keeps loopback as a maintainer-accepted boundary.
 - JSON diagnostic follow-up completed by H3.1 on 2026-09-17: fixed categories
   and positions replace value-bearing serde errors across diagnostic paths.
-- Approval store: document the key threat model and add an unsupported-version
-  quarantine reason.
+- Approval store: H3.3 documented the key threat model and added the
+  unsupported-version reason; V2.9 removed the store on 2026-09-24.
 - The CI Flatpak image now has an enforced digest pin; complete the remaining
   [H2.2 input inventory](build-input-pins.md#remaining-h22-scope).
 - Re-audit new log sites against the `Debug` list at the next review.

@@ -4,7 +4,7 @@ V2.6 ([issue #74](https://github.com/jm2/balun/issues/74)) remains open. The fir
 slice provides the shared catalog, startup selection, application menu, its
 tooltip/accessibility label, and the About description. A follow-on slice adds
 navigation titles, player-control copy, playback progress and failures, and device dialogs.
-The remaining interface, CLI, errors,
+Subnet search copy is translated too. The remaining interface, CLI, errors,
 desktop metadata, pluralization, and layout evidence remain pending.
 
 ## Catalog and startup contract
@@ -58,7 +58,7 @@ env -u LANGUAGE -u LC_ALL -u LC_MESSAGES LANG=de_DE.UTF-8 \
 
 The application menu, About description, navigation titles, player controls, and
 playback progress, startup status, and session errors are translated, along with
-Find device and Forget device dialogs and the unsaved-settings notice. Other
+Find device and Forget device dialogs, subnet search, and the unsaved-settings notice. Other
 window copy still contains English. The native
 GTK/libadwaita controls also depend on the platform's own translations and
 locale setup.
@@ -181,3 +181,16 @@ locales, rejected-input privacy, literal device names, and the distinct session-
 notice. Existing dialog admission tests still cover cancellation and consumption
 after close-time clearing. Packaged dialog layout, screen-reader announcements,
 and translation quality remain part of the outstanding V2.6/H4.3 evidence.
+
+## Subnet search
+
+The **Search a subnet** action, entry dialog, validation messages, confirmation,
+Forget subnet, progress/result statuses, and sidebar banners are translated.
+Validation selects fixed catalog messages and never repeats rejected input. The
+only interpolated values are the validated, canonical subnet and its candidate
+and request counts, and text containing them is rendered as plain text.
+
+Portable tests check the exact scope and budget in every confirmation, rejected
+input privacy, incomplete-versus-failed wording, and translated copy for every
+status across all thirteen catalogs. Layout, screen-reader announcements, and
+translation quality remain part of the outstanding V2.6/H4.3 evidence.

@@ -41,9 +41,10 @@ desktop path.
    `balun-discover --approved-range`, which is unchanged.
 4. **Keep what V2.4 and network-change handling need.** The approved-range
    scanner stays in `src/discovery/routed.rs` under its existing names, which
-   the unchanged typed-subnet validation imports. The Linux rtnetlink monitor
-   that drives network-change reconciliation stays at
-   `discovery::routes::linux::monitor` until V2.8 lands. It now lives beside
+   the unchanged typed-subnet validation imports; V2.4 then replaced it with
+   `src/discovery/subnet.rs` ([#206](https://github.com/jm2/balun/pull/206)).
+   The Linux rtnetlink monitor that drives network-change reconciliation stays
+   at `discovery::routes::linux::monitor` until V2.8 lands. It now lives beside
    the other watchers at `discovery::changes::linux::monitor`.
 5. **Persisted data.** `settings.json` never held routed state, so its schema
    is unchanged. The retired `routed-approvals/` directory in the profile is

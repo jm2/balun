@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Balun v0.1 is an alpha. Security fixes land on `main` and are included in the next v0.1 update.
+Balun v0.1 is an alpha. Security fixes land on `main` and are included in the next release (0.2.0).
 Report vulnerabilities in the initial release candidate as well as published v0.1 versions.
 
 | Version | Supported |
@@ -27,7 +27,8 @@ value is not.
 - Credential handling: `DeviceAuth` must never be parsed, persisted, or printed, and advertised
   URLs must never be followed as given.
 - Persisted state: the contents of `settings.json`, which must hold no credentials, stream URLs,
-  or raw topology.
+  or raw topology, and the `subnet-prefix` file, which holds only the last typed subnet and
+  never authorizes a search.
 - The stream transport: its refusal of proxies, redirects, DNS, and URL credentials, and the
   bounded size and time limits on device HTTP.
 - Package contents and the release component policy.
