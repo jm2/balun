@@ -233,11 +233,10 @@ tunnel search of P2 shipped in v0.1.0 and v0.1.1 and was removed by V2.9
 explicitly typed subnet search (V2.4, below and in the
 [typed-subnet contract](typed-subnet-discovery-proposal.md)) replaces it on every
 platform. Balun no longer derives candidates from route tables, remembers route
-approvals, or runs routed scans. Until V2.4 lands, remote tuners are added by
-exact address or hostname, or one private range is scanned with
-`balun-discover --approved-range`, which keeps its `/24`, 256-candidate,
-64 datagrams per second, 16-probe, 15-second, and cancellation bounds. The P2.5
-routed validation remains historical evidence.
+approvals, or runs routed scans; typed-subnet search now serves remote tuners on
+every platform, beside exact addresses and hostnames, and
+`balun-discover --approved-range` follows the same typed policy. The P2.5 routed
+validation remains historical evidence.
 
 Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
 
@@ -265,8 +264,9 @@ Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
   limits Balun's outbound requests. Keep socket broadcast disabled and require
   downstream routers to block directed broadcasts; Balun cannot verify that
   remote setting or guarantee single-host delivery if it is changed.
-- This approved contract permits V2.4 implementation; the documentation changes
-  no runtime behavior.
+- V2.4 implements this contract on the desktop and in the CLI; the
+  [contract document](typed-subnet-discovery-proposal.md) records where each
+  limit is enforced and tested.
 
 Network rules:
 

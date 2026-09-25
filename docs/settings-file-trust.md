@@ -94,6 +94,18 @@ approvals intact, and no deletion path is added to the private profile. Users
 may delete the directory by hand; it holds only keyed fingerprints and bounded
 policy state, never raw routes, interface names, or prefixes.
 
+## Remembered subnet (V2.4, 2026-09-24)
+
+Subnet search remembers only the last subnet whose search was admitted, in its own
+`subnet-prefix` file beside `settings.json`: one canonical prefix and a newline,
+at most 64 bytes. It uses the same pinned profile, cooperative lock, private
+atomic publication, and file checks, and the same single settings worker.
+`settings.json` stays at schema 2, so v0.1.x keeps loading the profile. A file
+that is not one canonical private `/23`–`/32` prefix is ignored and left
+untouched; the next remembered search replaces it, and **Forget subnet** removes
+it. The text never authorizes a search: every search needs a fresh confirmation,
+and a failed save cannot skip one.
+
 ## Accepted responsiveness and durability tradeoff
 
 Keep filesystem work off the GTK main context. Use one bounded worker per

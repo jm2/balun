@@ -51,14 +51,14 @@ The deferred HDHR5-4DT is an Australian unit; no regional or DVB-T support is cl
 | Exact address | ✅ Probed primary and secondary devices at exact addresses over LAN and tunnel | One IPv4 or unscoped IPv6 address, no port or range |
 | Hostname | Covered by tests and exact unicast target proofs | One name, resolved to at most four unicast addresses |
 | Remembered targets | ✅ Re-probed across launches; secondary tuners rediscovered | Nothing after the first successful probe |
-| Approved private range (`balun-discover` only) | ✅ Diagnostic only | One RFC 1918 range no wider than `/24` that you own or administer |
-| Route-table-derived tunnel search | Verified on Linux in v0.1.0 and v0.1.1; retired 2026-09-24 (V2.9) | Use an exact address, a hostname, or `balun-discover --approved-range` instead |
+| Subnet search (desktop and `balun-discover --approved-range`) | Covered by tests on Linux, macOS, and Windows; awaiting real-network confirmation | One RFC 1918 subnet, `/23` to `/32`, that you own or administer, confirmed before every search |
+| Route-table-derived tunnel search | Verified on Linux in v0.1.0 and v0.1.1; retired 2026-09-24 (V2.9) | Use subnet search, an exact address, or a hostname instead |
 
 Local discovery runs once at launch and then only on request; remembered targets are probed after
 it settles. Local broadcast and
-multicast, exact IP and hostname targets, and remembered targets work on every supported platform;
-only the network-change monitor is Linux-only. The approved-range scan is a diagnostic for a
-network you administer, not a desktop feature.
+multicast, exact IP and hostname targets, and remembered targets work on every supported platform.
+Subnet search is available only while Balun observes network changes, sends at most 1,020
+requests for a `/23`, and stops when the network changes.
 
 ## Codecs
 
@@ -98,8 +98,8 @@ nothing.
 - No recording, timeshift, transcoding, or tuner configuration.
 - Lineups are never merged across devices.
 - ATSC 3.0 AC-4 playback is not guaranteed on any platform.
-- There is no in-app subnet or tunnel search until typed-subnet search (V2.4) lands; use an exact
-  address or hostname, or `balun-discover --approved-range` for a private range you administer.
+- Subnet search needs downstream routers to keep directed-broadcast forwarding disabled; Balun
+  bounds its own requests but cannot check that setting.
 
 ## Evidence
 

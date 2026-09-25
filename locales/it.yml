@@ -76,6 +76,62 @@ device_dialogs:
   forgotten: "Dispositivo dimenticato."
   forgotten_session: "Dispositivo dimenticato solo per questa sessione; le impostazioni sono di sola lettura."
 
+subnet_search:
+  button: "Cerca in una sottorete"
+  unavailable: "La ricerca nella sottorete non è disponibile finché Balun non monitora le modifiche di rete."
+  title: "Cerca in una sottorete"
+  description: >-
+    Inserisci una sottorete IPv4 privata da /23 a /32, per esempio 192.168.2.0/23. Confermerai la ricerca prima che
+    Balun invii qualcosa.
+  entry: "Sottorete privata"
+  preview: "Indirizzi: %{candidates}. Richieste in uscita: al massimo %{requests}."
+  invalid_syntax: "Inserisci una sottorete IPv4 in notazione CIDR, per esempio 192.168.2.0/24."
+  noncanonical: "Inserisci l’indirizzo di rete senza bit host, per esempio 192.168.2.0/23."
+  too_wide: "Inserisci una sottorete da /23 a /32."
+  not_private: "Inserisci una sottorete nello spazio di indirizzi IPv4 privati."
+  cancel: "Annulla"
+  continue: "Continua"
+  forget: "Dimentica sottorete"
+  confirm_heading: "Cercare in %{subnet}?"
+  confirm_body: >-
+    Hai inserito %{subnet}. Indirizzi: %{candidates}. Budget di richieste in uscita: al massimo %{requests} richieste,
+    64 al secondo, per un massimo di 30 secondi. Il routing di rete attuale del sistema sceglie il percorso. Il budget
+    limita ciò che Balun invia, non ciò che i router recapitano.
+  search: "Cerca"
+  searching: "Ricerca di dispositivi HDHomeRun nella sottorete confermata."
+  busy: "Balun è occupato; riprova la ricerca nella sottorete tra un momento."
+  confirmation_expired: "La rete è cambiata; rivedi di nuovo la ricerca nella sottorete."
+  forgotten: "Sottorete memorizzata dimenticata."
+  forgotten_session: "Sottorete dimenticata solo per questa sessione; le impostazioni sono di sola lettura."
+  stopped_title: "Ricerca nella sottorete interrotta"
+  stopped: "Nessuna ricerca nella sottorete in corso."
+  searching_title: "Ricerca nella sottorete"
+  searching_status: "In attesa di risposte dalla sottorete confermata; può richiedere fino a 30 secondi."
+  complete_title: "Ricerca nella sottorete completata"
+  complete: "Ogni indirizzo della sottorete confermata è stato interrogato."
+  none_title: "Nessun dispositivo HDHomeRun trovato nella sottorete"
+  none: "Nessuna risposta valida è arrivata dalla sottorete confermata."
+  incomplete_title: "Ricerca nella sottorete incompleta"
+  deadline: "La ricerca ha raggiunto il limite di 30 secondi prima di interrogare ogni indirizzo."
+  device_limit: "La ricerca si è fermata dopo aver trovato 64 dispositivi, il suo limite."
+  unavailable_title: "Ricerca nella sottorete non disponibile"
+  unavailable_status: "Balun non sta monitorando le modifiche di rete, quindi ora non può cercare in una sottorete."
+  stale_title: "Ricerca nella sottorete non avviata"
+  stale: "La rete è cambiata dopo la conferma della ricerca. Confermala di nuovo."
+  changed: >-
+    La rete è cambiata durante la ricerca, quindi le sue risposte sono state scartate. Cerca di nuovo per confermare la
+    sottorete per questa rete.
+  failed_title: "Ricerca nella sottorete non riuscita"
+  failed: "Non è stato possibile completare la ricerca nella sottorete."
+  banner_complete: "Ricerca nella sottorete completata."
+  banner_none: "Nessuna risposta HDHomeRun è arrivata dalla sottorete."
+  banner_deadline: "Ricerca nella sottorete incompleta: limite di tempo raggiunto."
+  banner_device_limit: "Ricerca nella sottorete incompleta: limite di dispositivi raggiunto."
+  banner_changed: "Rete cambiata; la ricerca nella sottorete si è fermata."
+  banner_stale: "Rete cambiata; conferma di nuovo la ricerca nella sottorete."
+  banner_unavailable: "La ricerca nella sottorete non è disponibile al momento."
+  banner_failed: "Ricerca nella sottorete non riuscita."
+
 failure:
   busy_title: "Nessun sintonizzatore disponibile"
   busy_description: >-

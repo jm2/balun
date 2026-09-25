@@ -10,18 +10,23 @@ use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryFailure,
     DiscoveryKind, DiscoveryState, DiscoveryStatus, ExactSearchOutcome, ExactTargetTracker,
-    HostnameResolutionReceiver, RediscoveryQueue,
+    HostnameResolutionReceiver, OperationGeneration, RediscoveryQueue,
 };
 use balun::discovery::{
     DiscoveryEntry, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget,
 };
+use balun::discovery::{ObservationGeneration, TypedSubnetScope};
 use balun::localization::device_dialogs::{ForgetLabels, forget_description};
+use balun::localization::subnet_search::SubnetNotices;
 use balun::playback::{PlaybackInitializationError, PlaybackRuntime};
 use balun::settings::RememberedTarget;
 
 use super::objects::DeviceRowObject;
 use super::settings_session::SettingsSession;
-use super::{channel_sidebar, device_sidebar, exact_discovery_dialog, player_view};
+use super::subnet_search_dialog::PendingConfirmation;
+use super::{
+    channel_sidebar, device_sidebar, exact_discovery_dialog, player_view, subnet_search_dialog,
+};
 
 const DEVICE_SIDEBAR_MIN_WIDTH: f64 = 160.0;
 const DEVICE_SIDEBAR_MAX_WIDTH: f64 = 220.0;
@@ -414,8 +419,10 @@ pub(crate) fn build(
         toasts: toasts.downgrade(),
     });
 
-    connect_refresh(&device_sidebar, &handle);
+    let subnet = Rc::new(SubnetSearch::default());
+    connect_refresh(&device_sidebar, &handle, &accepted);
     connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
+    connect_subnet_search(&window, &device_sidebar, &wiring, &subnet);
     connect_cancel_discovery(&device_sidebar, &handle, &wiring);
     connect_device_selection(&device_sidebar, &handle, &accepted, &player_view, &layout);
     connect_lineup_reload(&channel_sidebar, &handle, &accepted, &player_view);
@@ -443,6 +450,7 @@ pub(crate) fn build(
         Rc::downgrade(&player_view),
         SnapshotReactions {
             rediscovery: Rc::clone(&wiring),
+            subnet: Rc::clone(&subnet),
         },
     );
     // One bounded local discovery runs at launch so the sidebar fills without
@@ -624,17 +632,24 @@ fn connect_window_shortcuts(
     layout.set_fullscreen(window.is_fullscreen());
 }
 
-fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &ControllerHandle) {
+fn connect_refresh(
+    sidebar: &device_sidebar::DeviceSidebar,
+    controller: &ControllerHandle,
+    accepted: &Rc<RefCell<Arc<ApplicationSnapshot>>>,
+) {
     let controller = controller.clone();
+    let accepted = Rc::clone(accepted);
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
     let exact_discovery_button = sidebar.exact_discovery_button().clone();
+    let subnet_search_button = sidebar.subnet_search_button().clone();
     sidebar.refresh_button().connect_clicked(move |button| {
         // Close the tiny interval before the Refreshing snapshot arrives so a
-        // fast double-click cannot enqueue redundant supersessions. Local and
-        // exact discovery share one supersedable lane, so every start control
-        // closes together.
+        // fast double-click cannot enqueue redundant supersessions. Local,
+        // exact, and subnet discovery share one supersedable lane, so every
+        // start control closes together; the next snapshot reopens them.
         button.set_sensitive(false);
         exact_discovery_button.set_sensitive(false);
+        subnet_search_button.set_sensitive(false);
         match controller.try_send(ControllerCommand::RefreshLocalDiscovery) {
             Ok(()) => {
                 cancel_discovery_button.set_visible(true);
@@ -643,9 +658,216 @@ fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &Control
             Err(_) => {
                 button.set_sensitive(true);
                 exact_discovery_button.set_sensitive(true);
+                subnet_search_button
+                    .set_sensitive(device_sidebar::subnet_search_sensitive(&accepted.borrow()));
             }
         }
     });
+}
+
+/// The subnet flow's main-context state: whether a dialog is open, the
+/// confirmation that an observation change must invalidate, and a confirmed
+/// search sent to the controller but not yet seen admitted.
+#[derive(Default)]
+struct SubnetSearch {
+    dialog_open: Cell<bool>,
+    confirmation: RefCell<Option<Rc<PendingConfirmation>>>,
+    sent: Cell<Option<SentSearch>>,
+}
+
+/// A confirmed search handed to the controller: its subnet, the discovery
+/// generation published before it was sent, and the observation generation
+/// it was confirmed under.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SentSearch {
+    prefix: TypedSubnetScope,
+    discovery: OperationGeneration,
+    observation: ObservationGeneration,
+}
+
+/// What became of a sent search.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SentOutcome {
+    /// The controller admitted it; its subnet is worth remembering.
+    Admitted(TypedSubnetScope),
+    /// Observation left the confirmed generation before admission was seen.
+    Expired,
+    /// The controller refused it and published why.
+    Refused,
+}
+
+/// Settle `sent` against a newer publication, or `None` while undecided.
+/// A later subnet state other than a refusal comes only from an admitted
+/// search, even when publications coalesced past its start; otherwise a
+/// later observation generation voids it, and a refusal is its outcome.
+fn settle_sent(sent: SentSearch, snapshot: &ApplicationSnapshot) -> Option<SentOutcome> {
+    let discovery = snapshot.discovery();
+    let later = snapshot.discovery_generation() > sent.discovery
+        && discovery.kind() == DiscoveryKind::Subnet;
+    let refused = matches!(
+        discovery.status(),
+        DiscoveryStatus::Failed(
+            DiscoveryFailure::SubnetUnavailable | DiscoveryFailure::SubnetConfirmationStale,
+        )
+    );
+    if later && !refused {
+        return Some(SentOutcome::Admitted(sent.prefix));
+    }
+    if !snapshot.observation().is_ready_for(sent.observation) {
+        return Some(SentOutcome::Expired);
+    }
+    later.then_some(SentOutcome::Refused)
+}
+
+impl SubnetSearch {
+    /// Invalidate and close an open confirmation whose generation is no
+    /// longer the healthy one; returns whether one was closed.
+    fn observe(&self, snapshot: &ApplicationSnapshot) -> bool {
+        let stale = self
+            .confirmation
+            .borrow()
+            .as_ref()
+            .is_some_and(|pending| !pending.observe(snapshot.observation()));
+        if stale {
+            // Release the borrow first: closing runs the dialog's `closed`
+            // handler, which clears this slot too.
+            let pending = self.confirmation.borrow_mut().take();
+            if let Some(pending) = pending {
+                pending.close();
+            }
+        }
+        stale
+    }
+
+    /// Settle a sent search once a publication decides it.
+    fn settle(&self, snapshot: &ApplicationSnapshot) -> Option<SentOutcome> {
+        let outcome = settle_sent(self.sent.get()?, snapshot)?;
+        self.sent.set(None);
+        Some(outcome)
+    }
+}
+
+/// Subnet search: enter a subnet, then confirm its exact scope and budget
+/// under the observation generation current when the confirmation opens.
+/// The entered text is remembered as a convenience; it never authorizes.
+fn connect_subnet_search(
+    window: &adw::ApplicationWindow,
+    sidebar: &device_sidebar::DeviceSidebar,
+    wiring: &Rc<RediscoveryWiring>,
+    subnet: &Rc<SubnetSearch>,
+) {
+    let window = window.downgrade();
+    let wiring = Rc::clone(wiring);
+    let subnet = Rc::clone(subnet);
+    let buttons = SubnetButtons {
+        subnet: sidebar.subnet_search_button().clone(),
+        exact: sidebar.exact_discovery_button().clone(),
+        refresh: sidebar.refresh_button().clone(),
+        cancel: sidebar.cancel_discovery_button().clone(),
+    };
+    sidebar.subnet_search_button().connect_clicked(move |_| {
+        if subnet.dialog_open.replace(true) {
+            return;
+        }
+        let Some(parent) = window.upgrade() else {
+            subnet.dialog_open.set(false);
+            return;
+        };
+        let confirm = {
+            let wiring = Rc::clone(&wiring);
+            let subnet = Rc::clone(&subnet);
+            let buttons = buttons.clone();
+            let parent = parent.downgrade();
+            move |scope: TypedSubnetScope| {
+                let Some(parent) = parent.upgrade() else {
+                    return;
+                };
+                present_subnet_confirmation(&parent, scope, &wiring, &subnet, &buttons);
+            }
+        };
+        let forget = {
+            let wiring = Rc::clone(&wiring);
+            move || wiring.forget_subnet()
+        };
+        let closed = {
+            let subnet = Rc::clone(&subnet);
+            move || subnet.dialog_open.set(false)
+        };
+        subnet_search_dialog::present_entry(
+            &parent,
+            wiring.settings.subnet_prefix(),
+            confirm,
+            forget,
+            closed,
+        );
+    });
+}
+
+#[derive(Clone)]
+struct SubnetButtons {
+    subnet: gtk::Button,
+    exact: gtk::Button,
+    refresh: gtk::Button,
+    cancel: gtk::Button,
+}
+
+/// Open the confirmation only while a healthy baseline is published, bound
+/// to that generation; the controller still checks it at admission.
+fn present_subnet_confirmation(
+    parent: &adw::ApplicationWindow,
+    scope: TypedSubnetScope,
+    wiring: &Rc<RediscoveryWiring>,
+    subnet: &Rc<SubnetSearch>,
+    buttons: &SubnetButtons,
+) {
+    let Some(generation) = wiring.accepted.borrow().observation().generation() else {
+        wiring.toast(&balun::localization::subnet_search::SubnetEntryLabels::current().unavailable);
+        return;
+    };
+    subnet.dialog_open.set(true);
+    let controller = wiring.controller.clone();
+    let toasts = Rc::clone(wiring);
+    let buttons = buttons.clone();
+    let sending = Rc::clone(subnet);
+    let closed = Rc::clone(subnet);
+    let pending = subnet_search_dialog::present_confirmation(
+        parent,
+        scope,
+        generation,
+        move |consent| {
+            // One lane: close every start control until the next snapshot.
+            buttons.subnet.set_sensitive(false);
+            buttons.exact.set_sensitive(false);
+            buttons.refresh.set_sensitive(false);
+            let notices = SubnetNotices::current();
+            let discovery = toasts.accepted.borrow().discovery_generation();
+            if controller.try_search_subnet(consent).is_ok() {
+                // The subnet is remembered once the search is seen admitted.
+                sending.sent.set(Some(SentSearch {
+                    prefix: scope,
+                    discovery,
+                    observation: generation,
+                }));
+                buttons.cancel.set_visible(true);
+                buttons.cancel.set_sensitive(true);
+                toasts.toast(&notices.searching);
+            } else {
+                buttons.exact.set_sensitive(true);
+                buttons.refresh.set_sensitive(true);
+                buttons
+                    .subnet
+                    .set_sensitive(device_sidebar::subnet_search_sensitive(
+                        &toasts.accepted.borrow(),
+                    ));
+                toasts.toast(&notices.busy);
+            }
+        },
+        move || {
+            closed.confirmation.borrow_mut().take();
+            closed.dialog_open.set(false);
+        },
+    );
+    *subnet.confirmation.borrow_mut() = Some(pending);
 }
 
 fn connect_exact_discovery(
@@ -661,6 +883,7 @@ fn connect_exact_discovery(
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
     let dialog_open = Rc::new(Cell::new(false));
     let refresh_button = sidebar.refresh_button().clone();
+    let subnet_search_button = sidebar.subnet_search_button().clone();
     let window = window.downgrade();
 
     sidebar
@@ -680,6 +903,7 @@ fn connect_exact_discovery(
             let admitted_cancel_button = cancel_discovery_button.clone();
             let admitted_exact_button = button.clone();
             let admitted_refresh_button = refresh_button.clone();
+            let admitted_subnet_button = subnet_search_button.clone();
             let closed_dialog_open = Rc::clone(&dialog_open);
             exact_discovery_dialog::present(
                 &window,
@@ -693,12 +917,13 @@ fn connect_exact_discovery(
                             return;
                         }
                     };
-                    // Exact and local discovery share one supersedable
-                    // lane. Disable every start action before the
-                    // Refreshing publication closes the small re-admission
-                    // interval.
+                    // Local, exact, and subnet discovery share one
+                    // supersedable lane. Disable every start action before
+                    // the Refreshing publication closes the small
+                    // re-admission interval.
                     admitted_exact_button.set_sensitive(false);
                     admitted_refresh_button.set_sensitive(false);
+                    admitted_subnet_button.set_sensitive(false);
                     match admitted_controller.try_discover_exact(target) {
                         Ok(ticket) => {
                             // Remember the address only once this search
@@ -712,6 +937,11 @@ fn connect_exact_discovery(
                         Err(_) => {
                             admitted_exact_button.set_sensitive(true);
                             admitted_refresh_button.set_sensitive(true);
+                            admitted_subnet_button.set_sensitive(
+                                device_sidebar::subnet_search_sensitive(
+                                    &admitted_wiring.accepted.borrow(),
+                                ),
+                            );
                             admitted_wiring
                                 .toast("Balun is busy; try the device address again in a moment.");
                         }
@@ -924,6 +1154,25 @@ impl HostnameProbes {
 }
 
 impl RediscoveryWiring {
+    /// Remember an admitted search's subnet as editable text for the next.
+    fn remember_subnet(&self, prefix: TypedSubnetScope) {
+        if let Some(pending_save) = self.settings.set_subnet_prefix(Some(prefix)) {
+            self.settings.save(pending_save);
+        }
+    }
+
+    /// Forget the remembered subnet; it never held any authority.
+    fn forget_subnet(&self) {
+        let notices = SubnetNotices::current();
+        match self.settings.set_subnet_prefix(None) {
+            Some(pending_save) => {
+                self.settings.save(pending_save);
+                self.toast(&notices.forgotten);
+            }
+            None => self.toast(&notices.forgotten_session),
+        }
+    }
+
     fn remember(&self, target: RememberedTarget) {
         if let Some(pending_save) = self.settings.remember_target(target) {
             // The session's writer runs the flushing write off the main
@@ -1279,6 +1528,7 @@ const fn exact_settlement_failure_toast(discovery: DiscoveryState) -> Option<&'s
 /// Main-context reactions the reducer runs after accepting a snapshot.
 struct SnapshotReactions {
     rediscovery: Rc<RediscoveryWiring>,
+    subnet: Rc<SubnetSearch>,
 }
 
 fn spawn_snapshot_reducer(
@@ -1290,7 +1540,10 @@ fn spawn_snapshot_reducer(
     player_view: Weak<player_view::PlayerView>,
     reactions: SnapshotReactions,
 ) {
-    let SnapshotReactions { rediscovery } = reactions;
+    let SnapshotReactions {
+        rediscovery,
+        subnet,
+    } = reactions;
     gtk::glib::MainContext::default().spawn_local(async move {
         while snapshots.changed().await.is_ok() {
             let candidate = Arc::clone(&snapshots.borrow_and_update());
@@ -1315,6 +1568,18 @@ fn spawn_snapshot_reducer(
                 layout.show_channels();
             }
 
+            // A confirmation shown under an earlier observation generation
+            // closes before anything else can act on this publication.
+            if subnet.observe(&candidate) {
+                rediscovery.toast(&SubnetNotices::current().confirmation_expired);
+            }
+            match subnet.settle(&candidate) {
+                Some(SentOutcome::Admitted(prefix)) => rediscovery.remember_subnet(prefix),
+                Some(SentOutcome::Expired) => {
+                    rediscovery.toast(&SubnetNotices::current().confirmation_expired);
+                }
+                Some(SentOutcome::Refused) | None => {}
+            }
             device_sidebar.apply_snapshot(&candidate);
             channel_sidebar.apply_snapshot(&candidate);
             layout.set_device_selected(candidate.selected_device().is_some());
@@ -1464,6 +1729,13 @@ mod tests {
             _: CancellationToken,
         ) -> DiscoveryFuture {
             Box::pin(async { Ok(DiscoveryReport::default()) })
+        }
+        fn discover_subnet(
+            &self,
+            _permit: balun::discovery::SubnetScanPermit,
+            _cancellation: CancellationToken,
+        ) -> balun::controller::SubnetDiscoveryFuture {
+            Box::pin(std::future::ready(Err(DiscoveryFailure::SubnetUnavailable)))
         }
     }
 
@@ -2211,6 +2483,171 @@ mod tests {
         assert!(completed.get(), "fullscreen smoke did not complete");
     }
 
+    /// The window's invalidation path, with the confirmation's real
+    /// `closed` handler clearing the same slot while it closes the dialog.
+    #[test]
+    #[ignore = "requires the isolated display supplied by scripts/test-desktop-lifecycle.sh"]
+    fn a_network_change_closes_the_open_subnet_confirmation_once() {
+        use balun::discovery::{ObservationGeneration, ObservationState};
+
+        adw::init().expect("initialize libadwaita for the subnet confirmation test");
+        let window = adw::ApplicationWindow::builder()
+            .default_width(640)
+            .default_height(480)
+            .build();
+        window.present();
+        let context = gtk::glib::MainContext::default();
+        while context.pending() {
+            context.iteration(false);
+        }
+        let subnet = Rc::new(SubnetSearch::default());
+        subnet.dialog_open.set(true);
+        let closed = Rc::clone(&subnet);
+        let pending = subnet_search_dialog::present_confirmation(
+            &window,
+            "192.168.2.0/23".parse().unwrap(),
+            ObservationGeneration::FIRST,
+            |_| panic!("a closed confirmation cannot consent"),
+            move || {
+                closed.confirmation.borrow_mut().take();
+                closed.dialog_open.set(false);
+            },
+        );
+        *subnet.confirmation.borrow_mut() = Some(pending);
+
+        let ready = ApplicationSnapshot::initial()
+            .with_observation(ObservationState::Ready(ObservationGeneration::FIRST));
+        assert!(
+            !subnet.observe(&ready),
+            "the shown generation is still live"
+        );
+        assert!(subnet.confirmation.borrow().is_some());
+        assert!(
+            subnet.observe(&ApplicationSnapshot::initial()),
+            "a change closes it"
+        );
+        assert!(subnet.confirmation.borrow().is_none());
+        assert!(!subnet.dialog_open.get());
+        assert!(!subnet.observe(&ready), "nothing is left to close");
+    }
+
+    #[test]
+    fn a_sent_subnet_search_is_remembered_only_once_seen_admitted() {
+        use balun::controller::{DiscoveryState, SelectedLineupState, SnapshotRevision};
+        use balun::discovery::ObservationState;
+
+        let prefix: TypedSubnetScope = "192.168.2.0/23".parse().unwrap();
+        let observation = ObservationGeneration::new(3).unwrap();
+        let sent = SentSearch {
+            prefix,
+            discovery: OperationGeneration::new(4),
+            observation,
+        };
+        let snapshot = |generation, discovery, state| {
+            ApplicationSnapshot::new(
+                SnapshotRevision::new(9),
+                OperationGeneration::new(generation),
+                OperationGeneration::INITIAL,
+                discovery,
+                [],
+                None,
+                SelectedLineupState::unselected(OperationGeneration::INITIAL),
+            )
+            .unwrap()
+            .with_observation(state)
+        };
+        let ready = ObservationState::Ready(observation);
+        let subnet = |generation, status: fn(OperationGeneration) -> DiscoveryState| {
+            status(OperationGeneration::new(generation))
+        };
+
+        // Not yet processed: an earlier generation decides nothing.
+        let earlier = snapshot(
+            4,
+            DiscoveryState::refreshing(OperationGeneration::new(4)),
+            ready,
+        );
+        assert_eq!(settle_sent(sent, &earlier), None);
+        // Only the sent search publishes a running subnet search later on.
+        let running = snapshot(
+            5,
+            subnet(5, |generation| {
+                DiscoveryState::refreshing_for(generation, DiscoveryKind::Subnet)
+            }),
+            ready,
+        );
+        assert_eq!(
+            settle_sent(sent, &running),
+            Some(SentOutcome::Admitted(prefix))
+        );
+        // A coalesced publication may show its outcome instead.
+        let finished = snapshot(
+            5,
+            subnet(5, |generation| {
+                DiscoveryState::ready_for(generation, DiscoveryKind::Subnet, 0)
+            }),
+            ready,
+        );
+        assert_eq!(
+            settle_sent(sent, &finished),
+            Some(SentOutcome::Admitted(prefix))
+        );
+        let refused = snapshot(
+            5,
+            subnet(5, |generation| {
+                DiscoveryState::failed_for(
+                    generation,
+                    DiscoveryKind::Subnet,
+                    DiscoveryFailure::SubnetConfirmationStale,
+                )
+            }),
+            ready,
+        );
+        assert_eq!(settle_sent(sent, &refused), Some(SentOutcome::Refused));
+        // A later observation generation voids it, even beside a running
+        // probe that kept its own generation.
+        let changed = ObservationState::Ready(ObservationGeneration::new(4).unwrap());
+        let voided = snapshot(
+            4,
+            DiscoveryState::refreshing(OperationGeneration::new(4)),
+            changed,
+        );
+        assert_eq!(settle_sent(sent, &voided), Some(SentOutcome::Expired));
+        assert_eq!(
+            settle_sent(sent, &snapshot(5, running.discovery(), changed)),
+            Some(SentOutcome::Admitted(prefix)),
+            "admission seen first wins"
+        );
+        // Coalesced past its start: the admitted search was revoked.
+        let revoked = snapshot(
+            6,
+            subnet(6, |generation| {
+                DiscoveryState::failed_for(
+                    generation,
+                    DiscoveryKind::Subnet,
+                    DiscoveryFailure::NetworkChanged,
+                )
+            }),
+            changed,
+        );
+        assert_eq!(
+            settle_sent(sent, &revoked),
+            Some(SentOutcome::Admitted(prefix))
+        );
+        // A refusal under a later observation generation reads as expired.
+        assert_eq!(
+            settle_sent(sent, &snapshot(5, refused.discovery(), changed)),
+            Some(SentOutcome::Expired)
+        );
+
+        let flow = SubnetSearch::default();
+        assert_eq!(flow.settle(&running), None, "nothing was sent");
+        flow.sent.set(Some(sent));
+        assert_eq!(flow.settle(&earlier), None);
+        assert_eq!(flow.settle(&running), Some(SentOutcome::Admitted(prefix)));
+        assert_eq!(flow.settle(&running), None, "settled once");
+    }
+
     #[test]
     fn user_selection_changes_always_map_to_superseding_commands() {
         let device_id = balun::domain::DeviceId::new(0x105A_1232).unwrap();
@@ -2256,7 +2693,6 @@ mod tests {
             }
             DiscoveryError::InvalidEndpoint { .. }
             | DiscoveryError::Task(_)
-            | DiscoveryError::RoutedScanDeadline { .. }
             | DiscoveryError::Cancelled
             | DiscoveryError::Protocol(_) => DiscoveryFailure::Internal,
         }
@@ -2315,6 +2751,13 @@ mod tests {
             // The window smoke never issues exact-address discovery; like the
             // packet-free application smoke, answer with an empty report.
             Box::pin(async { Ok::<_, DiscoveryFailure>(DiscoveryReport::default()) })
+        }
+        fn discover_subnet(
+            &self,
+            _permit: balun::discovery::SubnetScanPermit,
+            _cancellation: CancellationToken,
+        ) -> balun::controller::SubnetDiscoveryFuture {
+            Box::pin(std::future::ready(Err(DiscoveryFailure::SubnetUnavailable)))
         }
     }
 
@@ -2624,7 +3067,7 @@ mod tests {
                     toasts: toasts.downgrade(),
                 });
 
-                connect_refresh(&device_sidebar, &handle);
+                connect_refresh(&device_sidebar, &handle, &accepted);
                 connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
                 connect_cancel_discovery(&device_sidebar, &handle, &wiring);
                 connect_device_selection(
@@ -2659,6 +3102,7 @@ mod tests {
                     Rc::downgrade(&player_view),
                     SnapshotReactions {
                         rediscovery: Rc::clone(&wiring),
+                        subnet: Rc::default(),
                     },
                 );
                 connect_joined_shutdown(

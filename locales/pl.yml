@@ -76,6 +76,62 @@ device_dialogs:
   forgotten: "Zapomniano urządzenie."
   forgotten_session: "Zapomniano urządzenie tylko na czas tej sesji; ustawienia są tylko do odczytu."
 
+subnet_search:
+  button: "Przeszukaj podsieć"
+  unavailable: "Wyszukiwanie w podsieci jest niedostępne, dopóki Balun nie obserwuje zmian sieci."
+  title: "Przeszukaj podsieć"
+  description: >-
+    Wpisz jedną prywatną podsieć IPv4 od /23 do /32, na przykład 192.168.2.0/23. Potwierdzisz wyszukiwanie, zanim Balun
+    cokolwiek wyśle.
+  entry: "Prywatna podsieć"
+  preview: "Adresy: %{candidates}. Żądania wychodzące: najwyżej %{requests}."
+  invalid_syntax: "Wpisz jedną podsieć IPv4 w notacji CIDR, na przykład 192.168.2.0/24."
+  noncanonical: "Wpisz adres sieci bez bitów hosta, na przykład 192.168.2.0/23."
+  too_wide: "Wpisz podsieć od /23 do /32."
+  not_private: "Wpisz podsieć z prywatnej przestrzeni adresów IPv4."
+  cancel: "Anuluj"
+  continue: "Dalej"
+  forget: "Zapomnij podsieć"
+  confirm_heading: "Przeszukać %{subnet}?"
+  confirm_body: >-
+    Wpisano %{subnet}. Adresy: %{candidates}. Budżet żądań wychodzących: najwyżej %{requests}, 64 na sekundę, przez
+    maksymalnie 30 sekund. Ścieżkę wybiera bieżący routing sieciowy systemu. Budżet ogranicza to, co wysyła Balun, a nie
+    to, co dostarczają routery.
+  search: "Szukaj"
+  searching: "Przeszukiwanie potwierdzonej podsieci w poszukiwaniu urządzeń HDHomeRun."
+  busy: "Balun jest zajęty; spróbuj przeszukać podsieć ponownie za chwilę."
+  confirmation_expired: "Sieć się zmieniła; ponownie sprawdź wyszukiwanie w podsieci."
+  forgotten: "Zapomniano zapamiętaną podsieć."
+  forgotten_session: "Zapomniano podsieć tylko na czas tej sesji; ustawienia są tylko do odczytu."
+  stopped_title: "Wyszukiwanie w podsieci zatrzymane"
+  stopped: "Żadne wyszukiwanie w podsieci nie jest uruchomione."
+  searching_title: "Przeszukiwanie podsieci"
+  searching_status: "Oczekiwanie na odpowiedzi z potwierdzonej podsieci; potrwa to do 30 sekund."
+  complete_title: "Wyszukiwanie w podsieci zakończone"
+  complete: "Sprawdzono każdy adres w potwierdzonej podsieci."
+  none_title: "Nie znaleziono urządzeń HDHomeRun w podsieci"
+  none: "Z potwierdzonej podsieci nie nadeszła żadna prawidłowa odpowiedź."
+  incomplete_title: "Wyszukiwanie w podsieci niepełne"
+  deadline: "Wyszukiwanie osiągnęło limit 30 sekund, zanim sprawdzono każdy adres."
+  device_limit: "Wyszukiwanie zatrzymało się po znalezieniu 64 urządzeń, czyli limitu."
+  unavailable_title: "Wyszukiwanie w podsieci niedostępne"
+  unavailable_status: "Balun nie obserwuje zmian sieci, więc nie może teraz przeszukać podsieci."
+  stale_title: "Nie rozpoczęto wyszukiwania w podsieci"
+  stale: "Sieć zmieniła się po potwierdzeniu wyszukiwania. Potwierdź je ponownie."
+  changed: >-
+    Sieć zmieniła się podczas wyszukiwania, więc jego odpowiedzi odrzucono. Wyszukaj ponownie, aby potwierdzić podsieć
+    dla tej sieci.
+  failed_title: "Wyszukiwanie w podsieci nie powiodło się"
+  failed: "Nie udało się ukończyć wyszukiwania w podsieci."
+  banner_complete: "Wyszukiwanie w podsieci zakończone."
+  banner_none: "Z podsieci nie nadeszły żadne odpowiedzi HDHomeRun."
+  banner_deadline: "Wyszukiwanie w podsieci niepełne: osiągnięto limit czasu."
+  banner_device_limit: "Wyszukiwanie w podsieci niepełne: osiągnięto limit urządzeń."
+  banner_changed: "Sieć się zmieniła; wyszukiwanie w podsieci zatrzymano."
+  banner_stale: "Sieć się zmieniła; ponownie potwierdź wyszukiwanie w podsieci."
+  banner_unavailable: "Wyszukiwanie w podsieci jest teraz niedostępne."
+  banner_failed: "Wyszukiwanie w podsieci nie powiodło się."
+
 failure:
   busy_title: "Brak dostępnego tunera"
   busy_description: >-

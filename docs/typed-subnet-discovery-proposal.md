@@ -3,8 +3,9 @@
 Status: approved by jm2 on 2026-09-18 for V2.4 and [issue #71], selecting
 the `/23` traffic limits (1A) and confirmation before every search (2A).
 The maintainer also accepted the [outbound-request boundary](#approved-delivery-boundary)
-(option A) on 2026-09-18. Implementation may proceed under this contract.
-This documentation change does not expand current scan behavior or complete V2.4.
+(option A) on 2026-09-18. V2.4 implements it on Linux, macOS, and Windows, in the
+desktop and in `balun-discover --approved-range`; [Implementation](#implementation-v24)
+maps each limit to its enforcement and tests.
 
 The [authoritative plan](plan-v0.1.md#5-discovery-policy) and
 [ADR-0001 amendment](architecture/adr-0001-discovery-playback.md#typed-subnet-amendment--2026-09-18)
@@ -12,24 +13,12 @@ adopt this separate typed-scope policy. Their former route-derived treatment of
 user-entered ranges is superseded. Route-derived discovery itself was retired on
 2026-09-24 ([ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md)).
 
-The existing CLI accepts one explicitly approved private `/24` or narrower
-range, with a 256-candidate ceiling and a 15-second default deadline. That
-remains the current implementation baseline.
-
-The first implementation slice is the side-effect-free `TypedSubnetScope` library
-value. It accepts only canonical private `/23`–`/32` text, supplies usable-host
-enumeration and exact candidate/outbound-attempt counts, and names the fixed
-typed-policy limits below. It carries no consent, observation generation, or
-route-derived authority. Neither shipped application admits scans with this value
-yet; socket execution, observer health, consent, persistence, pacing, and UI/CLI
-integration remain pending. Diagnostic formatting redacts the scope; explicit
-display formatting retains canonical text for a future preview or preference.
-
-Portable fixtures cover each prefix at both ends of all three RFC 1918 blocks,
-`/23`, `/24`, `/30`, `/31`, and `/32` preview counts, noncanonical/invalid/private
-boundaries, diagnostic redaction, and the separate unchanged approved-range limits.
-The maximum-jitter budget fits the approved deadline arithmetically; it does not
-establish actual send pacing or completion timing, which require runner evidence.
+The side-effect-free `TypedSubnetScope` value (`src/discovery/typed_subnet.rs`) is
+the one policy value: it accepts only canonical private `/23`–`/32` text and supplies
+usable-host enumeration and exact candidate/outbound-attempt counts to the preview,
+confirmation, consent, runner, CLI, and persisted preference alike. It carries no
+consent or observation authority; diagnostic formatting redacts it, and explicit
+display formatting retains canonical text for the preview and the preference.
 
 ## Assessment and approved traffic limits
 
@@ -168,21 +157,18 @@ fresh confirmation. Check the live observation generation after write readiness
 and immediately before every nonblocking send attempt, including retries.
 Revoke on detection; UI notification debounce must not delay that revocation.
 
-`default_network_change_source()` in `src/controller/runtime.rs` now starts a
+`default_network_change_source()` in `src/controller/runtime.rs` starts a
 native source on Linux (rtnetlink), macOS (a `PF_ROUTE` routing socket), and
 Windows (IP Helper interface, unicast-address, and route notifications). Each
 subscribes before reading its baseline, reports one change after resubscribing,
-and gives up after bounded consecutive failures. Typed scans still need
-cancellation evidence on every platform, and these sources and their debounced
-controller stream still need the readiness, health, and immediate-invalidation
-evidence above; their mere presence is not sufficient admission proof.
+gives up after bounded consecutive failures, and publishes the readiness
+[Implementation](#implementation-v24) describes beside its debounced changes.
 
 ## Integration and acceptance
 
 Linux route-derived admission, with its interface pinning, topology
-fingerprints, and durable reservations, was retired on 2026-09-24 (V2.9). Until
-V2.4 moves the CLI onto this contract, `--approved-range` keeps its current
-`/24`, 256-candidate, and 15-second limits.
+fingerprints, and durable reservations, was retired on 2026-09-24 (V2.9).
+`--approved-range` now follows this contract, with the same limits as the desktop.
 
 The ordinary cross-platform socket path is appropriate only for the explicit
 typed range. Results retain their typed-search origin, and the registry's device
@@ -220,5 +206,31 @@ Required evidence before V2.4 can be completed:
 This approval permits implementation, not a completion checkbox. The maintainer,
 jm2, owns the scope, consent, and delivery-boundary decisions; revisit the contract
 before beta or any increase in scope, rate, retries, or automatic work.
+
+## Implementation (V2.4)
+
+| Contract item | Enforced in | Tests |
+| --- | --- | --- |
+| Canonical private `/23`–`/32` scope | `discovery/typed_subnet.rs` | `malformed_noncanonical_and_disallowed_scopes_reject` |
+| ≤510 candidates, 2 attempts each, ≤1,020 requests | `discovery/subnet.rs` (`probe`, `ScanContext::send`) | `a_slash_23_spends_exactly_its_budget_paced_at_the_send_boundary` |
+| ≥15.625 ms + 0–25% jitter at the send boundary, shared by later searches | `ScanContext::send`, `SubnetScanLane` | `a_slash_23_…`, `repeated_searches_share_one_pacing_boundary_and_one_lane` |
+| ≤16 probes in flight, one search per process | `scan`, `SubnetScanLane::begin` | `a_slash_23_…`, `repeated_searches_…` |
+| 200 ms window, ≤16 datagrams, one identity per candidate | `probe` | `each_attempt_waits_one_reply_window_…`, `a_candidate_reads_sixteen_datagrams_…` |
+| 64 devices or 30 s end the search as incomplete; no later send | `Aggregate::merge`, `ScanContext::refusal` | `reaching_the_device_limit_…`, `deadline_expiry_is_incomplete_…` |
+| A socket that cannot open stops the search as incomplete; a candidate no request reached leaves it incomplete, except a refused local directed broadcast | `scan`, `probe` (`CandidateResult::unsent`) | `a_socket_that_cannot_be_opened_…`, `only_a_candidate_no_request_reached_…`, `unprobed_addresses_never_retire_…` |
+| Re-check after readiness, before every send and retry | `ScanContext::send` | `revocation_after_readiness_prevents_every_send_including_a_retry`, `native_revocation_after_readiness_…` |
+| Broadcast disabled; refusals never retried; local directed broadcasts refused; unreadable interfaces send nothing | `open_system_socket`, `ScanContext::send`, `search` | `native_broadcast_sends_are_refused_…`, `a_local_directed_broadcast_is_refused_…`, `unreadable_interfaces_refuse_the_search_before_any_send` |
+| Readiness only from a reconciled baseline with no notification pending; revoked on detection; new generation on return | `discovery/changes/{observation,watch}.rs`, platform watchers | `bursts_are_filtered_diffed_counted_and_revoked_on_detection`, `a_{route,address}_recorded_before_its_wake_up_blocks_readiness`, `a_native_subscription_becomes_ready_…` |
+| Consent is scope plus generation, consumed once; stale consent refused without cancelling a running probe | `SubnetSearchConsent::admit`, `start_subnet_search` | `consent_binds_the_scope_and_its_generation`, `a_refused_confirmation_leaves_a_running_probe_alone` |
+| A change cancels and joins the search and discards its replies | `reconcile_observation`, `reconcile_network_change` | `a_detected_change_revokes_and_joins_…`, `subnet_evidence_expires_when_…` |
+| Confirmation before every search, voided by a change | `ui/subnet_search_dialog.rs`, `ui/window.rs` | `a_network_change_invalidates_an_open_or_queued_confirmation_for_good`, display tests |
+| CLI consent spent once, never replayed | `bin/balun-discover.rs` (`search_subnet`) | `subnet_consent_waits_for_observation_and_is_spent_once` |
+| Typed origin; incomplete results merge; expiry on lost IPv4 or unattributed changes | `controller/runtime.rs` (`retain_subnet_batch`, `origin_expires`) | `an_incomplete_search_replaces_only_the_addresses_it_answered_from`, `unattributed_changes_retire_typed_subnet_evidence_only` |
+| Only the admitted search's text is remembered, in its own file | `settings/store.rs`, `ui/settings_session.rs`, `ui/window.rs` | `the_subnet_prefix_file_holds_one_canonical_prefix_…`, `a_sent_subnet_search_is_remembered_only_once_seen_admitted` |
+
+Not provable here: downstream routers' directed-broadcast forwarding (the accepted
+delivery boundary); a directed broadcast when no local interface has a broadcast
+address (only the limited broadcast is checked then); keyboard use beyond
+configuration; and real-network behaviour on macOS and Windows.
 
 [issue #71]: https://github.com/jm2/balun/issues/71

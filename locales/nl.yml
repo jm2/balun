@@ -74,6 +74,62 @@ device_dialogs:
   forgotten: "Apparaat vergeten."
   forgotten_session: "Apparaat alleen voor deze sessie vergeten; de instellingen zijn alleen-lezen."
 
+subnet_search:
+  button: "Een subnet doorzoeken"
+  unavailable: "Subnet zoeken is niet beschikbaar totdat Balun netwerkwijzigingen volgt."
+  title: "Een subnet doorzoeken"
+  description: >-
+    Voer één privé-IPv4-subnet van /23 tot /32 in, bijvoorbeeld 192.168.2.0/23. U bevestigt de zoekopdracht voordat
+    Balun iets verstuurt.
+  entry: "Privésubnet"
+  preview: "Adressen: %{candidates}. Uitgaande verzoeken: hoogstens %{requests}."
+  invalid_syntax: "Voer één IPv4-subnet in CIDR-notatie in, bijvoorbeeld 192.168.2.0/24."
+  noncanonical: "Voer het netwerkadres zonder hostbits in, bijvoorbeeld 192.168.2.0/23."
+  too_wide: "Voer een subnet van /23 tot en met /32 in."
+  not_private: "Voer een subnet binnen de privé-IPv4-adresruimte in."
+  cancel: "Annuleren"
+  continue: "Doorgaan"
+  forget: "Subnet vergeten"
+  confirm_heading: "%{subnet} doorzoeken?"
+  confirm_body: >-
+    U hebt %{subnet} ingevoerd. Adressen: %{candidates}. Budget voor uitgaande verzoeken: hoogstens %{requests}
+    verzoeken, 64 per seconde, gedurende maximaal 30 seconden. De huidige netwerkroutering van uw systeem kiest het pad.
+    Het budget beperkt wat Balun verstuurt, niet wat routers afleveren.
+  search: "Zoeken"
+  searching: "Het bevestigde subnet wordt doorzocht op HDHomeRun-apparaten."
+  busy: "Balun is bezig; probeer het subnet zo meteen opnieuw te doorzoeken."
+  confirmation_expired: "Het netwerk is gewijzigd; controleer de subnetzoekopdracht opnieuw."
+  forgotten: "Opgeslagen subnet vergeten."
+  forgotten_session: "Subnet alleen voor deze sessie vergeten; de instellingen zijn alleen-lezen."
+  stopped_title: "Subnetzoekopdracht gestopt"
+  stopped: "Er loopt geen subnetzoekopdracht."
+  searching_title: "Subnet doorzoeken"
+  searching_status: "Wachten op antwoorden uit het bevestigde subnet; dit duurt maximaal 30 seconden."
+  complete_title: "Subnetzoekopdracht voltooid"
+  complete: "Elk adres in het bevestigde subnet is bevraagd."
+  none_title: "Geen HDHomeRun-apparaten gevonden in het subnet"
+  none: "Er kwam geen geldig antwoord uit het bevestigde subnet."
+  incomplete_title: "Subnetzoekopdracht onvolledig"
+  deadline: "De zoekopdracht bereikte de limiet van 30 seconden voordat elk adres was bevraagd."
+  device_limit: "De zoekopdracht stopte na het vinden van 64 apparaten, de limiet."
+  unavailable_title: "Subnet zoeken niet beschikbaar"
+  unavailable_status: "Balun volgt geen netwerkwijzigingen en kan daarom nu geen subnet doorzoeken."
+  stale_title: "Subnetzoekopdracht niet gestart"
+  stale: "Het netwerk is gewijzigd nadat u de zoekopdracht bevestigde. Bevestig deze opnieuw."
+  changed: >-
+    Het netwerk is tijdens de zoekopdracht gewijzigd, dus de antwoorden zijn verworpen. Zoek opnieuw om het subnet voor
+    dit netwerk te bevestigen.
+  failed_title: "Subnetzoekopdracht mislukt"
+  failed: "De subnetzoekopdracht kon niet worden voltooid."
+  banner_complete: "Subnetzoekopdracht voltooid."
+  banner_none: "Er kwamen geen HDHomeRun-antwoorden uit het subnet."
+  banner_deadline: "Subnetzoekopdracht onvolledig: tijdslimiet bereikt."
+  banner_device_limit: "Subnetzoekopdracht onvolledig: apparaatlimiet bereikt."
+  banner_changed: "Netwerk gewijzigd; de subnetzoekopdracht is gestopt."
+  banner_stale: "Netwerk gewijzigd; bevestig de subnetzoekopdracht opnieuw."
+  banner_unavailable: "Subnet zoeken is nu niet beschikbaar."
+  banner_failed: "Subnetzoekopdracht mislukt."
+
 failure:
   busy_title: "Geen tuner beschikbaar"
   busy_description: >-

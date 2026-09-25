@@ -14,6 +14,7 @@ pub mod playback_failure;
 #[cfg(feature = "playback")]
 pub mod playback_startup;
 pub mod playback_status;
+pub mod subnet_search;
 
 // Keep the generated initializer isolated as the catalogs grow. Like Tributary,
 // desktop startup forces it on one joined thread with an explicit stack size.

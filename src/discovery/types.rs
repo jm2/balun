@@ -8,9 +8,9 @@ pub enum DiscoveryMethod {
     /// Exact unicast address supplied by a manual, cached, or similarly
     /// high-confidence source.
     Targeted,
-    /// Unicast address selected by the separately approved private-range scan
-    /// policy.
-    RoutedTargeted,
+    /// Unicast address inside a typed subnet the user confirmed for one
+    /// search; the system's routing chose the path.
+    TypedSubnet,
     Ipv4Broadcast,
     Ipv6LinkLocalMulticast,
     Ipv6SiteLocalMulticast,
@@ -20,7 +20,7 @@ impl DiscoveryMethod {
     /// Whether this method uses exact-source unicast response validation.
     #[must_use]
     pub const fn is_targeted(self) -> bool {
-        matches!(self, Self::Targeted | Self::RoutedTargeted)
+        matches!(self, Self::Targeted | Self::TypedSubnet)
     }
 }
 

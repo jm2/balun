@@ -3,6 +3,7 @@
   "rust": {
     "src/discovery/client.rs": "admission",
     "src/discovery/manual.rs": "admission",
+    "src/discovery/subnet.rs": "admission",
     "src/discovery/hostname/resolver.rs": "cancellation",
     "src/controller/runtime.rs": "cancellation",
     "src/playback/source_policy.rs": "cancellation",
