@@ -1227,9 +1227,30 @@ mod native {
         }
     }
 
-    /// The operating system classifies the limited broadcast address as a
-    /// broadcast and refuses it on a socket that never enabled broadcasting;
-    /// the refusal leaves broadcasting disabled.
+    /// A local interface's directed broadcast, the kind of interior address
+    /// a typed subnet can contain, as the first `(interface network, address)`
+    /// found. `None` where no interface has an IPv4 broadcast address.
+    fn local_directed_broadcast() -> Option<Ipv4Addr> {
+        if_addrs::get_if_addrs()
+            .ok()?
+            .into_iter()
+            .find_map(|interface| match interface.addr {
+                if_addrs::IfAddr::V4(address)
+                    if interface.is_oper_up()
+                        && !address.ip.is_loopback()
+                        && address.prefixlen <= 30 =>
+                {
+                    address.broadcast
+                }
+                _ => None,
+            })
+    }
+
+    /// The operating system refuses a broadcast destination on a socket that
+    /// never enabled broadcasting, and the refusal widens nothing. The
+    /// limited broadcast is refused everywhere (macOS reports it
+    /// unreachable); a local directed broadcast, sent through the scan core
+    /// as an ordinary candidate, is refused once and never retried.
     #[tokio::test]
     async fn native_broadcast_sends_are_refused_with_broadcast_disabled() {
         let socket = open_system_socket().unwrap();
@@ -1238,7 +1259,36 @@ mod native {
             .send_to(b"balun", SocketAddr::from((Ipv4Addr::BROADCAST, 9)))
             .await
             .expect_err("a broadcast send needs broadcasting enabled");
-        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{error:?}");
+        assert!(
+            matches!(
+                error.kind(),
+                io::ErrorKind::PermissionDenied | io::ErrorKind::HostUnreachable
+            ),
+            "{error:?}"
+        );
         assert!(!socket.broadcast().unwrap(), "no permission was widened");
+
+        // A sandbox without a broadcast-capable interface has nothing to test.
+        let Some(broadcast) = local_directed_broadcast() else {
+            return;
+        };
+        let plan = ScanPlan {
+            // Any network that holds the address as an interior host.
+            network: Ipv4Net::new(broadcast, 1).unwrap().trunc(),
+            candidates: vec![broadcast],
+            port: 9,
+        };
+        assert!(plan.admits(SocketAddr::from((broadcast, 9))));
+        let (_gate, authority) = ready();
+        let hooked = Hooked::new(|_| {});
+        let report = scan(lane(0), &hooked, plan, authority, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(report.outcome, SubnetScanOutcome::Complete);
+        assert_eq!(report.requests_attempted, 1, "refused once, never retried");
+        assert_eq!(report.refused_sends, 1, "{:?}", report.report.issues);
+        assert_eq!(report.report.stats.datagrams_sent, 0);
+        assert_eq!(hooked.sends.lock().unwrap().len(), 1);
+        assert!(report.report.issues[0].message.contains("not retried"));
     }
 }

@@ -2,10 +2,10 @@
   "schema": 1,
   "metrics": {
     "rust-regions:src/discovery/client.rs": {
-      "covered": 489,
+      "covered": 488,
       "total": 597,
-      "uncovered": 108,
-      "percent": 81.91
+      "uncovered": 109,
+      "percent": 81.74
     },
     "rust-regions:src/discovery/manual.rs": {
       "covered": 169,
@@ -20,10 +20,10 @@
       "percent": 92.45
     },
     "rust-regions:src/controller/runtime.rs": {
-      "covered": 1971,
-      "total": 2167,
-      "uncovered": 196,
-      "percent": 90.96
+      "covered": 1974,
+      "total": 2171,
+      "uncovered": 197,
+      "percent": 90.93
     },
     "rust-regions:src/playback/source_policy.rs": {
       "covered": 404,

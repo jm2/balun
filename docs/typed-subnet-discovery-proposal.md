@@ -278,16 +278,18 @@ expiry as incomplete with no later send, revocation after readiness before first
 attempts and retries, a mid-search change that never revives, the shared pacing
 boundary, and one search per lane. Native loopback fixtures on every platform lane
 send real requests, prove one paced retry, stop after readiness on cancellation or a
-change, and show the operating system refusing a limited-broadcast send while
-broadcast stays disabled. Controller, CLI, settings, localization, and desktop
+change, and send a local interface's directed broadcast through the runner as an
+ordinary candidate: the operating system refuses it, it is counted and never retried,
+and broadcast stays disabled. Controller, CLI, settings, localization, and desktop
 projection tests cover the rest; the dialog and sidebar display tests run in the
 Linux desktop lifecycle job.
 
-**Limits of the evidence.** The native broadcast fixture exercises the limited
-broadcast address; a directed broadcast inside a typed subnet needs a matching local
-interface, so the refusal and no-retry path for it is proven with the scripted
-transport. Address-only changes are detected by an immediate inventory re-read rather
-than from the notification itself. Real-network behaviour on macOS and Windows, such
-as how often their sources report changes, awaits owner confirmation.
+**Limits of the evidence.** The directed-broadcast fixture needs a local interface
+with an IPv4 broadcast address and otherwise checks only the limited broadcast, which
+macOS reports as unreachable rather than refused; a downstream router's directed
+broadcast cannot be observed locally, as the delivery boundary accepts. Address-only
+changes are detected by an immediate inventory re-read rather than from the
+notification itself. Real-network behaviour on macOS and Windows, such as how often
+their sources report changes, awaits owner confirmation.
 
 [issue #71]: https://github.com/jm2/balun/issues/71

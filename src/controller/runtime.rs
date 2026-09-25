@@ -869,11 +869,7 @@ impl ControllerActor {
         };
         let bound = permit.generation();
         self.discovery = DiscoveryState::refreshing_for(generation, DiscoveryKind::Subnet);
-        tracing::info!(
-            kind = ?DiscoveryKind::Subnet,
-            generation = generation.get(),
-            "discovery started"
-        );
+        log_discovery_started(DiscoveryKind::Subnet, generation);
         self.publish()?;
 
         let cancellation = self.shutdown.child_token();
@@ -1082,11 +1078,7 @@ impl ControllerActor {
             ProbeScope::Exact(target) => self.expected_device_for_exact_target(target),
         };
         self.discovery = DiscoveryState::refreshing_for(generation, scope.kind());
-        tracing::info!(
-            kind = ?scope.kind(),
-            generation = generation.get(),
-            "discovery started"
-        );
+        log_discovery_started(scope.kind(), generation);
         self.publish()?;
 
         let cancellation = self.shutdown.child_token();
@@ -1905,6 +1897,11 @@ fn rebuild_registry(
         }
     }
     Ok((registry, contradicted))
+}
+
+/// One topology-free record per started discovery operation, for every lane.
+fn log_discovery_started(kind: DiscoveryKind, generation: OperationGeneration) {
+    tracing::info!(kind = ?kind, generation = generation.get(), "discovery started");
 }
 
 /// Await an optional task, or never resolve when there is none.
