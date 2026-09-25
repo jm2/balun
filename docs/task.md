@@ -154,9 +154,9 @@ Independent correctness fixes may continue.
 
 ## H4 — Beta regression and acceptance coverage
 
-- [x] **H4.1 — Add sustained adversarial regression testing.** Replayable mutation
-  and property suites cover packets, JSON/URLs, route/approval transitions, and
-  package manifests in bounded PR and [scheduled corpora](adversarial-regressions.md).
+- [x] **H4.1 — Add sustained adversarial regression testing.** Replayable mutation and property
+  suites cover packets, JSON/URLs, route/approval transitions (removed with V2.9), and package
+  manifests in bounded PR and [scheduled corpora](adversarial-regressions.md).
 
 - [x] **H4.2 — Measure critical-path test coverage.** Separate Rust, Python, and
   PowerShell [baselines and CI ratchets](critical-coverage.md) cover admission,

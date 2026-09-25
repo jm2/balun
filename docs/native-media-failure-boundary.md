@@ -2,8 +2,8 @@
 
 H3.5 evidence and accepted boundary, September 17, 2026. The maintainer accepted
 in-process decoding with the limits below. Owner: `jm2`; review before beta and
-after any reproduced native hang. H3.5 completes when this evidence and the
-reconciled claims land on `main`. This does not establish a decoder sandbox.
+after any reproduced native hang. H3.5 completed when this evidence and the
+reconciled claims landed on `main`. This does not establish a decoder sandbox.
 
 ## Measured synchronous-call limit
 

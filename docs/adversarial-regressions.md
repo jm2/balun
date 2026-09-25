@@ -11,8 +11,8 @@ route-budget and approval-sequence properties were deleted with that code.
 
 This is bounded mutation fuzzing, not coverage-guided fuzzing. It supplements
 the existing forced concurrency, real-socket, native packaging, and malformed
-input regressions. H4.2 separately measures missing coverage; P4.1 and H4.3
-still require actual packaged hardware and accessibility evidence.
+input regressions. H4.2 separately measures missing coverage; P4.1 recorded
+packaged hardware acceptance, and H4.3 still requires accessibility evidence.
 
 ## Corpus and properties
 

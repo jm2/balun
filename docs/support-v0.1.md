@@ -1,7 +1,7 @@
 # Balun v0.1 support matrix
 
-- Status: v0.1.0 Alpha published 2026-09-05
-- Last updated: 2026-09-24
+- Status: v0.1.1 Alpha published 2026-09-05; v0.2.0 in preparation
+- Last updated: 2026-09-25
 
 This matrix is derived from the sanitized evidence in
 [`compatibility-v0.1.md`](compatibility-v0.1.md) and the ledger in [`task.md`](task.md). A cell
@@ -10,7 +10,7 @@ it is unsupported. Every ✅ is traceable to a section of the compatibility note
 
 Note (2026-09-24): V2.9 retired the Linux route-table-derived tunnel search
 ([ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md)). Its routed-scan evidence
-below is historical; remote tuners are now added by exact address or hostname.
+below is historical; remote tuners are now added by subnet search, exact address, or hostname.
 
 ## Platforms
 
@@ -128,4 +128,4 @@ nothing.
   [macOS decoder inventory](compatibility-v0.1.md#macos-decoder-and-sink-inventory),
   [Windows live-TV trial](compatibility-v0.1.md#windows-live-tv-trial); ledger P0.5.
 - Limitations: [In-band guide spike](compatibility-v0.1.md#in-band-guide-spike) and the
-  "Explicitly outside v0.1" list in [`task.md`](task.md).
+  "Outside the adopted implementation scope" list in [`task.md`](task.md).

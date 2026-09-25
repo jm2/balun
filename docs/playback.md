@@ -1,6 +1,6 @@
 # Playback foundation
 
-Last reviewed: 2026-09-02
+Last reviewed: 2026-09-25
 
 This document records Balun's implemented GStreamer boundary, private stream
 handoff, generation-owned tune session, video presentation path, essential
@@ -72,7 +72,7 @@ PLAYING, reports the finite body's end as the stream becoming unavailable, and
 settles to a joined `NULL` while exposing only the paintable, and `PlayerView`
 binds/clears an opaque paintable through its production widgets and Stop control.
 The Linux and macOS live-device results and budgets are in
-[`compatibility-v0.1.md`](compatibility-v0.1.md); packaged-runtime acceptance (P3) remains open.
+[`compatibility-v0.1.md`](compatibility-v0.1.md); packaged acceptance closed with P4.1.
 Additional isolated widget and Wayland smokes cover the audio-control state, exact ListView
 activation, and a real compositor-confirmed fullscreen round trip without adding a URI-forging
 test surface.
@@ -150,12 +150,12 @@ through `playbin3` and `gtk4paintablesink`; P0.5 records the complete tested
 factory contract across all three platforms. The helpers' `--probe-playback`
 mode provides the development-runtime probe of this snapshot and of the
 constant-URI `appsrc` contract on Linux, Windows, and macOS, freezing the
-decoder and audio-sink inventory; the fake-device probes exist and P3 adds
+decoder and audio-sink inventory; the fake-device probes exist and P3 added
 packaged-runtime probes.
 
 Registry presence also does not prove that a factory can construct, negotiate,
 decode, render, reach EOS, or tear down cleanly. Those behaviors require the
-process-isolated synthetic and fake-device tests in the remaining milestones.
+process-isolated synthetic and fake-device tests described below.
 
 ## Actor-private stream handoff
 
@@ -279,7 +279,7 @@ are forced to the player and their Back/pop paths are disabled while fullscreen,
 then their exact pages, pop permissions, and prior focus are restored. Native
 Back choices outside fullscreen remain synchronized, and a valid compact-width
 channel activation presents the player even when setup fails. These controls
-are complete; the accessibility pass (P1.6) remains open, and the live-device
+are complete; the accessibility pass (P1.6) is complete, and the live-device
 teardown numbers (P0.4) are in [`compatibility-v0.1.md`](compatibility-v0.1.md).
 
 The session publishes every owned transition through a deduplicated,
@@ -406,7 +406,7 @@ The macOS CI lane runs that same loopback suite, and the Linux, macOS, and
 Windows lanes run the helpers' `--probe-playback`/`-ProbePlayback` mode, which
 proves the exact factory snapshot and the constant-URI `appsrc` contract on
 each development runtime. That evidence completed the transport record;
-packaged-runtime probes are P3 work.
+P3 added the packaged-runtime probes.
 
 The pipeline-side visual contract is explicit: Balun validates the
 `playbin3` flags, aspect-ratio, URI, and video-sink properties while the
@@ -579,8 +579,8 @@ metadata-port policy whose loopback exemption compiles only into library
 test builds — so this proof exercises the window stop wiring, while the
 live-tuner release evidence for those same paths stays with the library
 end-to-end smokes above. These proofs cover fake-tuner release ordering; the
-live-device release numbers (P0.4) are recorded, and packaged-runtime (P3)
-acceptance remains open.
+live-device release numbers (P0.4) are recorded, and packaged acceptance
+closed with P4.1.
 
 ## Development runtime examples
 
@@ -618,14 +618,14 @@ contract; the macOS package does the same from the frozen macOS inventory.
 ## Packaging and protected-content boundary
 
 The seven registry names are also not a self-contained packaging allowlist.
-Autoplugging will require a capability-derived closure based on the formats and
-platform audio/video paths actually proven by the P0 evidence records. A future
+Autoplugging requires a capability-derived closure based on the formats and
+platform audio/video paths actually proven by the P0 evidence records. A
 self-contained package must stage only that reviewed plugin and native-library
 closure, traverse native imports, inspect the completed application tree, and
 reopen and validate its final artifact. Copying an entire GStreamer plugin
 distribution is not acceptable.
 
-The Windows package implements that contract. `build-windows.ps1 -Zip` stages
+The Windows and macOS packages implement that contract. `build-windows.ps1 -Zip` stages
 exactly the plugins named in the helper's closure table (the seven structural
 factories, the MPEG-TS parsers and converters, the decoders recorded in the
 Windows inventory, and the Windows audio sinks) plus the DLLs those binaries
@@ -650,8 +650,8 @@ be staged merely because a broad media package makes it available. Ordinary
 codecs and containers still require their own compatibility, licensing, patent,
 provenance, and distribution review.
 
-## Next acceptance steps
+## Packaged acceptance
 
-1. P3.4: stage the derived runtime closure into the macOS package and run its
-   packaged-runtime probe; the Flatpak and Windows packages do so already.
-2. P4.1: validate packaged artifacts across all tier-1 targets.
+P3.4 staged the derived runtime closure into the macOS package with its
+packaged-runtime probe, and P4.1 accepted the v0.1.1 packages on Linux, macOS,
+and Windows against real tuners.

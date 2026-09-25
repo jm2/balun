@@ -2,11 +2,10 @@
 
 Status: maintainer-approved H3.2 contract, September 17, 2026. The maintainer
 accepted both the private-profile boundary and the two-second startup/close
-limits. The implementation and regressions below are staged in PR #109;
-completion takes effect only when CI and bot review are clean and the PR merges.
-The maintainer later amended it for #152: user-private-group directories,
-tightening that never adds permissions, and one in-app notice when persistence
-is unavailable.
+limits. The implementation and regressions below landed in PR #109 on
+September 18, 2026, completing H3.2. The maintainer later amended it for #152:
+user-private-group directories, tightening that never adds permissions, and one
+in-app notice when persistence is unavailable.
 
 ## Implemented changes
 
@@ -129,7 +128,7 @@ application must not claim that a timed-out save definitely did not occur.
 
 The portable store tests run with the library on Linux, macOS, and Windows;
 the desktop worker tests run in the native desktop jobs. Local Linux results
-are recorded in the PR; native CI must pass before merge.
+are recorded in the PR, and native CI passed before merge.
 
 - `src/settings/store.rs`: forced admission/open substitution with a regular
   file, outside symlink, hard link, and Unix FIFO; hard-linked lock rejection;
@@ -171,6 +170,5 @@ are recorded in the PR; native CI must pass before merge.
   deadline, one-worker limit, bounded queue, late-result rejection, and complete
   document behavior without claiming to cancel an arbitrary OS syscall.
 
-H3.2 completes only when the accepted contract, implementation, regressions,
-documentation, CI, and bot review land together. A checked PR ledger is staged
-for that merge, not a claim that a still-open PR has already landed.
+H3.2 completed when the accepted contract, implementation, regressions,
+documentation, CI, and bot review landed together in PR #109.

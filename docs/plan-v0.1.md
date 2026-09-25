@@ -174,11 +174,13 @@ src/
   bin/balun-discover.rs        GTK-free diagnostic
   domain/                      DeviceID and device-scoped ChannelKey
   hdhr/                        protocol, device HTTP, lineup, inspection, resolver, fake device
-  discovery/                   client, local, manual, hostname, registry, changes, range scan
-  controller/                  runtime actor, snapshots, stream handoff
-  settings/                    versioned atomic settings.json store
+  discovery/                   client, local, manual, hostname, registry, changes, typed subnet
+  controller/                  runtime actor, snapshots, stream handoff, network-change lane
+  settings/                    versioned atomic settings.json store and subnet-prefix file
+  localization/                compiled catalogs, locale selection, presentation copy
   playback/                    GStreamer runtime, session, source policy, transport, failures
-  ui/                          window, device sidebar, channel sidebar, address dialog, player
+  ui/                          window, device sidebar, channel sidebar, address and subnet
+                               dialogs, player
 ~~~
 
 Runtime and concurrency:
@@ -336,11 +338,14 @@ unless the evidence demands it.
 
 ## 7. State and diagnostics
 
-Persisted state is atomic, versioned JSON:
+Persisted state is atomic and private. `settings.json` is versioned JSON holding:
 
 - Remembered exact or hostname targets.
-- For V2.4, the user-entered subnet preference only; never its scan authorization.
 - Window geometry and UI preferences.
+
+For V2.4, the user-entered subnet preference is a separate one-line
+`subnet-prefix` file beside it, so `settings.json` stays at schema 2; its scan
+authorization is never persisted.
 
 No credentials, stream URLs, or incidental topology are persisted. Lineup
 caches are added only when an offline device needs a visibly stale lineup, and

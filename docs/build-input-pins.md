@@ -1,6 +1,7 @@
 # Build input pins
 
-H2.2 remains open. Current pins cover the **starting job-container images**,
+H2.2 is deferred by maintainer direction (2026-09-24); these landed slices stay.
+Current pins cover the **starting job-container images**,
 YAML lint dependencies, and Rust selection in rustup-based candidate jobs.
 They do not freeze the full build environment or claim reproducible artifacts.
 New signing and provenance work remains paused
@@ -69,10 +70,10 @@ a pinned object, the job fails; it must not fall back to the mutable tag.
 ## Release compiler selection
 
 [`release-toolchain/rust-toolchain.toml`](../build-aux/release-toolchain/rust-toolchain.toml)
-records Rust `1.98.0` for the five rustup-based release jobs: discovery diagnostics,
+records Rust `1.98.1` for the five rustup-based release jobs: discovery diagnostics,
 macOS, Windows, Debian, and RPM. Their pinned action receives that literal release,
 so a new `stable` release does not silently change those compilers. The initial
-selection is the already-tested compiler floor; the [official release manifest](https://static.rust-lang.org/dist/channel-rust-1.98.0.toml)
+selection, `1.98.0`, was the already-tested compiler floor; the [official release manifest](https://static.rust-lang.org/dist/channel-rust-1.98.0.toml)
 lists the required Linux, macOS, and Windows host targets as available.
 
 The lint job runs `scripts/check_release_rust.py` and its regression suite. It
@@ -131,8 +132,8 @@ against the downloaded wheel set.
 
 ## Remaining H2.2 scope
 
-The following inputs are still mutable or incompletely pinned. They are pending
-work, not newly approved exceptions:
+The following inputs are still mutable or incompletely pinned. Their pinning is
+deferred with H2.2, not newly approved as exceptions:
 
 - GitHub-hosted runner images and the preinstalled host tools/kernel.
 - Packages installed afterward through APT, DNF, pacman/MSYS2, and Homebrew,

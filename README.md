@@ -16,9 +16,10 @@ address so you know which tuner failed.
 
 ![Balun main window](data/screenshots/balun-main-window.png)
 
-> **v0.1.1.** Balun plays live TV on Linux, macOS, and Windows and has been verified against real
-> tuners. Pre-built packages are on the [Releases](https://github.com/jm2/balun/releases) page;
-> the countable status is in [`docs/task.md`](docs/task.md).
+> **v0.1.1 is the latest release; `main` is 0.2.0, unreleased.** Balun plays live TV on Linux,
+> macOS, and Windows and has been verified against real tuners. Pre-built v0.1.1 packages are on
+> the [Releases](https://github.com/jm2/balun/releases) page; the countable status is in
+> [`docs/task.md`](docs/task.md).
 
 ## Features
 
@@ -58,7 +59,7 @@ address so you know which tuner failed.
 | Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved; a notice appears when settings cannot be saved |
 | Native runtime inventory tooling | 🛠️ Reopened DMG content binding, macOS native copy ownership, installed Homebrew metadata, and native-scope SBOM generation; [catalog assembly, embedded-resource representation, remaining artifact adapters, and release attachment remain pending](docs/native-inventory.md) |
 | Light & dark mode | ✅ Automatic (libadwaita) |
-| i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Application menu, navigation, player controls/progress/startup, and About description; [remaining scope](docs/localization.md) |
+| i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Most window, player, and dialog copy; [remaining scope](docs/localization.md) |
 
 Local broadcast and multicast discovery, exact IP or hostname discovery, remembered targets, and
 network-change handling work on Linux, macOS, and Windows.
@@ -527,8 +528,8 @@ CI automatically runs on every push/PR:
   action it runs is pinned to an immutable commit
 
 CI and Linux release job containers use reviewed image-index digests, checked against an
-[explicit inventory](docs/build-input-pins.md). Packages installed afterward and other mutable
-build inputs remain tracked under H2.2.
+[explicit inventory](docs/build-input-pins.md). Pinning packages installed afterward and other
+mutable build inputs is deferred (H2.2).
 
 ### Rust toolchain policy
 
@@ -609,6 +610,8 @@ src/
 ├── settings/
 │   ├── mod.rs              # Versioned settings schema and validation
 │   └── store.rs            # Pinned private-profile transactions
+├── localization.rs         # Compiled catalogs and startup locale selection
+├── localization/           # Translated presentation copy for each interface area
 ├── playback/
 │   ├── runtime.rs          # GStreamer initialization and factory snapshot
 │   ├── session.rs          # Generation-owned playbin3 session and teardown
@@ -618,9 +621,10 @@ src/
 │   └── fake_device_e2e.rs  # End-to-end proofs against the fake device
 └── ui/
     ├── window.rs           # Adaptive three-pane window and controller bridge
-    ├── device_sidebar.rs   # Device list with Refresh, Find by address, and Stop
+    ├── device_sidebar.rs   # Device list with Refresh, Find by address, Search a subnet, and Stop
     ├── channel_sidebar.rs  # Selected device's channel list and badges
     ├── exact_discovery_dialog.rs # Find device by address dialog
+    ├── subnet_search_dialog.rs # Subnet entry and per-search confirmation
     ├── player_view.rs      # Live-TV picture, status, and playback controls
     ├── settings_session.rs # Bounded asynchronous settings load and close
     ├── settings_session/   # One worker and the latest queued settings snapshot
@@ -642,6 +646,8 @@ build-aux/
 ├── inno/                   # x86_64/ARM64 Windows installer recipe
 ├── linux/                  # Native Linux package payload and metadata validators
 ├── packaging/              # Shared forbidden-component policy and validator
+├── release-toolchain/      # Reviewed release-job Rust compiler
+├── rpm/                    # Fedora COPR (Packit) RPM spec
 └── toolchain/              # Rust compiler floor declaration
 
 data/
@@ -672,8 +678,10 @@ most four unicast addresses that are probed one at a time, each probe sends at m
 and up to 32 distinct addresses are admitted per session. A tuner that answers is remembered, by
 name when you entered a name, and probed again at the next launch; right-click a listed device,
 or press Menu or Shift+F10 on it, and choose **Forget device** to drop that entry, or **Remember
-device** to add one for a tuner that has none. **Stop device discovery** cancels either kind and
-any remaining launch probes.
+device** to add one for a tuner that has none. **Search a subnet** searches one private IPv4 subnet,
+`/23` to `/32`, only after you confirm its address count and request budget each time; the dialog
+offers the last subnet you searched, and **Forget subnet** removes it. **Stop device discovery**
+cancels any search and any remaining launch probes.
 
 On Windows, local discovery uses the limited broadcast from each interface. If a host firewall
 blocks the replies, use **Find device by address** with the tuner's IPv4 address.

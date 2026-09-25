@@ -26,10 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   versions and component names stay literal.
 - Playback failure categories, recovery instructions, and fallback device/channel
   labels now translate in all thirteen catalogs, preserving literal codec names.
-
 - Translated playback progress and parameterized connecting/buffering messages in
   all thirteen catalogs, with placeholder parity and literal display-name rendering.
-
 - Translated navigation titles and live-TV control names/tooltips in all thirteen
   catalogs, including mute and fullscreen transitions and the desktop idle reason.
 - Localization foundation with thirteen embedded catalogs, automatic locale
@@ -67,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
-- Rustup-based release candidate jobs select reviewed Rust 1.98.0, with a separate
+- Rustup-based release candidate jobs select reviewed Rust 1.98.1, with a separate
   update manifest and CI rejection of changed or missing compiler selections.
 - **winget** — `winget install jm2.Balun` installs the Windows build.
 - Locked the complete Markdown/TOML lint dependency tree with tarball integrity
@@ -121,14 +119,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text, so ampersands and markup-like names cannot break or reformat the message.
 - Concurrent source rejection now cancels a transport that is still being published,
   zeroizes pending handoffs, and retains all workers for the normal teardown join.
-
 - Settings now use a pinned private profile, no-follow file admission, a cooperative
   transaction lock, and schema revalidation before replacement. Loading and close-time
   saving wait at most two seconds on one worker with a bounded latest-save queue;
   timeouts disable persistence and may leave the newest preferences unsaved.
   Transaction completion explicitly releases its lock even when a concurrent
   process spawn briefly retains an inherited descriptor.
-
 - Native playback logs now discard plugin-supplied error/debug text, arbitrary caps
   values, stream identifiers, and unknown marker names while retaining closed labels
   and typed counters. GStreamer's separately enabled debug output remains outside this filter.

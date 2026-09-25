@@ -146,8 +146,9 @@ native tools, builds inert Debian and Arch-style packages, verifies their
 extracted data and relative links, and runs the complete validator. The Arch
 fixture excludes host ACLs/xattrs while retaining ordinary PAX timestamps.
 
-H2.4 remains unchecked. RPM header queries and native extraction still need
-time/output containment; the decoder itself is native code without an OS sandbox.
+H2.4 remains unchecked and is deferred by maintainer direction (2026-09-24). RPM
+header queries and native extraction still need time/output containment; the
+decoder itself is native code without an OS sandbox.
 Extractor isolation and broader format-specific negative fixtures remain
 required before accepting artifacts outside the trusted local build boundary.
 Existing post-extraction checks cannot contain a compromised native parser.
