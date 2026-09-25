@@ -73,6 +73,10 @@ device_dialogs:
   forget: "Vergeten"
   forgotten: "Apparaat vergeten."
   forgotten_session: "Apparaat alleen voor deze sessie vergeten; de instellingen zijn alleen-lezen."
+  remember_menu: "Apparaat onthouden"
+  remembered: "Apparaat onthouden."
+  remembered_session: "Apparaat alleen voor deze sessie onthouden; de instellingen zijn alleen-lezen."
+  remember_unavailable: "Het adres van dit apparaat kan niet worden onthouden."
 
 subnet_search:
   button: "Een subnet doorzoeken"

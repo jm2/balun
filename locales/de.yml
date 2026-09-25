@@ -74,6 +74,10 @@ device_dialogs:
   forget: "Vergessen"
   forgotten: "Gerät vergessen."
   forgotten_session: "Gerät nur für diese Sitzung vergessen; die Einstellungen sind schreibgeschützt."
+  remember_menu: "Gerät speichern"
+  remembered: "Gerät gespeichert."
+  remembered_session: "Gerät nur für diese Sitzung gespeichert; die Einstellungen sind schreibgeschützt."
+  remember_unavailable: "Die Adresse dieses Geräts kann nicht gespeichert werden."
 
 subnet_search:
   button: "Subnetz durchsuchen"

@@ -64,6 +64,10 @@ device_dialogs:
   forget: "忘记"
   forgotten: "已忘记设备。"
   forgotten_session: "仅在本次会话中忘记设备；设置为只读。"
+  remember_menu: "记住设备"
+  remembered: "已记住设备。"
+  remembered_session: "仅在本次会话中记住设备；设置为只读。"
+  remember_unavailable: "无法记住此设备的地址。"
 
 subnet_search:
   button: "搜索子网"

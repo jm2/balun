@@ -58,7 +58,7 @@ env -u LANGUAGE -u LC_ALL -u LC_MESSAGES LANG=de_DE.UTF-8 \
 
 The application menu, About description, navigation titles, player controls, and
 playback progress, startup status, and session errors are translated, along with
-Find device and Forget device dialogs, subnet search, and the unsaved-settings notice. Other
+the Find, Forget, and Remember device copy, subnet search, and the unsaved-settings notice. Other
 window copy still contains English. The native
 GTK/libadwaita controls also depend on the platform's own translations and
 locale setup.
@@ -174,7 +174,9 @@ Forget device translates the context-menu action, confirmation, and completion
 notices, including the session-only notice when settings are read-only. Cancel
 remains the default and close response. Device names are interpolated once into
 a plain-text dialog body, so markup and placeholder-looking text remain literal.
-The existing session and persistence behavior is unchanged.
+The existing session and persistence behavior is unchanged. Remember device, offered
+in its place for a device with nothing remembered, translates its action and its
+saved, session-only, and unavailable notices.
 
 Catalog/placeholder parity and portable presentation tests cover all thirteen
 locales, rejected-input privacy, literal device names, and the distinct session-only
