@@ -129,6 +129,9 @@ repeated reply, a refused send, the range-candidate probe, a registry rebuild
 over its device limit, and the production settings-directory lookup. Every other
 Rust threshold is unchanged.
 
+Typed-subnet search (V2.4) adds `discovery/subnet.rs` (ceiling 30 of 623 regions) and
+raises the other touched files' region totals with their ceilings unchanged.
+
 ## CI ratchet and review policy
 
 The Linux desktop job measures Rust; Linux quality measures portable package

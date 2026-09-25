@@ -43,8 +43,8 @@ decisions or physical-platform evidence without counting those as completed.
   the linked issue or pull request when work is claimed. Track names are target
   milestones, not release dates or permission to weaken an existing contract.
 
-Current status: **45/60 (75.0%)** records complete: historical P0–P4 **30/30**,
-hardening and assurance H0–H4 **13/21**, and roadmap V2 **2/9**. This is a
+Current status: **46/60 (76.7%)** records complete: historical P0–P4 **30/30**,
+hardening and assurance H0–H4 **13/21**, and roadmap V2 **3/9**. This is a
 dependency ledger, not an effort estimate.
 
 ## Current focus
@@ -180,7 +180,7 @@ Independent correctness fixes may continue.
   H3.5, compare a reuse prototype with the baseline and retain teardown proofs;
   speculative extra-tuner allocation requires a separate approved design.
 
-- [ ] **V2.4 — Add explicitly approved subnet discovery ([#71]).** After H0.1 and
+- [x] **V2.4 — Add explicitly approved subnet discovery ([#71]).** After H0.1 and
   V2.8, implement the
   [approved traffic, consent, and delivery contract](typed-subnet-discovery-proposal.md) on every
   platform; confirm every search and preserve cross-platform cancellation.

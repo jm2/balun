@@ -5,6 +5,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use adw::prelude::*;
+use balun::discovery::TypedSubnetScope;
 use balun::settings::{RememberedTarget, Settings, SettingsStore, WindowState};
 
 mod worker;
@@ -13,14 +14,30 @@ use worker::{Backend, IO_WAIT, SettingsWriter};
 /// Main-context preferences with a single worker for private-profile I/O.
 pub(crate) struct SettingsSession {
     settings: RefCell<Settings>,
+    subnet_prefix: Cell<Option<TypedSubnetScope>>,
     writer: Option<SettingsWriter>,
     notice_taken: Cell<bool>,
 }
 
-/// A snapshot owns no I/O handles and writes nothing until queued.
+/// A snapshot owns no I/O handles and writes nothing until queued. It holds
+/// the whole settings document, the remembered subnet, or both; `None` leaves
+/// that file alone.
 #[must_use = "a staged save writes nothing until it is queued"]
 pub(crate) struct PendingSave {
-    settings: Settings,
+    settings: Option<Settings>,
+    subnet_prefix: Option<Option<TypedSubnetScope>>,
+}
+
+impl PendingSave {
+    /// This snapshot queued after `earlier`: each file keeps its newest
+    /// staged content, so a queued subnet change survives a later settings
+    /// save and the other way round.
+    fn after(self, earlier: Self) -> Self {
+        Self {
+            settings: self.settings.or(earlier.settings),
+            subnet_prefix: self.subnet_prefix.or(earlier.subnet_prefix),
+        }
+    }
 }
 
 impl SettingsSession {
@@ -34,6 +51,7 @@ impl SettingsSession {
         if store.is_none() {
             return Self {
                 settings: RefCell::new(Settings::default()),
+                subnet_prefix: Cell::new(None),
                 writer: None,
                 notice_taken: Cell::new(false),
             };
@@ -44,6 +62,7 @@ impl SettingsSession {
     async fn open_backend(backend: Option<impl Backend>, limit: Duration) -> Self {
         let mut session = Self {
             settings: RefCell::new(Settings::default()),
+            subnet_prefix: Cell::new(None),
             writer: None,
             notice_taken: Cell::new(false),
         };
@@ -56,8 +75,9 @@ impl SettingsSession {
             () = gtk::glib::timeout_future(limit) => None,
         };
         match result {
-            Some(Ok(Ok(settings))) => {
+            Some(Ok(Ok((settings, subnet_prefix)))) => {
                 *session.settings.borrow_mut() = settings.unwrap_or_default();
+                session.subnet_prefix.set(subnet_prefix);
                 session.writer = Some(writer);
             }
             Some(Ok(Err(error))) => {
@@ -135,6 +155,28 @@ impl SettingsSession {
         self.stage(|settings| settings.forget_target(target))
     }
 
+    /// The subnet last entered for subnet search, offered again as editable
+    /// text. It never authorizes a search.
+    pub(crate) fn subnet_prefix(&self) -> Option<TypedSubnetScope> {
+        self.subnet_prefix.get()
+    }
+
+    /// Remember the entered subnet, or with `None` forget it, and stage the
+    /// save of its own file; `None` when nothing changed or the store is
+    /// read-only.
+    pub(crate) fn set_subnet_prefix(
+        &self,
+        prefix: Option<TypedSubnetScope>,
+    ) -> Option<PendingSave> {
+        if self.subnet_prefix.replace(prefix) == prefix || !self.writable() {
+            return None;
+        }
+        Some(PendingSave {
+            settings: None,
+            subnet_prefix: Some(prefix),
+        })
+    }
+
     /// Window geometry to apply before the window is shown.
     pub(crate) fn window(&self) -> WindowState {
         self.settings.borrow().window()
@@ -158,11 +200,17 @@ impl SettingsSession {
     /// Apply a change and stage a save when it altered the document.
     fn stage(&self, change: impl FnOnce(&mut Settings) -> bool) -> Option<PendingSave> {
         let changed = change(&mut self.settings.borrow_mut());
-        if !changed || !self.writer.as_ref().is_some_and(SettingsWriter::writable) {
+        if !changed || !self.writable() {
             return None;
         }
-        let settings = self.settings.borrow().clone();
-        Some(PendingSave { settings })
+        Some(PendingSave {
+            settings: Some(self.settings.borrow().clone()),
+            subnet_prefix: None,
+        })
+    }
+
+    fn writable(&self) -> bool {
+        self.writer.as_ref().is_some_and(SettingsWriter::writable)
     }
 }
 
@@ -307,6 +355,81 @@ mod tests {
     }
 
     #[test]
+    fn the_entered_subnet_round_trips_and_forgetting_it_saves() {
+        let (_directory, store) = store();
+        let session = SettingsSession::open(Some(store.clone()));
+        let prefix: TypedSubnetScope = "192.168.2.0/23".parse().expect("valid subnet");
+        assert_eq!(session.subnet_prefix(), None);
+        assert!(
+            session.set_subnet_prefix(None).is_none(),
+            "nothing to forget"
+        );
+
+        write(
+            &session,
+            session
+                .set_subnet_prefix(Some(prefix))
+                .expect("a new subnet stages a save"),
+        );
+        assert!(session.set_subnet_prefix(Some(prefix)).is_none());
+        assert_eq!(
+            SettingsSession::open(Some(store.clone())).subnet_prefix(),
+            Some(prefix)
+        );
+
+        write(
+            &session,
+            session
+                .set_subnet_prefix(None)
+                .expect("forgetting stages a save"),
+        );
+        assert_eq!(SettingsSession::open(Some(store)).subnet_prefix(), None);
+        // Without a store the subnet is kept for the session only.
+        let memory = SettingsSession::open(None);
+        assert!(memory.set_subnet_prefix(Some(prefix)).is_none());
+        assert_eq!(memory.subnet_prefix(), Some(prefix));
+    }
+
+    /// A subnet change queued behind a stalled save and a later settings
+    /// change both reach their files: queued snapshots merge per file.
+    #[test]
+    fn queued_subnet_and_settings_changes_merge_behind_a_stalled_save() {
+        gtk::glib::MainContext::new().block_on(async {
+            let (_directory, store) = store();
+            let (backend, _done) = stalled_backend(store.clone());
+            let (gate, entered, release) = gate();
+            *backend.save_gate.lock().unwrap() = Some(gate);
+            let session = SettingsSession::open_backend(Some(backend), IO_WAIT).await;
+            let prefix: TypedSubnetScope = "10.0.0.0/24".parse().expect("valid subnet");
+
+            let first = session
+                .stage(|settings| settings.set_window(sized(900, 600)))
+                .expect("stage the first window");
+            session.save(first);
+            entered.await.expect("the first save is in flight");
+            let remembered = session
+                .set_subnet_prefix(Some(prefix))
+                .expect("stage the subnet");
+            session.save(remembered);
+            let later = session
+                .stage(|settings| settings.set_window(resized()))
+                .expect("stage a later window");
+            session.save(later);
+            release.send(()).expect("release the stalled save");
+            session.drain().await;
+
+            assert_eq!(stored_window(&store), resized());
+            assert_eq!(store.load_subnet_prefix(), Ok(Some(prefix)));
+            assert_eq!(
+                SettingsSession::open_async(Some(store))
+                    .await
+                    .subnet_prefix(),
+                Some(prefix)
+            );
+        });
+    }
+
+    #[test]
     fn unchanged_updates_do_not_write() {
         let (_directory, store) = store();
         let session = SettingsSession::open(Some(store.clone()));
@@ -384,6 +507,22 @@ mod tests {
                 gate.wait();
             }
             self.store.save_unless_cancelled(settings, cancelled)
+        }
+
+        fn load_subnet_prefix(&self) -> Result<Option<TypedSubnetScope>, SettingsError> {
+            self.store.load_subnet_prefix()
+        }
+
+        fn save_subnet_prefix(
+            &self,
+            prefix: Option<TypedSubnetScope>,
+            cancelled: &AtomicBool,
+        ) -> Result<(), SettingsError> {
+            if let Some(gate) = self.save_gate.lock().unwrap().take() {
+                gate.wait();
+            }
+            self.store
+                .save_subnet_prefix_unless_cancelled(prefix, cancelled)
         }
     }
 
@@ -563,6 +702,18 @@ mod tests {
         }
 
         fn save(&self, _: &Settings, _: &AtomicBool) -> Result<(), SettingsError> {
+            panic!("injected settings worker panic");
+        }
+
+        fn load_subnet_prefix(&self) -> Result<Option<TypedSubnetScope>, SettingsError> {
+            Err(SettingsError::Busy)
+        }
+
+        fn save_subnet_prefix(
+            &self,
+            _: Option<TypedSubnetScope>,
+            _: &AtomicBool,
+        ) -> Result<(), SettingsError> {
             panic!("injected settings worker panic");
         }
     }

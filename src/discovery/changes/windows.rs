@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
+use super::observation::ObservationGate;
 use super::watch::{EventKinds, NetworkChangeWatchError, deliver_bursts};
 use super::{InterfaceInventory, NetworkChange};
 
@@ -28,13 +29,16 @@ impl WindowsNetworkChangeWatcher {
     /// On return it holds the latest baseline this attempt established.
     ///
     /// Dropping the future cancels every registration, waiting for any
-    /// notification callback already running.
+    /// notification callback already running. `gate` is ready only while
+    /// this attempt observes from a reconciled baseline; an interface or
+    /// route notification revokes it inside the callback that reports it.
     pub async fn observe(
         changes: &mpsc::Sender<NetworkChange>,
         inventory: &mut Option<InterfaceInventory>,
+        gate: &ObservationGate,
     ) -> Result<(), NetworkChangeWatchError> {
         Handle::try_current().map_err(|_| NetworkChangeWatchError::RuntimeUnavailable)?;
-        let kinds = Arc::new(EventKinds::default());
+        let kinds = Arc::new(EventKinds::revoking(gate.clone()));
         let (signal, mut events) = mpsc::channel(1);
         let _registrations = ip_helper::Registrations::register(Arc::clone(&kinds), signal)
             .map_err(|_| NetworkChangeWatchError::MonitorUnavailable)?;
@@ -49,6 +53,7 @@ impl WindowsNetworkChangeWatcher {
             &kinds,
             &mut events,
             InterfaceInventory::current,
+            gate,
         )
         .await
     }
@@ -317,9 +322,10 @@ mod tests {
         let (changes, receiver) = mpsc::channel(1);
         drop(receiver);
         let mut inventory = None;
+        let gate = ObservationGate::new();
         let outcome = tokio::time::timeout(
             Duration::from_secs(10),
-            WindowsNetworkChangeWatcher::observe(&changes, &mut inventory),
+            WindowsNetworkChangeWatcher::observe(&changes, &mut inventory, &gate),
         )
         .await
         .expect("observation must notice its closed receiver promptly");
@@ -341,9 +347,11 @@ mod tests {
         }
         let (changes, _receiver) = mpsc::channel(1);
         let mut inventory = None;
+        let gate = ObservationGate::new();
         let observation = assert_send(WindowsNetworkChangeWatcher::observe(
             &changes,
             &mut inventory,
+            &gate,
         ));
         // Outside any runtime, the first poll returns before registering.
         let mut context = Context::from_waker(Waker::noop());
@@ -356,20 +364,41 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn an_open_observation_stops_promptly_when_cancelled() {
+    async fn an_open_observation_is_ready_and_stops_promptly_when_cancelled() {
         let (changes, _receiver) = mpsc::channel(1);
         let mut inventory = None;
-        let observation = WindowsNetworkChangeWatcher::observe(&changes, &mut inventory);
-        // The observation runs until cancelled; dropping it cancels every
-        // registration.
+        let gate = ObservationGate::new();
+        let mut watch = gate.watch();
         let started = std::time::Instant::now();
-        let outcome = tokio::time::timeout(Duration::from_millis(500), observation).await;
-        match outcome {
-            Err(_elapsed) => {}
-            Ok(Err(NetworkChangeWatchError::MonitorUnavailable)) => return,
-            Ok(other) => panic!("unexpected end of observation {other:?}"),
+        {
+            let mut observation = pin!(WindowsNetworkChangeWatcher::observe(
+                &changes,
+                &mut inventory,
+                &gate,
+            ));
+            let ready = tokio::select! {
+                outcome = &mut observation => match outcome {
+                    // A sandbox without IP Helper fails closed.
+                    Err(NetworkChangeWatchError::MonitorUnavailable) => return,
+                    other => panic!("unexpected end of observation {other:?}"),
+                },
+                state = watch.changed() => state,
+            };
+            assert!(ready.generation().is_some(), "a baseline makes it ready");
+            // The observation runs until cancelled; dropping it cancels every
+            // registration.
+            let outcome = tokio::time::timeout(Duration::from_millis(500), observation).await;
+            assert!(
+                outcome.is_err(),
+                "unexpected end of observation {outcome:?}"
+            );
         }
         assert!(started.elapsed() < Duration::from_secs(10));
         assert!(inventory.is_some(), "the baseline exists while observing");
+        assert_eq!(
+            watch.current().generation(),
+            None,
+            "a cancelled observation is no longer ready"
+        );
     }
 }

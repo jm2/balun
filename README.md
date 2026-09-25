@@ -26,7 +26,7 @@ address so you know which tuner failed.
 | --------- | -------- |
 | Local HDHomeRun discovery (IPv4 broadcast, IPv6 multicast) | ✅ |
 | Find a routed tuner by IP address or hostname (WireGuard and other tunnels) | ✅ Remembered across launches |
-| Approved private-range enumeration (`balun-discover` only, `/24` or narrower) | ✅ |
+| Search one private subnet (`/23` to `/32`), confirmed before every search | ✅ Linux, macOS, Windows; also `balun-discover --approved-range` |
 | Multiple devices, each with its own channel lineup | ✅ |
 | Device metadata and lineup inspection without allocating a tuner | ✅ |
 | Reload the selected device's channels after a failure or lineup change | ✅ **Reload channels** in the channel header |
@@ -380,21 +380,20 @@ cargo run --locked --bin balun-discover -- --inspect --local
 # Probe one known device address, for example across WireGuard:
 cargo run --locked --bin balun-discover -- --target 192.168.50.20
 
-# Enumerate one explicitly approved private range:
-cargo run --locked --bin balun-discover -- --approved-range 10.42.7.0/24
+# Search one explicitly approved private subnet:
+cargo run --locked --bin balun-discover -- --approved-range 192.168.2.0/23
 ```
 
-`--approved-range` accepts only RFC 1918 space no wider than `/24`, caps the scan at 256
-candidates with a bounded packet rate and concurrency, and stops after 15 seconds. Only scan a
-network you own or administer, and prefer `--target` whenever the address is known. `Ctrl+C`
-cancels any run.
+`--approved-range` is that invocation's confirmation of one canonical RFC 1918 subnet from `/23`
+to `/32`: at most 510 addresses, two requests each, 64 per second, for 30 seconds, and only while
+network changes are observed. Only search a network you own or administer, and prefer `--target`
+whenever the address is known. `Ctrl+C` cancels any run.
 
 `--target` applies the desktop's unicast address rules and accepts no URL, hostname, port,
 loopback, multicast, unspecified, broadcast, or scoped/link-local IPv6 address. Each exact
 probe sends at most two requests, waits 200 ms per attempt, and accepts at most 16 reply
 datagrams and one device identity. One invocation admits at most 32 actions and one
-`--approved-range`. Routed target starts add up to 25% positive jitter without extending
-the deadline or increasing the nominal rate.
+`--approved-range`.
 
 On Windows, `.\scripts\build-windows.ps1 -InspectLocal` builds the diagnostic and runs exactly
 `--inspect --local`.

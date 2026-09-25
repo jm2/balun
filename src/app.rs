@@ -202,6 +202,13 @@ mod tests {
             self.exact.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok::<_, DiscoveryFailure>(DiscoveryReport::default()) })
         }
+        fn discover_subnet(
+            &self,
+            _permit: balun::discovery::SubnetScanPermit,
+            _cancellation: CancellationToken,
+        ) -> balun::controller::SubnetDiscoveryFuture {
+            Box::pin(std::future::ready(Err(DiscoveryFailure::SubnetUnavailable)))
+        }
     }
 
     /// Run through `scripts/test-desktop-lifecycle.sh`; the ordinary unit-test

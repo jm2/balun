@@ -75,6 +75,62 @@ device_dialogs:
   forgotten: "Gerät vergessen."
   forgotten_session: "Gerät nur für diese Sitzung vergessen; die Einstellungen sind schreibgeschützt."
 
+subnet_search:
+  button: "Subnetz durchsuchen"
+  unavailable: "Die Subnetzsuche ist nicht verfügbar, bis Balun Netzwerkänderungen überwacht."
+  title: "Subnetz durchsuchen"
+  description: >-
+    Geben Sie ein privates IPv4-Subnetz von /23 bis /32 ein, zum Beispiel 192.168.2.0/23. Sie bestätigen die Suche,
+    bevor Balun etwas sendet.
+  entry: "Privates Subnetz"
+  preview: "Adressen: %{candidates}. Ausgehende Anfragen: höchstens %{requests}."
+  invalid_syntax: "Geben Sie ein IPv4-Subnetz in CIDR-Schreibweise ein, zum Beispiel 192.168.2.0/24."
+  noncanonical: "Geben Sie die Netzwerkadresse ohne Host-Bits ein, zum Beispiel 192.168.2.0/23."
+  too_wide: "Geben Sie ein Subnetz von /23 bis /32 ein."
+  not_private: "Geben Sie ein Subnetz im privaten IPv4-Adressbereich ein."
+  cancel: "Abbrechen"
+  continue: "Weiter"
+  forget: "Subnetz vergessen"
+  confirm_heading: "%{subnet} durchsuchen?"
+  confirm_body: >-
+    Sie haben %{subnet} eingegeben. Adressen: %{candidates}. Budget für ausgehende Anfragen: höchstens %{requests}
+    Anfragen, 64 pro Sekunde, bis zu 30 Sekunden lang. Das aktuelle Netzwerk-Routing Ihres Systems wählt den Weg. Das
+    Budget begrenzt, was Balun sendet, nicht was Router zustellen.
+  search: "Suchen"
+  searching: "Das bestätigte Subnetz wird nach HDHomeRun-Geräten durchsucht."
+  busy: "Balun ist beschäftigt; versuchen Sie die Subnetzsuche gleich noch einmal."
+  confirmation_expired: "Das Netzwerk hat sich geändert; prüfen Sie die Subnetzsuche erneut."
+  forgotten: "Gespeichertes Subnetz vergessen."
+  forgotten_session: "Subnetz nur für diese Sitzung vergessen; die Einstellungen sind schreibgeschützt."
+  stopped_title: "Subnetzsuche gestoppt"
+  stopped: "Es läuft keine Subnetzsuche."
+  searching_title: "Subnetz wird durchsucht"
+  searching_status: "Warten auf Antworten aus dem bestätigten Subnetz; das dauert bis zu 30 Sekunden."
+  complete_title: "Subnetzsuche abgeschlossen"
+  complete: "Jede Adresse im bestätigten Subnetz wurde abgefragt."
+  none_title: "Keine HDHomeRun-Geräte im Subnetz gefunden"
+  none: "Aus dem bestätigten Subnetz kam keine gültige Antwort."
+  incomplete_title: "Subnetzsuche unvollständig"
+  deadline: "Die Suche hat ihr 30-Sekunden-Limit erreicht, bevor jede Adresse abgefragt wurde."
+  device_limit: "Die Suche wurde nach 64 gefundenen Geräten beendet, ihrem Limit."
+  unavailable_title: "Subnetzsuche nicht verfügbar"
+  unavailable_status: "Balun überwacht keine Netzwerkänderungen und kann deshalb gerade kein Subnetz durchsuchen."
+  stale_title: "Subnetzsuche nicht gestartet"
+  stale: "Das Netzwerk hat sich nach Ihrer Bestätigung geändert. Bestätigen Sie die Suche erneut."
+  changed: >-
+    Das Netzwerk hat sich während der Suche geändert, daher wurden ihre Antworten verworfen. Suchen Sie erneut, um das
+    Subnetz für dieses Netzwerk zu bestätigen.
+  failed_title: "Subnetzsuche fehlgeschlagen"
+  failed: "Die Subnetzsuche konnte nicht abgeschlossen werden."
+  banner_complete: "Subnetzsuche abgeschlossen."
+  banner_none: "Aus dem Subnetz kamen keine HDHomeRun-Antworten."
+  banner_deadline: "Subnetzsuche unvollständig: Zeitlimit erreicht."
+  banner_device_limit: "Subnetzsuche unvollständig: Gerätelimit erreicht."
+  banner_changed: "Netzwerk geändert; die Subnetzsuche wurde gestoppt."
+  banner_stale: "Netzwerk geändert; bestätigen Sie die Subnetzsuche erneut."
+  banner_unavailable: "Die Subnetzsuche ist gerade nicht verfügbar."
+  banner_failed: "Subnetzsuche fehlgeschlagen."
+
 failure:
   busy_title: "Kein Tuner verfügbar"
   busy_description: "Alle Tuner auf %{device} sind belegt. Gerätesuche und Kanallistenansicht bleiben verfügbar."

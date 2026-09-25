@@ -344,6 +344,24 @@ dbus-run-session -- \
 
 dbus-run-session -- \
     timeout --signal=TERM --kill-after=5s 30s \
+    cargo test --locked --features desktop --bin balun \
+        ui::device_sidebar::tests::device_sidebar_accessibility_contract -- \
+        --exact --ignored --nocapture
+
+dbus-run-session -- \
+    timeout --signal=TERM --kill-after=5s 30s \
+    cargo test --locked --features desktop --bin balun \
+        ui::subnet_search_dialog::tests::subnet_dialogs_preview_confirm_once_and_close_when_the_network_changes -- \
+        --exact --ignored --nocapture
+
+dbus-run-session -- \
+    timeout --signal=TERM --kill-after=5s 30s \
+    cargo test --locked --features desktop --bin balun \
+        ui::window::tests::a_network_change_closes_the_open_subnet_confirmation_once -- \
+        --exact --ignored --nocapture
+
+dbus-run-session -- \
+    timeout --signal=TERM --kill-after=5s 30s \
     cargo test --locked --features desktop --test playback_synthetic \
         synthetic_mpeg2_reaches_eos_and_renders_multiple_frames -- \
         --exact --ignored --nocapture --test-threads=1

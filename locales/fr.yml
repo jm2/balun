@@ -81,6 +81,63 @@ device_dialogs:
   forgotten: "Appareil oublié."
   forgotten_session: "Appareil oublié pour cette session uniquement ; les paramètres sont en lecture seule."
 
+subnet_search:
+  button: "Rechercher dans un sous-réseau"
+  unavailable: "La recherche de sous-réseau est indisponible tant que Balun ne surveille pas les changements de réseau."
+  title: "Rechercher dans un sous-réseau"
+  description: >-
+    Saisissez un sous-réseau IPv4 privé de /23 à /32, par exemple 192.168.2.0/23. Vous confirmez la recherche avant que
+    Balun n’envoie quoi que ce soit.
+  entry: "Sous-réseau privé"
+  preview: "Adresses : %{candidates}. Requêtes sortantes : %{requests} au maximum."
+  invalid_syntax: "Saisissez un sous-réseau IPv4 en notation CIDR, par exemple 192.168.2.0/24."
+  noncanonical: "Saisissez l’adresse réseau sans bits d’hôte, par exemple 192.168.2.0/23."
+  too_wide: "Saisissez un sous-réseau de /23 à /32."
+  not_private: "Saisissez un sous-réseau dans l’espace d’adresses IPv4 privées."
+  cancel: "Annuler"
+  continue: "Continuer"
+  forget: "Oublier le sous-réseau"
+  confirm_heading: "Rechercher dans %{subnet} ?"
+  confirm_body: >-
+    Vous avez saisi %{subnet}. Adresses : %{candidates}. Budget de requêtes sortantes : %{requests} requêtes au maximum,
+    64 par seconde, pendant 30 secondes au plus. Le routage réseau actuel de votre système choisit le chemin. Ce budget
+    limite ce que Balun envoie, pas ce que les routeurs acheminent.
+  search: "Rechercher"
+  searching: "Recherche d’appareils HDHomeRun dans le sous-réseau confirmé."
+  busy: "Balun est occupé ; réessayez la recherche de sous-réseau dans un instant."
+  confirmation_expired: "Le réseau a changé ; vérifiez à nouveau la recherche de sous-réseau."
+  forgotten: "Sous-réseau mémorisé oublié."
+  forgotten_session: "Sous-réseau oublié pour cette session uniquement ; les paramètres sont en lecture seule."
+  stopped_title: "Recherche de sous-réseau arrêtée"
+  stopped: "Aucune recherche de sous-réseau n’est en cours."
+  searching_title: "Recherche dans le sous-réseau"
+  searching_status: "En attente des réponses du sous-réseau confirmé ; cela prend jusqu’à 30 secondes."
+  complete_title: "Recherche de sous-réseau terminée"
+  complete: "Chaque adresse du sous-réseau confirmé a été interrogée."
+  none_title: "Aucun appareil HDHomeRun trouvé dans le sous-réseau"
+  none: "Aucune réponse valide n’est venue du sous-réseau confirmé."
+  incomplete_title: "Recherche de sous-réseau incomplète"
+  deadline: "La recherche a atteint sa limite de 30 secondes avant d’interroger chaque adresse."
+  device_limit: "La recherche s’est arrêtée après avoir trouvé 64 appareils, sa limite."
+  unavailable_title: "Recherche de sous-réseau indisponible"
+  unavailable_status: >-
+    Balun ne surveille pas les changements de réseau et ne peut donc pas rechercher dans un sous-réseau pour le moment.
+  stale_title: "Recherche de sous-réseau non lancée"
+  stale: "Le réseau a changé après votre confirmation. Confirmez de nouveau la recherche."
+  changed: >-
+    Le réseau a changé pendant la recherche ; ses réponses ont donc été ignorées. Relancez la recherche pour confirmer
+    le sous-réseau pour ce réseau.
+  failed_title: "Échec de la recherche de sous-réseau"
+  failed: "La recherche de sous-réseau n’a pas pu aboutir."
+  banner_complete: "Recherche de sous-réseau terminée."
+  banner_none: "Aucune réponse HDHomeRun n’est venue du sous-réseau."
+  banner_deadline: "Recherche de sous-réseau incomplète : limite de temps atteinte."
+  banner_device_limit: "Recherche de sous-réseau incomplète : limite d’appareils atteinte."
+  banner_changed: "Réseau modifié ; la recherche de sous-réseau s’est arrêtée."
+  banner_stale: "Réseau modifié ; confirmez de nouveau la recherche de sous-réseau."
+  banner_unavailable: "La recherche de sous-réseau est indisponible pour le moment."
+  banner_failed: "Échec de la recherche de sous-réseau."
+
 failure:
   busy_title: "Aucun tuner disponible"
   busy_description: >-

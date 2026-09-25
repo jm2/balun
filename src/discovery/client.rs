@@ -219,8 +219,6 @@ pub enum ProbeFailureClass {
     Network,
     /// A discovery task failed to run.
     Task,
-    /// The routed scan exceeded its overall deadline.
-    Deadline,
     /// The operation was cancelled.
     Cancelled,
     /// A frame could not be encoded or decoded.
@@ -236,7 +234,6 @@ impl ProbeFailureClass {
             Self::InvalidEndpoint => "invalid-endpoint",
             Self::Network => "network",
             Self::Task => "task",
-            Self::Deadline => "deadline",
             Self::Cancelled => "cancelled",
             Self::Protocol => "protocol",
         }
@@ -310,22 +307,6 @@ impl DiscoveryClient {
             target,
             expected_device,
             DiscoveryMethod::Targeted,
-            cancellation,
-        )
-        .await
-    }
-
-    /// Probe one candidate of an approved range while retaining its
-    /// lower-confidence range provenance in accepted observations.
-    pub(super) async fn discover_routed_target(
-        &self,
-        target: Ipv4Addr,
-        cancellation: &CancellationToken,
-    ) -> Result<DiscoveryReport, DiscoveryError> {
-        self.discover_target_with_method(
-            SocketAddr::new(target.into(), 0),
-            None,
-            DiscoveryMethod::RoutedTargeted,
             cancellation,
         )
         .await
@@ -517,32 +498,18 @@ impl DiscoveryClient {
                 };
                 report.stats.datagrams_received += 1;
 
-                if !source_matches(&endpoint, source) {
+                let Some(observation) = validated_observation(
+                    &endpoint,
+                    source,
+                    &receive_buffer[..length],
+                    expected_device,
+                ) else {
                     report.stats.datagrams_rejected += 1;
                     continue;
-                }
-
-                let response = match parse_tuner_discover_response(&receive_buffer[..length]) {
-                    Ok(response) => response,
-                    Err(_) => {
-                        report.stats.datagrams_rejected += 1;
-                        continue;
-                    }
                 };
-                let device_id = match DeviceId::new(response.device_id) {
-                    Ok(device_id) => device_id,
-                    Err(_) => {
-                        report.stats.datagrams_rejected += 1;
-                        continue;
-                    }
-                };
-                if expected_device.is_some_and(|expected| expected != device_id) {
-                    report.stats.datagrams_rejected += 1;
-                    continue;
-                }
 
                 report.stats.datagrams_accepted += 1;
-                let key = (device_id, source);
+                let key = (observation.device_id, source);
                 if observations.contains_key(&key) {
                     report.stats.duplicate_observations += 1;
                     continue;
@@ -552,19 +519,7 @@ impl DiscoveryClient {
                     break 'attempts;
                 }
 
-                observations.insert(
-                    key,
-                    DiscoveryObservation {
-                        device_id,
-                        source,
-                        method: endpoint.method,
-                        interface: endpoint.interface.clone(),
-                        device_types: response.device_types,
-                        tuner_count: response.tuner_count,
-                        advertised_base_url: response.base_url,
-                        advertised_lineup_url: response.lineup_url,
-                    },
-                );
+                observations.insert(key, observation);
             }
         }
 
@@ -608,9 +563,6 @@ pub enum DiscoveryError {
     #[error("discovery task failed: {0}")]
     Task(String),
 
-    #[error("routed discovery exceeded its {deadline:?} overall deadline")]
-    RoutedScanDeadline { deadline: Duration },
-
     #[error("discovery was cancelled")]
     Cancelled,
 
@@ -627,11 +579,39 @@ impl DiscoveryError {
             Self::InvalidEndpoint { .. } => ProbeFailureClass::InvalidEndpoint,
             Self::Io { .. } | Self::ShortSend { .. } => ProbeFailureClass::Network,
             Self::Task(_) => ProbeFailureClass::Task,
-            Self::RoutedScanDeadline { .. } => ProbeFailureClass::Deadline,
             Self::Cancelled => ProbeFailureClass::Cancelled,
             Self::Protocol(_) => ProbeFailureClass::Protocol,
         }
     }
+}
+
+/// Validate one datagram received for `endpoint`: it must come from an
+/// accepted source, parse as a tuner discovery reply, carry a valid DeviceID,
+/// and match `expected_device` when one is bound. Everything else is `None`.
+pub(super) fn validated_observation(
+    endpoint: &ProbeEndpoint,
+    source: SocketAddr,
+    datagram: &[u8],
+    expected_device: Option<DeviceId>,
+) -> Option<DiscoveryObservation> {
+    if !source_matches(endpoint, source) {
+        return None;
+    }
+    let response = parse_tuner_discover_response(datagram).ok()?;
+    let device_id = DeviceId::new(response.device_id).ok()?;
+    if expected_device.is_some_and(|expected| expected != device_id) {
+        return None;
+    }
+    Some(DiscoveryObservation {
+        device_id,
+        source,
+        method: endpoint.method,
+        interface: endpoint.interface.clone(),
+        device_types: response.device_types,
+        tuner_count: response.tuner_count,
+        advertised_base_url: response.base_url,
+        advertised_lineup_url: response.lineup_url,
+    })
 }
 
 fn validate_endpoint(endpoint: &ProbeEndpoint) -> Result<(), DiscoveryError> {
@@ -654,7 +634,7 @@ fn validate_endpoint(endpoint: &ProbeEndpoint) -> Result<(), DiscoveryError> {
         });
     }
     let source_policy_is_valid = match (endpoint.method, endpoint.accepted_source_network) {
-        (DiscoveryMethod::Targeted | DiscoveryMethod::RoutedTargeted, None) => {
+        (DiscoveryMethod::Targeted | DiscoveryMethod::TypedSubnet, None) => {
             endpoint.interface.is_none()
                 && endpoint.bind.ip().is_unspecified()
                 && !invalid_target(endpoint.destination)
@@ -778,7 +758,7 @@ fn source_matches(endpoint: &ProbeEndpoint, source: SocketAddr) -> bool {
     }
 
     match endpoint.method {
-        DiscoveryMethod::Targeted | DiscoveryMethod::RoutedTargeted => {
+        DiscoveryMethod::Targeted | DiscoveryMethod::TypedSubnet => {
             source.ip() == endpoint.destination.ip()
         }
         DiscoveryMethod::Ipv4Broadcast => {
@@ -894,7 +874,7 @@ mod tests {
 
     #[test]
     fn targeted_source_must_match_address_and_port() {
-        for method in [DiscoveryMethod::Targeted, DiscoveryMethod::RoutedTargeted] {
+        for method in [DiscoveryMethod::Targeted, DiscoveryMethod::TypedSubnet] {
             let endpoint = ProbeEndpoint {
                 bind: "0.0.0.0:0".parse().unwrap(),
                 destination: "192.0.2.10:65001".parse().unwrap(),
@@ -1172,7 +1152,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn routed_targeted_probe_marks_observation_provenance() {
+    async fn typed_subnet_probe_marks_observation_provenance() {
         let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let server_address = server.local_addr().unwrap();
         let server_task = tokio::spawn(async move {
@@ -1188,7 +1168,7 @@ mod tests {
         let endpoint = ProbeEndpoint {
             bind: "0.0.0.0:0".parse().unwrap(),
             destination: server_address,
-            method: DiscoveryMethod::RoutedTargeted,
+            method: DiscoveryMethod::TypedSubnet,
             interface: None,
             accepted_source_network: None,
         };
@@ -1201,10 +1181,7 @@ mod tests {
         server_task.await.unwrap();
 
         assert_eq!(report.observations.len(), 1);
-        assert_eq!(
-            report.observations[0].method,
-            DiscoveryMethod::RoutedTargeted
-        );
+        assert_eq!(report.observations[0].method, DiscoveryMethod::TypedSubnet);
     }
 
     #[test]
@@ -1212,7 +1189,7 @@ mod tests {
         let observation = |device: u32, source: &str| DiscoveryObservation {
             device_id: DeviceId::new(device).unwrap(),
             source: source.parse().unwrap(),
-            method: DiscoveryMethod::RoutedTargeted,
+            method: DiscoveryMethod::TypedSubnet,
             interface: None,
             device_types: vec![1],
             tuner_count: Some(2),
@@ -1223,7 +1200,7 @@ mod tests {
             endpoint: ProbeEndpoint {
                 bind: "0.0.0.0:0".parse().unwrap(),
                 destination: destination.parse().unwrap(),
-                method: DiscoveryMethod::RoutedTargeted,
+                method: DiscoveryMethod::TypedSubnet,
                 interface: None,
                 accepted_source_network: None,
             },
@@ -1329,27 +1306,6 @@ mod tests {
         assert_eq!(error.class(), ProbeFailureClass::Network);
     }
 
-    /// Each approved-range candidate goes through the production targeted
-    /// path with range provenance. The fake device answers on loopback
-    /// through the test-only discovery-port redirect.
-    #[cfg(feature = "desktop")]
-    #[tokio::test]
-    async fn range_candidate_probe_marks_range_provenance() {
-        let device = crate::hdhr::fake_device::FakeHdhrDevice::start(1, &[]);
-        let config = ProbeConfig::new(1, Duration::from_millis(200), 16, 4).unwrap();
-        let report = DiscoveryClient::new(config)
-            .discover_routed_target(Ipv4Addr::LOCALHOST, &CancellationToken::new())
-            .await
-            .expect("the fake responder answers the range probe");
-
-        assert_eq!(report.observations.len(), 1);
-        let observation = &report.observations[0];
-        assert_eq!(observation.device_id, device.device_id());
-        assert_eq!(observation.source, device.discovery_target());
-        assert_eq!(observation.method, DiscoveryMethod::RoutedTargeted);
-        assert_eq!(observation.interface, None);
-    }
-
     #[tokio::test]
     async fn rejects_broadcast_and_unscoped_link_local_targets() {
         let cancellation = CancellationToken::new();
@@ -1382,9 +1338,6 @@ mod tests {
                 source: io::Error::other("secret io detail"),
             },
             DiscoveryError::Task("synthetic".to_owned()),
-            DiscoveryError::RoutedScanDeadline {
-                deadline: Duration::from_secs(15),
-            },
             DiscoveryError::Cancelled,
         ];
         let classes = errors.iter().map(DiscoveryError::class).collect::<Vec<_>>();
@@ -1395,7 +1348,6 @@ mod tests {
                 ProbeFailureClass::InvalidEndpoint,
                 ProbeFailureClass::Network,
                 ProbeFailureClass::Task,
-                ProbeFailureClass::Deadline,
                 ProbeFailureClass::Cancelled,
             ]
         );

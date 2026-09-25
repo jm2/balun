@@ -6,6 +6,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::task::AbortOnDropHandle;
 
+use super::observation::ObservationGate;
 use super::watch::{ChangeKind, EventKinds, NetworkChangeWatchError, deliver_bursts};
 use super::{InterfaceInventory, NetworkChange};
 use crate::discovery::routes::{
@@ -13,11 +14,14 @@ use crate::discovery::routes::{
 };
 
 /// The monitor records a kind before queuing its reconciliation, so every
-/// notification of a delivered burst is already counted.
+/// notification of a delivered burst is already counted. A failed or
+/// overflowing monitor poisons its observer, which revokes readiness at once.
 impl RouteMonitorObserver for EventKinds {
     fn invalidate(&self) {}
 
-    fn poison(&self) {}
+    fn poison(&self) {
+        self.revoke();
+    }
 
     fn observed(&self, kind: NotificationKind) {
         self.record(match kind {
@@ -44,13 +48,16 @@ impl LinuxNetworkChangeWatcher {
     /// it is `Some`, the previous attempt ended and events may have been
     /// missed, so one change is sent as soon as the new baseline exists.
     /// On return it holds the latest baseline this attempt established.
+    /// `gate` is ready only while this attempt observes from a reconciled
+    /// baseline.
     pub async fn observe(
         changes: &mpsc::Sender<NetworkChange>,
         inventory: &mut Option<InterfaceInventory>,
+        gate: &ObservationGate,
     ) -> Result<(), NetworkChangeWatchError> {
         let runtime =
             Handle::try_current().map_err(|_| NetworkChangeWatchError::RuntimeUnavailable)?;
-        let kinds = Arc::new(EventKinds::default());
+        let kinds = Arc::new(EventKinds::revoking(gate.clone()));
         let observer: Arc<dyn RouteMonitorObserver> = kinds.clone();
         let (monitor, mut reconciliation) = LinuxRouteEventMonitor::subscribe(observer)
             .map_err(|_| NetworkChangeWatchError::MonitorUnavailable)?;
@@ -79,6 +86,7 @@ impl LinuxNetworkChangeWatcher {
             &kinds,
             &mut reconciliation,
             InterfaceInventory::current,
+            gate,
         )
         .await;
         if outcome.is_err() {
@@ -107,10 +115,15 @@ mod tests {
         let runtime = Builder::new_current_thread().build().unwrap();
         let (changes, _receiver) = mpsc::channel(1);
         let mut inventory = None;
-        let outcome =
-            runtime.block_on(LinuxNetworkChangeWatcher::observe(&changes, &mut inventory));
+        let gate = ObservationGate::new();
+        let outcome = runtime.block_on(LinuxNetworkChangeWatcher::observe(
+            &changes,
+            &mut inventory,
+            &gate,
+        ));
         assert_eq!(outcome, Err(NetworkChangeWatchError::MonitorUnavailable));
         assert!(inventory.is_none());
+        assert_eq!(gate.state().generation(), None);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -118,9 +131,10 @@ mod tests {
         let (changes, receiver) = mpsc::channel(1);
         drop(receiver);
         let mut inventory = None;
+        let gate = ObservationGate::new();
         let outcome = tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            LinuxNetworkChangeWatcher::observe(&changes, &mut inventory),
+            LinuxNetworkChangeWatcher::observe(&changes, &mut inventory, &gate),
         )
         .await
         .expect("observation must notice its closed receiver promptly");
@@ -140,10 +154,18 @@ mod tests {
 
     #[test]
     fn only_link_route_and_rule_notifications_go_beyond_addresses() {
-        let kinds = EventKinds::default();
+        let gate = ObservationGate::new();
+        gate.establish();
+        let kinds = EventKinds::revoking(gate.clone());
+        // A poisoned monitor has stopped observing.
+        kinds.poison();
+        assert_eq!(gate.state().generation(), None);
         kinds.observed(NotificationKind::Ipv6Address);
         kinds.observed(NotificationKind::Ipv4Address);
+        // Addresses block a new generation but are judged by the re-read.
+        assert!(kinds.notification_pending());
         assert!(!kinds.take_beyond_addresses());
+        assert!(!kinds.notification_pending());
 
         for kind in [
             NotificationKind::Link,

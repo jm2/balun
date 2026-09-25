@@ -22,8 +22,8 @@ value is not.
 
 ## What is in scope
 
-- Network admission: the discovery prefix and port checks and the per-operation and
-  approved-range packet budgets.
+- Network admission: the discovery prefix and port checks, the per-operation packet budgets,
+  and typed-subnet search's confirmation, observation binding, and request budget.
 - Credential handling: `DeviceAuth` must never be parsed, persisted, or printed, and advertised
   URLs must never be followed as given.
 - Persisted state: the contents of `settings.json`, which must hold no credentials, stream URLs,

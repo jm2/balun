@@ -3,7 +3,9 @@
 //! The settings file holds only reviewed preferences: remembered discovery
 //! targets and window state. It never holds credentials, `DeviceAuth`, stream
 //! URLs, lineups, or incidental network topology, and the types here cannot
-//! represent them.
+//! represent them. The subnet last entered for subnet search lives beside it
+//! in its own small file, so `settings.json` keeps the schema every earlier
+//! build reads; that text is a convenience and never authorizes a search.
 //!
 //! Reads fail closed. A malformed, oversized, symlinked, or newer-schema file
 //! is reported with a fixed, path-free error and left untouched, so a later
@@ -21,7 +23,7 @@ use std::path::PathBuf;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
-use crate::discovery::{ExactDiscoveryTarget, HostnameTarget};
+use crate::discovery::{ExactDiscoveryTarget, HostnameTarget, TypedSubnetScope};
 
 mod store;
 pub use store::SettingsStore;
@@ -32,6 +34,11 @@ pub const SCHEMA_VERSION: u32 = 2;
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 /// Largest settings document that will be read or written.
 pub const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
+/// File beside the settings document holding the last subnet entered for
+/// subnet search: one canonical prefix and a newline.
+pub const SUBNET_PREFIX_FILE_NAME: &str = "subnet-prefix";
+/// Largest subnet-prefix file that will be read.
+pub const MAX_SUBNET_PREFIX_BYTES: u64 = 64;
 /// Most remembered exact-address targets; matches the per-session probe cap.
 pub const MAX_REMEMBERED_TARGETS: usize = 32;
 /// Smallest persisted window dimension in logical pixels.
@@ -410,6 +417,18 @@ fn parse_document(bytes: &[u8]) -> Result<Settings, SettingsError> {
         }
         found => Err(SettingsError::UnsupportedSchema { found }),
     }
+}
+
+/// The remembered subnet, or `None` for anything but one canonical private
+/// `/23`–`/32` prefix with an optional final newline. An invalid file is
+/// ignored, never repaired.
+fn parse_subnet_prefix(bytes: &[u8]) -> Option<TypedSubnetScope> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    text.strip_suffix('\n').unwrap_or(text).parse().ok()
+}
+
+fn serialize_subnet_prefix(prefix: TypedSubnetScope) -> Vec<u8> {
+    format!("{prefix}\n").into_bytes()
 }
 
 fn serialize_document(settings: &Settings) -> Result<Vec<u8>, SettingsError> {
@@ -987,5 +1006,91 @@ mod tests {
                 String::from_utf8_lossy(raw)
             );
         }
+    }
+
+    /// The subnet prefix lives in its own file: `settings.json` stays at the
+    /// schema v0.1.x reads, and only one canonical prefix is ever accepted.
+    #[test]
+    fn the_subnet_prefix_file_holds_one_canonical_prefix_beside_an_unchanged_schema() {
+        let (_directory, store) = test_store();
+        let prefix: TypedSubnetScope = "192.168.2.0/23".parse().expect("valid prefix");
+        store.save(&populated()).expect("save settings");
+        assert_eq!(store.load_subnet_prefix(), Ok(None));
+
+        store
+            .save_subnet_prefix_unless_cancelled(
+                Some(prefix),
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .expect("save prefix");
+        let file = store.directory().join(SUBNET_PREFIX_FILE_NAME);
+        assert_eq!(fs::read(&file).expect("read prefix"), b"192.168.2.0/23\n");
+        assert_eq!(store.load_subnet_prefix(), Ok(Some(prefix)));
+        let value: serde_json::Value = serde_json::from_slice(&raw_bytes(&store)).expect("json");
+        assert_eq!(value["schema_version"], 2);
+        assert!(value.get("subnet_prefix").is_none());
+        assert_eq!(store.load(), Ok(Some(populated())));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&file).expect("metadata").permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        // Forgetting removes the file; forgetting again is harmless.
+        let idle = std::sync::atomic::AtomicBool::new(false);
+        store
+            .save_subnet_prefix_unless_cancelled(None, &idle)
+            .expect("forget prefix");
+        assert!(!file.exists());
+        store
+            .save_subnet_prefix_unless_cancelled(None, &idle)
+            .expect("forget again");
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        assert_eq!(
+            store.save_subnet_prefix_unless_cancelled(Some(prefix), &cancelled),
+            Err(SettingsError::Cancelled)
+        );
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn an_invalid_subnet_prefix_file_is_ignored_and_left_untouched() {
+        for raw in [
+            &b"192.168.2.1/23\n"[..],
+            b"10.0.0.0/16",
+            b"203.0.113.0/24",
+            b"10.0.0.0/24\n\n",
+            b" 10.0.0.0/24",
+            b"",
+            b"\xff\xfe",
+        ] {
+            let (_directory, store) = test_store();
+            store.save(&Settings::default()).expect("create profile");
+            let file = store.directory().join(SUBNET_PREFIX_FILE_NAME);
+            fs::write(&file, raw).expect("write raw prefix");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            assert_eq!(store.load_subnet_prefix(), Ok(None), "{raw:?}");
+            assert_eq!(fs::read(&file).expect("read raw"), raw);
+        }
+        let (_directory, store) = test_store();
+        store.save(&Settings::default()).expect("create profile");
+        let file = store.directory().join(SUBNET_PREFIX_FILE_NAME);
+        fs::write(&file, vec![b'1'; 65]).expect("write oversized");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        assert_eq!(store.load_subnet_prefix(), Err(SettingsError::TooLarge));
+        assert_eq!(
+            parse_subnet_prefix(b"10.0.0.0/24"),
+            "10.0.0.0/24".parse().ok()
+        );
     }
 }

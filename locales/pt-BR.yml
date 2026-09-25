@@ -75,6 +75,62 @@ device_dialogs:
   forgotten: "Dispositivo esquecido."
   forgotten_session: "Dispositivo esquecido apenas nesta sessão; as configurações são somente leitura."
 
+subnet_search:
+  button: "Buscar em uma sub-rede"
+  unavailable: "A busca em sub-rede fica indisponível até o Balun monitorar as mudanças de rede."
+  title: "Buscar em uma sub-rede"
+  description: >-
+    Digite uma sub-rede IPv4 privada de /23 a /32, por exemplo 192.168.2.0/23. Você confirma a busca antes de o Balun
+    enviar qualquer coisa.
+  entry: "Sub-rede privada"
+  preview: "Endereços: %{candidates}. Solicitações de saída: no máximo %{requests}."
+  invalid_syntax: "Digite uma sub-rede IPv4 em notação CIDR, por exemplo 192.168.2.0/24."
+  noncanonical: "Digite o endereço de rede sem bits de host, por exemplo 192.168.2.0/23."
+  too_wide: "Digite uma sub-rede de /23 a /32."
+  not_private: "Digite uma sub-rede dentro do espaço de endereços IPv4 privados."
+  cancel: "Cancelar"
+  continue: "Continuar"
+  forget: "Esquecer sub-rede"
+  confirm_heading: "Buscar em %{subnet}?"
+  confirm_body: >-
+    Você digitou %{subnet}. Endereços: %{candidates}. Orçamento de solicitações de saída: no máximo %{requests}
+    solicitações, 64 por segundo, por até 30 segundos. O roteamento de rede atual do seu sistema escolhe o caminho. O
+    orçamento limita o que o Balun envia, não o que os roteadores entregam.
+  search: "Buscar"
+  searching: "Buscando dispositivos HDHomeRun na sub-rede confirmada."
+  busy: "O Balun está ocupado; tente buscar na sub-rede novamente em instantes."
+  confirmation_expired: "A rede mudou; revise a busca em sub-rede novamente."
+  forgotten: "Sub-rede lembrada esquecida."
+  forgotten_session: "Sub-rede esquecida apenas nesta sessão; as configurações são somente leitura."
+  stopped_title: "Busca em sub-rede interrompida"
+  stopped: "Nenhuma busca em sub-rede está em andamento."
+  searching_title: "Buscando na sub-rede"
+  searching_status: "Aguardando respostas da sub-rede confirmada; isso leva até 30 segundos."
+  complete_title: "Busca em sub-rede concluída"
+  complete: "Todos os endereços da sub-rede confirmada foram consultados."
+  none_title: "Nenhum dispositivo HDHomeRun encontrado na sub-rede"
+  none: "Nenhuma resposta válida veio da sub-rede confirmada."
+  incomplete_title: "Busca em sub-rede incompleta"
+  deadline: "A busca atingiu o limite de 30 segundos antes de consultar todos os endereços."
+  device_limit: "A busca parou após encontrar 64 dispositivos, o limite."
+  unavailable_title: "Busca em sub-rede indisponível"
+  unavailable_status: "O Balun não está monitorando as mudanças de rede, então não pode buscar em uma sub-rede agora."
+  stale_title: "Busca em sub-rede não iniciada"
+  stale: "A rede mudou depois que você confirmou a busca. Confirme-a novamente."
+  changed: >-
+    A rede mudou durante a busca, então as respostas foram descartadas. Busque novamente para confirmar a sub-rede nesta
+    rede.
+  failed_title: "Falha na busca em sub-rede"
+  failed: "Não foi possível concluir a busca em sub-rede."
+  banner_complete: "Busca em sub-rede concluída."
+  banner_none: "Nenhuma resposta HDHomeRun veio da sub-rede."
+  banner_deadline: "Busca em sub-rede incompleta: limite de tempo atingido."
+  banner_device_limit: "Busca em sub-rede incompleta: limite de dispositivos atingido."
+  banner_changed: "A rede mudou; a busca em sub-rede foi interrompida."
+  banner_stale: "A rede mudou; confirme a busca em sub-rede novamente."
+  banner_unavailable: "A busca em sub-rede está indisponível no momento."
+  banner_failed: "Falha na busca em sub-rede."
+
 failure:
   busy_title: "Nenhum sintonizador disponível"
   busy_description: >-

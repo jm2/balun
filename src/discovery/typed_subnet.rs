@@ -1,7 +1,8 @@
 //! Side-effect-free scope and budget for the approved typed-subnet contract.
 //!
-//! This value carries no consent or network-observation authority. It cannot be
-//! used as a route-derived permit, and no scan entry point consumes it yet.
+//! This value carries no consent or network-observation authority. A search
+//! needs a [`super::SubnetSearchConsent`] for exactly this scope, admitted
+//! against a healthy observation generation.
 
 use std::fmt;
 use std::net::Ipv4Addr;
@@ -13,10 +14,10 @@ use thiserror::Error;
 
 /// A canonical RFC 1918 IPv4 scope, validated without granting permission to send.
 ///
-/// A future scan must separately bind fresh per-search consent and a healthy
+/// A search must separately bind fresh per-search consent and a healthy
 /// observation generation to this exact scope and policy. Remembering its text
 /// is a preference only. Construction performs no I/O or address resolution.
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TypedSubnetScope {
     network: Ipv4Net,
 }
@@ -125,9 +126,6 @@ impl fmt::Debug for TypedSubnetScope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{
-        ApprovedIpv4Range, DEFAULT_ROUTED_SCAN_DEADLINE, MAX_ROUTED_CANDIDATES,
-    };
 
     /// Approved endpoint rules drive both actual candidates and preview budgets.
     #[test]
@@ -257,7 +255,7 @@ mod tests {
 
     /// The fixed maximum pacing still leaves room for replies within the deadline.
     #[test]
-    fn typed_budget_fits_approved_deadline_without_changing_routed_policy() {
+    fn typed_budget_fits_the_approved_deadline() {
         let scope: TypedSubnetScope = "10.0.0.0/23".parse().unwrap();
         let attempts = u32::try_from(scope.maximum_request_attempts()).unwrap();
         let worst_spacing = TypedSubnetScope::MIN_SEND_INTERVAL + TypedSubnetScope::MAX_SEND_JITTER;
@@ -272,9 +270,10 @@ mod tests {
         assert!(
             worst_spacing * attempts + TypedSubnetScope::REPLY_WINDOW < TypedSubnetScope::DEADLINE
         );
-        assert!(ApprovedIpv4Range::new(scope.network()).is_err());
-        assert_eq!(MAX_ROUTED_CANDIDATES, 256);
-        assert_eq!(DEFAULT_ROUTED_SCAN_DEADLINE, Duration::from_secs(15));
+        assert_eq!(TypedSubnetScope::MAX_IN_FLIGHT, 16);
+        assert_eq!(TypedSubnetScope::MAX_RECEIVED_PER_CANDIDATE, 16);
+        assert_eq!(TypedSubnetScope::MAX_IDENTITIES_PER_CANDIDATE, 1);
+        assert_eq!(TypedSubnetScope::MAX_DEVICES, 64);
     }
 
     /// Failed input and incidental Debug formatting remain free of entered values.

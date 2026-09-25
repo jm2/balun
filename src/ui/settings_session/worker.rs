@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+use balun::discovery::TypedSubnetScope;
 use balun::settings::{Settings, SettingsError, SettingsStore};
 use tokio::sync::{oneshot, watch};
 
@@ -14,6 +15,14 @@ pub(super) const IO_WAIT: Duration = Duration::from_secs(2);
 pub(super) trait Backend: Send + 'static {
     fn load(&self) -> Result<Option<Settings>, SettingsError>;
     fn save(&self, settings: &Settings, cancelled: &AtomicBool) -> Result<(), SettingsError>;
+    /// The remembered subnet. A failure only leaves it unset: it is a
+    /// convenience, and an unreadable file is never repaired.
+    fn load_subnet_prefix(&self) -> Result<Option<TypedSubnetScope>, SettingsError>;
+    fn save_subnet_prefix(
+        &self,
+        prefix: Option<TypedSubnetScope>,
+        cancelled: &AtomicBool,
+    ) -> Result<(), SettingsError>;
 }
 
 impl Backend for SettingsStore {
@@ -23,6 +32,18 @@ impl Backend for SettingsStore {
 
     fn save(&self, settings: &Settings, cancelled: &AtomicBool) -> Result<(), SettingsError> {
         self.save_unless_cancelled(settings, cancelled)
+    }
+
+    fn load_subnet_prefix(&self) -> Result<Option<TypedSubnetScope>, SettingsError> {
+        self.load_subnet_prefix()
+    }
+
+    fn save_subnet_prefix(
+        &self,
+        prefix: Option<TypedSubnetScope>,
+        cancelled: &AtomicBool,
+    ) -> Result<(), SettingsError> {
+        self.save_subnet_prefix_unless_cancelled(prefix, cancelled)
     }
 }
 
@@ -36,7 +57,8 @@ struct Shared {
     failure: watch::Sender<bool>,
 }
 
-type LoadResult = Result<Option<Settings>, SettingsError>;
+/// The settings document, if one exists, and the remembered subnet.
+type LoadResult = Result<(Option<Settings>, Option<TypedSubnetScope>), SettingsError>;
 type LoadReceiver = oneshot::Receiver<LoadResult>;
 
 pub(super) struct SettingsWriter {
@@ -90,6 +112,10 @@ impl SettingsWriter {
     pub(super) fn save(&self, save: PendingSave) {
         let mut queued = self.shared.queued.lock().unwrap_or_else(|e| e.into_inner());
         if self.writable() {
+            let save = match queued.take() {
+                Some(earlier) => save.after(earlier),
+                None => save,
+            };
             *queued = Some(save);
             self.shared.idle.send_replace(false);
             self.shared.wake.notify_one();
@@ -133,7 +159,9 @@ impl Shared {
     }
 
     fn run(&self, backend: impl Backend, loaded: oneshot::Sender<LoadResult>) {
-        let result = backend.load();
+        let result = backend
+            .load()
+            .map(|settings| (settings, backend.load_subnet_prefix().ok().flatten()));
         let usable = result.is_ok();
         self.failed.store(!usable, Ordering::Release);
         self.idle.send_replace(true);
@@ -154,7 +182,16 @@ impl Shared {
                     queued = self.wake.wait(queued).unwrap_or_else(|e| e.into_inner());
                 }
             };
-            if let Err(error) = backend.save(&next.settings, &self.cancelled) {
+            let saved = next
+                .settings
+                .as_ref()
+                .map_or(Ok(()), |settings| backend.save(settings, &self.cancelled))
+                .and_then(|()| {
+                    next.subnet_prefix.map_or(Ok(()), |prefix| {
+                        backend.save_subnet_prefix(prefix, &self.cancelled)
+                    })
+                });
+            if let Err(error) = saved {
                 let mut queued = self.queued.lock().unwrap_or_else(|e| e.into_inner());
                 self.failed.store(true, Ordering::Release);
                 *queued = None;
