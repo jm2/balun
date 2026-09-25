@@ -1,7 +1,6 @@
 # Balun v0.1 implementation plan
 
-- Status: v0.1.1 Alpha published 2026-09-05; packaged acceptance complete;
-  v0.2.0 in preparation
+- Status: v0.2.0 Alpha released 2026-09-25; v0.1.1 packaged acceptance complete
 - Target: v0.1.x
 - Last updated: 2026-09-25
 

@@ -50,6 +50,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.2.0" date="2026-09-25">
+      <description>
+        <p>Search a private subnet for tuners, remember discovered devices from their right-click menu, and detect network changes natively on macOS and Windows; translate most of the interface into thirteen languages; remove route-table tunnel discovery; and fix IPv6 discovery, playback, and device-list issues.</p>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-09-05">
       <description>
         <p>Fix macOS icons, MPEG-2 playback, audio controls, native menus, and the Devices header; add the shared About dialog and clean application quit.</p>
