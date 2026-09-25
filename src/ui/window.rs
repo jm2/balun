@@ -697,28 +697,26 @@ enum SentOutcome {
 }
 
 /// Settle `sent` against a newer publication, or `None` while undecided.
-/// Only the sent search itself can publish a running subnet search in a later
-/// generation; a later observation generation voids it; any other subnet
-/// state in a later generation is its outcome.
+/// A later subnet state other than a refusal comes only from an admitted
+/// search, even when publications coalesced past its start; otherwise a
+/// later observation generation voids it, and a refusal is its outcome.
 fn settle_sent(sent: SentSearch, snapshot: &ApplicationSnapshot) -> Option<SentOutcome> {
     let discovery = snapshot.discovery();
     let later = snapshot.discovery_generation() > sent.discovery
         && discovery.kind() == DiscoveryKind::Subnet;
-    if later && discovery.status() == DiscoveryStatus::Refreshing {
+    let refused = matches!(
+        discovery.status(),
+        DiscoveryStatus::Failed(
+            DiscoveryFailure::SubnetUnavailable | DiscoveryFailure::SubnetConfirmationStale,
+        )
+    );
+    if later && !refused {
         return Some(SentOutcome::Admitted(sent.prefix));
     }
     if !snapshot.observation().is_ready_for(sent.observation) {
         return Some(SentOutcome::Expired);
     }
-    if !later {
-        return None;
-    }
-    Some(match discovery.status() {
-        DiscoveryStatus::Failed(
-            DiscoveryFailure::SubnetUnavailable | DiscoveryFailure::SubnetConfirmationStale,
-        ) => SentOutcome::Refused,
-        _ => SentOutcome::Admitted(sent.prefix),
-    })
+    later.then_some(SentOutcome::Refused)
 }
 
 impl SubnetSearch {
@@ -2619,6 +2617,27 @@ mod tests {
             settle_sent(sent, &snapshot(5, running.discovery(), changed)),
             Some(SentOutcome::Admitted(prefix)),
             "admission seen first wins"
+        );
+        // Coalesced past its start: the admitted search was revoked.
+        let revoked = snapshot(
+            6,
+            subnet(6, |generation| {
+                DiscoveryState::failed_for(
+                    generation,
+                    DiscoveryKind::Subnet,
+                    DiscoveryFailure::NetworkChanged,
+                )
+            }),
+            changed,
+        );
+        assert_eq!(
+            settle_sent(sent, &revoked),
+            Some(SentOutcome::Admitted(prefix))
+        );
+        // A refusal under a later observation generation reads as expired.
+        assert_eq!(
+            settle_sent(sent, &snapshot(5, refused.discovery(), changed)),
+            Some(SentOutcome::Expired)
         );
 
         let flow = SubnetSearch::default();
