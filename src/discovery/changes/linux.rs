@@ -9,14 +9,14 @@ use tokio_util::task::AbortOnDropHandle;
 use super::observation::ObservationGate;
 use super::watch::{ChangeKind, EventKinds, NetworkChangeWatchError, deliver_bursts};
 use super::{InterfaceInventory, NetworkChange};
-use crate::discovery::routes::{
-    LinuxRouteEventMonitor, LinuxRouteMonitorError, NotificationKind, RouteMonitorObserver,
-};
+
+mod monitor;
+use monitor::{NotificationKind, RtnetlinkMonitor, RtnetlinkMonitorError, RtnetlinkObserver};
 
 /// The monitor records a kind before queuing its reconciliation, so every
 /// notification of a delivered burst is already counted. A failed or
 /// overflowing monitor poisons its observer, which revokes readiness at once.
-impl RouteMonitorObserver for EventKinds {
+impl RtnetlinkObserver for EventKinds {
     fn invalidate(&self) {}
 
     fn poison(&self) {
@@ -58,8 +58,8 @@ impl LinuxNetworkChangeWatcher {
         let runtime =
             Handle::try_current().map_err(|_| NetworkChangeWatchError::RuntimeUnavailable)?;
         let kinds = Arc::new(EventKinds::revoking(gate.clone()));
-        let observer: Arc<dyn RouteMonitorObserver> = kinds.clone();
-        let (monitor, mut reconciliation) = LinuxRouteEventMonitor::subscribe(observer)
+        let observer: Arc<dyn RtnetlinkObserver> = kinds.clone();
+        let (monitor, mut reconciliation) = RtnetlinkMonitor::subscribe(observer)
             .map_err(|_| NetworkChangeWatchError::MonitorUnavailable)?;
         let (baseline, baseline_receiver) = oneshot::channel();
         let monitor_task =
@@ -100,8 +100,8 @@ impl LinuxNetworkChangeWatcher {
 /// when the inventory cannot be read (its receiver is awaited above), so a
 /// rejected activation is an inventory failure; every other early end is
 /// a change during the baseline.
-const fn is_inventory_failure(error: LinuxRouteMonitorError) -> bool {
-    matches!(error, LinuxRouteMonitorError::ActivationRejected)
+const fn is_inventory_failure(error: RtnetlinkMonitorError) -> bool {
+    matches!(error, RtnetlinkMonitorError::ActivationRejected)
 }
 
 #[cfg(test)]

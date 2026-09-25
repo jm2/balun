@@ -6,7 +6,6 @@ mod hostname;
 mod local;
 mod manual;
 mod registry;
-mod routes;
 mod subnet;
 mod typed_subnet;
 mod types;
