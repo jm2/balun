@@ -1,9 +1,9 @@
 # Balun v0.1 implementation plan
 
 - Status: v0.1.1 Alpha published 2026-09-05; packaged acceptance complete;
-  v0.1.2 in preparation
+  v0.2.0 in preparation
 - Target: v0.1.x
-- Last updated: 2026-09-24
+- Last updated: 2026-09-25
 
 This is the scope, architecture, and delivery-order contract for the first
 alpha. The countable ledger is [`task.md`](task.md); sanitized hardware
