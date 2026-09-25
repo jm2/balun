@@ -1182,10 +1182,41 @@ impl RediscoveryWiring {
         }
     }
 
-    /// Remember a listed device's address as a manual Find would, and say
-    /// whether it was saved or kept for this session only, as Forget does.
-    fn remember_device(&self, target: ExactDiscoveryTarget) {
+    /// Every address the listed device has been reached at, preferred
+    /// first; empty once it is no longer listed.
+    fn listed_addresses(&self, device_id: balun::domain::DeviceId) -> Vec<IpAddr> {
+        self.accepted
+            .borrow()
+            .devices()
+            .iter()
+            .find(|device| device.device_id() == device_id)
+            .map(device_addresses)
+            .unwrap_or_default()
+    }
+
+    /// The remembered entries a device reached at `addresses` stands for.
+    fn forgettable(&self, addresses: &[IpAddr]) -> Vec<RememberedTarget> {
+        forgettable_targets(
+            &self.settings.remembered_targets(),
+            addresses,
+            &self.hostnames.borrow().resolved,
+        )
+    }
+
+    /// Remember a listed device's current address as a manual Find would,
+    /// and say whether it was saved or kept for this session only, as Forget
+    /// does. Discovery may have changed the device since its menu opened.
+    fn remember_listed_device(&self, device_id: balun::domain::DeviceId) {
         let labels = RememberLabels::current();
+        let addresses = self.listed_addresses(device_id);
+        if !self.forgettable(&addresses).is_empty() {
+            self.toast(&labels.remembered);
+            return;
+        }
+        let Some(target) = rememberable_address(&addresses) else {
+            self.toast(&labels.unavailable);
+            return;
+        };
         match self
             .settings
             .remember_target(RememberedTarget::Address(target))
@@ -1259,21 +1290,11 @@ fn connect_device_menu(sidebar: &device_sidebar::DeviceSidebar, wiring: &Rc<Redi
         let Some(device_id) = model_row.device_id() else {
             return;
         };
-        let addresses = wiring
-            .accepted
-            .borrow()
-            .devices()
-            .iter()
-            .find(|device| device.device_id() == device_id)
-            .map(device_addresses);
-        let Some(addresses) = addresses else {
+        let addresses = wiring.listed_addresses(device_id);
+        if addresses.is_empty() {
             return;
-        };
-        let targets = forgettable_targets(
-            &wiring.settings.remembered_targets(),
-            &addresses,
-            &wiring.hostnames.borrow().resolved,
-        );
+        }
+        let targets = wiring.forgettable(&addresses);
         if !targets.is_empty() {
             let (parent, title, wiring) = (row.clone(), model_row.title(), Rc::clone(&wiring));
             present_device_menu(row, x, y, &ForgetLabels::current().menu, move || {
@@ -1281,15 +1302,14 @@ fn connect_device_menu(sidebar: &device_sidebar::DeviceSidebar, wiring: &Rc<Redi
             });
             return;
         }
-        match rememberable_address(&addresses) {
-            Some(target) => {
-                let wiring = Rc::clone(&wiring);
-                present_device_menu(row, x, y, &RememberLabels::current().menu, move || {
-                    wiring.remember_device(target);
-                });
-            }
-            None => wiring.toast(&RememberLabels::current().unavailable),
+        if rememberable_address(&addresses).is_none() {
+            wiring.toast(&RememberLabels::current().unavailable);
+            return;
         }
+        let wiring = Rc::clone(&wiring);
+        present_device_menu(row, x, y, &RememberLabels::current().menu, move || {
+            wiring.remember_listed_device(device_id);
+        });
     });
 }
 
@@ -1987,44 +2007,82 @@ mod tests {
 
     #[test]
     fn remembering_a_device_offers_forget_and_forgetting_offers_remember_again() {
+        use balun::controller::{DeviceSummary, SelectedLineupState, SnapshotRevision};
+        use balun::domain::DeviceId;
+
+        let device_id = DeviceId::new(0x105A_1232).unwrap();
+        let listed = |locators: &[&str]| {
+            let locators = locators
+                .iter()
+                .map(|locator| locator.parse().unwrap())
+                .collect::<Vec<SocketAddr>>();
+            let device = DeviceSummary::new(
+                device_id,
+                None,
+                None,
+                Some(2),
+                locators[0],
+                locators.clone(),
+            )
+            .unwrap();
+            let generation = OperationGeneration::INITIAL;
+            Arc::new(
+                ApplicationSnapshot::new(
+                    SnapshotRevision::new(1),
+                    generation,
+                    generation,
+                    DiscoveryState::idle(generation),
+                    [device],
+                    None,
+                    SelectedLineupState::unselected(generation),
+                )
+                .unwrap(),
+            )
+        };
+        let remembered =
+            RememberedTarget::Address(ExactDiscoveryTarget::parse("192.168.1.20").unwrap());
         let directory = tempfile::tempdir().unwrap();
         let store = balun::settings::SettingsStore::new(directory.path().join("settings"));
-        let addresses: Vec<IpAddr> =
-            vec!["fe80::20".parse().unwrap(), "192.168.1.20".parse().unwrap()];
         gtk::glib::MainContext::new().block_on(async {
             let settings = Rc::new(SettingsSession::open_async(Some(store.clone())).await);
             let (_controller, wiring) = hostname_wiring(settings.clone(), &[], &[]);
-            let offered = || {
-                forgettable_targets(
-                    &settings.remembered_targets(),
-                    &addresses,
-                    &wiring.hostnames.borrow().resolved,
-                )
-            };
-            assert!(offered().is_empty(), "the menu offers Remember");
-            let target = rememberable_address(&addresses).unwrap();
-            wiring.remember_device(target);
-            assert_eq!(offered(), [RememberedTarget::Address(target)]);
+            // Remember rechecks the device: gone, or left with only link-local IPv6.
+            wiring.remember_listed_device(device_id);
+            *wiring.accepted.borrow_mut() = listed(&["[fe80::20]:65001"]);
+            wiring.remember_listed_device(device_id);
+            assert!(settings.remembered_targets().is_empty());
+
+            *wiring.accepted.borrow_mut() = listed(&["[fe80::20]:65001", "192.168.1.20:65001"]);
+            let addresses = wiring.listed_addresses(device_id);
+            assert!(
+                wiring.forgettable(&addresses).is_empty(),
+                "the menu offers Remember"
+            );
+            wiring.remember_listed_device(device_id);
+            assert_eq!(
+                wiring.forgettable(&addresses),
+                std::slice::from_ref(&remembered)
+            );
             settings.drain().await;
             assert_eq!(
                 store.load().unwrap().unwrap().remembered_targets(),
-                &[RememberedTarget::Address(target)],
+                std::slice::from_ref(&remembered),
                 "saved like a manual Find"
             );
-            wiring.forget(&offered());
-            assert!(offered().is_empty(), "the menu offers Remember again");
+            wiring.forget(&wiring.forgettable(&addresses));
+            assert!(
+                wiring.forgettable(&addresses).is_empty(),
+                "the menu offers Remember again"
+            );
             settings.close().await;
         });
 
         // Read-only settings keep the address for this session only.
         let settings = Rc::new(SettingsSession::open(None));
         let (_controller, wiring) = hostname_wiring(settings.clone(), &[], &[]);
-        let target = rememberable_address(&addresses).unwrap();
-        wiring.remember_device(target);
-        assert_eq!(
-            settings.remembered_targets(),
-            [RememberedTarget::Address(target)]
-        );
+        *wiring.accepted.borrow_mut() = listed(&["192.168.1.20:65001"]);
+        wiring.remember_listed_device(device_id);
+        assert_eq!(settings.remembered_targets(), [remembered]);
     }
 
     #[test]
