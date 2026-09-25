@@ -60,10 +60,13 @@ pub(super) enum ChangeKind {
 /// Records whether anything other than an address notification arrived, so
 /// a burst of address-lifetime refreshes can be recognized, and revokes
 /// observation readiness at once for a link or route notification, which is
-/// always a change.
+/// always a change. Any recorded notification also blocks declaring a new
+/// ready generation until its burst is taken, without revoking one already
+/// ready: an address refresh is judged by the inventory re-read.
 #[derive(Debug, Default)]
 pub(super) struct EventKinds {
     beyond_addresses: AtomicBool,
+    pending: AtomicBool,
     gate: Option<ObservationGate>,
 }
 
@@ -73,6 +76,7 @@ impl EventKinds {
     pub(super) fn revoking(gate: ObservationGate) -> Self {
         Self {
             beyond_addresses: AtomicBool::new(false),
+            pending: AtomicBool::new(false),
             gate: Some(gate),
         }
     }
@@ -80,6 +84,7 @@ impl EventKinds {
     /// Record one notification. A platform records the kind before it wakes
     /// the watcher, so every notification of a delivered burst is counted.
     pub(super) fn record(&self, kind: ChangeKind) {
+        self.pending.store(true, Ordering::Release);
         if matches!(kind, ChangeKind::Link | ChangeKind::Route) {
             self.beyond_addresses.store(true, Ordering::Release);
             self.revoke();
@@ -99,9 +104,17 @@ impl EventKinds {
         self.beyond_addresses.load(Ordering::Acquire)
     }
 
-    /// Whether a link, route, or rule notification arrived since the last
-    /// call.
+    /// Whether any notification is recorded and not yet taken by a closed
+    /// burst.
+    pub(super) fn notification_pending(&self) -> bool {
+        self.pending.load(Ordering::Acquire)
+    }
+
+    /// Take the burst: whether a link, route, or rule notification arrived
+    /// since the last call. Every notification recorded so far belongs to
+    /// the burst being reconciled, so nothing is pending afterwards.
     pub(super) fn take_beyond_addresses(&self) -> bool {
+        self.pending.store(false, Ordering::Release);
         self.beyond_addresses.swap(false, Ordering::AcqRel)
     }
 }
@@ -161,10 +174,10 @@ where
     loop {
         // Reconcile a notification already queued before declaring the
         // baseline healthy; a queued one starts the next burst instead. A
-        // link or route change recorded before its wake-up is checked under
-        // the gate's lock, so it either blocks readiness or revokes it.
+        // notification recorded before its wake-up is checked under the
+        // gate's lock, so it blocks readiness until its burst is taken.
         if events.is_empty() {
-            gate.establish_unless(|| kinds.change_pending());
+            gate.establish_unless(|| kinds.notification_pending());
         }
         let burst = tokio::select! {
             biased;
@@ -359,7 +372,9 @@ mod tests {
         gate.establish();
         kinds.record(ChangeKind::Address);
         kinds.record(ChangeKind::Refresh);
+        assert!(kinds.notification_pending());
         assert!(!kinds.take_beyond_addresses());
+        assert!(!kinds.notification_pending(), "taking the burst clears it");
         assert_eq!(gate.state(), generation(1), "addresses need a re-read");
 
         for kind in [ChangeKind::Link, ChangeKind::Route] {
@@ -555,6 +570,106 @@ mod tests {
             "ready only after the recorded change was reconciled"
         );
         assert!(delivered.try_recv().is_ok());
+    }
+
+    /// An address notification recorded before its wake-up blocks a new
+    /// generation just as a route does, without revoking one already ready.
+    #[tokio::test(start_paused = true)]
+    async fn an_address_recorded_before_its_wake_up_blocks_readiness() {
+        let (changes, mut delivered) = mpsc::channel(4);
+        let (signal, mut events) = mpsc::channel::<()>(1);
+        let gate = ObservationGate::new();
+        let kinds = EventKinds::revoking(gate.clone());
+        let baseline = inventory(&[("eth0", "192.0.2.10")]);
+        kinds.record(ChangeKind::Address);
+        assert!(kinds.notification_pending() && !kinds.change_pending());
+        let feeder = {
+            let gate = gate.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let before = gate.state();
+                signal.send(()).await.unwrap();
+                tokio::time::sleep(NETWORK_CHANGE_MAX_DELAY * 2).await;
+                (before, gate.state())
+            })
+        };
+
+        let outcome = deliver_bursts(
+            &changes,
+            &mut None,
+            baseline.clone(),
+            &kinds,
+            &mut events,
+            live(&Arc::new(Mutex::new(Some(baseline)))),
+            &gate,
+        )
+        .await;
+
+        assert_eq!(outcome, Err(NetworkChangeWatchError::MonitorStopped));
+        assert_eq!(
+            feeder.await.unwrap(),
+            (ObservationState::Unavailable, generation(1)),
+            "ready only after the recorded notification was reconciled"
+        );
+        // It was a refresh, so no change was delivered.
+        assert!(delivered.try_recv().is_err());
+        assert!(!kinds.notification_pending());
+    }
+
+    /// A refresh-only burst leaves a ready gate at its generation and clears
+    /// its pending mark, so a later change can still become ready.
+    #[tokio::test(start_paused = true)]
+    async fn a_refresh_only_burst_keeps_its_generation_and_blocks_nothing_after() {
+        let (changes, mut delivered) = mpsc::channel(4);
+        let (signal, mut events) = mpsc::channel::<()>(4);
+        let gate = ObservationGate::new();
+        let kinds = Arc::new(EventKinds::revoking(gate.clone()));
+        let baseline = inventory(&[("eth0", "192.0.2.10")]);
+        let feeder = {
+            let gate = gate.clone();
+            let kinds = Arc::clone(&kinds);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                let first = gate.state();
+                for kind in [ChangeKind::Address, ChangeKind::Refresh] {
+                    kinds.record(kind);
+                    signal.send(()).await.unwrap();
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                let during = gate.state();
+                tokio::time::sleep(NETWORK_CHANGE_MAX_DELAY).await;
+                let settled = (gate.state(), kinds.notification_pending());
+                // A later change still revokes and returns as a new one.
+                kinds.record(ChangeKind::Link);
+                signal.send(()).await.unwrap();
+                tokio::time::sleep(NETWORK_CHANGE_MAX_DELAY).await;
+                (first, during, settled, gate.state())
+            })
+        };
+
+        let outcome = deliver_bursts(
+            &changes,
+            &mut None,
+            baseline.clone(),
+            &kinds,
+            &mut events,
+            live(&Arc::new(Mutex::new(Some(baseline)))),
+            &gate,
+        )
+        .await;
+
+        assert_eq!(outcome, Err(NetworkChangeWatchError::MonitorStopped));
+        assert_eq!(
+            feeder.await.unwrap(),
+            (
+                generation(1),
+                generation(1),
+                (generation(1), false),
+                generation(2)
+            )
+        );
+        assert!(delivered.try_recv().is_ok(), "only the link change");
+        assert!(delivered.try_recv().is_err());
     }
 
     #[tokio::test(start_paused = true)]

@@ -162,7 +162,10 @@ mod tests {
         assert_eq!(gate.state().generation(), None);
         kinds.observed(NotificationKind::Ipv6Address);
         kinds.observed(NotificationKind::Ipv4Address);
+        // Addresses block a new generation but are judged by the re-read.
+        assert!(kinds.notification_pending());
         assert!(!kinds.take_beyond_addresses());
+        assert!(!kinds.notification_pending());
 
         for kind in [
             NotificationKind::Link,
