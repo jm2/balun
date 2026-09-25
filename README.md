@@ -58,7 +58,7 @@ address so you know which tuner failed.
 | Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved; a notice appears when settings cannot be saved |
 | Native runtime inventory tooling | 🛠️ Reopened DMG content binding, macOS native copy ownership, installed Homebrew metadata, and native-scope SBOM generation; [catalog assembly, embedded-resource representation, remaining artifact adapters, and release attachment remain pending](docs/native-inventory.md) |
 | Light & dark mode | ✅ Automatic (libadwaita) |
-| i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Application menu, navigation, player controls, playback status and failures, Find/Forget device and subnet search dialogs, the settings notice, and About description; [remaining scope](docs/localization.md) |
+| i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Most window, player, and dialog copy; [remaining scope](docs/localization.md) |
 
 Local broadcast and multicast discovery, exact IP or hostname discovery, remembered targets, and
 network-change handling work on Linux, macOS, and Windows.
