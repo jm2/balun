@@ -75,6 +75,62 @@ device_dialogs:
   forgotten: "Dispositivo olvidado."
   forgotten_session: "Dispositivo olvidado solo durante esta sesión; los ajustes son de solo lectura."
 
+subnet_search:
+  button: "Buscar en una subred"
+  unavailable: "La búsqueda en subred no está disponible hasta que Balun vigile los cambios de red."
+  title: "Buscar en una subred"
+  description: >-
+    Introduce una subred IPv4 privada de /23 a /32, por ejemplo 192.168.2.0/23. Confirmarás la búsqueda antes de que
+    Balun envíe nada.
+  entry: "Subred privada"
+  preview: "Direcciones: %{candidates}. Solicitudes salientes: como máximo %{requests}."
+  invalid_syntax: "Introduce una subred IPv4 en formato CIDR, por ejemplo 192.168.2.0/24."
+  noncanonical: "Introduce la dirección de red sin bits de host, por ejemplo 192.168.2.0/23."
+  too_wide: "Introduce una subred de /23 a /32."
+  not_private: "Introduce una subred dentro del espacio de direcciones IPv4 privadas."
+  cancel: "Cancelar"
+  continue: "Continuar"
+  forget: "Olvidar subred"
+  confirm_heading: "¿Buscar en %{subnet}?"
+  confirm_body: >-
+    Has introducido %{subnet}. Direcciones: %{candidates}. Presupuesto de solicitudes salientes: como máximo %{requests}
+    solicitudes, 64 por segundo, durante un máximo de 30 segundos. El enrutamiento de red actual de tu sistema elige la
+    ruta. El presupuesto limita lo que envía Balun, no lo que entregan los routers.
+  search: "Buscar"
+  searching: "Buscando dispositivos HDHomeRun en la subred confirmada."
+  busy: "Balun está ocupado; vuelve a intentar la búsqueda en subred en un momento."
+  confirmation_expired: "La red ha cambiado; revisa de nuevo la búsqueda en subred."
+  forgotten: "Subred guardada olvidada."
+  forgotten_session: "Subred olvidada solo durante esta sesión; los ajustes son de solo lectura."
+  stopped_title: "Búsqueda en subred detenida"
+  stopped: "No hay ninguna búsqueda en subred en curso."
+  searching_title: "Buscando en la subred"
+  searching_status: "Esperando respuestas de la subred confirmada; esto tarda hasta 30 segundos."
+  complete_title: "Búsqueda en subred completada"
+  complete: "Se ha sondeado cada dirección de la subred confirmada."
+  none_title: "No se encontraron dispositivos HDHomeRun en la subred"
+  none: "No llegó ninguna respuesta válida de la subred confirmada."
+  incomplete_title: "Búsqueda en subred incompleta"
+  deadline: "La búsqueda alcanzó su límite de 30 segundos antes de sondear todas las direcciones."
+  device_limit: "La búsqueda se detuvo tras encontrar 64 dispositivos, su límite."
+  unavailable_title: "Búsqueda en subred no disponible"
+  unavailable_status: "Balun no está vigilando los cambios de red, así que ahora no puede buscar en una subred."
+  stale_title: "Búsqueda en subred no iniciada"
+  stale: "La red cambió después de que confirmaras la búsqueda. Vuelve a confirmarla."
+  changed: >-
+    La red cambió durante la búsqueda, así que se descartaron sus respuestas. Busca de nuevo para confirmar la subred en
+    esta red.
+  failed_title: "La búsqueda en subred falló"
+  failed: "No se pudo completar la búsqueda en subred."
+  banner_complete: "Búsqueda en subred completada."
+  banner_none: "No llegaron respuestas HDHomeRun de la subred."
+  banner_deadline: "Búsqueda en subred incompleta: se alcanzó el límite de tiempo."
+  banner_device_limit: "Búsqueda en subred incompleta: se alcanzó el límite de dispositivos."
+  banner_changed: "La red cambió; la búsqueda en subred se detuvo."
+  banner_stale: "La red cambió; confirma de nuevo la búsqueda en subred."
+  banner_unavailable: "La búsqueda en subred no está disponible ahora mismo."
+  banner_failed: "La búsqueda en subred falló."
+
 failure:
   busy_title: "No hay sintonizadores disponibles"
   busy_description: >-

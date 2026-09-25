@@ -71,6 +71,14 @@ mod tests {
                     .map_err(discovery_failure)
             })
         }
+
+        fn discover_subnet(
+            &self,
+            _permit: crate::discovery::SubnetScanPermit,
+            _cancellation: CancellationToken,
+        ) -> crate::controller::SubnetDiscoveryFuture {
+            Box::pin(std::future::ready(Err(DiscoveryFailure::SubnetUnavailable)))
+        }
     }
 
     fn discovery_failure(error: DiscoveryError) -> DiscoveryFailure {
@@ -81,7 +89,6 @@ mod tests {
             }
             DiscoveryError::InvalidEndpoint { .. }
             | DiscoveryError::Task(_)
-            | DiscoveryError::RoutedScanDeadline { .. }
             | DiscoveryError::Cancelled
             | DiscoveryError::Protocol(_) => DiscoveryFailure::Internal,
         }

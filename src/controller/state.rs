@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
+use crate::discovery::ObservationState;
 use crate::domain::{ChannelKey, DeviceId};
 
 /// Maximum number of devices retained in one UI projection.
@@ -220,6 +221,15 @@ pub enum DiscoveryFailure {
     Network,
     ExactTargetLimitReached,
     Internal,
+    /// Network changes were not being observed, so the subnet search was
+    /// refused before any request.
+    SubnetUnavailable,
+    /// The network changed between confirmation and admission; the subnet
+    /// search sent nothing and needs a fresh confirmation.
+    SubnetConfirmationStale,
+    /// A detected network change stopped the subnet search; its partial
+    /// replies were discarded.
+    NetworkChanged,
 }
 
 /// Address-free kind of discovery operation represented by a state update.
@@ -227,6 +237,17 @@ pub enum DiscoveryFailure {
 pub enum DiscoveryKind {
     Local,
     Exact,
+    /// A confirmed typed-subnet search.
+    Subnet,
+}
+
+/// Why a subnet search stopped early but kept what it found.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiscoveryIncomplete {
+    /// The 30-second search deadline expired first.
+    Deadline,
+    /// The search reached its limit of distinct devices.
+    DeviceLimit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -235,6 +256,9 @@ pub enum DiscoveryStatus {
     Refreshing,
     Ready,
     NoResponse,
+    /// The operation stopped early; its devices are listed but the search
+    /// did not cover its whole scope.
+    Incomplete(DiscoveryIncomplete),
     Failed(DiscoveryFailure),
 }
 
@@ -314,6 +338,22 @@ impl DiscoveryState {
             generation,
             kind,
             status: DiscoveryStatus::NoResponse,
+            issue_count,
+        }
+    }
+
+    /// Complete a subnet search that stopped early but kept its replies.
+    #[must_use]
+    pub const fn incomplete_for(
+        generation: OperationGeneration,
+        kind: DiscoveryKind,
+        reason: DiscoveryIncomplete,
+        issue_count: u16,
+    ) -> Self {
+        Self {
+            generation,
+            kind,
+            status: DiscoveryStatus::Incomplete(reason),
             issue_count,
         }
     }
@@ -575,6 +615,7 @@ pub struct ApplicationSnapshot {
     selected_lineup: SelectedLineupState,
     network: NetworkChangeSummary,
     exact_searches: u64,
+    observation: ObservationState,
 }
 
 impl ApplicationSnapshot {
@@ -643,6 +684,7 @@ impl ApplicationSnapshot {
             selected_lineup,
             network: NetworkChangeSummary::INITIAL,
             exact_searches: 0,
+            observation: ObservationState::Unavailable,
         })
     }
 
@@ -662,6 +704,13 @@ impl ApplicationSnapshot {
         self
     }
 
+    /// Attach the network-observation state subnet search depends on.
+    #[must_use]
+    pub const fn with_observation(mut self, observation: ObservationState) -> Self {
+        self.observation = observation;
+        self
+    }
+
     #[must_use]
     pub fn initial() -> Self {
         Self {
@@ -674,6 +723,7 @@ impl ApplicationSnapshot {
             selected_lineup: SelectedLineupState::unselected(OperationGeneration::INITIAL),
             network: NetworkChangeSummary::INITIAL,
             exact_searches: 0,
+            observation: ObservationState::Unavailable,
         }
     }
 
@@ -725,6 +775,15 @@ impl ApplicationSnapshot {
         self.exact_searches
     }
 
+    /// Whether network changes were being observed from a healthy baseline
+    /// when this snapshot was published. Subnet search is offered only while
+    /// this is ready, and its confirmation is bound to this generation; the
+    /// controller still checks the live observation when admitting it.
+    #[must_use]
+    pub const fn observation(&self) -> ObservationState {
+        self.observation
+    }
+
     /// Whether this publication can safely replace `previous` in a reducer.
     ///
     /// Revisions must advance, and neither independent operation generation
@@ -747,6 +806,7 @@ impl ApplicationSnapshot {
                         DiscoveryStatus::Refreshing,
                         DiscoveryStatus::Ready
                         | DiscoveryStatus::NoResponse
+                        | DiscoveryStatus::Incomplete(_)
                         | DiscoveryStatus::Failed(_),
                     ) => true,
                     _ => {
@@ -1497,6 +1557,56 @@ mod tests {
             "the summary carries no generation and never blocks a reducer"
         );
         assert!(!format!("{next:?}").contains("eth"));
+    }
+
+    #[test]
+    fn an_incomplete_subnet_search_is_terminal_and_observation_rides_along() {
+        use crate::discovery::{ObservationGeneration, ObservationState};
+
+        let generation = OperationGeneration::new(1);
+        let selection = OperationGeneration::INITIAL;
+        let snapshot = |revision, discovery| {
+            ApplicationSnapshot::new(
+                SnapshotRevision::new(revision),
+                generation,
+                selection,
+                discovery,
+                [],
+                None,
+                SelectedLineupState::unselected(selection),
+            )
+            .unwrap()
+        };
+        let refreshing = snapshot(
+            1,
+            DiscoveryState::refreshing_for(generation, DiscoveryKind::Subnet),
+        );
+        let stopped = DiscoveryState::incomplete_for(
+            generation,
+            DiscoveryKind::Subnet,
+            DiscoveryIncomplete::Deadline,
+            3,
+        );
+        let incomplete = snapshot(2, stopped);
+        assert!(incomplete.can_replace(&refreshing));
+        assert!(!refreshing.can_replace(&incomplete));
+        assert_eq!(
+            stopped.status(),
+            DiscoveryStatus::Incomplete(DiscoveryIncomplete::Deadline)
+        );
+        assert_eq!(stopped.issue_count(), 3);
+
+        assert_eq!(
+            ApplicationSnapshot::initial().observation(),
+            ObservationState::Unavailable
+        );
+        let ready = ObservationState::Ready(ObservationGeneration::FIRST);
+        let observed = snapshot(3, stopped).with_observation(ready);
+        assert_eq!(observed.observation(), ready);
+        assert!(
+            observed.can_replace(&incomplete),
+            "observation carries no generation of the discovery lane"
+        );
     }
 
     #[test]

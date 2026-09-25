@@ -11,6 +11,7 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use tokio_util::task::AbortOnDropHandle;
 
+use super::observation::ObservationGate;
 use super::route_socket::route_message_kinds;
 use super::watch::{EventKinds, NetworkChangeWatchError, deliver_bursts};
 use super::{InterfaceInventory, NetworkChange};
@@ -40,16 +41,19 @@ impl MacosNetworkChangeWatcher {
     /// it is `Some`, the previous attempt ended and events may have been
     /// missed, so one change is sent as soon as the new baseline exists.
     /// On return it holds the latest baseline this attempt established.
+    /// `gate` is ready only while this attempt observes from a reconciled
+    /// baseline; a failed, closed, or malformed read revokes it at once.
     pub async fn observe(
         changes: &mpsc::Sender<NetworkChange>,
         inventory: &mut Option<InterfaceInventory>,
+        gate: &ObservationGate,
     ) -> Result<(), NetworkChangeWatchError> {
         let runtime =
             Handle::try_current().map_err(|_| NetworkChangeWatchError::RuntimeUnavailable)?;
         let socket = subscribe().map_err(|_| NetworkChangeWatchError::MonitorUnavailable)?;
         let current = InterfaceInventory::current()
             .map_err(|_| NetworkChangeWatchError::InventoryUnavailable)?;
-        let kinds = Arc::new(EventKinds::default());
+        let kinds = Arc::new(EventKinds::revoking(gate.clone()));
         let (signal, mut events) = mpsc::channel(1);
         let reader = AbortOnDropHandle::new(runtime.spawn(read_messages(
             socket,
@@ -63,6 +67,7 @@ impl MacosNetworkChangeWatcher {
             &kinds,
             &mut events,
             InterfaceInventory::current,
+            gate,
         )
         .await;
         if outcome.is_err() {
@@ -89,7 +94,17 @@ fn subscribe() -> io::Result<AsyncFd<OwnedFd>> {
 ///
 /// Returns, dropping `signal` and so ending the observation, when the socket
 /// fails, closes, or yields a malformed read, or once the watcher is gone.
+/// Readiness is revoked the moment reading stops, before the watcher notices.
 async fn read_messages(socket: AsyncFd<OwnedFd>, kinds: Arc<EventKinds>, signal: mpsc::Sender<()>) {
+    read_until_stopped(socket, &kinds, signal).await;
+    kinds.revoke();
+}
+
+async fn read_until_stopped(
+    socket: AsyncFd<OwnedFd>,
+    kinds: &EventKinds,
+    signal: mpsc::Sender<()>,
+) {
     let mut buffer = vec![0_u8; READ_BUFFER_BYTES].into_boxed_slice();
     loop {
         let mut ready = tokio::select! {
@@ -150,10 +165,15 @@ mod tests {
         let runtime = Builder::new_current_thread().build().unwrap();
         let (changes, _receiver) = mpsc::channel(1);
         let mut inventory = None;
-        let outcome =
-            runtime.block_on(MacosNetworkChangeWatcher::observe(&changes, &mut inventory));
+        let gate = ObservationGate::new();
+        let outcome = runtime.block_on(MacosNetworkChangeWatcher::observe(
+            &changes,
+            &mut inventory,
+            &gate,
+        ));
         assert_eq!(outcome, Err(NetworkChangeWatchError::MonitorUnavailable));
         assert!(inventory.is_none());
+        assert_eq!(gate.state().generation(), None);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -161,9 +181,10 @@ mod tests {
         let (changes, receiver) = mpsc::channel(1);
         drop(receiver);
         let mut inventory = None;
+        let gate = ObservationGate::new();
         let outcome = tokio::time::timeout(
             Duration::from_secs(10),
-            MacosNetworkChangeWatcher::observe(&changes, &mut inventory),
+            MacosNetworkChangeWatcher::observe(&changes, &mut inventory, &gate),
         )
         .await
         .expect("observation must notice its closed receiver promptly");
@@ -179,17 +200,39 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn an_open_observation_stops_promptly_when_cancelled() {
+    async fn an_open_observation_is_ready_and_stops_promptly_when_cancelled() {
         let (changes, _receiver) = mpsc::channel(1);
         let mut inventory = None;
-        let observation = MacosNetworkChangeWatcher::observe(&changes, &mut inventory);
-        // The observation runs until cancelled; dropping it closes the socket.
-        let outcome = tokio::time::timeout(Duration::from_millis(500), observation).await;
-        match outcome {
-            Err(_elapsed) => {}
-            Ok(Err(NetworkChangeWatchError::MonitorUnavailable)) => return,
-            Ok(other) => panic!("unexpected end of observation {other:?}"),
+        let gate = ObservationGate::new();
+        let mut watch = gate.watch();
+        {
+            let mut observation = std::pin::pin!(MacosNetworkChangeWatcher::observe(
+                &changes,
+                &mut inventory,
+                &gate,
+            ));
+            let ready = tokio::select! {
+                outcome = &mut observation => match outcome {
+                    // A sandbox without routing sockets fails closed.
+                    Err(NetworkChangeWatchError::MonitorUnavailable) => return,
+                    other => panic!("unexpected end of observation {other:?}"),
+                },
+                state = watch.changed() => state,
+            };
+            assert!(ready.generation().is_some(), "a baseline makes it ready");
+            // The observation runs until cancelled; dropping it closes the
+            // socket.
+            let outcome = tokio::time::timeout(Duration::from_millis(500), observation).await;
+            assert!(
+                outcome.is_err(),
+                "unexpected end of observation {outcome:?}"
+            );
         }
         assert!(inventory.is_some(), "the baseline exists while observing");
+        assert_eq!(
+            watch.current().generation(),
+            None,
+            "a cancelled observation is no longer ready"
+        );
     }
 }

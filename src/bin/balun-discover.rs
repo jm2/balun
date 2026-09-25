@@ -2,19 +2,22 @@
 
 use std::env;
 use std::error::Error;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::time::Duration;
 
 use balun::discovery::{
-    ApprovedIpv4Range, DiscoveryClient, DiscoveryReport, ExactDiscoveryTarget, ProbeConfig,
-    RegistryError, RoutedRangeError, RoutedScanConfig,
+    DiscoveryClient, DiscoveryReport, ExactDiscoveryTarget, InvalidTypedSubnetScope,
+    ObservationGeneration, ObservationWatch, ProbeConfig, RegistryError, SubnetAdmissionError,
+    SubnetConsentError, SubnetScanError, SubnetScanIncomplete, SubnetScanOutcome, SubnetScanPermit,
+    SubnetScanReport, SubnetSearchConsent, TypedSubnetScope,
 };
 use balun::domain::DeviceId;
 use balun::hdhr::{
     DeviceInspectionError, DeviceInspectionIssueKind, DeviceInspectionReport, DeviceInspector,
 };
-use ipnet::Ipv4Net;
 use thiserror::Error;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const USAGE: &str = "\
@@ -27,18 +30,23 @@ Usage:
 No arguments performs ordinary local-interface discovery.
 --inspect also fetches bounded device metadata and lineup counts; it never
 starts a stream or allocates a tuner.
-Range enumeration requires the explicit --approved-range option and is
-limited by Balun's private-/24 and packet-rate safety policy.
+--approved-range searches one canonical RFC 1918 subnet, /23 through /32, and
+is this invocation's confirmation of that subnet and its request budget: at
+most 510 addresses, two requests each, 64 requests per second, 30 seconds.
+The system's current routing selects the path. It needs network-change
+observation, stops if the network changes, and is never repeated.
 At most 32 actions and one approved range are accepted per invocation.
 --target uses the desktop's unicast address rules and bounded reply budget.";
 
 const MAX_CLI_ACTIONS: usize = 32;
+/// Longest wait for network-change observation to establish its baseline.
+const OBSERVATION_WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug)]
 enum Action {
     Local,
     Target(SocketAddr),
-    ApprovedRange(ApprovedIpv4Range),
+    ApprovedRange(TypedSubnetScope),
 }
 
 #[derive(Debug)]
@@ -55,15 +63,33 @@ enum CliError {
     #[error("invalid targeted address {value:?}: {message}")]
     Target { value: String, message: String },
 
-    #[error("invalid routed range {value:?}: {source}")]
+    #[error("invalid approved range {value:?}: {source}")]
     Range {
         value: String,
         #[source]
-        source: RoutedRangeError,
+        source: InvalidTypedSubnetScope,
     },
 
-    #[error("invalid routed range {value:?}: {message}")]
-    RangeSyntax { value: String, message: String },
+    #[error("subnet search needs network-change observation, which is unavailable")]
+    ObservationUnavailable,
+
+    #[error("network-change observation did not become ready within {0:?}")]
+    ObservationTimeout(Duration),
+
+    #[error("subnet search was cancelled before it started")]
+    SubnetCancelled,
+
+    #[error(transparent)]
+    SubnetConsent(#[from] SubnetConsentError),
+
+    #[error(transparent)]
+    SubnetAdmission(#[from] SubnetAdmissionError),
+
+    #[error(transparent)]
+    SubnetScan(#[from] SubnetScanError),
+
+    #[error("subnet search incomplete: {0}")]
+    SubnetIncomplete(&'static str),
 
     #[error("could not build the device inspection registry: {0}")]
     InspectionRegistry(#[from] RegistryError),
@@ -155,10 +181,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let inspector = DeviceInspector::default();
     let inspect = cli.inspect;
     let mut inspection = InspectionOutcome::default();
+    let mut incomplete = None;
     for action in cli.actions {
         match action {
-            Action::Target(_) => print_probe_budget(exact_client.config()),
-            Action::Local | Action::ApprovedRange(_) => print_probe_budget(client.config()),
+            Action::Target(_) | Action::ApprovedRange(_) => {
+                print_probe_budget(exact_client.config());
+            }
+            Action::Local => print_probe_budget(client.config()),
         }
         let report = match action {
             Action::Local => client.discover_local(&cancellation).await?,
@@ -167,17 +196,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     .discover_target(target, None, &cancellation)
                     .await?
             }
-            Action::ApprovedRange(range) => {
-                let scan = RoutedScanConfig::default();
-                eprintln!(
-                    "approved routed scan: {} candidates, at most {} request datagrams, {} datagrams/s",
-                    range.candidates().count(),
-                    scan.maximum_request_datagrams(range, client.config().attempts()),
-                    scan.wire_datagrams_per_second()
-                );
-                client
-                    .discover_approved_range(range, scan, &cancellation)
-                    .await?
+            Action::ApprovedRange(scope) => {
+                let Some(observation) = network_observation() else {
+                    return Err(CliError::ObservationUnavailable.into());
+                };
+                let scan = search_subnet(
+                    scope,
+                    observation.watch,
+                    OBSERVATION_WAIT,
+                    &cancellation,
+                    |permit| balun::discovery::discover_typed_subnet(permit, &cancellation),
+                )
+                .await?;
+                print_subnet_outcome(&scan);
+                incomplete = incomplete.or(incomplete_reason(scan.outcome));
+                scan.report
             }
         };
         print_report(&report);
@@ -194,8 +227,120 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if inspect {
         inspection.require_success()?;
     }
+    if let Some(reason) = incomplete {
+        return Err(CliError::SubnetIncomplete(reason).into());
+    }
 
     Ok(())
+}
+
+/// The native network-change source behind one subnet search. The source
+/// stays alive, and its changes drained, for as long as this is held.
+struct NetworkObservation {
+    watch: ObservationWatch,
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    _source: balun::controller::NativeNetworkChangeSource,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+fn network_observation() -> Option<NetworkObservation> {
+    use balun::controller::{NativeNetworkChangeSource, NetworkChangeSource};
+
+    let source = NativeNetworkChangeSource::new();
+    let subscription = source.subscribe()?;
+    let mut changes = subscription.changes;
+    // Readiness, not the debounced changes, governs the search; draining
+    // keeps the watcher from waiting on a full stream.
+    tokio::spawn(async move { while changes.recv().await.is_some() {} });
+    Some(NetworkObservation {
+        watch: subscription.observation,
+        _source: source,
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn network_observation() -> Option<NetworkObservation> {
+    None
+}
+
+/// Wait for the first healthy observation baseline, at most `limit`.
+async fn wait_for_baseline(
+    observation: &mut ObservationWatch,
+    limit: Duration,
+    cancellation: &CancellationToken,
+) -> Result<ObservationGeneration, CliError> {
+    let deadline = Instant::now() + limit;
+    loop {
+        if let Some(generation) = observation.current().generation() {
+            return Ok(generation);
+        }
+        if observation.is_closed() {
+            return Err(CliError::ObservationUnavailable);
+        }
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => return Err(CliError::SubnetCancelled),
+            () = tokio::time::sleep_until(deadline) => {
+                return Err(CliError::ObservationTimeout(limit));
+            }
+            _ = observation.changed() => {}
+        }
+    }
+}
+
+/// Run this invocation's one subnet search.
+///
+/// The explicit argument is validated without granting anything. Only once
+/// observation has a healthy baseline is the argument taken as consent for
+/// exactly the printed scope and budget, bound to that generation, and
+/// consumed once by admission. `search` runs at most once; a changed
+/// network ends the invocation instead of replaying the argument.
+async fn search_subnet<F, Fut>(
+    scope: TypedSubnetScope,
+    mut observation: ObservationWatch,
+    limit: Duration,
+    cancellation: &CancellationToken,
+    search: F,
+) -> Result<SubnetScanReport, CliError>
+where
+    F: FnOnce(SubnetScanPermit) -> Fut,
+    Fut: Future<Output = Result<SubnetScanReport, SubnetScanError>>,
+{
+    let generation = wait_for_baseline(&mut observation, limit, cancellation).await?;
+    let candidates = scope.candidate_count();
+    let requests = scope.maximum_request_attempts();
+    eprintln!(
+        "subnet search: {scope} as entered, {candidates} addresses, at most {requests} \
+         outbound requests; the system's current routing selects the path"
+    );
+    let consent = SubnetSearchConsent::confirm(scope, candidates, requests, generation)?;
+    let permit = consent.admit(&observation)?;
+    Ok(search(permit).await?)
+}
+
+fn incomplete_reason(outcome: SubnetScanOutcome) -> Option<&'static str> {
+    match outcome {
+        SubnetScanOutcome::Complete => None,
+        SubnetScanOutcome::Incomplete(reason) => Some(match reason {
+            SubnetScanIncomplete::Deadline => "the 30-second deadline expired",
+            SubnetScanIncomplete::DeviceLimit => "the 64-device limit was reached",
+            SubnetScanIncomplete::NetworkChanged => "the network changed",
+            SubnetScanIncomplete::Cancelled => "it was cancelled",
+            SubnetScanIncomplete::RequestBudget => "the request budget was spent",
+        }),
+    }
+}
+
+fn print_subnet_outcome(scan: &SubnetScanReport) {
+    eprintln!(
+        "subnet search: {} outbound requests, {} refused by the system and not retried; {}",
+        scan.requests_attempted,
+        scan.refused_sends,
+        incomplete_reason(scan.outcome).map_or_else(
+            || "complete".to_owned(),
+            |reason| format!("incomplete because {reason}")
+        )
+    );
 }
 
 fn parse_cli(arguments: impl Iterator<Item = String>) -> Result<Option<Cli>, CliError> {
@@ -232,15 +377,11 @@ fn parse_cli(arguments: impl Iterator<Item = String>) -> Result<Option<Cli>, Cli
                 let value = arguments.next().ok_or_else(|| {
                     CliError::Usage("--approved-range requires a private IPv4 CIDR".to_owned())
                 })?;
-                let network = value
-                    .parse::<Ipv4Net>()
-                    .map_err(|error| CliError::RangeSyntax {
-                        value: value.clone(),
-                        message: error.to_string(),
-                    })?;
-                let range = ApprovedIpv4Range::new(network)
+                // Validation only: consent is taken once observation is ready.
+                let scope = value
+                    .parse::<TypedSubnetScope>()
                     .map_err(|source| CliError::Range { value, source })?;
-                actions.push(Action::ApprovedRange(range));
+                actions.push(Action::ApprovedRange(scope));
             }
             _ => return Err(CliError::Usage(format!("unknown option {argument:?}"))),
         }
@@ -499,22 +640,143 @@ mod tests {
     }
 
     #[test]
-    fn routed_range_requires_safe_private_cidr() {
-        assert!(matches!(
-            parse(&["--approved-range", "10.7.8.0/24"])
+    fn approved_range_uses_the_typed_subnet_policy() {
+        for (value, candidates) in [
+            ("10.7.8.0/23", 510),
+            ("10.7.8.0/24", 254),
+            ("172.16.0.0/31", 2),
+            ("192.168.1.9/32", 1),
+        ] {
+            let actions = parse(&["--approved-range", value])
                 .unwrap()
                 .unwrap()
-                .actions[0],
-            Action::ApprovedRange(_)
-        ));
-        assert!(parse(&["--approved-range", "10.7.8.0/16"]).is_err());
-        assert!(parse(&["--approved-range", "192.0.2.0/24"]).is_err());
-        assert!(
-            parse(&["--approved-range", "not-a-cidr"])
-                .unwrap_err()
-                .to_string()
-                .starts_with("invalid routed range")
+                .actions;
+            let [Action::ApprovedRange(scope)] = actions.as_slice() else {
+                panic!("{value} is one approved range");
+            };
+            assert_eq!(scope.to_string(), value);
+            assert_eq!(scope.candidate_count(), candidates);
+            assert_eq!(scope.maximum_request_attempts(), candidates * 2);
+        }
+        for value in [
+            "10.7.8.0/22",
+            "10.7.8.1/24",
+            "192.0.2.0/24",
+            "127.0.0.0/24",
+            "169.254.0.0/24",
+            "fd00::/120",
+            "not-a-cidr",
+        ] {
+            let error = parse(&["--approved-range", value]).unwrap_err();
+            assert!(
+                error.to_string().starts_with("invalid approved range"),
+                "{value}: {error}"
+            );
+        }
+    }
+
+    fn scan_report(outcome: SubnetScanOutcome) -> SubnetScanReport {
+        SubnetScanReport {
+            report: DiscoveryReport::default(),
+            outcome,
+            requests_attempted: 0,
+            refused_sends: 0,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn subnet_consent_waits_for_observation_and_is_spent_once() {
+        use balun::discovery::ObservationGate;
+        use std::cell::Cell;
+
+        let scope: TypedSubnetScope = "192.168.2.0/23".parse().unwrap();
+        let cancellation = CancellationToken::new();
+
+        // Nothing observes: no search, no consent.
+        let searches = Cell::new(0);
+        let unavailable = search_subnet(
+            scope,
+            ObservationWatch::unavailable(),
+            OBSERVATION_WAIT,
+            &cancellation,
+            |_| {
+                searches.set(searches.get() + 1);
+                async { Ok(scan_report(SubnetScanOutcome::Complete)) }
+            },
+        )
+        .await;
+        assert!(matches!(unavailable, Err(CliError::ObservationUnavailable)));
+        let gate = ObservationGate::new();
+        let pending = search_subnet(scope, gate.watch(), OBSERVATION_WAIT, &cancellation, |_| {
+            searches.set(searches.get() + 1);
+            async { Ok(scan_report(SubnetScanOutcome::Complete)) }
+        })
+        .await;
+        assert!(matches!(pending, Err(CliError::ObservationTimeout(_))));
+        assert_eq!(searches.get(), 0);
+
+        // A ready baseline admits exactly one search, bound to it. A network
+        // change during that search ends the invocation; nothing is replayed.
+        let ready = {
+            let gate = gate.clone();
+            async move {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                gate.establish();
+            }
+        };
+        let search = search_subnet(
+            scope,
+            gate.watch(),
+            OBSERVATION_WAIT,
+            &cancellation,
+            |permit| {
+                searches.set(searches.get() + 1);
+                assert!(permit.is_live());
+                assert_eq!(permit.scope(), scope);
+                gate.invalidate();
+                assert!(!permit.is_live());
+                async {
+                    Ok(scan_report(SubnetScanOutcome::Incomplete(
+                        SubnetScanIncomplete::NetworkChanged,
+                    )))
+                }
+            },
         );
+        let (search, ()) = tokio::join!(search, ready);
+        let report = search.unwrap();
+        assert_eq!(searches.get(), 1);
+        assert_eq!(
+            incomplete_reason(report.outcome),
+            Some("the network changed")
+        );
+        assert_eq!(incomplete_reason(SubnetScanOutcome::Complete), None);
+
+        // Consent from an earlier generation is refused, even once the
+        // network is observed again.
+        let earlier = gate.watch();
+        gate.establish();
+        let current = gate.state().generation().unwrap();
+        let stale = SubnetSearchConsent::confirm(
+            scope,
+            510,
+            1_020,
+            ObservationGeneration::new(current.get() - 1).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            stale.admit(&earlier).unwrap_err(),
+            SubnetAdmissionError::Stale
+        );
+
+        cancellation.cancel();
+        gate.invalidate();
+        let cancelled = search_subnet(scope, gate.watch(), OBSERVATION_WAIT, &cancellation, |_| {
+            searches.set(searches.get() + 1);
+            async { Ok(scan_report(SubnetScanOutcome::Complete)) }
+        })
+        .await;
+        assert!(matches!(cancelled, Err(CliError::SubnetCancelled)));
+        assert_eq!(searches.get(), 1);
     }
 
     #[test]

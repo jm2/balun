@@ -18,16 +18,20 @@ use tokio_util::sync::CancellationToken;
 use super::network::{NetworkChangeSource, UnavailableNetworkChangeSource};
 use super::resolution::HostnameResolutionReceiver;
 use super::{
-    ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryKind,
-    DiscoveryState, DiscoveryStatus, ExactSearchTicket, LineupFailure, NetworkChangeSummary,
-    OperationGeneration, SelectedLineupState, SelectedLineupStatus, SnapshotRevision, StateError,
-    StreamHandoff, StreamHandoffError, StreamHandoffReceiver, StreamSelection,
+    ApplicationSnapshot, ChannelSummary, DeviceSummary, DiscoveryFailure, DiscoveryIncomplete,
+    DiscoveryKind, DiscoveryState, DiscoveryStatus, ExactSearchTicket, LineupFailure,
+    NetworkChangeSummary, OperationGeneration, SelectedLineupState, SelectedLineupStatus,
+    SnapshotRevision, StateError, StreamHandoff, StreamHandoffError, StreamHandoffReceiver,
+    StreamSelection,
 };
 use crate::discovery::{
     DeviceRegistry, DiscoveryClient, DiscoveryError, DiscoveryMethod, DiscoveryObservation,
     DiscoveryReport, ExactDiscoveryTarget, ExpirationOutcome, HostnameResolutionError,
-    HostnameResolver, HostnameTarget, InterfaceLoss, LocatorOrigin, NetworkChange, ProbeConfig,
-    RegistryError, RegistryInstant,
+    HostnameResolver, HostnameTarget, InterfaceLoss, LocatorOrigin, NetworkChange,
+    ObservationGeneration, ObservationState, ObservationWatch, ProbeConfig, RegistryError,
+    RegistryInstant, SubnetAdmissionError, SubnetScanIncomplete, SubnetScanOutcome,
+    SubnetScanPermit, SubnetScanReport, SubnetSearchConsent, TypedSubnetScope,
+    discover_typed_subnet,
 };
 use crate::domain::{ChannelKey, DeviceId};
 use crate::hdhr::protocol::DISCOVERY_UDP_PORT;
@@ -52,10 +56,17 @@ const MAX_RETAINED_LOCAL_OBSERVATIONS: usize = match DeviceRegistry::DEFAULT_MAX
     None => panic!("default discovery registry limits must have a representable product"),
 };
 const MAX_RETAINED_EXACT_OBSERVATIONS: usize = 1;
+/// Distinct subnets whose latest search results stay listed at once; a new
+/// subnet beyond this replaces the oldest one's results.
+pub const MAX_RETAINED_SUBNET_SEARCHES: usize = 4;
 
 /// Owned, `'static` future returned by an injected discovery service.
 pub type DiscoveryFuture =
     Pin<Box<dyn Future<Output = Result<DiscoveryReport, DiscoveryFailure>> + Send + 'static>>;
+
+/// Owned, `'static` future of one typed-subnet search.
+pub type SubnetDiscoveryFuture =
+    Pin<Box<dyn Future<Output = Result<SubnetScanReport, DiscoveryFailure>> + Send + 'static>>;
 
 /// Async discovery behind a packet-free controller boundary.
 ///
@@ -83,6 +94,19 @@ pub trait DiscoveryService: Send + Sync + 'static {
         expected_device: Option<DeviceId>,
         cancellation: CancellationToken,
     ) -> DiscoveryFuture;
+
+    /// Search one admitted typed subnet.
+    ///
+    /// The controller calls this only with a permit it admitted against the
+    /// live observation, and it cancels the search on a network change. A
+    /// production implementation is the traffic boundary of the approved
+    /// typed-subnet contract; a service that cannot search subnets returns
+    /// [`DiscoveryFailure::SubnetUnavailable`] without sending anything.
+    fn discover_subnet(
+        &self,
+        permit: SubnetScanPermit,
+        cancellation: CancellationToken,
+    ) -> SubnetDiscoveryFuture;
 }
 
 type SelectedDeviceFuture = Pin<
@@ -143,6 +167,20 @@ impl DiscoveryService for DiscoveryClient {
             .map_err(discovery_failure)
         })
     }
+
+    /// Every typed-subnet search in the process shares one lane and its
+    /// pacing boundary, whatever client configuration started it.
+    fn discover_subnet(
+        &self,
+        permit: SubnetScanPermit,
+        cancellation: CancellationToken,
+    ) -> SubnetDiscoveryFuture {
+        Box::pin(async move {
+            discover_typed_subnet(permit, &cancellation)
+                .await
+                .map_err(|_| DiscoveryFailure::Internal)
+        })
+    }
 }
 
 /// The production network-change source: the native watcher thread on
@@ -168,7 +206,6 @@ fn discovery_failure(error: DiscoveryError) -> DiscoveryFailure {
         DiscoveryError::Io { .. } | DiscoveryError::ShortSend { .. } => DiscoveryFailure::Network,
         DiscoveryError::InvalidEndpoint { .. }
         | DiscoveryError::Task(_)
-        | DiscoveryError::RoutedScanDeadline { .. }
         | DiscoveryError::Cancelled
         | DiscoveryError::Protocol(_) => DiscoveryFailure::Internal,
     }
@@ -202,6 +239,7 @@ enum ActorCommand {
         target: HostnameTarget,
         reply: oneshot::Sender<Result<Vec<ExactDiscoveryTarget>, HostnameResolutionError>>,
     },
+    SearchSubnet(SubnetSearchConsent),
 }
 
 /// Immediate result of trying to admit a controller command.
@@ -516,6 +554,20 @@ impl ControllerHandle {
         Ok(StreamHandoffReceiver::new(receiver))
     }
 
+    /// Admit one confirmed typed-subnet search, superseding any discovery.
+    ///
+    /// The consent is consumed here whether or not the command queue accepts
+    /// it, so a refused command needs a fresh confirmation. The actor admits
+    /// it only while observation is healthy in exactly the confirmed
+    /// generation; otherwise it publishes a failed subnet state and sends
+    /// nothing.
+    pub fn try_search_subnet(
+        &self,
+        consent: SubnetSearchConsent,
+    ) -> Result<(), ControllerCommandError> {
+        self.try_send_actor(ActorCommand::SearchSubnet(consent))
+    }
+
     /// Resolve one validated hostname on the controller runtime into at most
     /// a few usable exact targets, delivered only to this caller.
     ///
@@ -572,6 +624,7 @@ struct ControllerActor {
     local_batch: Option<RetainedDiscoveryBatch>,
     attempted_exact_targets: BTreeSet<ExactDiscoveryTarget>,
     exact_sources: BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
+    subnet_sources: BTreeMap<TypedSubnetScope, RetainedDiscoveryBatch>,
     revision: SnapshotRevision,
     discovery_generation: OperationGeneration,
     selection_generation: OperationGeneration,
@@ -584,6 +637,10 @@ struct ControllerActor {
     active_selection: Option<ActiveSelection>,
     network_source: Arc<dyn NetworkChangeSource>,
     network_changes: Option<mpsc::Receiver<NetworkChange>>,
+    /// The source's readiness, `None` without a source or once it is gone.
+    observation: Option<ObservationWatch>,
+    /// The observation state last published.
+    observation_state: ObservationState,
     network: NetworkChangeSummary,
     exact_searches: u64,
 }
@@ -609,6 +666,7 @@ impl ControllerActor {
             local_batch: None,
             attempted_exact_targets: BTreeSet::new(),
             exact_sources: BTreeMap::new(),
+            subnet_sources: BTreeMap::new(),
             revision: SnapshotRevision::INITIAL,
             discovery_generation: OperationGeneration::INITIAL,
             selection_generation: OperationGeneration::INITIAL,
@@ -621,6 +679,8 @@ impl ControllerActor {
             active_selection: None,
             network_source,
             network_changes: None,
+            observation: None,
+            observation_state: ObservationState::Unavailable,
             network: NetworkChangeSummary::INITIAL,
             exact_searches: 0,
         }
@@ -628,11 +688,21 @@ impl ControllerActor {
 
     async fn run(mut self) -> Result<(), ControllerRuntimeError> {
         // Subscribing may start a thread but never blocks or sends a packet.
-        self.network_changes = self.network_source.subscribe();
+        if let Some(subscription) = self.network_source.subscribe() {
+            self.network_changes = Some(subscription.changes);
+            self.observation = Some(subscription.observation);
+            let state = self.observation.as_mut().map(ObservationWatch::mark_seen);
+            if state.is_some_and(|state| state != self.observation_state) {
+                self.reconcile_observation().await?;
+            }
+        }
         loop {
             let event = tokio::select! {
                 biased;
                 () = self.shutdown.cancelled() => ActorEvent::Shutdown,
+                // Readiness changes are not debounced: a subnet search whose
+                // generation ended is revoked before anything else runs.
+                () = observation_changed(self.observation.as_mut()) => ActorEvent::Observation,
                 // A network change outranks queued commands: stale evidence
                 // is expired before any new work is admitted.
                 change = recv_optional(self.network_changes.as_mut()) => {
@@ -655,12 +725,12 @@ impl ControllerActor {
                 ActorEvent::Command(Some(ActorCommand::Controller(
                     ControllerCommand::RefreshLocalDiscovery,
                 ))) => {
-                    self.start_discovery(DiscoveryScope::Local).await?;
+                    self.start_discovery(ProbeScope::Local).await?;
                 }
                 ActorEvent::Command(Some(ActorCommand::Controller(
                     ControllerCommand::DiscoverExact(target),
                 ))) => {
-                    self.start_discovery(DiscoveryScope::Exact(target)).await?;
+                    self.start_discovery(ProbeScope::Exact(target)).await?;
                 }
                 ActorEvent::Command(Some(ActorCommand::Controller(
                     ControllerCommand::CancelDiscovery,
@@ -683,6 +753,9 @@ impl ControllerActor {
                         tracing::warn!(?error, "stream handoff refused");
                     }
                     let _ = reply.send(handoff);
+                }
+                ActorEvent::Command(Some(ActorCommand::SearchSubnet(consent))) => {
+                    self.start_subnet_search(consent).await?;
                 }
                 ActorEvent::Command(Some(ActorCommand::ResolveHostname { target, mut reply })) => {
                     // Actual system work has process-wide admission and is not
@@ -716,8 +789,115 @@ impl ControllerActor {
                     // it does on a platform without one.
                     self.network_changes = None;
                 }
+                ActorEvent::Observation => {
+                    self.reconcile_observation().await?;
+                }
             }
         }
+    }
+
+    /// Follow the live observation state: revoke a subnet search whose
+    /// generation ended, cancelling and joining it, and publish the state so
+    /// the interface offers subnet search only while it is ready.
+    async fn reconcile_observation(&mut self) -> Result<(), ControllerRuntimeError> {
+        let state = match self.observation.as_mut() {
+            Some(watch) if !watch.is_closed() => watch.mark_seen(),
+            _ => {
+                self.observation = None;
+                ObservationState::Unavailable
+            }
+        };
+        let revoked = self.active_discovery.as_ref().is_some_and(|active| {
+            active
+                .bound
+                .is_some_and(|generation| !state.is_ready_for(generation))
+        });
+        if revoked {
+            self.cancel_active_discovery().await;
+            if self.shutdown.is_cancelled() {
+                return Ok(());
+            }
+            let generation = self.next_discovery_generation()?;
+            self.discovery = DiscoveryState::failed_for(
+                generation,
+                DiscoveryKind::Subnet,
+                DiscoveryFailure::NetworkChanged,
+            );
+            self.log_discovery_outcome();
+        }
+        if revoked || state != self.observation_state {
+            self.observation_state = state;
+            self.publish()?;
+        }
+        Ok(())
+    }
+
+    /// Admit one confirmed subnet search against the live observation and
+    /// start it, superseding any discovery operation.
+    async fn start_subnet_search(
+        &mut self,
+        consent: SubnetSearchConsent,
+    ) -> Result<(), ControllerRuntimeError> {
+        let scope = consent.scope();
+        self.cancel_active_discovery().await;
+        if self.shutdown.is_cancelled() {
+            return Ok(());
+        }
+        let generation = self.next_discovery_generation()?;
+        // Admission reads the live state, not the last published one, so a
+        // queued confirmation cannot outlive the generation it was shown in.
+        let admitted = match self.observation.as_ref() {
+            Some(watch) => consent.admit(watch),
+            None => Err(SubnetAdmissionError::ObservationUnavailable),
+        };
+        let permit = match admitted {
+            Ok(permit) => permit,
+            Err(error) => {
+                self.discovery = DiscoveryState::failed_for(
+                    generation,
+                    DiscoveryKind::Subnet,
+                    match error {
+                        SubnetAdmissionError::ObservationUnavailable => {
+                            DiscoveryFailure::SubnetUnavailable
+                        }
+                        SubnetAdmissionError::Stale => DiscoveryFailure::SubnetConfirmationStale,
+                    },
+                );
+                self.log_discovery_outcome();
+                return self.publish();
+            }
+        };
+        let bound = permit.generation();
+        self.discovery = DiscoveryState::refreshing_for(generation, DiscoveryKind::Subnet);
+        tracing::info!(
+            kind = ?DiscoveryKind::Subnet,
+            generation = generation.get(),
+            "discovery started"
+        );
+        self.publish()?;
+
+        let cancellation = self.shutdown.child_token();
+        let service = Arc::clone(&self.discovery_service);
+        let task_cancellation = cancellation.clone();
+        let scope = DiscoveryScope::Subnet(scope);
+        let task = tokio::spawn(async move {
+            let (result, incomplete) =
+                subnet_completion(service.discover_subnet(permit, task_cancellation).await);
+            DiscoveryCompletion {
+                generation,
+                scope,
+                result,
+                incomplete,
+            }
+        });
+        self.active_discovery = Some(ActiveDiscovery {
+            generation,
+            scope,
+            bound: Some(bound),
+            cancellation,
+            task,
+        });
+        Ok(())
     }
 
     /// Reconcile one debounced network change, in this order: stop a probe
@@ -733,8 +913,13 @@ impl ControllerActor {
         // cannot make a local or exact probe's replies stale, so it keeps
         // running; otherwise cancel it before the first await and join it so
         // the lanes stay deterministic.
+        // A subnet search is bound to the observation generation this change
+        // ended, whatever it lost.
         let cancelled_scope = match &self.active_discovery {
-            Some(active) if !change.lost_interfaces().is_empty() => {
+            Some(active)
+                if !change.lost_interfaces().is_empty()
+                    || matches!(active.scope, DiscoveryScope::Subnet(_)) =>
+            {
                 active.cancellation.cancel();
                 Some(active.scope)
             }
@@ -764,6 +949,14 @@ impl ControllerActor {
         self.commit_discovery_update(update);
 
         match cancelled_scope {
+            Some(DiscoveryScope::Subnet(_)) => {
+                let generation = self.next_discovery_generation()?;
+                self.discovery = DiscoveryState::failed_for(
+                    generation,
+                    DiscoveryKind::Subnet,
+                    DiscoveryFailure::NetworkChanged,
+                );
+            }
             Some(scope) => {
                 let generation = self.next_discovery_generation()?;
                 self.discovery = DiscoveryState::idle_for(generation, scope.kind());
@@ -796,14 +989,21 @@ impl ControllerActor {
     ) -> Result<(DiscoveryUpdate, ExpirationOutcome), ControllerRuntimeError> {
         let expires = |origin: &LocatorOrigin| origin_expires(origin, change);
 
-        let local_batch = self.local_batch.as_ref().and_then(|batch| {
-            batch.retain(|observation| {
-                !expires(&LocatorOrigin {
-                    method: observation.method,
-                    interface: observation.interface.clone(),
-                })
+        let survives = |observation: &DiscoveryObservation| {
+            !expires(&LocatorOrigin {
+                method: observation.method,
+                interface: observation.interface.clone(),
             })
-        });
+        };
+        let local_batch = self
+            .local_batch
+            .as_ref()
+            .and_then(|batch| batch.retain(survives));
+        let subnet_sources = self
+            .subnet_sources
+            .iter()
+            .filter_map(|(scope, batch)| Some((*scope, batch.retain(survives)?)))
+            .collect();
         let mut registry = self.registry.clone();
         let now = RegistryInstant::from_duration(self.registry_epoch.elapsed());
         let expired = registry
@@ -816,6 +1016,7 @@ impl ControllerActor {
             DiscoveryUpdate {
                 local_batch,
                 exact_sources: self.exact_sources.clone(),
+                subnet_sources,
                 registry,
                 devices,
                 ignored: u16::try_from(unlisted).unwrap_or(u16::MAX),
@@ -845,11 +1046,9 @@ impl ControllerActor {
         }
     }
 
-    async fn start_discovery(
-        &mut self,
-        scope: DiscoveryScope,
-    ) -> Result<(), ControllerRuntimeError> {
-        let exact_target_limit_reached = matches!(scope, DiscoveryScope::Exact(target)
+    async fn start_discovery(&mut self, probe: ProbeScope) -> Result<(), ControllerRuntimeError> {
+        let scope = probe.scope();
+        let exact_target_limit_reached = matches!(probe, ProbeScope::Exact(target)
             if !self.attempted_exact_targets.contains(&target)
                 && self.attempted_exact_targets.len()
                     >= MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION);
@@ -878,9 +1077,9 @@ impl ControllerActor {
             self.attempted_exact_targets.insert(target);
         }
 
-        let expected_device = match scope {
-            DiscoveryScope::Local => None,
-            DiscoveryScope::Exact(target) => self.expected_device_for_exact_target(target),
+        let expected_device = match probe {
+            ProbeScope::Local => None,
+            ProbeScope::Exact(target) => self.expected_device_for_exact_target(target),
         };
         self.discovery = DiscoveryState::refreshing_for(generation, scope.kind());
         tracing::info!(
@@ -897,9 +1096,9 @@ impl ControllerActor {
             let result = if task_cancellation.is_cancelled() {
                 Err(DiscoveryFailure::Internal)
             } else {
-                match scope {
-                    DiscoveryScope::Local => service.discover_local(task_cancellation).await,
-                    DiscoveryScope::Exact(target) => {
+                match probe {
+                    ProbeScope::Local => service.discover_local(task_cancellation).await,
+                    ProbeScope::Exact(target) => {
                         service
                             .discover_exact(target, expected_device, task_cancellation)
                             .await
@@ -910,11 +1109,13 @@ impl ControllerActor {
                 generation,
                 scope,
                 result,
+                incomplete: None,
             }
         });
         self.active_discovery = Some(ActiveDiscovery {
             generation,
             scope,
+            bound: None,
             cancellation,
             task,
         });
@@ -993,6 +1194,7 @@ impl ControllerActor {
                 generation: active.generation,
                 scope: active.scope,
                 result: Err(DiscoveryFailure::Internal),
+                incomplete: None,
             },
         };
         self.apply_discovery_completion(completion).await?;
@@ -1043,7 +1245,7 @@ impl ControllerActor {
                             self.spawn_selection(pending_selection);
                             return Ok(true);
                         }
-                        DiscoveryScope::Exact(_) => {
+                        DiscoveryScope::Exact(_) | DiscoveryScope::Subnet(_) => {
                             let kind = completion.scope.kind();
                             let selected_changed = self.selected_evidence_changed(&update.registry);
                             if selected_changed {
@@ -1061,7 +1263,14 @@ impl ControllerActor {
 
                             let issue_count = issue_count.saturating_add(update.ignored);
                             self.commit_discovery_update(update);
-                            self.discovery = if no_response {
+                            self.discovery = if let Some(reason) = completion.incomplete {
+                                DiscoveryState::incomplete_for(
+                                    self.discovery_generation,
+                                    kind,
+                                    reason,
+                                    issue_count,
+                                )
+                            } else if no_response {
                                 DiscoveryState::no_response_for(
                                     self.discovery_generation,
                                     kind,
@@ -1116,6 +1325,7 @@ impl ControllerActor {
         let observation_limit = match scope {
             DiscoveryScope::Local => MAX_RETAINED_LOCAL_OBSERVATIONS,
             DiscoveryScope::Exact(_) => MAX_RETAINED_EXACT_OBSERVATIONS,
+            DiscoveryScope::Subnet(subnet) => subnet.candidate_count(),
         };
         if report.observations.len() > observation_limit {
             return Err(());
@@ -1125,8 +1335,12 @@ impl ControllerActor {
         let batch = RetainedDiscoveryBatch::new(seen_at, report.observations);
         let mut local_batch = self.local_batch.clone();
         let mut exact_sources = self.exact_sources.clone();
+        let mut subnet_sources = self.subnet_sources.clone();
         match scope {
             DiscoveryScope::Local => local_batch = batch,
+            DiscoveryScope::Subnet(subnet) => {
+                retain_subnet_batch(&mut subnet_sources, subnet, batch)?;
+            }
             DiscoveryScope::Exact(target) => match batch {
                 Some(batch) => {
                     if !exact_sources.contains_key(&target)
@@ -1147,11 +1361,13 @@ impl ControllerActor {
             },
         }
 
-        let (mut registry, contradicted) = rebuild_registry(local_batch.as_ref(), &exact_sources)?;
+        let (mut registry, contradicted) =
+            rebuild_registry(local_batch.as_ref(), &exact_sources, &subnet_sources)?;
         let (devices, unlisted) = project_devices(&mut registry);
         Ok(DiscoveryUpdate {
             local_batch,
             exact_sources,
+            subnet_sources,
             registry,
             devices,
             ignored: u16::try_from(contradicted + unlisted).unwrap_or(u16::MAX),
@@ -1161,6 +1377,7 @@ impl ControllerActor {
     fn commit_discovery_update(&mut self, update: DiscoveryUpdate) {
         self.local_batch = update.local_batch;
         self.exact_sources = update.exact_sources;
+        self.subnet_sources = update.subnet_sources;
         self.registry = update.registry;
         self.devices = update.devices;
     }
@@ -1539,7 +1756,8 @@ impl ControllerActor {
             self.selected_lineup.clone(),
         )?
         .with_network(self.network)
-        .with_exact_searches(self.exact_searches);
+        .with_exact_searches(self.exact_searches)
+        .with_observation(self.observation_state);
         self.revision = revision;
         self.snapshots.send_replace(Arc::new(snapshot));
         Ok(())
@@ -1637,8 +1855,9 @@ fn preserve_device_summary(
 fn rebuild_registry(
     local_batch: Option<&RetainedDiscoveryBatch>,
     exact_sources: &BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
+    subnet_sources: &BTreeMap<TypedSubnetScope, RetainedDiscoveryBatch>,
 ) -> Result<(DeviceRegistry, usize), ()> {
-    let mut batches = Vec::with_capacity(1 + exact_sources.len());
+    let mut batches = Vec::with_capacity(1 + exact_sources.len() + subnet_sources.len());
     if let Some(batch) = local_batch {
         batches.push((batch.seen_at, DiscoveryScope::Local, batch));
     }
@@ -1648,6 +1867,11 @@ fn rebuild_registry(
             .as_ref()
             .map(|batch| (batch.seen_at, DiscoveryScope::Exact(*target), batch))
     }));
+    batches.extend(
+        subnet_sources
+            .iter()
+            .map(|(scope, batch)| (batch.seen_at, DiscoveryScope::Subnet(*scope), batch)),
+    );
     batches.sort_by_key(|(seen_at, scope, _)| (*seen_at, *scope));
 
     let mut registry = DeviceRegistry::default();
@@ -1699,13 +1923,106 @@ async fn recv_optional<T>(receiver: Option<&mut mpsc::Receiver<T>>) -> Option<T>
     }
 }
 
+/// Resolve when the observation state may have changed, or never without a
+/// source. The actor retires a closed watch, so this cannot spin.
+async fn observation_changed(watch: Option<&mut ObservationWatch>) {
+    match watch {
+        Some(watch) => {
+            watch.changed().await;
+        }
+        None => std::future::pending().await,
+    }
+}
+
+/// Map a subnet search to the lane's result: an incomplete search keeps its
+/// replies only when it stopped for its own limits. A network change discards
+/// them, and a search the controller did not cancel cannot be cancelled.
+fn subnet_completion(
+    result: Result<SubnetScanReport, DiscoveryFailure>,
+) -> (
+    Result<DiscoveryReport, DiscoveryFailure>,
+    Option<DiscoveryIncomplete>,
+) {
+    let scan = match result {
+        Ok(scan) => scan,
+        Err(failure) => return (Err(failure), None),
+    };
+    match scan.outcome {
+        SubnetScanOutcome::Complete => (Ok(scan.report), None),
+        SubnetScanOutcome::Incomplete(SubnetScanIncomplete::Deadline) => {
+            (Ok(scan.report), Some(DiscoveryIncomplete::Deadline))
+        }
+        SubnetScanOutcome::Incomplete(SubnetScanIncomplete::DeviceLimit) => {
+            (Ok(scan.report), Some(DiscoveryIncomplete::DeviceLimit))
+        }
+        SubnetScanOutcome::Incomplete(SubnetScanIncomplete::NetworkChanged) => {
+            (Err(DiscoveryFailure::NetworkChanged), None)
+        }
+        SubnetScanOutcome::Incomplete(
+            SubnetScanIncomplete::Cancelled | SubnetScanIncomplete::RequestBudget,
+        ) => (Err(DiscoveryFailure::Internal), None),
+    }
+}
+
+/// Replace what earlier searches of `scope` found with `batch`, keeping at
+/// most [`MAX_RETAINED_SUBNET_SEARCHES`] subnets by dropping the oldest.
+///
+/// Every retained observation must be a direct reply from a usable host of
+/// `scope` on the discovery port, with typed-subnet provenance and no
+/// interface, from at most the approved number of distinct devices.
+fn retain_subnet_batch(
+    sources: &mut BTreeMap<TypedSubnetScope, RetainedDiscoveryBatch>,
+    scope: TypedSubnetScope,
+    batch: Option<RetainedDiscoveryBatch>,
+) -> Result<(), ()> {
+    let Some(batch) = batch else {
+        sources.remove(&scope);
+        return Ok(());
+    };
+    let network = scope.network();
+    let usable = |address: &std::net::Ipv4Addr| {
+        network.contains(address)
+            && (network.prefix_len() >= 31
+                || (*address != network.network() && *address != network.broadcast()))
+    };
+    let devices = batch
+        .observations
+        .iter()
+        .map(|observation| observation.device_id)
+        .collect::<BTreeSet<_>>();
+    if devices.len() > TypedSubnetScope::MAX_DEVICES
+        || batch.observations.iter().any(|observation| {
+            observation.method != DiscoveryMethod::TypedSubnet
+                || observation.interface.is_some()
+                || observation.source.port() != DISCOVERY_UDP_PORT
+                || !matches!(observation.source.ip(), IpAddr::V4(address) if usable(&address))
+        })
+    {
+        return Err(());
+    }
+    sources.insert(scope, batch);
+    // Subnets are added one at a time, so one eviction restores the bound.
+    if sources.len() > MAX_RETAINED_SUBNET_SEARCHES
+        && let Some(oldest) = sources
+            .iter()
+            .filter(|(retained, _)| **retained != scope)
+            .min_by_key(|(_, batch)| batch.seen_at)
+            .map(|(retained, _)| *retained)
+    {
+        sources.remove(&oldest);
+    }
+    Ok(())
+}
+
 /// Whether one locator origin depended on something a network change lost.
 ///
 /// Exact and hostname targets are user data and never expire here. Local
 /// broadcast and multicast origins expire when their interface lost the
 /// address family they were observed through, so an IPv6 address rotation
-/// leaves IPv4 evidence in place. No controller lane admits approved-range
-/// replies; like an exact target, such an origin names no interface.
+/// leaves IPv4 evidence in place. A typed-subnet reply names no interface:
+/// the system's routing chose its path under the observation generation the
+/// search was bound to, so it expires when any interface lost IPv4 or went
+/// away, and survives IPv6-only changes like the other IPv4 evidence.
 fn origin_expires(origin: &LocatorOrigin, change: &NetworkChange) -> bool {
     let loss = |family: fn(InterfaceLoss) -> bool| {
         origin
@@ -1714,7 +2031,8 @@ fn origin_expires(origin: &LocatorOrigin, change: &NetworkChange) -> bool {
             .is_some_and(|interface| family(change.loss(interface)))
     };
     match origin.method {
-        DiscoveryMethod::Targeted | DiscoveryMethod::RoutedTargeted => false,
+        DiscoveryMethod::Targeted => false,
+        DiscoveryMethod::TypedSubnet => change.lost_interfaces().values().any(|loss| loss.ipv4()),
         DiscoveryMethod::Ipv4Broadcast => loss(InterfaceLoss::ipv4),
         DiscoveryMethod::Ipv6LinkLocalMulticast => loss(InterfaceLoss::ipv6_link_local),
         DiscoveryMethod::Ipv6SiteLocalMulticast => loss(InterfaceLoss::ipv6_routable),
@@ -1809,12 +2127,31 @@ enum ActorEvent {
     Discovery(Result<DiscoveryCompletion, tokio::task::JoinError>),
     Selection(Result<SelectionCompletion, tokio::task::JoinError>),
     NetworkChange(Option<NetworkChange>),
+    Observation,
+}
+
+/// The operations [`ControllerActor::start_discovery`] starts; a subnet
+/// search starts only through its admission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProbeScope {
+    Local,
+    Exact(ExactDiscoveryTarget),
+}
+
+impl ProbeScope {
+    const fn scope(self) -> DiscoveryScope {
+        match self {
+            Self::Local => DiscoveryScope::Local,
+            Self::Exact(target) => DiscoveryScope::Exact(target),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum DiscoveryScope {
     Local,
     Exact(ExactDiscoveryTarget),
+    Subnet(TypedSubnetScope),
 }
 
 impl DiscoveryScope {
@@ -1822,6 +2159,7 @@ impl DiscoveryScope {
         match self {
             Self::Local => DiscoveryKind::Local,
             Self::Exact(_) => DiscoveryKind::Exact,
+            Self::Subnet(_) => DiscoveryKind::Subnet,
         }
     }
 }
@@ -1910,6 +2248,7 @@ impl RetainedExactSource {
 struct DiscoveryUpdate {
     local_batch: Option<RetainedDiscoveryBatch>,
     exact_sources: BTreeMap<ExactDiscoveryTarget, RetainedExactSource>,
+    subnet_sources: BTreeMap<TypedSubnetScope, RetainedDiscoveryBatch>,
     registry: DeviceRegistry,
     devices: Vec<DeviceSummary>,
     /// Observations and devices the rebuild left out, counted as issues.
@@ -1919,6 +2258,8 @@ struct DiscoveryUpdate {
 struct ActiveDiscovery {
     generation: OperationGeneration,
     scope: DiscoveryScope,
+    /// The observation generation a subnet search is bound to.
+    bound: Option<ObservationGeneration>,
     cancellation: CancellationToken,
     task: JoinHandle<DiscoveryCompletion>,
 }
@@ -1927,6 +2268,8 @@ struct DiscoveryCompletion {
     generation: OperationGeneration,
     scope: DiscoveryScope,
     result: Result<DiscoveryReport, DiscoveryFailure>,
+    /// Why a subnet search that kept its replies stopped early.
+    incomplete: Option<DiscoveryIncomplete>,
 }
 
 struct RetainedSelectedSnapshot {
@@ -1965,8 +2308,9 @@ mod tests {
     use tokio::runtime::RuntimeFlavor;
     use tokio::sync::oneshot;
 
+    use super::super::network::NetworkSubscription;
     use super::*;
-    use crate::discovery::{DiscoveryMethod, DiscoveryObservation, LocatorOrigin};
+    use crate::discovery::{DiscoveryMethod, DiscoveryObservation, LocatorOrigin, ObservationGate};
 
     /// Upper bound on every positive wait in these tests. It only shortens a
     /// failing run, so it is generous: on the Windows CI runners a scripted
@@ -2058,6 +2402,7 @@ mod tests {
 
     struct ScriptedState {
         steps: Mutex<VecDeque<ServiceStep>>,
+        subnet_steps: Mutex<VecDeque<SubnetStep>>,
         calls: AtomicUsize,
         active: AtomicUsize,
         maximum_active: AtomicUsize,
@@ -2077,6 +2422,23 @@ mod tests {
         Exact {
             target: ExactDiscoveryTarget,
             expected_device: Option<DeviceId>,
+        },
+        Subnet {
+            scope: TypedSubnetScope,
+            generation: ObservationGeneration,
+            live: bool,
+        },
+    }
+
+    enum SubnetStep {
+        Immediate(Result<SubnetScanReport, DiscoveryFailure>),
+        Gated {
+            release: oneshot::Receiver<Result<SubnetScanReport, DiscoveryFailure>>,
+            cancelled: std_mpsc::Sender<bool>,
+        },
+        CancellationBarrier {
+            cancellation_observed: std_mpsc::Sender<()>,
+            finish_cancellation: oneshot::Receiver<()>,
         },
     }
 
@@ -2139,6 +2501,7 @@ mod tests {
                 Self {
                     shared: Arc::new(ScriptedState {
                         steps: Mutex::new(steps.into_iter().collect()),
+                        subnet_steps: Mutex::new(VecDeque::new()),
                         calls: AtomicUsize::new(0),
                         active: AtomicUsize::new(0),
                         maximum_active: AtomicUsize::new(0),
@@ -2155,6 +2518,11 @@ mod tests {
 
         fn maximum_active(&self) -> usize {
             self.shared.maximum_active.load(Ordering::SeqCst)
+        }
+
+        fn with_subnet_steps(self, steps: impl IntoIterator<Item = SubnetStep>) -> Self {
+            self.shared.subnet_steps.lock().unwrap().extend(steps);
+            self
         }
     }
 
@@ -2176,6 +2544,61 @@ mod tests {
                 },
                 cancellation,
             )
+        }
+
+        /// Records the permit's scope and liveness, then follows the next
+        /// subnet step. The permit stays held until the step ends.
+        fn discover_subnet(
+            &self,
+            permit: SubnetScanPermit,
+            cancellation: CancellationToken,
+        ) -> SubnetDiscoveryFuture {
+            let state = Arc::clone(&self.shared);
+            let step = state
+                .subnet_steps
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("test should provide one subnet step per search");
+            let call = state.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            state
+                .started
+                .send(ServiceStart {
+                    call,
+                    request: DiscoveryRequest::Subnet {
+                        scope: permit.scope(),
+                        generation: permit.generation(),
+                        live: permit.is_live(),
+                    },
+                    thread_name: thread::current().name().map(str::to_owned),
+                    runtime_flavor: tokio::runtime::Handle::current().runtime_flavor(),
+                })
+                .expect("test start receiver should remain open");
+            Box::pin(async move {
+                match step {
+                    SubnetStep::Immediate(result) => result,
+                    SubnetStep::Gated { release, cancelled } => {
+                        tokio::select! {
+                            result = release => result.expect("subnet release should remain open"),
+                            () = cancellation.cancelled() => {
+                                // Report whether the permit was already
+                                // revoked when cancellation arrived.
+                                let _ = cancelled.send(permit.is_live());
+                                Err(DiscoveryFailure::Internal)
+                            }
+                        }
+                    }
+                    SubnetStep::CancellationBarrier {
+                        cancellation_observed,
+                        finish_cancellation,
+                    } => {
+                        cancellation.cancelled().await;
+                        let _ = cancellation_observed.send(());
+                        let _ = finish_cancellation.await;
+                        Err(DiscoveryFailure::Internal)
+                    }
+                }
+            })
         }
     }
 
@@ -2368,16 +2791,24 @@ mod tests {
     async fn disconnected_network_source_cannot_starve_command_channel_shutdown() {
         struct ClosedChangeSource;
         impl NetworkChangeSource for ClosedChangeSource {
-            fn subscribe(&self) -> Option<mpsc::Receiver<NetworkChange>> {
+            fn subscribe(&self) -> Option<NetworkSubscription> {
                 let (sender, receiver) = mpsc::channel(1);
                 drop(sender);
-                Some(receiver)
+                let gate = ObservationGate::new();
+                gate.establish();
+                let observation = gate.watch();
+                drop(gate);
+                Some(NetworkSubscription {
+                    changes: receiver,
+                    observation,
+                })
             }
         }
         let mut actor = test_actor();
         actor.network_source = Arc::new(ClosedChangeSource);
-        // Both receivers are already closed. Network events have priority, so
-        // the actor must retire that source before it can observe command EOF.
+        // Every receiver is already closed. Network events have priority, so
+        // the actor must retire the source and its readiness before it can
+        // observe command EOF.
         tokio::time::timeout(Duration::from_secs(1), actor.run())
             .await
             .expect("a closed change source must not spin or starve shutdown")
@@ -2620,7 +3051,7 @@ mod tests {
         let mut wrong_port = exact_report(target, first_id(), 4);
         wrong_port.observations[0].source.set_port(65_000);
         let mut wrong_method = exact_report(target, first_id(), 4);
-        wrong_method.observations[0].method = DiscoveryMethod::RoutedTargeted;
+        wrong_method.observations[0].method = DiscoveryMethod::TypedSubnet;
         let mut wrong_interface = exact_report(target, first_id(), 4);
         wrong_interface.observations[0].interface = Some("synthetic0".to_owned());
 
@@ -2714,7 +3145,7 @@ mod tests {
         ]);
 
         let (registry, contradicted) =
-            rebuild_registry(Some(&local_batch), &exact_sources).unwrap();
+            rebuild_registry(Some(&local_batch), &exact_sources, &BTreeMap::new()).unwrap();
         assert_eq!(contradicted, 0);
         assert_eq!(registry.clock(), Some(newer_at));
         let device = registry.get(first_id()).unwrap();
@@ -2770,7 +3201,7 @@ mod tests {
         // A tuner added by address, then a refresh finds another tuner there.
         let local = RetainedDiscoveryBatch::new(newer_at, vec![replacement.clone()]).unwrap();
         let (registry, contradicted) =
-            rebuild_registry(Some(&local), &exact_sources(older_at)).unwrap();
+            rebuild_registry(Some(&local), &exact_sources(older_at), &BTreeMap::new()).unwrap();
         assert_eq!(contradicted, 0);
         assert!(registry.get(first_id()).is_none());
         let device = registry.get(second_id()).unwrap();
@@ -2779,7 +3210,7 @@ mod tests {
         // A newer exact probe takes the address back the same way.
         let local = RetainedDiscoveryBatch::new(older_at, vec![replacement.clone()]).unwrap();
         let (registry, contradicted) =
-            rebuild_registry(Some(&local), &exact_sources(newer_at)).unwrap();
+            rebuild_registry(Some(&local), &exact_sources(newer_at), &BTreeMap::new()).unwrap();
         assert_eq!(contradicted, 0);
         assert!(registry.get(second_id()).is_none());
         assert!(registry.get(first_id()).is_some());
@@ -2790,7 +3221,8 @@ mod tests {
         first_on_eth1.interface = Some("eth1".to_owned());
         let local =
             RetainedDiscoveryBatch::new(newer_at, vec![replacement, first_on_eth1]).unwrap();
-        let (registry, contradicted) = rebuild_registry(Some(&local), &BTreeMap::new()).unwrap();
+        let (registry, contradicted) =
+            rebuild_registry(Some(&local), &BTreeMap::new(), &BTreeMap::new()).unwrap();
         assert_eq!(contradicted, 1);
         assert_eq!(registry.len(), 1);
         assert!(registry.get(first_id()).is_some());
@@ -4740,6 +5172,7 @@ mod tests {
                     generation: OperationGeneration::new(1),
                     scope: DiscoveryScope::Local,
                     result: Ok(report(first_id(), "192.0.2.10:65001", 4)),
+                    incomplete: None,
                 })
                 .await
                 .unwrap()
@@ -4903,9 +5336,10 @@ mod tests {
 
     /// A change source whose raw events pass through the production
     /// debouncer on the controller runtime, so bursts coalesce exactly as the
-    /// Linux source coalesces them.
+    /// Linux source coalesces them, and whose readiness a test drives.
     struct ScriptedChangeSource {
         raw: Mutex<Option<mpsc::Receiver<NetworkChange>>>,
+        gate: ObservationGate,
     }
 
     impl ScriptedChangeSource {
@@ -4914,6 +5348,7 @@ mod tests {
             (
                 Self {
                     raw: Mutex::new(Some(receiver)),
+                    gate: ObservationGate::new(),
                 },
                 sender,
             )
@@ -4921,7 +5356,7 @@ mod tests {
     }
 
     impl NetworkChangeSource for ScriptedChangeSource {
-        fn subscribe(&self) -> Option<mpsc::Receiver<NetworkChange>> {
+        fn subscribe(&self) -> Option<NetworkSubscription> {
             let mut raw = self.raw.lock().unwrap().take()?;
             let (changes, receiver) = mpsc::channel(4);
             tokio::spawn(async move {
@@ -4931,7 +5366,10 @@ mod tests {
                     }
                 }
             });
-            Some(receiver)
+            Some(NetworkSubscription {
+                changes: receiver,
+                observation: self.gate.watch(),
+            })
         }
     }
 
@@ -5005,8 +5443,8 @@ mod tests {
             method: DiscoveryMethod::Ipv6SiteLocalMulticast,
             interface: Some("eth0".to_owned()),
         };
-        let range = LocatorOrigin {
-            method: DiscoveryMethod::RoutedTargeted,
+        let subnet = LocatorOrigin {
+            method: DiscoveryMethod::TypedSubnet,
             interface: None,
         };
 
@@ -5014,7 +5452,9 @@ mod tests {
         assert!(origin_expires(&broadcast("eth0"), &lost));
         assert!(!origin_expires(&broadcast("eth1"), &lost));
         assert!(origin_expires(&multicast, &lost));
-        assert!(!origin_expires(&range, &lost));
+        // Typed-subnet replies name no interface; any lost IPv4 retires them.
+        assert!(origin_expires(&subnet, &lost));
+        assert!(!origin_expires(&subnet, &NetworkChange::default()));
     }
 
     #[test]
@@ -5437,5 +5877,773 @@ mod tests {
         .await;
         assert_eq!(ready.devices().len(), 1);
         controller.shutdown().unwrap();
+    }
+
+    // ---- typed-subnet search -----------------------------------------------
+
+    fn subnet(text: &str) -> TypedSubnetScope {
+        text.parse().unwrap()
+    }
+
+    fn subnet_observation(device_id: DeviceId, source: &str) -> DiscoveryObservation {
+        DiscoveryObservation {
+            device_id,
+            source: source.parse().unwrap(),
+            method: DiscoveryMethod::TypedSubnet,
+            interface: None,
+            device_types: vec![1],
+            tuner_count: Some(2),
+            advertised_base_url: None,
+            advertised_lineup_url: None,
+        }
+    }
+
+    fn subnet_scan(
+        outcome: SubnetScanOutcome,
+        observations: Vec<DiscoveryObservation>,
+    ) -> SubnetScanReport {
+        SubnetScanReport {
+            report: report_of(observations),
+            outcome,
+            requests_attempted: 0,
+            refused_sends: 0,
+        }
+    }
+
+    /// Consent for `scope`, shown under the gate's current generation.
+    fn subnet_consent(scope: TypedSubnetScope, gate: &ObservationGate) -> SubnetSearchConsent {
+        SubnetSearchConsent::confirm(
+            scope,
+            scope.candidate_count(),
+            scope.maximum_request_attempts(),
+            gate.state()
+                .generation()
+                .unwrap_or(ObservationGeneration::FIRST),
+        )
+        .unwrap()
+    }
+
+    type SubnetController = (
+        ControllerRuntime,
+        std_mpsc::Receiver<ServiceStart>,
+        ScriptedService,
+        ObservationGate,
+        mpsc::Sender<NetworkChange>,
+    );
+
+    fn start_subnet_controller(
+        discovery_steps: impl IntoIterator<Item = ServiceStep>,
+        subnet_steps: impl IntoIterator<Item = SubnetStep>,
+        established: bool,
+    ) -> SubnetController {
+        let (discovery, starts) = ScriptedService::new(discovery_steps);
+        let discovery = discovery.with_subnet_steps(subnet_steps);
+        let (selection, _) = ScriptedSelectionService::new([]);
+        let (network, changes) = ScriptedChangeSource::new();
+        let gate = network.gate.clone();
+        if established {
+            gate.establish();
+        }
+        let controller =
+            ControllerRuntime::start_with_test_services(discovery.clone(), selection, network)
+                .unwrap();
+        (controller, starts, discovery, gate, changes)
+    }
+
+    fn failed_subnet(snapshot: &ApplicationSnapshot, failure: DiscoveryFailure) -> bool {
+        snapshot.discovery().kind() == DiscoveryKind::Subnet
+            && snapshot.discovery().status() == DiscoveryStatus::Failed(failure)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn subnet_search_without_observation_is_refused_before_any_send() {
+        // No source at all.
+        let (service, _) = ScriptedService::new([]);
+        let observed = service.clone();
+        let (selection, _) = ScriptedSelectionService::new([]);
+        let controller = ControllerRuntime::start_with_test_services(
+            service,
+            selection,
+            UnavailableNetworkChangeSource,
+        )
+        .unwrap();
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        let elsewhere = ObservationGate::new();
+        elsewhere.establish();
+        handle
+            .try_search_subnet(subnet_consent(subnet("10.0.0.0/24"), &elsewhere))
+            .unwrap();
+        let refused = wait_for_snapshot(&mut snapshots, |snapshot| {
+            failed_subnet(snapshot, DiscoveryFailure::SubnetUnavailable)
+        })
+        .await;
+        assert_eq!(refused.observation(), ObservationState::Unavailable);
+        controller.shutdown().unwrap();
+        assert_eq!(observed.calls(), 0);
+
+        // A source whose observation never became ready.
+        let (controller, _starts, observed, gate, _changes) =
+            start_subnet_controller([], [], false);
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_search_subnet(subnet_consent(subnet("10.0.0.0/24"), &elsewhere))
+            .unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            failed_subnet(snapshot, DiscoveryFailure::SubnetUnavailable)
+        })
+        .await;
+        assert_eq!(gate.state(), ObservationState::Unavailable);
+        controller.shutdown().unwrap();
+        assert_eq!(observed.calls(), 0);
+        assert_eq!(
+            handle.try_search_subnet(subnet_consent(subnet("10.0.0.0/24"), &elsewhere)),
+            Err(ControllerCommandError::ShuttingDown)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_confirmation_from_an_earlier_generation_sends_nothing_even_if_the_network_returns() {
+        let (controller, _starts, observed, gate, _changes) = start_subnet_controller([], [], true);
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        let first = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.observation().generation().is_some()
+        })
+        .await
+        .observation();
+        let shown = subnet_consent(subnet("10.0.0.0/24"), &gate);
+
+        // The network changes while the confirmation is open, then the same
+        // topology is observed again as a new generation.
+        gate.invalidate();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.observation() == ObservationState::Unavailable
+        })
+        .await;
+        gate.establish();
+        let second = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.observation().generation().is_some()
+        })
+        .await
+        .observation();
+        assert_ne!(first, second);
+
+        handle.try_search_subnet(shown).unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            failed_subnet(snapshot, DiscoveryFailure::SubnetConfirmationStale)
+        })
+        .await;
+
+        // Accepted, then the network changes before the actor admits it.
+        let queued = subnet_consent(subnet("10.0.0.0/24"), &gate);
+        gate.invalidate();
+        handle.try_search_subnet(queued).unwrap();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            failed_subnet(snapshot, DiscoveryFailure::SubnetUnavailable)
+        })
+        .await;
+        controller.shutdown().unwrap();
+        assert_eq!(observed.calls(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_detected_change_revokes_and_joins_an_active_search_before_any_debounce() {
+        let scope = subnet("192.168.2.0/23");
+        let (_release, release_rx) = oneshot::channel();
+        let (cancelled, cancelled_rx) = std_mpsc::channel();
+        let (controller, starts, _observed, gate, _changes) = start_subnet_controller(
+            [],
+            [
+                SubnetStep::Gated {
+                    release: release_rx,
+                    cancelled,
+                },
+                SubnetStep::Immediate(Ok(subnet_scan(
+                    SubnetScanOutcome::Complete,
+                    vec![subnet_observation(first_id(), "192.168.3.7:65001")],
+                ))),
+            ],
+            true,
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        let bound = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.observation().generation().is_some()
+        })
+        .await
+        .observation()
+        .generation()
+        .unwrap();
+        handle
+            .try_search_subnet(subnet_consent(scope, &gate))
+            .unwrap();
+        assert_eq!(
+            recv_start(&starts).request,
+            DiscoveryRequest::Subnet {
+                scope,
+                generation: bound,
+                live: true,
+            }
+        );
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().kind() == DiscoveryKind::Subnet
+                && snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+
+        // Readiness is revoked on detection; no debounced change is needed.
+        gate.invalidate();
+        let revoked = wait_for_snapshot(&mut snapshots, |snapshot| {
+            failed_subnet(snapshot, DiscoveryFailure::NetworkChanged)
+        })
+        .await;
+        assert_eq!(
+            cancelled_rx.recv_timeout(WAIT),
+            Ok(false),
+            "the permit was already revoked when the search was cancelled"
+        );
+        assert_eq!(revoked.network().sequence(), 0);
+        assert!(revoked.devices().is_empty());
+
+        // Fresh confirmation under the new generation searches again.
+        gate.establish();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot
+                .observation()
+                .generation()
+                .is_some_and(|generation| generation > bound)
+        })
+        .await;
+        handle
+            .try_search_subnet(subnet_consent(scope, &gate))
+            .unwrap();
+        recv_start(&starts);
+        let found = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().kind() == DiscoveryKind::Subnet
+                && snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(found.devices().len(), 1);
+        assert_eq!(
+            found.devices()[0].preferred_locator(),
+            "192.168.3.7:65001".parse().unwrap()
+        );
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn subnet_results_are_retained_per_subnet_and_incomplete_work_is_reported() {
+        let near = subnet("10.0.0.0/24");
+        let far = subnet("10.9.0.0/24");
+        let complete = |observations| Ok(subnet_scan(SubnetScanOutcome::Complete, observations));
+        let incomplete = |reason, observations| {
+            Ok(subnet_scan(
+                SubnetScanOutcome::Incomplete(reason),
+                observations,
+            ))
+        };
+        let third = (0x105A_1250_u32..)
+            .find_map(|value| {
+                DeviceId::new(value)
+                    .ok()
+                    .filter(|id| *id != first_id() && *id != second_id())
+            })
+            .unwrap();
+        let (controller, starts, _observed, gate, _changes) = start_subnet_controller(
+            [],
+            [
+                SubnetStep::Immediate(complete(vec![subnet_observation(
+                    first_id(),
+                    "10.0.0.5:65001",
+                )])),
+                SubnetStep::Immediate(incomplete(
+                    SubnetScanIncomplete::Deadline,
+                    vec![subnet_observation(second_id(), "10.9.0.5:65001")],
+                )),
+                SubnetStep::Immediate(incomplete(
+                    SubnetScanIncomplete::DeviceLimit,
+                    vec![subnet_observation(third, "10.9.0.6:65001")],
+                )),
+                SubnetStep::Immediate(incomplete(
+                    SubnetScanIncomplete::NetworkChanged,
+                    vec![subnet_observation(second_id(), "10.9.0.5:65001")],
+                )),
+                SubnetStep::Immediate(incomplete(SubnetScanIncomplete::Cancelled, vec![])),
+                SubnetStep::Immediate(complete(vec![])),
+            ],
+            true,
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.observation().generation().is_some()
+        })
+        .await;
+        let mut search = async |scope, expected: DiscoveryStatus| {
+            let generation = snapshots.borrow().discovery_generation();
+            handle
+                .try_search_subnet(subnet_consent(scope, &gate))
+                .unwrap();
+            recv_start(&starts);
+            wait_for_snapshot(&mut snapshots, |snapshot| {
+                snapshot.discovery_generation() > generation
+                    && snapshot.discovery().kind() == DiscoveryKind::Subnet
+                    && snapshot.discovery().status() == expected
+            })
+            .await
+        };
+        let listed = |snapshot: &ApplicationSnapshot| {
+            snapshot
+                .devices()
+                .iter()
+                .map(DeviceSummary::device_id)
+                .collect::<Vec<_>>()
+        };
+
+        let found = search(near, DiscoveryStatus::Ready).await;
+        assert_eq!(listed(&found), [first_id()]);
+        let timed_out = search(
+            far,
+            DiscoveryStatus::Incomplete(DiscoveryIncomplete::Deadline),
+        )
+        .await;
+        assert_eq!(listed(&timed_out), [first_id(), second_id()]);
+        // A later search of the same subnet replaces what it found before.
+        let limited = search(
+            far,
+            DiscoveryStatus::Incomplete(DiscoveryIncomplete::DeviceLimit),
+        )
+        .await;
+        assert_eq!(listed(&limited), [first_id(), third]);
+        // A search stopped by a network change keeps nothing it found.
+        let changed = search(
+            far,
+            DiscoveryStatus::Failed(DiscoveryFailure::NetworkChanged),
+        )
+        .await;
+        assert_eq!(listed(&changed), [first_id(), third]);
+        let cancelled = search(far, DiscoveryStatus::Failed(DiscoveryFailure::Internal)).await;
+        assert_eq!(listed(&cancelled), [first_id(), third]);
+        // A complete search that found nothing retires its subnet's devices.
+        let empty = search(near, DiscoveryStatus::NoResponse).await;
+        assert_eq!(listed(&empty), [third]);
+        controller.shutdown().unwrap();
+    }
+
+    #[test]
+    fn retained_subnet_replies_must_come_from_their_subnet_with_typed_provenance() {
+        let scope = subnet("10.0.0.0/24");
+        let actor = test_actor();
+        let valid = subnet_observation(first_id(), "10.0.0.5:65001");
+        assert!(
+            actor
+                .build_discovery_update(
+                    DiscoveryScope::Subnet(scope),
+                    report_of(vec![valid.clone()])
+                )
+                .is_ok()
+        );
+        let mut outside = valid.clone();
+        outside.source = "10.0.1.5:65001".parse().unwrap();
+        let mut network_address = valid.clone();
+        network_address.source = "10.0.0.0:65001".parse().unwrap();
+        let mut wrong_port = valid.clone();
+        wrong_port.source.set_port(65_000);
+        let mut exact = valid.clone();
+        exact.method = DiscoveryMethod::Targeted;
+        let mut interface = valid.clone();
+        interface.interface = Some("eth0".to_owned());
+        let mut ipv6 = valid;
+        ipv6.source = "[fd00::5]:65001".parse().unwrap();
+        for observation in [outside, network_address, wrong_port, exact, interface, ipv6] {
+            assert!(
+                actor
+                    .build_discovery_update(
+                        DiscoveryScope::Subnet(scope),
+                        report_of(vec![observation])
+                    )
+                    .is_err()
+            );
+        }
+        let one = subnet("10.0.0.9/32");
+        let too_many = (0..=1)
+            .map(|_| subnet_observation(first_id(), "10.0.0.9:65001"))
+            .collect();
+        assert!(
+            actor
+                .build_discovery_update(DiscoveryScope::Subnet(one), report_of(too_many))
+                .is_err(),
+            "more replies than candidates"
+        );
+        let point_to_point = subnet("10.0.0.0/31");
+        assert!(
+            actor
+                .build_discovery_update(
+                    DiscoveryScope::Subnet(point_to_point),
+                    report_of(vec![subnet_observation(first_id(), "10.0.0.0:65001")])
+                )
+                .is_ok(),
+            "both /31 addresses are hosts"
+        );
+
+        // More distinct devices than a search may accept.
+        let many = subnet("10.1.0.0/24");
+        let ids = (0x1050_0000_u32..)
+            .filter_map(|value| DeviceId::new(value).ok())
+            .take(TypedSubnetScope::MAX_DEVICES + 1);
+        let observations = ids
+            .zip(1_u8..)
+            .map(|(id, host)| subnet_observation(id, &format!("10.1.0.{host}:65001")))
+            .collect::<Vec<_>>();
+        let mut sources = BTreeMap::new();
+        let batch = RetainedDiscoveryBatch::new(RegistryInstant::default(), observations);
+        assert!(retain_subnet_batch(&mut sources, many, batch).is_err());
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn at_most_four_subnets_stay_listed_and_the_oldest_leaves_first() {
+        let mut sources = BTreeMap::new();
+        for index in 0..=MAX_RETAINED_SUBNET_SEARCHES {
+            let octet = u8::try_from(index).unwrap();
+            let scope = subnet(&format!("10.{octet}.0.0/24"));
+            let batch = RetainedDiscoveryBatch::new(
+                RegistryInstant::from_duration(Duration::from_secs(u64::from(octet))),
+                vec![subnet_observation(
+                    first_id(),
+                    &format!("10.{octet}.0.1:65001"),
+                )],
+            );
+            retain_subnet_batch(&mut sources, scope, batch).unwrap();
+        }
+        assert_eq!(sources.len(), MAX_RETAINED_SUBNET_SEARCHES);
+        assert!(!sources.contains_key(&subnet("10.0.0.0/24")));
+        assert!(sources.contains_key(&subnet("10.4.0.0/24")));
+        retain_subnet_batch(&mut sources, subnet("10.4.0.0/24"), None).unwrap();
+        assert_eq!(sources.len(), MAX_RETAINED_SUBNET_SEARCHES - 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn subnet_evidence_expires_when_an_interface_loses_ipv4_or_a_change_cancels_it() {
+        use crate::discovery::InterfaceInventory;
+
+        let (release, release_rx) = oneshot::channel();
+        let (cancelled, cancelled_rx) = std_mpsc::channel();
+        let (controller, starts, _observed, gate, changes) = start_subnet_controller(
+            [],
+            [
+                SubnetStep::Immediate(Ok(subnet_scan(
+                    SubnetScanOutcome::Complete,
+                    vec![subnet_observation(first_id(), "10.0.0.5:65001")],
+                ))),
+                SubnetStep::Gated {
+                    release: release_rx,
+                    cancelled,
+                },
+            ],
+            true,
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.observation().generation().is_some()
+        })
+        .await;
+        handle
+            .try_search_subnet(subnet_consent(subnet("10.0.0.0/24"), &gate))
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| snapshot.devices().len() == 1).await;
+
+        // Losing only an IPv6 address leaves IPv4 subnet evidence in place.
+        let address = |text: &str| text.parse().unwrap();
+        let before = InterfaceInventory::from_addresses([
+            ("eth0".to_owned(), address("192.0.2.1")),
+            ("eth0".to_owned(), address("2001:db8::1")),
+        ]);
+        let after = InterfaceInventory::from_addresses([("eth0".to_owned(), address("192.0.2.1"))]);
+        changes
+            .try_send(NetworkChange::coalesced(before.loss_since(&after), 1))
+            .unwrap();
+        let kept = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 1
+        })
+        .await;
+        assert_eq!(kept.devices().len(), 1);
+
+        // A delivered change cancels an active search even if readiness was
+        // never revoked, and it keeps nothing.
+        handle
+            .try_search_subnet(subnet_consent(subnet("10.0.0.0/24"), &gate))
+            .unwrap();
+        recv_start(&starts);
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Refreshing
+        })
+        .await;
+        changes
+            .try_send(NetworkChange::coalesced(BTreeMap::new(), 1))
+            .unwrap();
+        let cancelled_search = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 2
+        })
+        .await;
+        assert!(failed_subnet(
+            &cancelled_search,
+            DiscoveryFailure::NetworkChanged
+        ));
+        assert_eq!(cancelled_rx.recv_timeout(WAIT), Ok(true));
+        drop(release);
+
+        // Losing IPv4 on any interface retires every typed-subnet reply.
+        changes.try_send(lost(&["eth1"])).unwrap();
+        let retired = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 3
+        })
+        .await;
+        assert!(retired.devices().is_empty());
+        assert_eq!(retired.network().removed_devices(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_production_service_refuses_a_second_search_in_the_process() {
+        let gate = ObservationGate::new();
+        gate.establish();
+        let permit = || {
+            subnet_consent(subnet("10.0.0.0/24"), &gate)
+                .admit(&gate.watch())
+                .unwrap()
+        };
+
+        let _serial = crate::discovery::PROCESS_LANE_TESTS.lock().await;
+        let claim = crate::discovery::claim_process_lane();
+        assert_eq!(
+            DiscoveryClient::default()
+                .discover_subnet(permit(), CancellationToken::new())
+                .await
+                .unwrap_err(),
+            DiscoveryFailure::Internal,
+            "one subnet search per process"
+        );
+        drop(claim);
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        let report = DiscoveryClient::default()
+            .discover_subnet(permit(), cancelled)
+            .await
+            .unwrap();
+        assert_eq!(
+            report.outcome,
+            SubnetScanOutcome::Incomplete(SubnetScanIncomplete::Cancelled)
+        );
+        assert_eq!(report.requests_attempted, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_during_subnet_supersession_or_revocation_starts_nothing_more() {
+        // Shutdown wins while a local refresh is being superseded.
+        let (cancellation_observed, observed_rx) = std_mpsc::channel();
+        let (finish_cancellation, finish_rx) = oneshot::channel();
+        let (controller, starts, observed, gate, _changes) = start_subnet_controller(
+            [ServiceStep::CancellationBarrier {
+                cancellation_observed,
+                finish_cancellation: finish_rx,
+                cancellation_result: Err(DiscoveryFailure::Internal),
+            }],
+            [],
+            true,
+        );
+        let handle = controller.handle();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        handle
+            .try_search_subnet(subnet_consent(subnet("10.0.0.0/24"), &gate))
+            .unwrap();
+        observed_rx.recv_timeout(WAIT).unwrap();
+        controller.begin_shutdown();
+        finish_cancellation.send(()).unwrap();
+        controller.join().unwrap();
+        assert_eq!(observed.calls(), 1, "no subnet search started");
+
+        // Shutdown wins while a revoked subnet search is being joined.
+        let (cancellation_observed, observed_rx) = std_mpsc::channel();
+        let (finish_cancellation, finish_rx) = oneshot::channel();
+        let (controller, starts, _observed, gate, _changes) = start_subnet_controller(
+            [],
+            [SubnetStep::CancellationBarrier {
+                cancellation_observed,
+                finish_cancellation: finish_rx,
+            }],
+            true,
+        );
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.observation().generation().is_some()
+        })
+        .await;
+        handle
+            .try_search_subnet(subnet_consent(subnet("10.0.0.0/24"), &gate))
+            .unwrap();
+        recv_start(&starts);
+        gate.invalidate();
+        observed_rx.recv_timeout(WAIT).unwrap();
+        controller.begin_shutdown();
+        finish_cancellation.send(()).unwrap();
+        controller.join().unwrap();
+    }
+
+    /// A gate-backed source that becomes ready only after the actor has
+    /// subscribed, or already at subscription.
+    struct GateSource {
+        gate: ObservationGate,
+        ready_at_subscription: bool,
+    }
+
+    impl NetworkChangeSource for GateSource {
+        fn subscribe(&self) -> Option<NetworkSubscription> {
+            // A closed change stream: only readiness matters here.
+            let (_, receiver) = mpsc::channel(1);
+            if self.ready_at_subscription {
+                self.gate.establish();
+            } else {
+                let gate = self.gate.clone();
+                tokio::spawn(async move { gate.establish() });
+            }
+            Some(NetworkSubscription {
+                changes: receiver,
+                observation: self.gate.watch(),
+            })
+        }
+    }
+
+    type SubnetActor = (
+        ControllerActor,
+        mpsc::Sender<ActorCommand>,
+        std_mpsc::Receiver<ServiceStart>,
+        ObservationGate,
+    );
+
+    fn subnet_actor(subnet_steps: impl IntoIterator<Item = SubnetStep>) -> SubnetActor {
+        let (service, starts) = ScriptedService::new([]);
+        let service = service.with_subnet_steps(subnet_steps);
+        let (selection, _) = ScriptedSelectionService::new([]);
+        let (commands, receiver) = mpsc::channel(4);
+        let (snapshots, _) = watch::channel(Arc::new(ApplicationSnapshot::initial()));
+        let gate = ObservationGate::new();
+        let mut actor = ControllerActor::new(
+            Arc::new(service),
+            Arc::new(selection),
+            Arc::new(UnavailableNetworkChangeSource),
+            receiver,
+            CancellationToken::new(),
+            snapshots,
+        );
+        gate.establish();
+        actor.observation = Some(gate.watch());
+        (actor, commands, starts, gate)
+    }
+
+    #[tokio::test]
+    async fn exhausted_generations_and_revisions_stop_every_subnet_path() {
+        let scope = subnet("10.0.0.0/24");
+        let exhausted = OperationGeneration::new(u64::MAX);
+
+        // Admission cannot allocate a generation or publish.
+        let (mut actor, _commands, _starts, gate) = subnet_actor([]);
+        actor.discovery_generation = exhausted;
+        assert_eq!(
+            actor
+                .start_subnet_search(subnet_consent(scope, &gate))
+                .await,
+            Err(ControllerRuntimeError::DiscoveryGenerationExhausted)
+        );
+        let (mut actor, _commands, starts, gate) = subnet_actor([]);
+        actor.revision = SnapshotRevision::new(u64::MAX);
+        assert_eq!(
+            actor
+                .start_subnet_search(subnet_consent(scope, &gate))
+                .await,
+            Err(ControllerRuntimeError::SnapshotRevisionExhausted)
+        );
+        assert!(starts.try_recv().is_err(), "nothing was searched");
+
+        // Revocation and a delivered change cannot allocate a generation.
+        for delivered in [false, true] {
+            let (release, release_rx) = oneshot::channel();
+            let (cancelled, _cancelled_rx) = std_mpsc::channel();
+            let (mut actor, _commands, starts, gate) = subnet_actor([SubnetStep::Gated {
+                release: release_rx,
+                cancelled,
+            }]);
+            actor
+                .start_subnet_search(subnet_consent(scope, &gate))
+                .await
+                .unwrap();
+            // The search task runs on this test's own thread.
+            let mut polls = 0;
+            while starts.try_recv().is_err() {
+                polls += 1;
+                assert!(polls < 1_000, "the subnet search should start");
+                tokio::task::yield_now().await;
+            }
+            actor.discovery_generation = exhausted;
+            let outcome = if delivered {
+                actor
+                    .reconcile_network_change(NetworkChange::default())
+                    .await
+            } else {
+                gate.invalidate();
+                actor.reconcile_observation().await
+            };
+            assert_eq!(
+                outcome,
+                Err(ControllerRuntimeError::DiscoveryGenerationExhausted)
+            );
+            drop(release);
+        }
+
+        // A readiness change cannot be published.
+        let (mut actor, _commands, _starts, _gate) = subnet_actor([]);
+        actor.revision = SnapshotRevision::new(u64::MAX);
+        assert_eq!(
+            actor.reconcile_observation().await,
+            Err(ControllerRuntimeError::SnapshotRevisionExhausted)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_actor_stops_when_a_subnet_path_cannot_publish() {
+        // Readiness at subscription, and readiness arriving later.
+        for ready_at_subscription in [true, false] {
+            let (mut actor, _commands, _starts, _gate) = subnet_actor([]);
+            actor.network_source = Arc::new(GateSource {
+                gate: ObservationGate::new(),
+                ready_at_subscription,
+            });
+            actor.observation = None;
+            actor.revision = SnapshotRevision::new(u64::MAX);
+            assert_eq!(
+                tokio::time::timeout(WAIT, actor.run()).await.unwrap(),
+                Err(ControllerRuntimeError::SnapshotRevisionExhausted)
+            );
+        }
+
+        // A queued subnet command that cannot allocate a generation.
+        let (mut actor, commands, _starts, gate) = subnet_actor([]);
+        actor.discovery_generation = OperationGeneration::new(u64::MAX);
+        let consent = subnet_consent(subnet("10.0.0.0/24"), &gate);
+        commands
+            .try_send(ActorCommand::SearchSubnet(consent))
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(WAIT, actor.run()).await.unwrap(),
+            Err(ControllerRuntimeError::DiscoveryGenerationExhausted)
+        );
     }
 }

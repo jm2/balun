@@ -74,6 +74,62 @@ device_dialogs:
   forgotten: "Device forgotten."
   forgotten_session: "Device forgotten for this session only; settings are read-only."
 
+subnet_search:
+  button: "Search a subnet"
+  unavailable: "Subnet search is unavailable until Balun is watching for network changes."
+  title: "Search a subnet"
+  description: >-
+    Enter one private IPv4 subnet from /23 to /32, such as 192.168.2.0/23. You confirm the search before Balun
+    sends anything.
+  entry: "Private subnet"
+  preview: "Addresses: %{candidates}. Outbound requests: at most %{requests}."
+  invalid_syntax: "Enter one IPv4 subnet in CIDR form, such as 192.168.2.0/24."
+  noncanonical: "Enter the network address without host bits, such as 192.168.2.0/23."
+  too_wide: "Enter a subnet from /23 through /32."
+  not_private: "Enter a subnet inside private IPv4 address space."
+  cancel: "Cancel"
+  continue: "Continue"
+  forget: "Forget subnet"
+  confirm_heading: "Search %{subnet}?"
+  confirm_body: >-
+    You entered %{subnet}. Addresses: %{candidates}. Outbound request budget: at most %{requests} requests, 64
+    per second, for up to 30 seconds. Your system's current network routing selects the path. The budget limits
+    what Balun sends, not what routers deliver.
+  search: "Search"
+  searching: "Searching the confirmed subnet for HDHomeRun devices."
+  busy: "Balun is busy; try the subnet search again in a moment."
+  confirmation_expired: "The network changed; review the subnet search again."
+  forgotten: "Remembered subnet forgotten."
+  forgotten_session: "Subnet forgotten for this session only; settings are read-only."
+  stopped_title: "Subnet search stopped"
+  stopped: "No subnet search is running."
+  searching_title: "Searching the subnet"
+  searching_status: "Waiting for replies from the confirmed subnet; this takes up to 30 seconds."
+  complete_title: "Subnet search complete"
+  complete: "Every address in the confirmed subnet was probed."
+  none_title: "No HDHomeRun devices found in the subnet"
+  none: "No valid reply came from the confirmed subnet."
+  incomplete_title: "Subnet search incomplete"
+  deadline: "The search reached its 30-second limit before every address was probed."
+  device_limit: "The search stopped after finding 64 devices, its limit."
+  unavailable_title: "Subnet search unavailable"
+  unavailable_status: "Balun is not watching for network changes, so it cannot search a subnet now."
+  stale_title: "Subnet search not started"
+  stale: "The network changed after you confirmed the search. Confirm it again."
+  changed: >-
+    The network changed during the search, so its replies were discarded. Search again to confirm the subnet for
+    this network.
+  failed_title: "Subnet search failed"
+  failed: "The subnet search could not be completed."
+  banner_complete: "Subnet search complete."
+  banner_none: "No HDHomeRun replies came from the subnet."
+  banner_deadline: "Subnet search incomplete: time limit reached."
+  banner_device_limit: "Subnet search incomplete: device limit reached."
+  banner_changed: "Network changed; the subnet search stopped."
+  banner_stale: "Network changed; confirm the subnet search again."
+  banner_unavailable: "Subnet search is unavailable right now."
+  banner_failed: "Subnet search failed."
+
 failure:
   busy_title: "No tuner available"
   busy_description: "All tuners on %{device} are busy. Device discovery and lineup inspection remain available."

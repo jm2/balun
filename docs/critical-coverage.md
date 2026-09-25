@@ -129,6 +129,15 @@ repeated reply, a refused send, the range-candidate probe, a registry rebuild
 over its device limit, and the production settings-directory lookup. Every other
 Rust threshold is unchanged.
 
+Typed-subnet search (V2.4) removes the routed-era target probe and its deadline error
+from the discovery client, a legitimate removal: it measures 489/597 regions
+(81.91%), and its uncovered ceiling tightens from 109 to 108. The controller gains the
+subnet lane and measures 1971/2167 (90.96%), tightening its ceiling from 197 to 196;
+the settings schema (261/271) and settings session (137/173) record their new
+prefix regions with unchanged ceilings. The subnet runner itself is outside the
+scope; its paced-clock and native fixtures are described in the
+[typed-subnet contract](typed-subnet-discovery-proposal.md#implementation-v24).
+
 ## CI ratchet and review policy
 
 The Linux desktop job measures Rust; Linux quality measures portable package

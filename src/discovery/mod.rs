@@ -6,8 +6,8 @@ mod hostname;
 mod local;
 mod manual;
 mod registry;
-mod routed;
 mod routes;
+mod subnet;
 mod typed_subnet;
 mod types;
 
@@ -21,7 +21,8 @@ pub use changes::NetworkChangeWatchError;
 pub use changes::WindowsNetworkChangeWatcher;
 pub use changes::{
     Coalesced, InterfaceInventory, InterfaceLoss, NETWORK_CHANGE_MAX_DELAY,
-    NETWORK_CHANGE_QUIET_PERIOD, NetworkChange, coalesce_burst,
+    NETWORK_CHANGE_QUIET_PERIOD, NetworkChange, ObservationGate, ObservationGeneration,
+    ObservationState, ObservationWatch, coalesce_burst,
 };
 #[cfg(all(test, feature = "desktop"))]
 pub(crate) use client::DiscoveryPortOverride;
@@ -43,11 +44,12 @@ pub use registry::{
     DeviceRegistry, ExpirationOutcome, LocatorClaim, LocatorOrigin, ObservationOutcome,
     RegisteredDevice, RegistryError, RegistryInstant,
 };
-pub use routed::{
-    ApprovedIpv4Range, DEFAULT_ROUTED_SCAN_DEADLINE, InvalidRoutedScanConfig,
-    MAX_ROUTED_CANDIDATES, MAX_ROUTED_CONCURRENCY, MAX_ROUTED_SCAN_DEADLINE,
-    MAX_ROUTED_WIRE_DATAGRAMS_PER_SECOND, MIN_ROUTED_SCAN_DEADLINE, RoutedRangeError,
-    RoutedScanConfig,
+#[cfg(test)]
+pub(crate) use subnet::{PROCESS_LANE_TESTS, claim_process_lane};
+pub use subnet::{
+    SubnetAdmissionError, SubnetConsentError, SubnetScanError, SubnetScanIncomplete,
+    SubnetScanOutcome, SubnetScanPermit, SubnetScanReport, SubnetSearchConsent,
+    discover_typed_subnet,
 };
 pub use typed_subnet::{InvalidTypedSubnetScope, TypedSubnetScope};
 pub use types::{DiscoveryMethod, ProbeEndpoint};

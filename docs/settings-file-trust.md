@@ -94,6 +94,17 @@ approvals intact, and no deletion path is added to the private profile. Users
 may delete the directory by hand; it holds only keyed fingerprints and bounded
 policy state, never raw routes, interface names, or prefixes.
 
+## Remembered subnet (V2.4, 2026-09-24)
+
+Subnet search remembers only the last subnet the user entered, as `subnet_prefix`
+in schema 3. It is editable text for the next search and never authorization:
+every search still needs a fresh confirmation, and a failed save cannot skip one.
+A document is written as schema 3 only while it holds a prefix, and as schema 2
+otherwise, so **Forget subnet** restores a file earlier builds read. Earlier
+builds report a schema-3 file as unsupported and leave it untouched. A prefix
+that is not a canonical private `/23`–`/32` subnet makes the document malformed,
+and it is preserved like any other.
+
 ## Accepted responsiveness and durability tradeoff
 
 Keep filesystem work off the GTK main context. Use one bounded worker per

@@ -5,6 +5,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use adw::prelude::*;
+use balun::discovery::TypedSubnetScope;
 use balun::settings::{RememberedTarget, Settings, SettingsStore, WindowState};
 
 mod worker;
@@ -133,6 +134,21 @@ impl SettingsSession {
     /// remembered or the store is read-only.
     pub(crate) fn forget_target(&self, target: &RememberedTarget) -> Option<PendingSave> {
         self.stage(|settings| settings.forget_target(target))
+    }
+
+    /// The subnet last entered for subnet search, offered again as editable
+    /// text. It never authorizes a search.
+    pub(crate) fn subnet_prefix(&self) -> Option<TypedSubnetScope> {
+        self.settings.borrow().subnet_prefix()
+    }
+
+    /// Remember the entered subnet, or with `None` forget it, and stage the
+    /// save; `None` when nothing changed or the store is read-only.
+    pub(crate) fn set_subnet_prefix(
+        &self,
+        prefix: Option<TypedSubnetScope>,
+    ) -> Option<PendingSave> {
+        self.stage(|settings| settings.set_subnet_prefix(prefix))
     }
 
     /// Window geometry to apply before the window is shown.
@@ -304,6 +320,42 @@ mod tests {
         );
         let reloaded = SettingsSession::open(Some(store));
         assert_eq!(reloaded.remembered_targets(), vec![target]);
+    }
+
+    #[test]
+    fn the_entered_subnet_round_trips_and_forgetting_it_saves() {
+        let (_directory, store) = store();
+        let session = SettingsSession::open(Some(store.clone()));
+        let prefix: TypedSubnetScope = "192.168.2.0/23".parse().expect("valid subnet");
+        assert_eq!(session.subnet_prefix(), None);
+        assert!(
+            session.set_subnet_prefix(None).is_none(),
+            "nothing to forget"
+        );
+
+        write(
+            &session,
+            session
+                .set_subnet_prefix(Some(prefix))
+                .expect("a new subnet stages a save"),
+        );
+        assert!(session.set_subnet_prefix(Some(prefix)).is_none());
+        assert_eq!(
+            SettingsSession::open(Some(store.clone())).subnet_prefix(),
+            Some(prefix)
+        );
+
+        write(
+            &session,
+            session
+                .set_subnet_prefix(None)
+                .expect("forgetting stages a save"),
+        );
+        assert_eq!(SettingsSession::open(Some(store)).subnet_prefix(), None);
+        // Without a store the subnet is kept for the session only.
+        let memory = SettingsSession::open(None);
+        assert!(memory.set_subnet_prefix(Some(prefix)).is_none());
+        assert_eq!(memory.subnet_prefix(), Some(prefix));
     }
 
     #[test]

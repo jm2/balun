@@ -285,6 +285,8 @@ impl fmt::Debug for InterfaceInventory {
     }
 }
 
+mod observation;
+
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 mod watch;
 
@@ -305,6 +307,7 @@ mod windows;
 pub use linux::LinuxNetworkChangeWatcher;
 #[cfg(target_os = "macos")]
 pub use macos::MacosNetworkChangeWatcher;
+pub use observation::{ObservationGate, ObservationGeneration, ObservationState, ObservationWatch};
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub use watch::NetworkChangeWatchError;
 #[cfg(windows)]

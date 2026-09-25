@@ -219,7 +219,7 @@ impl LocatorClaim {
             .map(|(origin, freshness)| {
                 let method_preference = match origin.method {
                     DiscoveryMethod::Targeted => 4,
-                    DiscoveryMethod::RoutedTargeted => 4,
+                    DiscoveryMethod::TypedSubnet => 4,
                     DiscoveryMethod::Ipv4Broadcast => 3,
                     DiscoveryMethod::Ipv6SiteLocalMulticast => 2,
                     DiscoveryMethod::Ipv6LinkLocalMulticast => 1,
@@ -866,7 +866,7 @@ mod tests {
             .unwrap();
         registry
             .observe(
-                observation(FIRST_ID, source, DiscoveryMethod::RoutedTargeted),
+                observation(FIRST_ID, source, DiscoveryMethod::TypedSubnet),
                 at(20),
             )
             .unwrap();
@@ -878,7 +878,7 @@ mod tests {
                 && origin.interface.as_deref() == Some("test0")
         }));
         assert!(locator.origins().any(|origin| {
-            origin.method == DiscoveryMethod::RoutedTargeted
+            origin.method == DiscoveryMethod::TypedSubnet
                 && origin.interface.as_deref() == Some("test0")
         }));
     }

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Search a private subnet (/23 to /32) for tuners on Linux, macOS, and Windows after confirming
+  its request budget each time; `balun-discover --approved-range` now uses the same policy.
 - macOS and Windows now notice adapter, address, and route changes natively, so addresses
   observed through a lost adapter expire there as they already did on Linux.
 - Find device and Forget device dialogs now use all thirteen supported locales,

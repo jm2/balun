@@ -1,5 +1,6 @@
 //! Virtualized HDHomeRun device sidebar.
 
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
@@ -9,6 +10,7 @@ use balun::controller::{
     ApplicationSnapshot, DeviceSummary, DiscoveryFailure, DiscoveryKind, DiscoveryStatus,
     NetworkChangeSummary, OperationGeneration,
 };
+use balun::localization::subnet_search::{self, SubnetEntryLabels};
 
 use super::objects::DeviceRowObject;
 
@@ -50,6 +52,7 @@ pub(crate) struct DeviceSidebar {
     spinner: gtk::Spinner,
     cancel_discovery_button: gtk::Button,
     exact_discovery_button: gtk::Button,
+    subnet_search_button: gtk::Button,
     refresh_button: gtk::Button,
     device_context: SharedDeviceContextHandler,
     bound_rows: BoundRows,
@@ -79,6 +82,11 @@ impl DeviceSidebar {
     #[must_use]
     pub(crate) fn exact_discovery_button(&self) -> &gtk::Button {
         &self.exact_discovery_button
+    }
+
+    #[must_use]
+    pub(crate) fn subnet_search_button(&self) -> &gtk::Button {
+        &self.subnet_search_button
     }
 
     #[must_use]
@@ -186,6 +194,13 @@ impl DeviceSidebar {
         self.refresh_button.set_sensitive(actions.start_sensitive);
         self.exact_discovery_button
             .set_sensitive(actions.start_sensitive);
+        let subnet = subnet_action_presentation(
+            actions.start_sensitive,
+            snapshot.observation().generation().is_some(),
+        );
+        self.subnet_search_button.set_sensitive(subnet.sensitive);
+        self.subnet_search_button
+            .set_tooltip_text(Some(&subnet_action_tooltip(subnet.available)));
         self.cancel_discovery_button
             .set_sensitive(actions.cancel_sensitive);
         self.cancel_discovery_button
@@ -197,7 +212,7 @@ impl DeviceSidebar {
         match plan_terminal_banner(
             discovery.kind(),
             discovery.status(),
-            title,
+            title.as_deref(),
             discovery.generation(),
             self.announced_generation.get(),
             self.terminal_banner.title().as_str(),
@@ -323,6 +338,16 @@ pub(crate) fn build() -> DeviceSidebar {
         .css_classes(["flat"])
         .build();
     exact_discovery_button.update_property(&[gtk::accessible::Property::Label(&find_title)]);
+    // Offered only once a snapshot reports healthy network observation.
+    let subnet_labels = SubnetEntryLabels::current();
+    let subnet_search_button = gtk::Button::builder()
+        .icon_name("network-workgroup-symbolic")
+        .tooltip_text(&*subnet_labels.unavailable)
+        .css_classes(["flat"])
+        .sensitive(false)
+        .build();
+    subnet_search_button
+        .update_property(&[gtk::accessible::Property::Label(&subnet_labels.button)]);
     let refresh_button = gtk::Button::builder()
         .icon_name("view-refresh-symbolic")
         .tooltip_text("Refresh devices (F5)")
@@ -343,6 +368,7 @@ pub(crate) fn build() -> DeviceSidebar {
         .update_property(&[gtk::accessible::Property::Label("Stop device discovery")]);
     let discovery_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     discovery_actions.append(&exact_discovery_button);
+    discovery_actions.append(&subnet_search_button);
     discovery_actions.append(&refresh_button);
     discovery_actions.append(&cancel_discovery_button);
     let header = adw::HeaderBar::new();
@@ -385,6 +411,7 @@ pub(crate) fn build() -> DeviceSidebar {
         spinner,
         cancel_discovery_button,
         exact_discovery_button,
+        subnet_search_button,
         refresh_button,
         device_context,
         bound_rows,
@@ -667,19 +694,19 @@ fn apply_empty_presentation(
 ) {
     let presentation = discovery_presentation(discovery_kind, discovery_status, issue_count);
     status.set_icon_name(Some(presentation.icon_name));
-    status.set_title(presentation.title);
-    status.set_description(Some(presentation.description));
+    status.set_title(&presentation.title);
+    status.set_description(Some(&presentation.description));
 }
 
 /// How the top banner reacts to a discovery outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BannerChange {
+enum BannerChange<'a> {
     /// Nothing to show; clear whatever is there.
     Hide,
     /// A condition worth keeping until the discovery state changes.
-    Reveal(&'static str),
+    Reveal(&'a str),
     /// Good news: show it, then let a timer clear it.
-    Announce(&'static str),
+    Announce(&'a str),
     /// A notice borrowed the banner after the announcement; clear it but
     /// keep the announcement on record so it is not repeated.
     Clear,
@@ -692,18 +719,18 @@ enum BannerChange {
 /// whether the timer has run or not. Every other title stays until the
 /// discovery state changes, and a notice that borrowed the banner after the
 /// announcement is cleared on the next snapshot, as before.
-fn plan_terminal_banner(
+fn plan_terminal_banner<'a>(
     kind: DiscoveryKind,
     status: DiscoveryStatus,
-    title: Option<&'static str>,
+    title: Option<&'a str>,
     generation: OperationGeneration,
     announced: Option<OperationGeneration>,
     shown_title: &str,
-) -> BannerChange {
+) -> BannerChange<'a> {
     let Some(title) = title else {
         return BannerChange::Hide;
     };
-    if (kind, status) != (DiscoveryKind::Exact, DiscoveryStatus::Ready) {
+    if status != DiscoveryStatus::Ready || kind == DiscoveryKind::Local {
         return BannerChange::Reveal(title);
     }
     if announced != Some(generation) {
@@ -723,12 +750,15 @@ fn terminal_banner_title(
     kind: DiscoveryKind,
     status: DiscoveryStatus,
     has_device_rows: bool,
-) -> Option<&'static str> {
+) -> Option<Cow<'static, str>> {
     if !has_device_rows {
         return None;
     }
+    if kind == DiscoveryKind::Subnet || matches!(status, DiscoveryStatus::Incomplete(_)) {
+        return subnet_search::banner(status);
+    }
 
-    match (kind, status) {
+    let title = match (kind, status) {
         (DiscoveryKind::Exact, DiscoveryStatus::Ready) => Some("HDHomeRun device reply received."),
         (DiscoveryKind::Exact, DiscoveryStatus::NoResponse) => {
             Some("No valid HDHomeRun reply was received.")
@@ -746,8 +776,11 @@ fn terminal_banner_title(
         (DiscoveryKind::Local, DiscoveryStatus::Failed(_)) => {
             Some("Local device discovery failed.")
         }
-        (_, DiscoveryStatus::Idle | DiscoveryStatus::Refreshing | DiscoveryStatus::Ready) => None,
-    }
+        (_, DiscoveryStatus::Idle | DiscoveryStatus::Refreshing | DiscoveryStatus::Ready)
+        | (DiscoveryKind::Subnet, _)
+        | (_, DiscoveryStatus::Incomplete(_)) => None,
+    };
+    title.map(Cow::Borrowed)
 }
 
 /// A brief notice for the snapshot that reconciled a network change, shown
@@ -765,11 +798,54 @@ fn network_change_banner_title(network: NetworkChangeSummary) -> Option<&'static
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct DiscoveryPresentation {
     icon_name: &'static str,
-    title: &'static str,
-    description: &'static str,
+    title: Cow<'static, str>,
+    description: Cow<'static, str>,
+}
+
+/// Whether the subnet action can start a search, and whether observation
+/// makes subnet search available at all.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SubnetActionPresentation {
+    sensitive: bool,
+    available: bool,
+}
+
+/// Subnet search needs an idle discovery lane and healthy observation.
+fn subnet_action_presentation(start_sensitive: bool, observing: bool) -> SubnetActionPresentation {
+    SubnetActionPresentation {
+        sensitive: start_sensitive && observing,
+        available: observing,
+    }
+}
+
+fn subnet_action_tooltip(available: bool) -> Cow<'static, str> {
+    let labels = SubnetEntryLabels::current();
+    if available {
+        labels.button
+    } else {
+        labels.unavailable
+    }
+}
+
+/// The empty-list copy for a subnet search, which never stops short of its
+/// scope without saying so.
+fn subnet_presentation(status: DiscoveryStatus) -> DiscoveryPresentation {
+    let (title, description) = subnet_search::status(status);
+    DiscoveryPresentation {
+        icon_name: match status {
+            DiscoveryStatus::Idle => "process-stop-symbolic",
+            DiscoveryStatus::Refreshing => "network-transmit-receive-symbolic",
+            DiscoveryStatus::Ready => "network-workgroup-symbolic",
+            DiscoveryStatus::NoResponse => "network-offline-symbolic",
+            DiscoveryStatus::Incomplete(_) => "dialog-warning-symbolic",
+            DiscoveryStatus::Failed(_) => "dialog-error-symbolic",
+        },
+        title,
+        description,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -793,59 +869,68 @@ fn discovery_presentation(
     status: DiscoveryStatus,
     issue_count: u16,
 ) -> DiscoveryPresentation {
+    if kind == DiscoveryKind::Subnet || matches!(status, DiscoveryStatus::Incomplete(_)) {
+        return subnet_presentation(status);
+    }
+    let fixed = |icon_name, title, description| DiscoveryPresentation {
+        icon_name,
+        title: Cow::Borrowed(title),
+        description: Cow::Borrowed(description),
+    };
     match (kind, status) {
-        (DiscoveryKind::Local, DiscoveryStatus::Idle) => DiscoveryPresentation {
-            icon_name: "network-wired-symbolic",
-            title: "No HDHomeRun devices",
-            description: "Choose Refresh to search your local network.",
-        },
-        (DiscoveryKind::Exact, DiscoveryStatus::Idle) => DiscoveryPresentation {
-            icon_name: "process-stop-symbolic",
-            title: "Device search stopped",
-            description: "No exact-address discovery request is running.",
-        },
-        (DiscoveryKind::Local, DiscoveryStatus::Refreshing) => DiscoveryPresentation {
-            icon_name: "network-transmit-receive-symbolic",
-            title: "Searching for HDHomeRun devices",
-            description: "Waiting for replies from this local network.",
-        },
-        (DiscoveryKind::Exact, DiscoveryStatus::Refreshing) => DiscoveryPresentation {
-            icon_name: "network-transmit-receive-symbolic",
-            title: "Finding HDHomeRun device",
-            description: "Waiting for a reply from the entered address.",
-        },
-        (DiscoveryKind::Local, DiscoveryStatus::Ready) => DiscoveryPresentation {
-            icon_name: "network-offline-symbolic",
-            title: "No HDHomeRun devices found",
-            description: if issue_count == 0 {
+        (DiscoveryKind::Exact, DiscoveryStatus::Idle) => fixed(
+            "process-stop-symbolic",
+            "Device search stopped",
+            "No exact-address discovery request is running.",
+        ),
+        (DiscoveryKind::Exact, DiscoveryStatus::Refreshing) => fixed(
+            "network-transmit-receive-symbolic",
+            "Finding HDHomeRun device",
+            "Waiting for a reply from the entered address.",
+        ),
+        (DiscoveryKind::Exact, DiscoveryStatus::Ready) => fixed(
+            "network-wired-symbolic",
+            "Device reply received",
+            "The exact-address discovery request completed.",
+        ),
+        (DiscoveryKind::Exact, DiscoveryStatus::NoResponse) => fixed(
+            "network-offline-symbolic",
+            "No valid HDHomeRun reply received",
+            "Check that the entered address is reachable, then try again.",
+        ),
+        (DiscoveryKind::Local, DiscoveryStatus::Refreshing) => fixed(
+            "network-transmit-receive-symbolic",
+            "Searching for HDHomeRun devices",
+            "Waiting for replies from this local network.",
+        ),
+        (DiscoveryKind::Local, DiscoveryStatus::Ready) => fixed(
+            "network-offline-symbolic",
+            "No HDHomeRun devices found",
+            if issue_count == 0 {
                 "Check that a tuner is reachable, then refresh again."
             } else {
                 "No usable tuner was found; one or more replies were ignored."
             },
-        },
-        (DiscoveryKind::Exact, DiscoveryStatus::Ready) => DiscoveryPresentation {
-            icon_name: "network-wired-symbolic",
-            title: "Device reply received",
-            description: "The exact-address discovery request completed.",
-        },
-        (DiscoveryKind::Exact, DiscoveryStatus::NoResponse) => DiscoveryPresentation {
-            icon_name: "network-offline-symbolic",
-            title: "No valid HDHomeRun reply received",
-            description: "Check that the entered address is reachable, then try again.",
-        },
-        (DiscoveryKind::Local, DiscoveryStatus::NoResponse) => DiscoveryPresentation {
-            icon_name: "network-offline-symbolic",
-            title: "No valid HDHomeRun replies received",
-            description: "Check that a tuner is reachable, then refresh again.",
-        },
-        (kind, DiscoveryStatus::Failed(failure)) => DiscoveryPresentation {
-            icon_name: "dialog-error-symbolic",
-            title: match kind {
-                DiscoveryKind::Local => "Device discovery failed",
+        ),
+        (DiscoveryKind::Local, DiscoveryStatus::NoResponse) => fixed(
+            "network-offline-symbolic",
+            "No valid HDHomeRun replies received",
+            "Check that a tuner is reachable, then refresh again.",
+        ),
+        (kind, DiscoveryStatus::Failed(failure)) => fixed(
+            "dialog-error-symbolic",
+            match kind {
                 DiscoveryKind::Exact => "Device search failed",
+                DiscoveryKind::Local | DiscoveryKind::Subnet => "Device discovery failed",
             },
-            description: discovery_failure_description(kind, failure),
-        },
+            discovery_failure_description(kind, failure),
+        ),
+        // Local idle, and the subnet states handled above.
+        _ => fixed(
+            "network-wired-symbolic",
+            "No HDHomeRun devices",
+            "Choose Refresh to search your local network.",
+        ),
     }
 }
 
@@ -866,7 +951,16 @@ fn discovery_failure_description(kind: DiscoveryKind, failure: DiscoveryFailure)
         (_, DiscoveryFailure::ExactTargetLimitReached) => {
             "This session has reached its limit for distinct device addresses."
         }
-        (_, DiscoveryFailure::Internal) => "Device discovery stopped because of an internal error.",
+        // Subnet failures have their own translated copy; these never reach
+        // a local or exact operation.
+        (
+            _,
+            DiscoveryFailure::Internal
+            | DiscoveryFailure::SubnetUnavailable
+            | DiscoveryFailure::SubnetConfirmationStale
+            | DiscoveryFailure::NetworkChanged,
+        )
+        | (DiscoveryKind::Subnet, _) => "Device discovery stopped because of an internal error.",
     }
 }
 
@@ -1107,7 +1201,8 @@ mod tests {
                 DiscoveryKind::Local,
                 DiscoveryStatus::Failed(DiscoveryFailure::Network),
                 true
-            ),
+            )
+            .as_deref(),
             Some("Local device discovery failed.")
         );
         assert_eq!(
@@ -1172,6 +1267,96 @@ mod tests {
     }
 
     #[test]
+    fn subnet_search_is_offered_only_with_an_idle_lane_and_healthy_observation() {
+        for (start_sensitive, observing, sensitive) in [
+            (true, true, true),
+            (true, false, false),
+            (false, true, false),
+            (false, false, false),
+        ] {
+            assert_eq!(
+                subnet_action_presentation(start_sensitive, observing),
+                SubnetActionPresentation {
+                    sensitive,
+                    available: observing,
+                }
+            );
+        }
+        let labels = SubnetEntryLabels::current();
+        assert_eq!(subnet_action_tooltip(true), labels.button);
+        assert_eq!(subnet_action_tooltip(false), labels.unavailable);
+    }
+
+    #[test]
+    fn subnet_outcomes_have_their_own_copy_and_never_look_complete_when_cut_short() {
+        use balun::controller::DiscoveryIncomplete;
+
+        let incomplete = [
+            DiscoveryStatus::Incomplete(DiscoveryIncomplete::Deadline),
+            DiscoveryStatus::Incomplete(DiscoveryIncomplete::DeviceLimit),
+        ];
+        let complete = discovery_presentation(DiscoveryKind::Subnet, DiscoveryStatus::Ready, 0);
+        let empty = discovery_presentation(DiscoveryKind::Subnet, DiscoveryStatus::NoResponse, 0);
+        for status in incomplete {
+            let presentation = discovery_presentation(DiscoveryKind::Subnet, status, 0);
+            assert_eq!(presentation.icon_name, "dialog-warning-symbolic");
+            assert_ne!(presentation.title, complete.title);
+            assert_ne!(presentation.title, empty.title);
+            let banner = terminal_banner_title(DiscoveryKind::Subnet, status, true)
+                .expect("an incomplete search stays visible above listed devices");
+            assert_eq!(
+                plan_terminal_banner(
+                    DiscoveryKind::Subnet,
+                    status,
+                    Some(&banner),
+                    OperationGeneration::new(1),
+                    None,
+                    "",
+                ),
+                BannerChange::Reveal(&banner)
+            );
+        }
+        for failure in [
+            DiscoveryFailure::SubnetUnavailable,
+            DiscoveryFailure::SubnetConfirmationStale,
+            DiscoveryFailure::NetworkChanged,
+            DiscoveryFailure::Internal,
+        ] {
+            let status = DiscoveryStatus::Failed(failure);
+            let presentation = discovery_presentation(DiscoveryKind::Subnet, status, 0);
+            assert_eq!(presentation.icon_name, "dialog-error-symbolic");
+            assert!(terminal_banner_title(DiscoveryKind::Subnet, status, true).is_some());
+            assert!(terminal_banner_title(DiscoveryKind::Subnet, status, false).is_none());
+        }
+        for status in [DiscoveryStatus::Idle, DiscoveryStatus::Refreshing] {
+            assert!(terminal_banner_title(DiscoveryKind::Subnet, status, true).is_none());
+            assert!(
+                !discovery_presentation(DiscoveryKind::Subnet, status, 0)
+                    .title
+                    .is_empty()
+            );
+        }
+        // A completed search is announced once, like an exact reply.
+        let done = terminal_banner_title(DiscoveryKind::Subnet, DiscoveryStatus::Ready, true)
+            .expect("a completed search is announced");
+        assert_eq!(
+            plan_terminal_banner(
+                DiscoveryKind::Subnet,
+                DiscoveryStatus::Ready,
+                Some(&done),
+                OperationGeneration::new(2),
+                None,
+                "",
+            ),
+            BannerChange::Announce(&done)
+        );
+        assert_eq!(
+            discovery_failure_description(DiscoveryKind::Subnet, DiscoveryFailure::Network),
+            "Device discovery stopped because of an internal error."
+        );
+    }
+
+    #[test]
     fn nested_application_guard_restores_the_prior_state() {
         let flag = Rc::new(Cell::new(false));
         let outer = SnapshotApplicationGuard::enter(Rc::clone(&flag));
@@ -1200,6 +1385,53 @@ mod tests {
         assert_eq!(
             sidebar.exact_discovery_button.accessible_role(),
             gtk::AccessibleRole::Button
+        );
+        assert_eq!(
+            sidebar.subnet_search_button.accessible_role(),
+            gtk::AccessibleRole::Button
+        );
+        assert!(
+            !sidebar.subnet_search_button.is_sensitive(),
+            "subnet search waits for healthy observation"
+        );
+
+        // Healthy observation offers the action; a running subnet search
+        // offers only Stop, and its progress copy is the subnet's own.
+        use balun::controller::{DiscoveryState, SelectedLineupState, SnapshotRevision};
+        use balun::discovery::{ObservationGeneration, ObservationState};
+        let snapshot = |revision, discovery| {
+            ApplicationSnapshot::new(
+                SnapshotRevision::new(revision),
+                OperationGeneration::new(1),
+                OperationGeneration::INITIAL,
+                discovery,
+                [],
+                None,
+                SelectedLineupState::unselected(OperationGeneration::INITIAL),
+            )
+            .unwrap()
+            .with_observation(ObservationState::Ready(ObservationGeneration::FIRST))
+        };
+        let generation = OperationGeneration::new(1);
+        sidebar.apply_snapshot(&snapshot(
+            1,
+            DiscoveryState::idle_for(generation, DiscoveryKind::Local),
+        ));
+        assert!(sidebar.subnet_search_button.is_sensitive());
+        assert_eq!(
+            sidebar.subnet_search_button.tooltip_text().as_deref(),
+            Some(&*SubnetEntryLabels::current().button)
+        );
+        sidebar.apply_snapshot(&snapshot(
+            2,
+            DiscoveryState::refreshing_for(generation, DiscoveryKind::Subnet),
+        ));
+        assert!(!sidebar.subnet_search_button.is_sensitive());
+        assert!(sidebar.cancel_discovery_button.is_visible());
+        assert!(sidebar.cancel_discovery_button.is_sensitive());
+        assert_eq!(
+            sidebar.status.title().as_str(),
+            subnet_search::status(DiscoveryStatus::Refreshing).0
         );
         assert_eq!(
             sidebar.refresh_button.accessible_role(),
