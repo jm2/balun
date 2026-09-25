@@ -2,13 +2,14 @@
 
 ## Supported versions
 
-Balun v0.1 is an alpha. Security fixes land on `main` and are included in the next release (0.2.0).
-Report vulnerabilities in the initial release candidate as well as published v0.1 versions.
+Balun is an alpha. Security fixes land on `main` and are included in the next release.
+Report vulnerabilities in `main` and the latest published release.
 
 | Version | Supported |
 | --- | --- |
 | `main` | ✅ |
-| `0.1.x` | ✅ |
+| `0.2.x` | ✅ |
+| `0.1.x` | ❌ Upgrade to 0.2 |
 
 ## Reporting a vulnerability
 

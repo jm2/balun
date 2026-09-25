@@ -16,10 +16,9 @@ address so you know which tuner failed.
 
 ![Balun main window](data/screenshots/balun-main-window.png)
 
-> **v0.1.1 is the latest release; `main` is 0.2.0, unreleased.** Balun plays live TV on Linux,
-> macOS, and Windows and has been verified against real tuners. Pre-built v0.1.1 packages are on
-> the [Releases](https://github.com/jm2/balun/releases) page; the countable status is in
-> [`docs/task.md`](docs/task.md).
+> **v0.2.0.** Balun plays live TV on Linux, macOS, and Windows and has been verified against real
+> tuners. Pre-built packages are on the [Releases](https://github.com/jm2/balun/releases) page;
+> the countable status is in [`docs/task.md`](docs/task.md).
 
 ## Features
 

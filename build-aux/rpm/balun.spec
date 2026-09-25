@@ -92,6 +92,9 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/*.metainfo.xml
 %{_datadir}/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg
 
 %changelog
+* Fri Sep 25 2026 John-Michael Mulesa <jmulesa@gmail.com> - 0.2.0-1
+- Add subnet search and Remember device; remove route-table tunnel discovery.
+
 * Sat Sep 05 2026 John-Michael Mulesa <jmulesa@gmail.com> - 0.1.1-1
 - Fix macOS playback, icons, and menus; add shared About and Quit actions.
 

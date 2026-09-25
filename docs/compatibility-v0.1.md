@@ -276,7 +276,7 @@ channel switching, and close all worked. This completes P4.1. Startup, idle, and
 switch budgets were not re-measured for the packages; the development-build
 figures under [Tune and teardown budgets](#tune-and-teardown-budgets) stand, and
 the V2.1 re-take remains open. Linux coverage was brief: the IPv6 address-refresh
-discovery defect later found in review (#145) was not observed and is fixed for
+discovery defect later found in review (#145) was not observed and is fixed in
 v0.2.0.
 
 ## In-band guide spike

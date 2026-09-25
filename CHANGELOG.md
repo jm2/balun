@@ -7,151 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-25
+
 ### Added
 
-- **Remember device** in a discovered tuner's right-click menu keeps it with the devices added by
-  address, so it is probed at every launch; the menu item and notices use all thirteen catalogs.
-- Search a private subnet (/23 to /32) for tuners on Linux, macOS, and Windows after confirming
-  its request budget each time; `balun-discover --approved-range` now uses the same policy.
-- macOS and Windows now notice adapter, address, and route changes natively, so addresses
-  observed through a lost adapter expire there as they already did on Linux.
-- Find device and Forget device dialogs now use all thirteen supported locales,
-  including validation, launcher accessibility copy, and read-only-settings notices.
-- Reviewed digest pins for all six CI/release job containers, with a workflow
-  inventory check that rejects changed, missing, or unrecorded image references.
-- YAML lint and builder-image checks now install the complete three-package Python
-  dependency set from exact versions and reviewed wheel hashes, with no source-build fallback.
-- Playback startup and idle status now translate ready, missing-component, and
-  initialization-failure messages in all thirteen supported locales. Runtime
-  versions and component names stay literal.
-- Playback failure categories, recovery instructions, and fallback device/channel
-  labels now translate in all thirteen catalogs, preserving literal codec names.
-- Translated playback progress and parameterized connecting/buffering messages in
-  all thirteen catalogs, with placeholder parity and literal display-name rendering.
-- Translated navigation titles and live-TV control names/tooltips in all thirteen
-  catalogs, including mute and fullscreen transitions and the desktop idle reason.
-- Localization foundation with thirteen embedded catalogs, automatic locale
-  selection and English fallback, translated application-menu accessibility copy,
-  and an About description. The remaining interface and CLI are still English.
-- Bounded per-generation startup timing records separate predecessor retirement,
-  handoff validation, graph setup, worker-captured HTTP/appsrc observations, and
-  received stream/PLAYING notifications. First raw video/audio sink ingress and
-  video paintable invalidation are recorded even after PLAYING, without treating
-  them as proof of displayed or audible output. Decoder-output/presentation
-  timing, continuing media progress, and useful-media deadlines remain pending.
-- Isolated native-call stall regressions document the limits of playback teardown
-  timeouts; Windows CI now executes the desktop tests as well as compiling them.
-- Native inventory tooling independently hashes reopened package trees and completed
-  artifacts, validates exact native membership/content against component metadata, and
-  emits a native-scope CycloneDX SBOM. The macOS helper records each native copy's
-  input owner and pre/post-relocation content, rejecting unknown final members
-  and any changed native content in the reopened DMG.
-  An installed Homebrew recipe collector preserves actual package/source/license
-  metadata plus independently identified resource and ordered patch declarations.
-  Catalog assembly, embedded-component ownership/license evidence,
-  remaining final-artifact adapters, and release attachment remain
-  pending; current packages do not yet include these reports.
-- [Flatpak Cargo-source generation](docs/flatpak-generator-inputs.md) installs its
-  full Python dependency closure from reviewed wheel hashes into a private environment in CI and
-  release jobs, with source-build fallback disabled.
-- Critical admission, cancellation, identity, privacy, and package gates have measured
-  coverage baselines and per-surface CI ratchets, with native-platform gaps kept explicit.
-- Python package-gate coverage installs now require reviewed wheel hashes and
-  reject source-build fallback for the existing coverage.py 7.16.1 tool.
-- Reproducible adversarial packet, metadata/URL, lineup, and package-manifest
-  properties run in PR checks and scheduled extended corpora, with failure replay records.
-- Typed-subnet scope validation and exact preview budgets implement the approved
-  private `/23`–`/32` policy that subnet search now uses.
-- **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
-  `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
-- **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
-- Rustup-based release candidate jobs select reviewed Rust 1.98.1, with a separate
-  update manifest and CI rejection of changed or missing compiler selections.
-- **winget** — `winget install jm2.Balun` installs the Windows build.
-- Locked the complete Markdown/TOML lint dependency tree with tarball integrity
-  checks and disabled install scripts; CI no longer resolves fresh transitive
-  npm dependencies for these tools on each run. The Markdown linter and its TOML
-  parser advance to clear the observed dependency advisories.
+- Search a private subnet (/23 to /32) for tuners, confirmed before every search.
+- Remember device in a discovered tuner's right-click menu, saving it like a tuner added by address.
+- Native network-change detection on macOS and Windows, as on Linux.
+- Translations in thirteen languages, chosen from the system locale, for most of the interface.
+- Fedora COPR, AUR (`balun`, `balun-bin`, `balun-git`), and winget (`jm2.Balun`) packages.
 
 ### Changed
 
-- Deinterlacing evidence now distinguishes verified steady field order and progressive
-  passthrough from unresolved mixed-stream transition and boundary timing behavior.
-- Playback and shutdown claims now reflect the accepted in-process native boundary:
-  native hangs can block the UI or close before timed waits, and network bytes do not
-  establish useful-media progress. Review is owned before beta and after a reproduced hang.
+- `balun-discover --approved-range` follows the subnet-search limits: /23 to /32, 30 seconds.
+- Settings live in a private profile and show a notice when they cannot be saved.
+- Hardened builds and packages: pinned build containers and tools, and bounded checks of every
+  Linux, macOS, and Windows package before upload.
 
 ### Removed
 
-- Route-table tunnel discovery (**Search routes behind your tunnel**) and
-  `balun-discover --providers` are removed; find remote tuners with **Search a subnet**, by IP
-  address or hostname, or with `balun-discover --approved-range`.
+- Route-table tunnel discovery (Search routes behind your tunnel) and `balun-discover --providers`;
+  use Search a subnet or Find device by address instead.
 
 ### Fixed
 
-- On Linux, routine IPv6 address refreshes no longer cancel device searches every few seconds,
-  and a remembered device whose startup search was interrupted is tried again.
-- Keyboard focus, scroll position, and an open Forget menu in the device list no longer
-  reset when discovery or channel loading updates it, so arrow keys select the next device.
-- Reload channels keeps the highlighted channel and scrolls back to it once the lineup loads.
-- Losing one IPv6 address, such as a rotated temporary address, no longer removes tuners found over
-  IPv4 or stops playback.
-- A tuner stream that ends before sending any data now shows the stream as unavailable
-  instead of staying on "Connecting…" until Stop.
-- Channels carrying teletext or DVB subtitles no longer fail to play when those decoders
-  are missing, and subtitles are no longer burned into the video.
-- Discovery keeps working after a tuner's address passes to another tuner, one bad tuner count no
-  longer hides every device or halts discovery, and re-probing the playing tuner no longer stops it.
-- A live stream that ends mid-playback, such as when its tuner is reclaimed, now shows the
-  stream as unavailable instead of returning to the idle page as if Stop was pressed.
-- Debian control/data and Arch payloads now receive bounded decoding and complete
-  tar member preflight before extraction. Native parser isolation and extraction
-  containment remain pending; only trusted local build output is admitted.
-- Settings now load from a configuration folder writable by your own user-private group,
-  keep a read-only profile read-only, and show a notice when they cannot be saved.
-- RPM payload inspection now bounds decoding and validates member paths, types,
-  links, sizes, and directory budgets before invoking the native extractor.
-  Native parser isolation remains pending.
-- Linux Debian, RPM, and Arch inspectors now share one bounded private archive
-  snapshot, preventing input replacement between metadata and payload checks.
-  Complete extraction containment remains pending.
-- Playback status and error descriptions now show tuner/channel names as literal
-  text, so ampersands and markup-like names cannot break or reformat the message.
-- Concurrent source rejection now cancels a transport that is still being published,
-  zeroizes pending handoffs, and retains all workers for the normal teardown join.
-- Settings now use a pinned private profile, no-follow file admission, a cooperative
-  transaction lock, and schema revalidation before replacement. Loading and close-time
-  saving wait at most two seconds on one worker with a bounded latest-save queue;
-  timeouts disable persistence and may leave the newest preferences unsaved.
-  Transaction completion explicitly releases its lock even when a concurrent
-  process spawn briefly retains an inherited descriptor.
-- Native playback logs now discard plugin-supplied error/debug text, arbitrary caps
-  values, stream identifiers, and unknown marker names while retaining closed labels
-  and typed counters. GStreamer's separately enabled debug output remains outside this filter.
-- Completed Windows installers now undergo bounded static payload extraction and exact
-  manifest comparison, followed by repeated native/resource checks and a runtime probe
-  on the extracted tree for both x86_64 and ARM64 before upload.
-- Approved-range scans add bounded positive jitter; the diagnostic uses desktop exact-address
-  admission and reply limits, caps each invocation, and rejects repeated range scans.
-- Device and lineup JSON errors now retain only fixed failure categories and line/column
-  positions, preventing mistyped device values from reaching inspection, debug output,
-  CLI diagnostics, or nested error sources.
-- Windows packaging now checks the shared component-policy checksum against one
-  bounded, strict UTF-8, non-reparse file snapshot before any build, copy, or probe.
-- Windows installer-only reuse now binds a successful runtime probe to every staged
-  file and directory, the build profile, and local packaging-policy inputs. Changed,
-  missing, extra, or aliased inputs require a fresh bundle/probe before compilation.
-- macOS package validation now rejects external, unresolved, or escaping native dependencies
-  in every Mach-O member and architecture, including pixbuf loaders, after signing and
-  reopening the DMG. The relocated runtime probe cannot read Homebrew's libraries.
-- Slow or stuck hostname lookups no longer hold window close open. Outstanding
-  lookups are capped across timeouts and restarts of the controller; busy resolution
-  offers direct IP entry or a later retry.
-- Playback startup and retirement now coordinate worker ownership, so an overlapping
-  source callback or failed worker creation cannot escape the predecessor's teardown join.
-- macOS builds no longer require Homebrew's unavailable FDK AAC plugin; the bundled
-  libav, FAAD, and AudioToolbox decoders continue to provide AAC support.
-- Restore the Rust minimum-version CI check and prevent patch-only compiler-floor drift.
+- Routine IPv6 address refreshes on Linux cancelling device searches every few seconds.
+- A remembered device not being tried again after its startup search was interrupted.
+- Losing one IPv6 address, such as a rotated temporary address, removing IPv4 tuners or stopping
+  playback.
+- Keyboard focus, scroll position, and an open device menu resetting when the device list updates.
+- Reload channels losing the highlighted channel.
+- A stream that ends before sending data staying on "Connecting…" until Stop.
+- A stream that ends mid-playback returning to the idle page instead of reporting the channel
+  unavailable.
+- Channels with teletext or DVB subtitles failing without those decoders, and burned-in subtitles.
+- Discovery stalling when a tuner's address moves to another tuner or one tuner reports a bad count,
+  and re-probing the playing tuner stopping playback.
+- Tuner and channel names with ampersands or markup-like text displaying incorrectly.
+- Slow hostname lookups delaying window close.
+- Device errors and playback logs carrying device-supplied text.
+- Settings failing to load from a folder writable by your user-private group.
+- macOS builds requiring Homebrew's unavailable FDK AAC plugin.
 
 ## [0.1.1] — 2026-09-05
 
@@ -312,6 +208,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
   decoder, so those channels fail closed and cannot be transcoded.
 
-[Unreleased]: https://github.com/jm2/balun/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/jm2/balun/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jm2/balun/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/jm2/balun/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/jm2/balun/releases/tag/v0.1.0
