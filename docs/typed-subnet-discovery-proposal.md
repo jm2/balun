@@ -282,9 +282,10 @@ boundary, and one search per lane. Native loopback fixtures on every platform la
 send real requests, prove one paced retry, stop after readiness on cancellation or a
 change, and send a local interface's directed broadcast: Linux and macOS refuse it on
 the socket, and the runner, offered it as an ordinary candidate, refuses it before the
-socket, counts it, and never retries it, while broadcast stays disabled. Controller, CLI, settings, localization, and desktop
-projection tests cover the rest; the dialog and sidebar display tests run in the
-Linux desktop lifecycle job.
+socket, counts it, and never retries it, while broadcast stays disabled. Controller,
+CLI, settings, localization, and desktop projection tests cover the rest; the dialog,
+sidebar, and confirmation-invalidation display tests run in the Linux desktop
+lifecycle job.
 
 **Limits of the evidence.** The directed-broadcast fixture needs a local interface
 with an IPv4 broadcast address and otherwise checks only the limited broadcast, which
