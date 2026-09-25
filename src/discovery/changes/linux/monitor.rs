@@ -57,7 +57,7 @@ const RECONCILIATION_CAPACITY: usize = 1;
 /// Both methods must be idempotent and must not panic. `poison` must prevent a
 /// later stale observer from publishing a healthy epoch. Dropping the monitor
 /// calls `poison`, including when its task is aborted.
-pub(in crate::discovery) trait RouteMonitorObserver: Send + Sync {
+pub(super) trait RouteMonitorObserver: Send + Sync {
     fn invalidate(&self);
     fn poison(&self);
 
@@ -79,7 +79,7 @@ pub(in crate::discovery) trait RouteMonitorObserver: Send + Sync {
 
 /// The rtnetlink group that carried one validated notification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::discovery) enum NotificationKind {
+pub(super) enum NotificationKind {
     Link,
     Ipv4Address,
     Ipv6Address,
@@ -90,7 +90,7 @@ pub(in crate::discovery) enum NotificationKind {
 impl NotificationKind {
     /// Whether the notification reported an interface address, which covers
     /// the lifetime refreshes routers trigger for addresses that already exist.
-    pub(in crate::discovery) const fn is_address(self) -> bool {
+    pub(super) const fn is_address(self) -> bool {
         matches!(self, Self::Ipv4Address | Self::Ipv6Address)
     }
 
@@ -108,7 +108,7 @@ impl NotificationKind {
 
 /// A coalesced request for the controller to debounce and rebuild its baseline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::discovery) struct RouteReconciliationRequired;
+pub(super) struct RouteReconciliationRequired;
 
 /// Result of draining all notifications queued after a route snapshot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -121,7 +121,7 @@ pub(super) enum PostSnapshotBarrier {
 
 /// A topology-redacted terminal monitor failure.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub(in crate::discovery) enum LinuxRouteMonitorError {
+pub(super) enum LinuxRouteMonitorError {
     #[error("the Linux route-event socket could not be opened")]
     SocketUnavailable,
     #[error("the Linux route-event receive buffer could not be bounded")]
@@ -161,7 +161,7 @@ pub(in crate::discovery) enum LinuxRouteMonitorError {
 /// Construction must occur on a Tokio runtime with I/O enabled. Successful
 /// construction is the subscription point: callers take their route snapshot
 /// only after this value has been returned.
-pub(in crate::discovery) struct LinuxRouteEventMonitor {
+pub(super) struct LinuxRouteEventMonitor {
     socket: AsyncFd<NlSocket>,
     core: MonitorCore,
     receive_buffer: Box<[u8]>,
@@ -171,7 +171,7 @@ pub(in crate::discovery) struct LinuxRouteEventMonitor {
 impl LinuxRouteEventMonitor {
     /// Subscribe to every kernel source which can alter Balun's Linux route
     /// fingerprint, returning a capacity-one reconciliation receiver.
-    pub(in crate::discovery) fn subscribe(
+    pub(super) fn subscribe(
         observer: Arc<dyn RouteMonitorObserver>,
     ) -> Result<(Self, mpsc::Receiver<RouteReconciliationRequired>), LinuxRouteMonitorError> {
         // AsyncFd's public constructors panic without a current reactor. Check
@@ -215,7 +215,7 @@ impl LinuxRouteEventMonitor {
     /// the healthy epoch derived from that snapshot. The future then owns and
     /// continuously polls this monitor; cancellation, a rejected activation,
     /// or a changed barrier drops the monitor and poisons its incarnation.
-    pub(in crate::discovery) async fn run_continuously<F>(
+    pub(super) async fn run_continuously<F>(
         mut self,
         activate: F,
     ) -> Result<(), LinuxRouteMonitorError>

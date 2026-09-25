@@ -43,7 +43,8 @@ desktop path.
    scanner stays in `src/discovery/routed.rs` under its existing names, which
    the unchanged typed-subnet validation imports. The Linux rtnetlink monitor
    that drives network-change reconciliation stays at
-   `discovery::routes::linux::monitor` until V2.8 lands.
+   `discovery::routes::linux::monitor` until V2.8 lands. It now lives beside
+   the other watchers at `discovery::changes::linux::monitor`.
 5. **Persisted data.** `settings.json` never held routed state, so its schema
    is unchanged. The retired `routed-approvals/` directory in the profile is
    left untouched; see the [settings boundary](../settings-file-trust.md).

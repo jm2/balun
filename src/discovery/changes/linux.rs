@@ -9,7 +9,9 @@ use tokio_util::task::AbortOnDropHandle;
 use super::observation::ObservationGate;
 use super::watch::{ChangeKind, EventKinds, NetworkChangeWatchError, deliver_bursts};
 use super::{InterfaceInventory, NetworkChange};
-use crate::discovery::routes::{
+
+mod monitor;
+use monitor::{
     LinuxRouteEventMonitor, LinuxRouteMonitorError, NotificationKind, RouteMonitorObserver,
 };
 

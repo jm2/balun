@@ -598,8 +598,8 @@ src/
 │   ├── registry.rs         # Device registry with locator claims and expiry
 │   ├── changes.rs          # Debounced network-change coalescing and interface inventory
 │   ├── changes/            # rtnetlink, routing-socket, and IP Helper change watchers
-│   ├── routed.rs           # Approved-range scan budgets and candidate limits
-│   └── routes/linux/       # rtnetlink change monitor
+│   ├── typed_subnet.rs     # Typed RFC 1918 subnet scope and search budget
+│   └── subnet.rs           # Paced, bounded search of one confirmed subnet
 ├── controller/
 │   ├── runtime.rs          # Controller thread, command ingress, snapshot publishing
 │   ├── state.rs            # Immutable URL-free device and channel projections

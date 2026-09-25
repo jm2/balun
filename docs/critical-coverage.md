@@ -132,6 +132,10 @@ Rust threshold is unchanged.
 Typed-subnet search (V2.4) adds `discovery/subnet.rs` (ceiling 30 of 623 regions) and
 raises the other touched files' region totals with their ceilings unchanged.
 
+Moving the Linux rtnetlink monitor beside the change watchers, to
+`discovery/changes/linux/monitor.rs`, deletes `discovery/routes.rs`. Neither
+path is in the scope, so every threshold is unchanged.
+
 ## CI ratchet and review policy
 
 The Linux desktop job measures Rust; Linux quality measures portable package
