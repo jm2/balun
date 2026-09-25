@@ -116,8 +116,16 @@ impl ObservationGate {
     /// unavailability this publishes a new generation; while already ready it
     /// changes nothing.
     pub fn establish(&self) {
+        self.establish_unless(|| false);
+    }
+
+    /// [`Self::establish`] unless `pending` reports a change already
+    /// recorded. `pending` runs under the gate's lock, so a notification that
+    /// records its change before revoking either blocks this or revokes the
+    /// generation it publishes.
+    pub fn establish_unless(&self, pending: impl FnOnce() -> bool) {
         self.inner.state.send_if_modified(|state| {
-            if matches!(state, ObservationState::Ready(_)) {
+            if matches!(state, ObservationState::Ready(_)) || pending() {
                 return false;
             }
             let value = self.inner.next.fetch_add(1, Ordering::AcqRel);
@@ -257,6 +265,12 @@ mod tests {
         assert_eq!(watch.current(), ObservationState::Unavailable);
         assert!(!watch.is_ready_for(first));
         gate.invalidate();
+        gate.establish_unless(|| true);
+        assert_eq!(
+            watch.current(),
+            ObservationState::Unavailable,
+            "a change is pending"
+        );
 
         gate.establish();
         let second = watch.current().generation().unwrap();

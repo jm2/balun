@@ -132,7 +132,7 @@ Rust threshold is unchanged.
 Typed-subnet search (V2.4) removes the routed-era target probe and its deadline error
 from the discovery client, a legitimate removal: its denominator floor drops from 605
 to 597 regions with the uncovered ceiling unchanged at 109. The controller gains the
-subnet lane (2171 regions), the settings schema its remembered prefix (271), and the
+subnet lane (2177 regions), the settings schema its remembered prefix (271), and the
 settings session its prefix staging (173); their uncovered ceilings stay at 197, 10,
 and 36. Log-field regions are evaluated only while a subscriber enables them, so the
 lanes share one start record rather than adding order-dependent regions. The subnet

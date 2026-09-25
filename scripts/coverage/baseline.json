@@ -20,10 +20,10 @@
       "percent": 92.45
     },
     "rust-regions:src/controller/runtime.rs": {
-      "covered": 1974,
-      "total": 2171,
+      "covered": 1980,
+      "total": 2177,
       "uncovered": 197,
-      "percent": 90.93
+      "percent": 90.95
     },
     "rust-regions:src/playback/source_policy.rs": {
       "covered": 404,

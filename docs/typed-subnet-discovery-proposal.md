@@ -212,8 +212,9 @@ before beta or any increase in scope, rate, retries, or automatic work.
 **Readiness.** `ObservationGate` (`src/discovery/changes/observation.rs`) publishes
 `Ready(generation)` or `Unavailable`; every return to readiness is a new generation.
 The shared watcher (`changes/watch.rs`) declares readiness only after the baseline is
-reconciled with no notification queued, revokes it where a link or route notification
-is recorded (inside the Linux monitor, the macOS reader, or the Windows callback) and,
+reconciled with no notification queued or recorded, revokes it where a link or route
+notification is recorded (inside the Linux monitor, the macOS reader, or the Windows
+callback; a recorded change is checked under the gate's lock) and,
 for address notifications, as soon as an immediate inventory re-read differs, so the
 debounce never delays revocation. An ended attempt, the resubscription gap, a
 poisoned or overflowing monitor, a source that gave up, and a dropped source are all
@@ -255,10 +256,11 @@ directed-broadcast address as refused at the send boundary on every platform.
 latest result for each of at most four subnets, validates that every reply comes from
 a usable host of its subnet on the discovery port, and replays them through the
 registry's identity rules. Deadline and device-limit results keep their devices and
-show *incomplete*; a complete search that found nothing retires that subnet's
-devices. Because a typed reply names no interface, a network change that removes an
-interface or an IPv4 address anywhere expires typed-subnet evidence; IPv6-only
-changes leave it, as they leave other IPv4 evidence. HTTP metadata is fetched only for
+show *incomplete*; one that stopped early without a reply keeps the subnet's earlier
+results, and only a complete search that found nothing retires them. Because a typed
+reply names no interface, a network change that removes an interface or an IPv4
+address anywhere expires typed-subnet evidence; IPv6-only changes leave it, as they
+leave other IPv4 evidence. HTTP metadata is fetched only for
 a selected device, never for nonresponders.
 
 **Desktop.** **Search a subnet** (`src/ui/subnet_search_dialog.rs`) validates the
@@ -294,7 +296,9 @@ when a search starts; an interface change stops the search anyway. A downstream
 router's directed broadcast cannot be observed locally, as the delivery boundary
 accepts. Address-only
 changes are detected by an immediate inventory re-read rather than from the
-notification itself. Real-network behaviour on macOS and Windows, such as how often
-their sources report changes, awaits owner confirmation.
+notification itself. The display tests check keyboard use through configuration (Enter
+activates Continue in the entry and Cancel in the confirmation) rather than synthesized
+key events. Real-network behaviour on macOS and Windows, such as how often their
+sources report changes, awaits owner confirmation.
 
 [issue #71]: https://github.com/jm2/balun/issues/71

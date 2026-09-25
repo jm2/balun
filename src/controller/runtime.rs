@@ -1208,7 +1208,8 @@ impl ControllerActor {
             Ok(report) => {
                 let issue_count = u16::try_from(report.issues.len()).unwrap_or(u16::MAX);
                 let no_response = report.observations.is_empty();
-                match self.build_discovery_update(completion.scope, report) {
+                let complete = completion.incomplete.is_none();
+                match self.build_discovery_update(completion.scope, report, complete) {
                     Ok(mut update) => match completion.scope {
                         DiscoveryScope::Local => {
                             let selected_device = self.selected_device;
@@ -1309,10 +1310,13 @@ impl ControllerActor {
         Ok(true)
     }
 
+    /// `complete` is false for a subnet search that stopped early, which
+    /// never retires what earlier searches of its subnet found.
     fn build_discovery_update(
         &self,
         scope: DiscoveryScope,
         report: DiscoveryReport,
+        complete: bool,
     ) -> Result<DiscoveryUpdate, ()> {
         let observation_limit = match scope {
             DiscoveryScope::Local => MAX_RETAINED_LOCAL_OBSERVATIONS,
@@ -1331,7 +1335,7 @@ impl ControllerActor {
         match scope {
             DiscoveryScope::Local => local_batch = batch,
             DiscoveryScope::Subnet(subnet) => {
-                retain_subnet_batch(&mut subnet_sources, subnet, batch)?;
+                retain_subnet_batch(&mut subnet_sources, subnet, batch, complete)?;
             }
             DiscoveryScope::Exact(target) => match batch {
                 Some(batch) => {
@@ -1962,7 +1966,9 @@ fn subnet_completion(
 }
 
 /// Replace what earlier searches of `scope` found with `batch`, keeping at
-/// most [`MAX_RETAINED_SUBNET_SEARCHES`] subnets by dropping the oldest.
+/// most [`MAX_RETAINED_SUBNET_SEARCHES`] subnets by dropping the oldest. A
+/// search that found nothing retires the subnet's results only when it was
+/// `complete`.
 ///
 /// Every retained observation must be a direct reply from a usable host of
 /// `scope` on the discovery port, with typed-subnet provenance and no
@@ -1971,9 +1977,12 @@ fn retain_subnet_batch(
     sources: &mut BTreeMap<TypedSubnetScope, RetainedDiscoveryBatch>,
     scope: TypedSubnetScope,
     batch: Option<RetainedDiscoveryBatch>,
+    complete: bool,
 ) -> Result<(), ()> {
     let Some(batch) = batch else {
-        sources.remove(&scope);
+        if complete {
+            sources.remove(&scope);
+        }
         return Ok(());
     };
     let network = scope.network();
@@ -2955,7 +2964,7 @@ mod tests {
         };
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Local, at_local_limit)
+                .build_discovery_update(DiscoveryScope::Local, at_local_limit, true)
                 .is_ok()
         );
 
@@ -2965,7 +2974,7 @@ mod tests {
         };
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Local, over_local_limit)
+                .build_discovery_update(DiscoveryScope::Local, over_local_limit, true)
                 .is_err()
         );
 
@@ -2990,7 +2999,7 @@ mod tests {
         assert!(over_device_limit.observations.len() < MAX_RETAINED_LOCAL_OBSERVATIONS);
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Local, over_device_limit)
+                .build_discovery_update(DiscoveryScope::Local, over_device_limit, true)
                 .is_err()
         );
 
@@ -3005,7 +3014,7 @@ mod tests {
         };
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Exact(target), exact_one)
+                .build_discovery_update(DiscoveryScope::Exact(target), exact_one, true)
                 .is_ok()
         );
 
@@ -3015,7 +3024,7 @@ mod tests {
         };
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Exact(target), exact_two)
+                .build_discovery_update(DiscoveryScope::Exact(target), exact_two, true)
                 .is_err()
         );
     }
@@ -3028,6 +3037,7 @@ mod tests {
             .build_discovery_update(
                 DiscoveryScope::Exact(target),
                 exact_report(target, first_id(), 4),
+                true,
             )
             .unwrap();
         actor.commit_discovery_update(valid);
@@ -3036,6 +3046,7 @@ mod tests {
             .build_discovery_update(
                 DiscoveryScope::Exact(ipv6_target),
                 exact_report(ipv6_target, first_id(), 4),
+                true,
             )
             .unwrap();
         actor.commit_discovery_update(valid_ipv6);
@@ -3055,7 +3066,7 @@ mod tests {
         for report in [wrong_address, wrong_port, wrong_method, wrong_interface] {
             assert!(
                 actor
-                    .build_discovery_update(DiscoveryScope::Exact(target), report)
+                    .build_discovery_update(DiscoveryScope::Exact(target), report, true)
                     .is_err()
             );
             assert!(actor.registry == prior_registry);
@@ -3074,7 +3085,7 @@ mod tests {
         source.set_scope_id(7);
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Exact(ipv6_target), scoped_ipv6)
+                .build_discovery_update(DiscoveryScope::Exact(ipv6_target), scoped_ipv6, true)
                 .is_err()
         );
         assert!(actor.registry == prior_registry);
@@ -6163,6 +6174,7 @@ mod tests {
                     SubnetScanIncomplete::DeviceLimit,
                     vec![subnet_observation(third, "10.9.0.6:65001")],
                 )),
+                SubnetStep::Immediate(incomplete(SubnetScanIncomplete::Deadline, vec![])),
                 SubnetStep::Immediate(incomplete(
                     SubnetScanIncomplete::NetworkChanged,
                     vec![subnet_observation(second_id(), "10.9.0.5:65001")],
@@ -6214,6 +6226,13 @@ mod tests {
         )
         .await;
         assert_eq!(listed(&limited), [first_id(), third]);
+        // A search that stopped early and found nothing retires nothing.
+        let unanswered = search(
+            far,
+            DiscoveryStatus::Incomplete(DiscoveryIncomplete::Deadline),
+        )
+        .await;
+        assert_eq!(listed(&unanswered), [first_id(), third]);
         // A search stopped by a network change keeps nothing it found.
         let changed = search(
             far,
@@ -6238,7 +6257,8 @@ mod tests {
             actor
                 .build_discovery_update(
                     DiscoveryScope::Subnet(scope),
-                    report_of(vec![valid.clone()])
+                    report_of(vec![valid.clone()]),
+                    true
                 )
                 .is_ok()
         );
@@ -6259,7 +6279,8 @@ mod tests {
                 actor
                     .build_discovery_update(
                         DiscoveryScope::Subnet(scope),
-                        report_of(vec![observation])
+                        report_of(vec![observation]),
+                        true
                     )
                     .is_err()
             );
@@ -6270,7 +6291,7 @@ mod tests {
             .collect();
         assert!(
             actor
-                .build_discovery_update(DiscoveryScope::Subnet(one), report_of(too_many))
+                .build_discovery_update(DiscoveryScope::Subnet(one), report_of(too_many), true)
                 .is_err(),
             "more replies than candidates"
         );
@@ -6279,7 +6300,8 @@ mod tests {
             actor
                 .build_discovery_update(
                     DiscoveryScope::Subnet(point_to_point),
-                    report_of(vec![subnet_observation(first_id(), "10.0.0.0:65001")])
+                    report_of(vec![subnet_observation(first_id(), "10.0.0.0:65001")]),
+                    true
                 )
                 .is_ok(),
             "both /31 addresses are hosts"
@@ -6296,7 +6318,7 @@ mod tests {
             .collect::<Vec<_>>();
         let mut sources = BTreeMap::new();
         let batch = RetainedDiscoveryBatch::new(RegistryInstant::default(), observations);
-        assert!(retain_subnet_batch(&mut sources, many, batch).is_err());
+        assert!(retain_subnet_batch(&mut sources, many, batch, true).is_err());
         assert!(sources.is_empty());
     }
 
@@ -6313,12 +6335,18 @@ mod tests {
                     &format!("10.{octet}.0.1:65001"),
                 )],
             );
-            retain_subnet_batch(&mut sources, scope, batch).unwrap();
+            retain_subnet_batch(&mut sources, scope, batch, true).unwrap();
         }
         assert_eq!(sources.len(), MAX_RETAINED_SUBNET_SEARCHES);
         assert!(!sources.contains_key(&subnet("10.0.0.0/24")));
         assert!(sources.contains_key(&subnet("10.4.0.0/24")));
-        retain_subnet_batch(&mut sources, subnet("10.4.0.0/24"), None).unwrap();
+        retain_subnet_batch(&mut sources, subnet("10.4.0.0/24"), None, false).unwrap();
+        assert_eq!(
+            sources.len(),
+            MAX_RETAINED_SUBNET_SEARCHES,
+            "incomplete keeps it"
+        );
+        retain_subnet_batch(&mut sources, subnet("10.4.0.0/24"), None, true).unwrap();
         assert_eq!(sources.len(), MAX_RETAINED_SUBNET_SEARCHES - 1);
     }
 

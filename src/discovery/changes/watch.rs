@@ -94,6 +94,12 @@ impl EventKinds {
         }
     }
 
+    /// Whether a link, route, or rule notification is recorded and not yet
+    /// taken by a closed burst.
+    pub(super) fn change_pending(&self) -> bool {
+        self.beyond_addresses.load(Ordering::Acquire)
+    }
+
     /// Whether a link, route, or rule notification arrived since the last
     /// call.
     pub(super) fn take_beyond_addresses(&self) -> bool {
@@ -155,14 +161,16 @@ where
 
     loop {
         // Reconcile a notification already queued before declaring the
-        // baseline healthy; a queued one starts the next burst instead.
+        // baseline healthy; a queued one starts the next burst instead. A
+        // link or route change recorded before its wake-up is checked under
+        // the gate's lock, so it either blocks readiness or revokes it.
         if events.is_empty() {
-            gate.establish();
+            gate.establish_unless(|| kinds.change_pending());
         }
         let burst = tokio::select! {
             biased;
             () = changes.closed() => return Ok(()),
-            burst = next_burst(events, gate, &current, &read_inventory) => burst,
+            burst = next_burst(events, gate, kinds, &current, &read_inventory) => burst,
         };
         let Some(count) = burst else {
             return Err(NetworkChangeWatchError::MonitorStopped);
@@ -211,6 +219,7 @@ where
 async fn next_burst<T, R>(
     events: &mut mpsc::Receiver<T>,
     gate: &ObservationGate,
+    kinds: &EventKinds,
     current: &InterfaceInventory,
     read_inventory: &R,
 ) -> Option<usize>
@@ -218,7 +227,7 @@ where
     R: Fn() -> io::Result<InterfaceInventory> + Clone + Send + 'static,
 {
     events.recv().await?;
-    revoke_if_changed(gate, current, read_inventory).await;
+    revoke_if_changed(gate, kinds, current, read_inventory).await;
     let mut count = 1;
     let deadline = Instant::now() + NETWORK_CHANGE_MAX_DELAY;
     loop {
@@ -230,7 +239,7 @@ where
             next = events.recv() => match next {
                 Some(_) => {
                     count += 1;
-                    revoke_if_changed(gate, current, read_inventory).await;
+                    revoke_if_changed(gate, kinds, current, read_inventory).await;
                 }
                 None => break,
             },
@@ -239,16 +248,20 @@ where
     Some(count)
 }
 
-/// Revoke a still-ready gate when the inventory no longer matches the
-/// baseline or cannot be read.
-async fn revoke_if_changed<R>(gate: &ObservationGate, current: &InterfaceInventory, read: &R)
-where
+/// Revoke a still-ready gate when a link or route change is recorded, or the
+/// inventory no longer matches the baseline or cannot be read.
+async fn revoke_if_changed<R>(
+    gate: &ObservationGate,
+    kinds: &EventKinds,
+    current: &InterfaceInventory,
+    read: &R,
+) where
     R: Fn() -> io::Result<InterfaceInventory> + Clone + Send + 'static,
 {
     if gate.state().generation().is_none() {
         return;
     }
-    if read_off_runtime(read).await.as_ref() != Some(current) {
+    if kinds.change_pending() || read_off_runtime(read).await.as_ref() != Some(current) {
         gate.invalidate();
     }
 }
@@ -505,6 +518,48 @@ mod tests {
             *states.lock().unwrap(),
             [generation(1), ObservationState::Unavailable]
         );
+    }
+
+    /// A platform records a link or route change before it sends the
+    /// wake-up. Recorded while the gate is already unavailable, the change
+    /// must still keep the next generation from being declared.
+    #[tokio::test(start_paused = true)]
+    async fn a_route_recorded_before_its_wake_up_blocks_readiness() {
+        let (changes, mut delivered) = mpsc::channel(4);
+        let (signal, mut events) = mpsc::channel::<()>(1);
+        let gate = ObservationGate::new();
+        let kinds = EventKinds::revoking(gate.clone());
+        let baseline = inventory(&[("eth0", "192.0.2.10")]);
+        kinds.record(ChangeKind::Route);
+        let feeder = {
+            let gate = gate.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let before = gate.state();
+                signal.send(()).await.unwrap();
+                tokio::time::sleep(NETWORK_CHANGE_MAX_DELAY * 2).await;
+                (before, gate.state())
+            })
+        };
+
+        let outcome = deliver_bursts(
+            &changes,
+            &mut None,
+            baseline.clone(),
+            &kinds,
+            &mut events,
+            scripted([Ok(baseline)]),
+            &gate,
+        )
+        .await;
+
+        assert_eq!(outcome, Err(NetworkChangeWatchError::MonitorStopped));
+        assert_eq!(
+            feeder.await.unwrap(),
+            (ObservationState::Unavailable, generation(1)),
+            "ready only after the recorded change was reconciled"
+        );
+        assert!(delivered.try_recv().is_ok());
     }
 
     #[tokio::test(start_paused = true)]

@@ -420,7 +420,7 @@ pub(crate) fn build(
     });
 
     let subnet = Rc::new(SubnetSearch::default());
-    connect_refresh(&device_sidebar, &handle);
+    connect_refresh(&device_sidebar, &handle, &accepted);
     connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
     connect_subnet_search(&window, &device_sidebar, &wiring, &subnet);
     connect_cancel_discovery(&device_sidebar, &handle, &wiring);
@@ -632,8 +632,13 @@ fn connect_window_shortcuts(
     layout.set_fullscreen(window.is_fullscreen());
 }
 
-fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &ControllerHandle) {
+fn connect_refresh(
+    sidebar: &device_sidebar::DeviceSidebar,
+    controller: &ControllerHandle,
+    accepted: &Rc<RefCell<Arc<ApplicationSnapshot>>>,
+) {
     let controller = controller.clone();
+    let accepted = Rc::clone(accepted);
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
     let exact_discovery_button = sidebar.exact_discovery_button().clone();
     let subnet_search_button = sidebar.subnet_search_button().clone();
@@ -653,6 +658,8 @@ fn connect_refresh(sidebar: &device_sidebar::DeviceSidebar, controller: &Control
             Err(_) => {
                 button.set_sensitive(true);
                 exact_discovery_button.set_sensitive(true);
+                subnet_search_button
+                    .set_sensitive(device_sidebar::subnet_search_sensitive(&accepted.borrow()));
             }
         }
     });
@@ -787,6 +794,11 @@ fn present_subnet_confirmation(
             } else {
                 buttons.exact.set_sensitive(true);
                 buttons.refresh.set_sensitive(true);
+                buttons
+                    .subnet
+                    .set_sensitive(device_sidebar::subnet_search_sensitive(
+                        &toasts.accepted.borrow(),
+                    ));
                 toasts.toast(&notices.busy);
             }
         },
@@ -2863,7 +2875,7 @@ mod tests {
                     toasts: toasts.downgrade(),
                 });
 
-                connect_refresh(&device_sidebar, &handle);
+                connect_refresh(&device_sidebar, &handle, &accepted);
                 connect_exact_discovery(&window, &device_sidebar, &handle, &exact_tracker, &wiring);
                 connect_cancel_discovery(&device_sidebar, &handle, &wiring);
                 connect_device_selection(

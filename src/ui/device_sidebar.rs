@@ -813,6 +813,16 @@ struct SubnetActionPresentation {
     available: bool,
 }
 
+/// Whether `snapshot` lets the subnet action start a search, for restoring
+/// the action after a start that could not be queued.
+pub(crate) fn subnet_search_sensitive(snapshot: &ApplicationSnapshot) -> bool {
+    subnet_action_presentation(
+        discovery_actions_presentation(snapshot.discovery().status()).start_sensitive,
+        snapshot.observation().generation().is_some(),
+    )
+    .sensitive
+}
+
 /// Subnet search needs an idle discovery lane and healthy observation.
 fn subnet_action_presentation(start_sensitive: bool, observing: bool) -> SubnetActionPresentation {
     SubnetActionPresentation {
@@ -1282,6 +1292,11 @@ mod tests {
                 }
             );
         }
+        use balun::discovery::{ObservationGeneration, ObservationState};
+        let ready = ApplicationSnapshot::initial()
+            .with_observation(ObservationState::Ready(ObservationGeneration::FIRST));
+        assert!(subnet_search_sensitive(&ready));
+        assert!(!subnet_search_sensitive(&ApplicationSnapshot::initial()));
         let labels = SubnetEntryLabels::current();
         assert_eq!(subnet_action_tooltip(true), labels.button);
         assert_eq!(subnet_action_tooltip(false), labels.unavailable);

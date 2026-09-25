@@ -61,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reproducible adversarial packet, metadata/URL, lineup, and package-manifest
   properties run in PR checks and scheduled extended corpora, with failure replay records.
 - Typed-subnet scope validation and exact preview budgets implement the approved
-  private `/23`–`/32` policy without granting scan authority. Runtime integration remains pending.
+  private `/23`–`/32` policy that subnet search now uses.
 - **Fedora COPR** — Packit builds the RPM for Fedora 44 and 45 (x86_64, aarch64) in
   `jmsqrd/balun` on each published release; `sudo dnf copr enable jmsqrd/balun`.
 - **AUR packages** — `balun`, `balun-bin`, and `balun-git` on the AUR, the same set as Tributary.
@@ -84,8 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - Route-table tunnel discovery (**Search routes behind your tunnel**) and
-  `balun-discover --providers` are removed; add remote tuners by IP address or hostname, or scan
-  a private range with `balun-discover --approved-range`, until in-app subnet search arrives.
+  `balun-discover --providers` are removed; find remote tuners with **Search a subnet**, by IP
+  address or hostname, or with `balun-discover --approved-range`.
 
 ### Fixed
 
