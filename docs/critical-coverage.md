@@ -129,12 +129,8 @@ repeated reply, a refused send, the range-candidate probe, a registry rebuild
 over its device limit, and the production settings-directory lookup. Every other
 Rust threshold is unchanged.
 
-Typed-subnet search (V2.4) adds `discovery/subnet.rs` (ceiling 30 of 623 regions) and
+Typed-subnet search (V2.4) adds `discovery/subnet.rs` (ceiling 25 of 643 regions) and
 raises the other touched files' region totals with their ceilings unchanged.
-
-Moving the Linux rtnetlink monitor beside the change watchers, to
-`discovery/changes/linux/monitor.rs`, deletes `discovery/routes.rs`. Neither
-path is in the scope, so every threshold is unchanged.
 
 ## CI ratchet and review policy
 
