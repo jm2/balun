@@ -47,9 +47,8 @@ pub use registry::{
 #[cfg(test)]
 pub(crate) use subnet::{PROCESS_LANE_TESTS, claim_process_lane};
 pub use subnet::{
-    SubnetAdmissionError, SubnetConsentError, SubnetScanError, SubnetScanIncomplete,
-    SubnetScanOutcome, SubnetScanPermit, SubnetScanReport, SubnetSearchConsent,
-    discover_typed_subnet,
+    SubnetAdmissionError, SubnetScanError, SubnetScanIncomplete, SubnetScanOutcome,
+    SubnetScanPermit, SubnetScanReport, SubnetSearchConsent, discover_typed_subnet,
 };
 pub use typed_subnet::{InvalidTypedSubnetScope, TypedSubnetScope};
 pub use types::{DiscoveryMethod, ProbeEndpoint};

@@ -1,10 +1,11 @@
 //! Versioned, atomic, GTK-free persistence of Balun's user settings.
 //!
 //! The settings file holds only reviewed preferences: remembered discovery
-//! targets, the last subnet typed for subnet search, and window state. It
-//! never holds credentials, `DeviceAuth`, stream URLs, lineups, scan
-//! authorization, or incidental network topology, and the types here cannot
-//! represent them.
+//! targets and window state. It never holds credentials, `DeviceAuth`, stream
+//! URLs, lineups, or incidental network topology, and the types here cannot
+//! represent them. The subnet last entered for subnet search lives beside it
+//! in its own small file, so `settings.json` keeps the schema every earlier
+//! build reads; that text is a convenience and never authorizes a search.
 //!
 //! Reads fail closed. A malformed, oversized, symlinked, or newer-schema file
 //! is reported with a fixed, path-free error and left untouched, so a later
@@ -27,16 +28,17 @@ use crate::discovery::{ExactDiscoveryTarget, HostnameTarget, TypedSubnetScope};
 mod store;
 pub use store::SettingsStore;
 
-/// The newest schema version this build reads. It is written only for a
-/// document that remembers a subnet prefix; every other document is written
-/// as version 2, so earlier builds keep reading it.
-pub const SCHEMA_VERSION: u32 = 3;
-/// The schema version written when no subnet prefix is remembered.
-const PREFIX_FREE_SCHEMA_VERSION: u32 = 2;
+/// Schema version written by this build and the newest version it can read.
+pub const SCHEMA_VERSION: u32 = 2;
 /// File name inside the settings directory.
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 /// Largest settings document that will be read or written.
 pub const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
+/// File beside the settings document holding the last subnet entered for
+/// subnet search: one canonical prefix and a newline.
+pub const SUBNET_PREFIX_FILE_NAME: &str = "subnet-prefix";
+/// Largest subnet-prefix file that will be read.
+pub const MAX_SUBNET_PREFIX_BYTES: u64 = 64;
 /// Most remembered exact-address targets; matches the per-session probe cap.
 pub const MAX_REMEMBERED_TARGETS: usize = 32;
 /// Smallest persisted window dimension in logical pixels.
@@ -127,7 +129,6 @@ pub enum RememberedTarget {
 pub struct Settings {
     window: WindowState,
     remembered_targets: Vec<RememberedTarget>,
-    subnet_prefix: Option<TypedSubnetScope>,
 }
 
 impl Settings {
@@ -173,23 +174,6 @@ impl Settings {
         let before = self.remembered_targets.len();
         self.remembered_targets.retain(|known| known != target);
         self.remembered_targets.len() != before
-    }
-
-    /// The subnet last entered for subnet search, offered again as text to
-    /// edit. It is a convenience only and never authorizes a search.
-    #[must_use]
-    pub const fn subnet_prefix(&self) -> Option<TypedSubnetScope> {
-        self.subnet_prefix
-    }
-
-    /// Remember or, with `None`, forget the entered subnet; returns whether
-    /// anything changed.
-    pub fn set_subnet_prefix(&mut self, prefix: Option<TypedSubnetScope>) -> bool {
-        if self.subnet_prefix == prefix {
-            return false;
-        }
-        self.subnet_prefix = prefix;
-        true
     }
 }
 
@@ -241,8 +225,6 @@ pub enum MalformedSettings {
     DuplicateTarget,
     #[error("more than {MAX_REMEMBERED_TARGETS} remembered targets")]
     TooManyTargets,
-    #[error("the remembered subnet is not a canonical private /23 to /32 subnet")]
-    SubnetPrefix,
 }
 
 /// A settings load or save failure. Paths and file contents are never carried.
@@ -398,34 +380,10 @@ struct StoredTargetV2 {
     host: Option<String>,
 }
 
-/// Version 2 plus the last subnet entered for subnet search.
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct StoredSettingsV3 {
-    schema_version: u32,
-    #[serde(default)]
-    window: StoredWindowV1,
-    #[serde(default)]
-    remembered_targets: Vec<StoredTargetV2>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    subnet_prefix: Option<String>,
-}
-
-impl From<StoredSettingsV2> for StoredSettingsV3 {
-    fn from(stored: StoredSettingsV2) -> Self {
-        Self {
-            schema_version: SCHEMA_VERSION,
-            window: stored.window,
-            remembered_targets: stored.remembered_targets,
-            subnet_prefix: None,
-        }
-    }
-}
-
 impl From<StoredSettingsV1> for StoredSettingsV2 {
     fn from(stored: StoredSettingsV1) -> Self {
         Self {
-            schema_version: PREFIX_FREE_SCHEMA_VERSION,
+            schema_version: SCHEMA_VERSION,
             window: stored.window,
             remembered_targets: stored
                 .remembered_targets
@@ -450,16 +408,10 @@ fn parse_document(bytes: &[u8]) -> Result<Settings, SettingsError> {
         1 => {
             let stored: StoredSettingsV1 = serde_json::from_slice(bytes)
                 .map_err(|_| SettingsError::Malformed(MalformedSettings::Json))?;
-            Settings::try_from(StoredSettingsV3::from(StoredSettingsV2::from(stored)))
-                .map_err(SettingsError::Malformed)
+            Settings::try_from(StoredSettingsV2::from(stored)).map_err(SettingsError::Malformed)
         }
         2 => {
             let stored: StoredSettingsV2 = serde_json::from_slice(bytes)
-                .map_err(|_| SettingsError::Malformed(MalformedSettings::Json))?;
-            Settings::try_from(StoredSettingsV3::from(stored)).map_err(SettingsError::Malformed)
-        }
-        3 => {
-            let stored: StoredSettingsV3 = serde_json::from_slice(bytes)
                 .map_err(|_| SettingsError::Malformed(MalformedSettings::Json))?;
             Settings::try_from(stored).map_err(SettingsError::Malformed)
         }
@@ -467,21 +419,21 @@ fn parse_document(bytes: &[u8]) -> Result<Settings, SettingsError> {
     }
 }
 
-/// Write the oldest schema that holds the document: version 3 only while a
-/// subnet prefix is remembered, so forgetting it restores version 2.
+/// The remembered subnet, or `None` for anything but one canonical private
+/// `/23`–`/32` prefix with an optional final newline. An invalid file is
+/// ignored, never repaired.
+fn parse_subnet_prefix(bytes: &[u8]) -> Option<TypedSubnetScope> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    text.strip_suffix('\n').unwrap_or(text).parse().ok()
+}
+
+fn serialize_subnet_prefix(prefix: TypedSubnetScope) -> Vec<u8> {
+    format!("{prefix}\n").into_bytes()
+}
+
 fn serialize_document(settings: &Settings) -> Result<Vec<u8>, SettingsError> {
-    let stored = StoredSettingsV3::from(settings);
-    let mut bytes = if stored.subnet_prefix.is_some() {
-        serde_json::to_vec_pretty(&stored)
-    } else {
-        serde_json::to_vec_pretty(&StoredSettingsV2 {
-            schema_version: PREFIX_FREE_SCHEMA_VERSION,
-            window: stored.window,
-            remembered_targets: stored.remembered_targets,
-            _retired_device_names: IgnoredAny,
-        })
-    }
-    .map_err(|_| SettingsError::Serialization)?;
+    let stored = StoredSettingsV2::from(settings);
+    let mut bytes = serde_json::to_vec_pretty(&stored).map_err(|_| SettingsError::Serialization)?;
     bytes.push(b'\n');
     if bytes.len() as u64 > MAX_SETTINGS_BYTES {
         return Err(SettingsError::Serialization);
@@ -489,7 +441,7 @@ fn serialize_document(settings: &Settings) -> Result<Vec<u8>, SettingsError> {
     Ok(bytes)
 }
 
-impl From<&Settings> for StoredSettingsV3 {
+impl From<&Settings> for StoredSettingsV2 {
     fn from(settings: &Settings) -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
@@ -512,15 +464,15 @@ impl From<&Settings> for StoredSettingsV3 {
                     },
                 })
                 .collect(),
-            subnet_prefix: settings.subnet_prefix.map(|prefix| prefix.to_string()),
+            _retired_device_names: IgnoredAny,
         }
     }
 }
 
-impl TryFrom<StoredSettingsV3> for Settings {
+impl TryFrom<StoredSettingsV2> for Settings {
     type Error = MalformedSettings;
 
-    fn try_from(stored: StoredSettingsV3) -> Result<Self, Self::Error> {
+    fn try_from(stored: StoredSettingsV2) -> Result<Self, Self::Error> {
         let window = WindowState::new(
             stored.window.width,
             stored.window.height,
@@ -548,16 +500,9 @@ impl TryFrom<StoredSettingsV3> for Settings {
             remembered_targets.push(target);
         }
 
-        let subnet_prefix = stored
-            .subnet_prefix
-            .map(|prefix| prefix.parse::<TypedSubnetScope>())
-            .transpose()
-            .map_err(|_| MalformedSettings::SubnetPrefix)?;
-
         Ok(Self {
             window,
             remembered_targets,
-            subnet_prefix,
         })
     }
 }
@@ -673,7 +618,7 @@ mod tests {
         let text = std::str::from_utf8(&bytes).expect("utf-8");
         let value: serde_json::Value = serde_json::from_str(text).expect("json");
 
-        assert_eq!(value["schema_version"], PREFIX_FREE_SCHEMA_VERSION);
+        assert_eq!(value["schema_version"], SCHEMA_VERSION);
         let keys: Vec<_> = value
             .as_object()
             .expect("object")
@@ -702,12 +647,12 @@ mod tests {
     #[test]
     fn newer_schema_is_reported_and_left_untouched() {
         let (_directory, store) = test_store();
-        let raw = b"{\"schema_version\":4,\"future\":{\"unknown\":true}}\n";
+        let raw = b"{\"schema_version\":3,\"future\":{\"unknown\":true}}\n";
         write_raw(&store, raw);
 
         assert_eq!(
             store.load(),
-            Err(SettingsError::UnsupportedSchema { found: 4 })
+            Err(SettingsError::UnsupportedSchema { found: 3 })
         );
         assert_eq!(raw_bytes(&store), raw);
     }
@@ -946,7 +891,7 @@ mod tests {
 
         store.save(&loaded).expect("save");
         let value: serde_json::Value = serde_json::from_slice(&raw_bytes(&store)).expect("json");
-        assert_eq!(value["schema_version"], PREFIX_FREE_SCHEMA_VERSION);
+        assert_eq!(value["schema_version"], SCHEMA_VERSION);
         assert_eq!(value["remembered_targets"][0]["address"], "192.0.2.1");
         assert!(value["remembered_targets"][0].get("host").is_none());
     }
@@ -1012,7 +957,7 @@ mod tests {
 
         store.save(&loaded).expect("save");
         let value: serde_json::Value = serde_json::from_slice(&raw_bytes(&store)).expect("json");
-        assert_eq!(value["schema_version"], PREFIX_FREE_SCHEMA_VERSION);
+        assert_eq!(value["schema_version"], SCHEMA_VERSION);
         let keys: Vec<_> = value
             .as_object()
             .expect("object")
@@ -1063,75 +1008,89 @@ mod tests {
         }
     }
 
-    /// The remembered subnet is a convenience that forces version 3 only
-    /// while it exists; older documents keep loading, and forgetting it lets
-    /// earlier builds read the file again.
+    /// The subnet prefix lives in its own file: `settings.json` stays at the
+    /// schema v0.1.x reads, and only one canonical prefix is ever accepted.
     #[test]
-    fn a_remembered_subnet_round_trips_as_version_three_and_forgetting_restores_two() {
+    fn the_subnet_prefix_file_holds_one_canonical_prefix_beside_an_unchanged_schema() {
         let (_directory, store) = test_store();
         let prefix: TypedSubnetScope = "192.168.2.0/23".parse().expect("valid prefix");
-        let mut settings = populated();
-        assert_eq!(settings.subnet_prefix(), None);
-        assert!(settings.set_subnet_prefix(Some(prefix)));
-        assert!(!settings.set_subnet_prefix(Some(prefix)), "unchanged");
-        store.save(&settings).expect("save");
+        store.save(&populated()).expect("save settings");
+        assert_eq!(store.load_subnet_prefix(), Ok(None));
 
+        store
+            .save_subnet_prefix_unless_cancelled(
+                Some(prefix),
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .expect("save prefix");
+        let file = store.directory().join(SUBNET_PREFIX_FILE_NAME);
+        assert_eq!(fs::read(&file).expect("read prefix"), b"192.168.2.0/23\n");
+        assert_eq!(store.load_subnet_prefix(), Ok(Some(prefix)));
         let value: serde_json::Value = serde_json::from_slice(&raw_bytes(&store)).expect("json");
-        assert_eq!(value["schema_version"], SCHEMA_VERSION);
-        assert_eq!(value["subnet_prefix"], "192.168.2.0/23");
-        let loaded = store.load().expect("load").expect("document");
-        assert_eq!(loaded.subnet_prefix(), Some(prefix));
-        assert_eq!(loaded, settings);
-
-        assert!(settings.set_subnet_prefix(None));
-        store.save(&settings).expect("save");
-        let value: serde_json::Value = serde_json::from_slice(&raw_bytes(&store)).expect("json");
-        assert_eq!(value["schema_version"], PREFIX_FREE_SCHEMA_VERSION);
+        assert_eq!(value["schema_version"], 2);
         assert!(value.get("subnet_prefix").is_none());
-        assert_eq!(store.load(), Ok(Some(settings)));
+        assert_eq!(store.load(), Ok(Some(populated())));
 
-        // A version 3 document without a prefix, and older documents, load.
-        write_raw(&store, b"{\"schema_version\":3}\n");
-        assert_eq!(store.load(), Ok(Some(Settings::default())));
-        write_raw(
-            &store,
-            b"{\"schema_version\":2,\"remembered_targets\":[{\"host\":\"tuner.example\"}]}\n",
-        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&file).expect("metadata").permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        // Forgetting removes the file; forgetting again is harmless.
+        let idle = std::sync::atomic::AtomicBool::new(false);
+        store
+            .save_subnet_prefix_unless_cancelled(None, &idle)
+            .expect("forget prefix");
+        assert!(!file.exists());
+        store
+            .save_subnet_prefix_unless_cancelled(None, &idle)
+            .expect("forget again");
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
         assert_eq!(
-            store
-                .load()
-                .expect("load")
-                .expect("document")
-                .subnet_prefix(),
-            None
+            store.save_subnet_prefix_unless_cancelled(Some(prefix), &cancelled),
+            Err(SettingsError::Cancelled)
         );
+        assert!(!file.exists());
     }
 
     #[test]
-    fn an_unusable_remembered_subnet_is_malformed_and_preserved() {
+    fn an_invalid_subnet_prefix_file_is_ignored_and_left_untouched() {
         for raw in [
-            &b"{\"schema_version\":3,\"subnet_prefix\":\"192.168.2.1/23\"}"[..],
-            b"{\"schema_version\":3,\"subnet_prefix\":\"10.0.0.0/16\"}",
-            b"{\"schema_version\":3,\"subnet_prefix\":\"203.0.113.0/24\"}",
-            b"{\"schema_version\":3,\"subnet_prefix\":\"\"}",
+            &b"192.168.2.1/23\n"[..],
+            b"10.0.0.0/16",
+            b"203.0.113.0/24",
+            b"10.0.0.0/24\n\n",
+            b" 10.0.0.0/24",
+            b"",
+            b"\xff\xfe",
         ] {
             let (_directory, store) = test_store();
-            write_raw(&store, raw);
-            assert_eq!(
-                store.load(),
-                Err(SettingsError::Malformed(MalformedSettings::SubnetPrefix)),
-                "{}",
-                String::from_utf8_lossy(raw)
-            );
-            assert_eq!(raw_bytes(&store), raw);
+            store.save(&Settings::default()).expect("create profile");
+            let file = store.directory().join(SUBNET_PREFIX_FILE_NAME);
+            fs::write(&file, raw).expect("write raw prefix");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            assert_eq!(store.load_subnet_prefix(), Ok(None), "{raw:?}");
+            assert_eq!(fs::read(&file).expect("read raw"), raw);
         }
-        // Version 2 never carried a prefix, so the key is unknown there.
         let (_directory, store) = test_store();
-        let raw = b"{\"schema_version\":2,\"subnet_prefix\":\"10.0.0.0/24\"}";
-        write_raw(&store, raw);
+        store.save(&Settings::default()).expect("create profile");
+        let file = store.directory().join(SUBNET_PREFIX_FILE_NAME);
+        fs::write(&file, vec![b'1'; 65]).expect("write oversized");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        assert_eq!(store.load_subnet_prefix(), Err(SettingsError::TooLarge));
         assert_eq!(
-            store.load(),
-            Err(SettingsError::Malformed(MalformedSettings::Json))
+            parse_subnet_prefix(b"10.0.0.0/24"),
+            "10.0.0.0/24".parse().ok()
         );
     }
 }

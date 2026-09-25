@@ -10,12 +10,12 @@ use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, ControllerCommand, ControllerHandle, ControllerRuntime, DiscoveryFailure,
     DiscoveryKind, DiscoveryState, DiscoveryStatus, ExactSearchOutcome, ExactTargetTracker,
-    HostnameResolutionReceiver, RediscoveryQueue,
+    HostnameResolutionReceiver, OperationGeneration, RediscoveryQueue,
 };
-use balun::discovery::TypedSubnetScope;
 use balun::discovery::{
     DiscoveryEntry, ExactDiscoveryTarget, HostnameResolutionError, HostnameTarget,
 };
+use balun::discovery::{ObservationGeneration, TypedSubnetScope};
 use balun::localization::device_dialogs::{ForgetLabels, forget_description};
 use balun::localization::subnet_search::SubnetNotices;
 use balun::playback::{PlaybackInitializationError, PlaybackRuntime};
@@ -665,12 +665,60 @@ fn connect_refresh(
     });
 }
 
-/// The subnet flow's main-context state: whether a dialog is open, and the
-/// confirmation that an observation change must invalidate.
+/// The subnet flow's main-context state: whether a dialog is open, the
+/// confirmation that an observation change must invalidate, and a confirmed
+/// search sent to the controller but not yet seen admitted.
 #[derive(Default)]
 struct SubnetSearch {
     dialog_open: Cell<bool>,
     confirmation: RefCell<Option<Rc<PendingConfirmation>>>,
+    sent: Cell<Option<SentSearch>>,
+}
+
+/// A confirmed search handed to the controller: its subnet, the discovery
+/// generation published before it was sent, and the observation generation
+/// it was confirmed under.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SentSearch {
+    prefix: TypedSubnetScope,
+    discovery: OperationGeneration,
+    observation: ObservationGeneration,
+}
+
+/// What became of a sent search.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SentOutcome {
+    /// The controller admitted it; its subnet is worth remembering.
+    Admitted(TypedSubnetScope),
+    /// Observation left the confirmed generation before admission was seen.
+    Expired,
+    /// The controller refused it and published why.
+    Refused,
+}
+
+/// Settle `sent` against a newer publication, or `None` while undecided.
+/// Only the sent search itself can publish a running subnet search in a later
+/// generation; a later observation generation voids it; any other subnet
+/// state in a later generation is its outcome.
+fn settle_sent(sent: SentSearch, snapshot: &ApplicationSnapshot) -> Option<SentOutcome> {
+    let discovery = snapshot.discovery();
+    let later = snapshot.discovery_generation() > sent.discovery
+        && discovery.kind() == DiscoveryKind::Subnet;
+    if later && discovery.status() == DiscoveryStatus::Refreshing {
+        return Some(SentOutcome::Admitted(sent.prefix));
+    }
+    if !snapshot.observation().is_ready_for(sent.observation) {
+        return Some(SentOutcome::Expired);
+    }
+    if !later {
+        return None;
+    }
+    Some(match discovery.status() {
+        DiscoveryStatus::Failed(
+            DiscoveryFailure::SubnetUnavailable | DiscoveryFailure::SubnetConfirmationStale,
+        ) => SentOutcome::Refused,
+        _ => SentOutcome::Admitted(sent.prefix),
+    })
 }
 
 impl SubnetSearch {
@@ -691,6 +739,13 @@ impl SubnetSearch {
             }
         }
         stale
+    }
+
+    /// Settle a sent search once a publication decides it.
+    fn settle(&self, snapshot: &ApplicationSnapshot) -> Option<SentOutcome> {
+        let outcome = settle_sent(self.sent.get()?, snapshot)?;
+        self.sent.set(None);
+        Some(outcome)
     }
 }
 
@@ -726,7 +781,6 @@ fn connect_subnet_search(
             let buttons = buttons.clone();
             let parent = parent.downgrade();
             move |scope: TypedSubnetScope| {
-                wiring.remember_subnet(Some(scope));
                 let Some(parent) = parent.upgrade() else {
                     return;
                 };
@@ -776,6 +830,7 @@ fn present_subnet_confirmation(
     let controller = wiring.controller.clone();
     let toasts = Rc::clone(wiring);
     let buttons = buttons.clone();
+    let sending = Rc::clone(subnet);
     let closed = Rc::clone(subnet);
     let pending = subnet_search_dialog::present_confirmation(
         parent,
@@ -787,7 +842,14 @@ fn present_subnet_confirmation(
             buttons.exact.set_sensitive(false);
             buttons.refresh.set_sensitive(false);
             let notices = SubnetNotices::current();
+            let discovery = toasts.accepted.borrow().discovery_generation();
             if controller.try_search_subnet(consent).is_ok() {
+                // The subnet is remembered once the search is seen admitted.
+                sending.sent.set(Some(SentSearch {
+                    prefix: scope,
+                    discovery,
+                    observation: generation,
+                }));
                 buttons.cancel.set_visible(true);
                 buttons.cancel.set_sensitive(true);
                 toasts.toast(&notices.searching);
@@ -823,6 +885,7 @@ fn connect_exact_discovery(
     let cancel_discovery_button = sidebar.cancel_discovery_button().clone();
     let dialog_open = Rc::new(Cell::new(false));
     let refresh_button = sidebar.refresh_button().clone();
+    let subnet_search_button = sidebar.subnet_search_button().clone();
     let window = window.downgrade();
 
     sidebar
@@ -842,6 +905,7 @@ fn connect_exact_discovery(
             let admitted_cancel_button = cancel_discovery_button.clone();
             let admitted_exact_button = button.clone();
             let admitted_refresh_button = refresh_button.clone();
+            let admitted_subnet_button = subnet_search_button.clone();
             let closed_dialog_open = Rc::clone(&dialog_open);
             exact_discovery_dialog::present(
                 &window,
@@ -855,12 +919,13 @@ fn connect_exact_discovery(
                             return;
                         }
                     };
-                    // Exact and local discovery share one supersedable
-                    // lane. Disable every start action before the
-                    // Refreshing publication closes the small re-admission
-                    // interval.
+                    // Local, exact, and subnet discovery share one
+                    // supersedable lane. Disable every start action before
+                    // the Refreshing publication closes the small
+                    // re-admission interval.
                     admitted_exact_button.set_sensitive(false);
                     admitted_refresh_button.set_sensitive(false);
+                    admitted_subnet_button.set_sensitive(false);
                     match admitted_controller.try_discover_exact(target) {
                         Ok(ticket) => {
                             // Remember the address only once this search
@@ -874,6 +939,11 @@ fn connect_exact_discovery(
                         Err(_) => {
                             admitted_exact_button.set_sensitive(true);
                             admitted_refresh_button.set_sensitive(true);
+                            admitted_subnet_button.set_sensitive(
+                                device_sidebar::subnet_search_sensitive(
+                                    &admitted_wiring.accepted.borrow(),
+                                ),
+                            );
                             admitted_wiring
                                 .toast("Balun is busy; try the device address again in a moment.");
                         }
@@ -1086,9 +1156,9 @@ impl HostnameProbes {
 }
 
 impl RediscoveryWiring {
-    /// Remember the entered subnet as editable text for the next search.
-    fn remember_subnet(&self, prefix: Option<TypedSubnetScope>) {
-        if let Some(pending_save) = self.settings.set_subnet_prefix(prefix) {
+    /// Remember an admitted search's subnet as editable text for the next.
+    fn remember_subnet(&self, prefix: TypedSubnetScope) {
+        if let Some(pending_save) = self.settings.set_subnet_prefix(Some(prefix)) {
             self.settings.save(pending_save);
         }
     }
@@ -1504,6 +1574,13 @@ fn spawn_snapshot_reducer(
             // closes before anything else can act on this publication.
             if subnet.observe(&candidate) {
                 rediscovery.toast(&SubnetNotices::current().confirmation_expired);
+            }
+            match subnet.settle(&candidate) {
+                Some(SentOutcome::Admitted(prefix)) => rediscovery.remember_subnet(prefix),
+                Some(SentOutcome::Expired) => {
+                    rediscovery.toast(&SubnetNotices::current().confirmation_expired);
+                }
+                Some(SentOutcome::Refused) | None => {}
             }
             device_sidebar.apply_snapshot(&candidate);
             channel_sidebar.apply_snapshot(&candidate);
@@ -2454,6 +2531,102 @@ mod tests {
         assert!(subnet.confirmation.borrow().is_none());
         assert!(!subnet.dialog_open.get());
         assert!(!subnet.observe(&ready), "nothing is left to close");
+    }
+
+    #[test]
+    fn a_sent_subnet_search_is_remembered_only_once_seen_admitted() {
+        use balun::controller::{DiscoveryState, SelectedLineupState, SnapshotRevision};
+        use balun::discovery::ObservationState;
+
+        let prefix: TypedSubnetScope = "192.168.2.0/23".parse().unwrap();
+        let observation = ObservationGeneration::new(3).unwrap();
+        let sent = SentSearch {
+            prefix,
+            discovery: OperationGeneration::new(4),
+            observation,
+        };
+        let snapshot = |generation, discovery, state| {
+            ApplicationSnapshot::new(
+                SnapshotRevision::new(9),
+                OperationGeneration::new(generation),
+                OperationGeneration::INITIAL,
+                discovery,
+                [],
+                None,
+                SelectedLineupState::unselected(OperationGeneration::INITIAL),
+            )
+            .unwrap()
+            .with_observation(state)
+        };
+        let ready = ObservationState::Ready(observation);
+        let subnet = |generation, status: fn(OperationGeneration) -> DiscoveryState| {
+            status(OperationGeneration::new(generation))
+        };
+
+        // Not yet processed: an earlier generation decides nothing.
+        let earlier = snapshot(
+            4,
+            DiscoveryState::refreshing(OperationGeneration::new(4)),
+            ready,
+        );
+        assert_eq!(settle_sent(sent, &earlier), None);
+        // Only the sent search publishes a running subnet search later on.
+        let running = snapshot(
+            5,
+            subnet(5, |generation| {
+                DiscoveryState::refreshing_for(generation, DiscoveryKind::Subnet)
+            }),
+            ready,
+        );
+        assert_eq!(
+            settle_sent(sent, &running),
+            Some(SentOutcome::Admitted(prefix))
+        );
+        // A coalesced publication may show its outcome instead.
+        let finished = snapshot(
+            5,
+            subnet(5, |generation| {
+                DiscoveryState::ready_for(generation, DiscoveryKind::Subnet, 0)
+            }),
+            ready,
+        );
+        assert_eq!(
+            settle_sent(sent, &finished),
+            Some(SentOutcome::Admitted(prefix))
+        );
+        let refused = snapshot(
+            5,
+            subnet(5, |generation| {
+                DiscoveryState::failed_for(
+                    generation,
+                    DiscoveryKind::Subnet,
+                    DiscoveryFailure::SubnetConfirmationStale,
+                )
+            }),
+            ready,
+        );
+        assert_eq!(settle_sent(sent, &refused), Some(SentOutcome::Refused));
+        // A later observation generation voids it, even beside a running
+        // probe that kept its own generation.
+        let changed = ObservationState::Ready(ObservationGeneration::new(4).unwrap());
+        let voided = snapshot(
+            4,
+            DiscoveryState::refreshing(OperationGeneration::new(4)),
+            changed,
+        );
+        assert_eq!(settle_sent(sent, &voided), Some(SentOutcome::Expired));
+        assert_eq!(
+            settle_sent(sent, &snapshot(5, running.discovery(), changed)),
+            Some(SentOutcome::Admitted(prefix)),
+            "admission seen first wins"
+        );
+
+        let flow = SubnetSearch::default();
+        assert_eq!(flow.settle(&running), None, "nothing was sent");
+        flow.sent.set(Some(sent));
+        assert_eq!(flow.settle(&earlier), None);
+        assert_eq!(flow.settle(&running), Some(SentOutcome::Admitted(prefix)));
+        assert_eq!(flow.settle(&running), None, "settled once");
     }
 
     #[test]

@@ -14,7 +14,6 @@
 //! never delays revocation. Readiness returns, as a new generation, only
 //! once the burst is reconciled and no notification is pending.
 
-use std::collections::BTreeMap;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -179,7 +178,7 @@ where
         // after this point belongs to the next burst, and the state it
         // reports is already visible to the read below.
         let beyond_addresses = kinds.take_beyond_addresses();
-        let lost = match read_off_runtime(&read_inventory).await {
+        let change = match read_off_runtime(&read_inventory).await {
             Some(latest) => {
                 if !burst_matters(&current, &latest, beyond_addresses) {
                     continue;
@@ -188,20 +187,16 @@ where
                 let lost = current.loss_since(&latest);
                 current = latest;
                 *inventory = Some(current.clone());
-                lost
+                NetworkChange::coalesced(lost, count)
             }
             // The change is still real; authority is cancelled even
             // when nothing can be attributed.
             None => {
                 gate.invalidate();
-                BTreeMap::new()
+                NetworkChange::unattributed(count)
             }
         };
-        if changes
-            .send(NetworkChange::coalesced(lost, count))
-            .await
-            .is_err()
-        {
+        if changes.send(change).await.is_err() {
             return Ok(());
         }
     }
@@ -649,6 +644,8 @@ mod tests {
         assert!(removal.loss("eth1").ipv4());
         let unreadable = delivered.try_recv().unwrap();
         assert!(unreadable.lost_interfaces().is_empty());
+        assert!(unreadable.is_unattributed());
+        assert!(!removal.is_unattributed());
         assert!(delivered.try_recv().is_err());
         // The failed read kept the last good baseline.
         assert_eq!(known, Some(without_eth1));

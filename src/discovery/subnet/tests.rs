@@ -154,18 +154,16 @@ struct FakeSocket {
 }
 
 impl SubnetTransport for FakeTransport {
-    type Socket = FakeSocket;
-
-    fn open(&self) -> io::Result<FakeSocket> {
+    fn open(&self) -> io::Result<Box<dyn SubnetSocket>> {
         let open = self.0.open.fetch_add(1, Ordering::SeqCst) + 1;
         self.0.max_open.fetch_max(open, Ordering::SeqCst);
         let (replies, inbox) = mpsc::unbounded_channel();
-        Ok(FakeSocket {
+        Ok(Box::new(FakeSocket {
             network: Arc::clone(&self.0),
             replies,
             inbox: tokio::sync::Mutex::new(inbox),
             destination: Mutex::new(None),
-        })
+        }))
     }
 }
 
@@ -182,13 +180,15 @@ impl Drop for FakeSocket {
 }
 
 impl SubnetSocket for FakeSocket {
-    async fn writable(&self) -> io::Result<()> {
-        if !self.network.ready_delay.is_zero() {
-            tokio::time::sleep(self.network.ready_delay).await;
-        }
-        let readiness = self.network.readiness.fetch_add(1, Ordering::SeqCst) + 1;
-        (self.network.on_ready)(readiness);
-        Ok(())
+    fn writable(&self) -> IoFuture<'_, ()> {
+        Box::pin(async move {
+            if !self.network.ready_delay.is_zero() {
+                tokio::time::sleep(self.network.ready_delay).await;
+            }
+            let readiness = self.network.readiness.fetch_add(1, Ordering::SeqCst) + 1;
+            (self.network.on_ready)(readiness);
+            Ok(())
+        })
     }
 
     fn try_send_to(&self, _datagram: &[u8], destination: SocketAddr) -> io::Result<usize> {
@@ -225,16 +225,18 @@ impl SubnetSocket for FakeSocket {
         Ok(_datagram.len())
     }
 
-    async fn recv_from(&self, buffer: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-        let mut inbox = self.inbox.lock().await;
-        match inbox.recv().await {
-            Some(Ok((bytes, source))) => {
-                buffer[..bytes.len()].copy_from_slice(&bytes);
-                Ok((bytes.len(), source))
+    fn recv_from<'a>(&'a self, buffer: &'a mut [u8]) -> IoFuture<'a, (usize, SocketAddr)> {
+        Box::pin(async move {
+            let mut inbox = self.inbox.lock().await;
+            match inbox.recv().await {
+                Some(Ok((bytes, source))) => {
+                    buffer[..bytes.len()].copy_from_slice(&bytes);
+                    Ok((bytes.len(), source))
+                }
+                Some(Err(error)) => Err(error),
+                None => std::future::pending().await,
             }
-            Some(Err(error)) => Err(error),
-            None => std::future::pending().await,
-        }
+        })
     }
 }
 
@@ -790,12 +792,54 @@ async fn a_local_directed_broadcast_is_refused_before_the_socket_on_every_platfo
     assert_eq!(report.report.issues[0].endpoint.destination, at(local));
 }
 
+/// Windows sends a directed broadcast without the broadcast option, so a
+/// search that cannot read the local interfaces fails closed: it opens no
+/// socket and sends nothing, on every platform.
+#[tokio::test(start_paused = true)]
+async fn unreadable_interfaces_refuse_the_search_before_any_send() {
+    let network = Arc::new(FakeNetwork::silent());
+    let gate = ObservationGate::new();
+    gate.establish();
+    let permit =
+        SubnetSearchConsent::confirm(scope("10.9.0.0/24"), gate.state().generation().unwrap())
+            .admit(&gate.watch())
+            .unwrap();
+    let outcome = search(
+        lane(0),
+        &FakeTransport(Arc::clone(&network)),
+        permit,
+        &CancellationToken::new(),
+        Err(io::Error::other("interfaces unavailable")),
+    )
+    .await;
+
+    assert_eq!(outcome, Err(SubnetScanError::Interfaces));
+    assert!(network.sends().is_empty());
+    assert_eq!(network.max_open.load(Ordering::SeqCst), 0);
+
+    // With the interfaces read, the same search runs.
+    let permit =
+        SubnetSearchConsent::confirm(scope("10.9.0.0/30"), gate.state().generation().unwrap())
+            .admit(&gate.watch())
+            .unwrap();
+    let report = search(
+        lane(0),
+        &FakeTransport(Arc::clone(&network)),
+        permit,
+        &CancellationToken::new(),
+        Ok(BTreeSet::new()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.outcome, SubnetScanOutcome::Complete);
+    assert_eq!(network.sends().len(), 4);
+}
+
 #[tokio::test(start_paused = true)]
 async fn failed_sockets_are_issues_and_other_candidates_continue() {
     struct Failing;
     impl SubnetTransport for Failing {
-        type Socket = FakeSocket;
-        fn open(&self) -> io::Result<FakeSocket> {
+        fn open(&self) -> io::Result<Box<dyn SubnetSocket>> {
             Err(io::ErrorKind::AddrNotAvailable.into())
         }
     }
@@ -886,24 +930,29 @@ async fn every_send_rechecks_scope_budget_and_each_authority_condition() {
         "[fd00::1]:65001".parse().unwrap(),
     ] {
         assert!(matches!(
-            context.send(&socket, destination).await,
+            context.send(socket.as_ref(), destination).await,
             SendOutcome::OutOfScope
         ));
     }
     assert!(network.sends().is_empty());
     assert!(matches!(
-        context.send(&socket, at(Ipv4Addr::new(10, 7, 0, 1))).await,
+        context
+            .send(socket.as_ref(), at(Ipv4Addr::new(10, 7, 0, 1)))
+            .await,
         SendOutcome::Sent(_)
     ));
 
-    // A spent budget refuses the send at the boundary.
+    // A spent budget refuses the send at the boundary without stopping the
+    // search; each candidate's attempts fit the budget, so it is a guard.
     let spent = test_context(authority.clone(), ScanPlan::typed(scope("10.7.0.0/24")), 0);
-    assert_eq!(spent.refusal(), Some(SubnetScanIncomplete::RequestBudget));
+    assert_eq!(spent.refusal(), None);
     assert!(matches!(
-        spent.send(&socket, at(Ipv4Addr::new(10, 7, 0, 2))).await,
-        SendOutcome::Halted
+        spent
+            .send(socket.as_ref(), at(Ipv4Addr::new(10, 7, 0, 2)))
+            .await,
+        SendOutcome::BudgetSpent
     ));
-    assert_eq!(spent.reason(), Some(SubnetScanIncomplete::RequestBudget));
+    assert_eq!(spent.reason(), None);
 
     let late = test_context(authority.clone(), ScanPlan::typed(scope("10.7.0.0/24")), 2);
     tokio::time::advance(TypedSubnetScope::DEADLINE).await;
@@ -954,20 +1003,14 @@ fn usable_hosts_follow_the_entered_prefix() {
 }
 
 #[test]
-fn consent_binds_the_displayed_budget_and_its_generation() {
+fn consent_binds_the_scope_and_its_generation() {
     let typed = scope("192.168.2.0/23");
     let gate = ObservationGate::new();
     let watch = gate.watch();
     gate.establish();
     let generation = gate.state().generation().unwrap();
 
-    for (candidates, budget) in [(510, 1_021), (509, 1_020), (0, 0)] {
-        assert_eq!(
-            SubnetSearchConsent::confirm(typed, candidates, budget, generation).unwrap_err(),
-            SubnetConsentError::BudgetMismatch
-        );
-    }
-    let consent = SubnetSearchConsent::confirm(typed, 510, 1_020, generation).unwrap();
+    let consent = SubnetSearchConsent::confirm(typed, generation);
     assert_eq!(consent.scope(), typed);
     assert_eq!(consent.generation(), generation);
     assert!(!format!("{consent:?}").contains("192.168"));
@@ -980,14 +1023,14 @@ fn consent_binds_the_displayed_budget_and_its_generation() {
     // A change revokes the permit; the network returning does not restore it.
     gate.invalidate();
     assert!(!permit.is_live());
-    let unavailable = SubnetSearchConsent::confirm(typed, 510, 1_020, generation).unwrap();
+    let unavailable = SubnetSearchConsent::confirm(typed, generation);
     assert_eq!(
         unavailable.admit(&watch).unwrap_err(),
         SubnetAdmissionError::ObservationUnavailable
     );
     gate.establish();
     assert!(!permit.is_live());
-    let stale = SubnetSearchConsent::confirm(typed, 510, 1_020, generation).unwrap();
+    let stale = SubnetSearchConsent::confirm(typed, generation);
     assert_eq!(
         stale.admit(&watch).unwrap_err(),
         SubnetAdmissionError::Stale
@@ -1002,8 +1045,7 @@ async fn the_production_entry_sends_nothing_without_live_uncancelled_authority()
     gate.establish();
     let generation = gate.state().generation().unwrap();
     let admit = || {
-        SubnetSearchConsent::confirm(typed, 254, 508, generation)
-            .unwrap()
+        SubnetSearchConsent::confirm(typed, generation)
             .admit(&gate.watch())
             .unwrap()
     };
@@ -1139,30 +1181,26 @@ mod native {
     }
 
     impl SubnetTransport for Hooked {
-        type Socket = HookedSocket;
-
-        fn open(&self) -> io::Result<HookedSocket> {
+        fn open(&self) -> io::Result<Box<dyn SubnetSocket>> {
             let inner = open_system_socket()?;
-            assert!(!socket2_broadcast(&inner), "broadcast stays disabled");
-            Ok(HookedSocket {
+            assert!(!inner.broadcast().unwrap(), "broadcast stays disabled");
+            Ok(Box::new(HookedSocket {
                 inner,
                 readiness: Arc::clone(&self.readiness),
                 on_ready: Arc::clone(&self.on_ready),
                 sends: Arc::clone(&self.sends),
-            })
+            }))
         }
     }
 
-    fn socket2_broadcast(socket: &UdpSocket) -> bool {
-        socket.broadcast().unwrap()
-    }
-
     impl SubnetSocket for HookedSocket {
-        async fn writable(&self) -> io::Result<()> {
-            self.inner.writable().await?;
-            let readiness = self.readiness.fetch_add(1, Ordering::SeqCst) + 1;
-            (self.on_ready)(readiness);
-            Ok(())
+        fn writable(&self) -> IoFuture<'_, ()> {
+            Box::pin(async move {
+                self.inner.writable().await?;
+                let readiness = self.readiness.fetch_add(1, Ordering::SeqCst) + 1;
+                (self.on_ready)(readiness);
+                Ok(())
+            })
         }
 
         fn try_send_to(&self, datagram: &[u8], destination: SocketAddr) -> io::Result<usize> {
@@ -1171,11 +1209,8 @@ mod native {
             sent
         }
 
-        fn recv_from(
-            &self,
-            buffer: &mut [u8],
-        ) -> impl Future<Output = io::Result<(usize, SocketAddr)>> + Send {
-            self.inner.recv_from(buffer)
+        fn recv_from<'a>(&'a self, buffer: &'a mut [u8]) -> IoFuture<'a, (usize, SocketAddr)> {
+            Box::pin(self.inner.recv_from(buffer))
         }
     }
 
@@ -1321,7 +1356,7 @@ mod native {
             network: Ipv4Net::new(broadcast, 1).unwrap().trunc(),
             candidates: vec![broadcast],
             port: 9,
-            local_broadcasts: local_directed_broadcasts(),
+            local_broadcasts: local_directed_broadcasts().unwrap(),
         };
         assert!(plan.admits(SocketAddr::from((broadcast, 9))));
         let (_gate, authority) = ready();

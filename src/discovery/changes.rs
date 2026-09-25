@@ -80,6 +80,7 @@ impl InterfaceLoss {
 pub struct NetworkChange {
     lost_interfaces: BTreeMap<String, InterfaceLoss>,
     coalesced: usize,
+    unattributed: bool,
 }
 
 impl NetworkChange {
@@ -92,6 +93,18 @@ impl NetworkChange {
                 .map(|name| (name, InterfaceLoss::REMOVED))
                 .collect(),
             coalesced: 1,
+            unattributed: false,
+        }
+    }
+
+    /// A change of `coalesced` notifications whose losses are unknown
+    /// because the interfaces could not be read.
+    #[must_use]
+    pub fn unattributed(coalesced: usize) -> Self {
+        Self {
+            lost_interfaces: BTreeMap::new(),
+            coalesced: coalesced.max(1),
+            unattributed: true,
         }
     }
 
@@ -106,7 +119,15 @@ impl NetworkChange {
         Self {
             lost_interfaces,
             coalesced: coalesced.max(1),
+            unattributed: false,
         }
+    }
+
+    /// Whether what was lost is unknown because the interfaces could not be
+    /// read; evidence that names no interface cannot be kept safely.
+    #[must_use]
+    pub const fn is_unattributed(&self) -> bool {
+        self.unattributed
     }
 
     /// What each affected interface lost. Evidence observed through it in a
@@ -138,6 +159,7 @@ impl NetworkChange {
             self.lost_interfaces.insert(name, merged);
         }
         self.coalesced = self.coalesced.saturating_add(later.coalesced);
+        self.unattributed |= later.unattributed;
     }
 }
 
@@ -147,6 +169,7 @@ impl fmt::Debug for NetworkChange {
             .debug_struct("NetworkChange")
             .field("lost_interface_count", &self.lost_interfaces.len())
             .field("coalesced", &self.coalesced)
+            .field("unattributed", &self.unattributed)
             .finish()
     }
 }
@@ -501,6 +524,7 @@ mod tests {
         merged.merge(NetworkChange::coalesced(link_local_only, 1));
         merged.merge(change(&["wg0"]));
         merged.merge(NetworkChange::coalesced(BTreeMap::new(), 3));
+        assert!(!merged.is_unattributed());
 
         assert_eq!(merged.lost_interfaces().len(), 2);
         let eth0 = merged.loss("eth0");
@@ -508,6 +532,12 @@ mod tests {
         assert_eq!(merged.loss("wg0"), InterfaceLoss::REMOVED);
         assert!(merged.loss("eth9").is_empty());
         assert_eq!(merged.coalesced_count(), 6);
+        merged.merge(NetworkChange::unattributed(0));
+        assert!(
+            merged.is_unattributed(),
+            "unknown losses stay unknown once merged"
+        );
+        assert_eq!(merged.coalesced_count(), 7);
         assert_eq!(
             NetworkChange::coalesced(BTreeMap::new(), 0).coalesced_count(),
             1

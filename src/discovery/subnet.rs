@@ -32,7 +32,7 @@
 //!   refuses, as it refuses a broadcast destination, is never retried. A
 //!   local interface's directed broadcast is refused the same way before it
 //!   reaches the socket, because Windows would send it without the broadcast
-//!   option.
+//!   option, and a search whose local interfaces cannot be read never starts.
 //!
 //! Only validated responders reach the report, so HTTP metadata enrichment
 //! stays a separate, responder-only step.
@@ -42,6 +42,7 @@ use std::fmt;
 use std::future::Future;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::Duration;
@@ -61,13 +62,6 @@ use super::{
 use crate::domain::DeviceId;
 use crate::hdhr::protocol::{DISCOVERY_UDP_PORT, MAX_PACKET_SIZE, encode_tuner_discover_request};
 
-/// Why a displayed confirmation cannot become consent.
-#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub enum SubnetConsentError {
-    #[error("the confirmed candidate count or request budget does not match the subnet")]
-    BudgetMismatch,
-}
-
 /// Why consent could not be admitted. Neither reason sends anything.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum SubnetAdmissionError {
@@ -84,11 +78,15 @@ pub enum SubnetScanError {
     Busy,
     #[error("the discovery request could not be encoded")]
     Request,
+    #[error(
+        "local network interfaces could not be read, so broadcast addresses cannot be excluded"
+    )]
+    Interfaces,
 }
 
-/// One confirmation of an exact typed scope and its outbound request budget,
-/// bound to the network-observation generation that was healthy when the
-/// confirmation was shown.
+/// One confirmation of an exact typed scope, whose budget the scope alone
+/// determines, bound to the network-observation generation that was healthy
+/// when the confirmation was shown.
 ///
 /// It is neither `Clone` nor `Copy`: admitting it consumes it, so one
 /// confirmation authorizes at most one search. Its type is separate from
@@ -99,21 +97,11 @@ pub struct SubnetSearchConsent {
 }
 
 impl SubnetSearchConsent {
-    /// Confirm `scope` exactly as it was displayed: the candidate count and
-    /// outbound request budget shown must be the ones this policy derives
-    /// from the same scope.
-    pub fn confirm(
-        scope: TypedSubnetScope,
-        displayed_candidates: usize,
-        displayed_request_budget: usize,
-        generation: ObservationGeneration,
-    ) -> Result<Self, SubnetConsentError> {
-        if displayed_candidates != scope.candidate_count()
-            || displayed_request_budget != scope.maximum_request_attempts()
-        {
-            return Err(SubnetConsentError::BudgetMismatch);
-        }
-        Ok(Self { scope, generation })
+    /// Confirm `scope`, shown with the budget it determines, under
+    /// `generation`.
+    #[must_use]
+    pub const fn confirm(scope: TypedSubnetScope, generation: ObservationGeneration) -> Self {
+        Self { scope, generation }
     }
 
     /// The confirmed scope.
@@ -218,9 +206,6 @@ pub enum SubnetScanIncomplete {
     NetworkChanged,
     /// The search was cancelled.
     Cancelled,
-    /// The outbound request budget was spent before every candidate was
-    /// probed. Each candidate's attempts fit the budget, so this is a guard.
-    RequestBudget,
 }
 
 /// The result of one subnet search.
@@ -240,37 +225,47 @@ pub struct SubnetScanReport {
 /// Search the permit's scope from this process's single subnet lane.
 ///
 /// Returns [`SubnetScanError::Busy`] without sending if another search is
-/// already running in this process. Cancellation, a network change, the
+/// already running in this process, and [`SubnetScanError::Interfaces`] if
+/// the local interfaces cannot be read. Cancellation, a network change, the
 /// deadline, and the device limit end the search with an incomplete report.
 pub async fn discover_typed_subnet(
     permit: SubnetScanPermit,
     cancellation: &CancellationToken,
 ) -> Result<SubnetScanReport, SubnetScanError> {
-    let plan = ScanPlan::typed(permit.scope).with_local_broadcasts(local_directed_broadcasts());
-    scan(
+    search(
         SubnetScanLane::process(),
         &SystemTransport,
-        plan,
-        permit.authority,
+        permit,
         cancellation,
+        local_directed_broadcasts(),
     )
     .await
 }
 
-/// Every local interface's IPv4 directed-broadcast address, or none when the
-/// interfaces cannot be read, leaving the operating system's own refusal.
-fn local_directed_broadcasts() -> BTreeSet<Ipv4Addr> {
-    if_addrs::get_if_addrs()
-        .map(|interfaces| {
-            interfaces
-                .into_iter()
-                .filter_map(|interface| match interface.addr {
-                    if_addrs::IfAddr::V4(address) => address.broadcast,
-                    if_addrs::IfAddr::V6(_) => None,
-                })
-                .collect()
+/// Start a search only once every local directed-broadcast address is known:
+/// Windows sends one without the broadcast option, so a search that cannot
+/// exclude them sends nothing.
+async fn search(
+    lane: Arc<SubnetScanLane>,
+    transport: &dyn SubnetTransport,
+    permit: SubnetScanPermit,
+    cancellation: &CancellationToken,
+    local_broadcasts: io::Result<BTreeSet<Ipv4Addr>>,
+) -> Result<SubnetScanReport, SubnetScanError> {
+    let local_broadcasts = local_broadcasts.map_err(|_| SubnetScanError::Interfaces)?;
+    let plan = ScanPlan::typed(permit.scope).with_local_broadcasts(local_broadcasts);
+    scan(lane, transport, plan, permit.authority, cancellation).await
+}
+
+/// Every local interface's IPv4 directed-broadcast address.
+fn local_directed_broadcasts() -> io::Result<BTreeSet<Ipv4Addr>> {
+    Ok(if_addrs::get_if_addrs()?
+        .into_iter()
+        .filter_map(|interface| match interface.addr {
+            if_addrs::IfAddr::V4(address) => address.broadcast,
+            if_addrs::IfAddr::V6(_) => None,
         })
-        .unwrap_or_default()
+        .collect())
 }
 
 /// The observation generation a search stays bound to.
@@ -356,34 +351,31 @@ fn send_jitter(entropy: u64) -> Duration {
     Duration::from_nanos(u64::try_from(extra).unwrap_or(u64::MAX))
 }
 
-/// Opens one socket per probed candidate.
-trait SubnetTransport: Sync {
-    type Socket: SubnetSocket;
+/// One socket operation in flight.
+type IoFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
 
-    fn open(&self) -> io::Result<Self::Socket>;
+/// Opens one socket per probed candidate. Trait objects keep one compiled
+/// scheduler for production and its fixtures alike.
+trait SubnetTransport: Sync {
+    fn open(&self) -> io::Result<Box<dyn SubnetSocket>>;
 }
 
 /// The socket operations a probe needs: readiness, one nonblocking send, and
 /// receiving replies.
-trait SubnetSocket: Send + Sync + 'static {
-    fn writable(&self) -> impl Future<Output = io::Result<()>> + Send;
+trait SubnetSocket: Send + Sync {
+    fn writable(&self) -> IoFuture<'_, ()>;
 
     fn try_send_to(&self, datagram: &[u8], destination: SocketAddr) -> io::Result<usize>;
 
-    fn recv_from(
-        &self,
-        buffer: &mut [u8],
-    ) -> impl Future<Output = io::Result<(usize, SocketAddr)>> + Send;
+    fn recv_from<'a>(&'a self, buffer: &'a mut [u8]) -> IoFuture<'a, (usize, SocketAddr)>;
 }
 
 /// Ordinary unbound IPv4 UDP sockets; the system's routing picks the path.
 struct SystemTransport;
 
 impl SubnetTransport for SystemTransport {
-    type Socket = UdpSocket;
-
-    fn open(&self) -> io::Result<UdpSocket> {
-        open_system_socket()
+    fn open(&self) -> io::Result<Box<dyn SubnetSocket>> {
+        Ok(Box::new(open_system_socket()?))
     }
 }
 
@@ -399,19 +391,16 @@ fn open_system_socket() -> io::Result<UdpSocket> {
 }
 
 impl SubnetSocket for UdpSocket {
-    fn writable(&self) -> impl Future<Output = io::Result<()>> + Send {
-        Self::writable(self)
+    fn writable(&self) -> IoFuture<'_, ()> {
+        Box::pin(Self::writable(self))
     }
 
     fn try_send_to(&self, datagram: &[u8], destination: SocketAddr) -> io::Result<usize> {
         Self::try_send_to(self, datagram, destination)
     }
 
-    fn recv_from(
-        &self,
-        buffer: &mut [u8],
-    ) -> impl Future<Output = io::Result<(usize, SocketAddr)>> + Send {
-        Self::recv_from(self, buffer)
+    fn recv_from<'a>(&'a self, buffer: &'a mut [u8]) -> IoFuture<'a, (usize, SocketAddr)> {
+        Box::pin(Self::recv_from(self, buffer))
     }
 }
 
@@ -486,6 +475,9 @@ enum SendOutcome {
     Halted,
     /// The destination is not a usable host of the scope; nothing was sent.
     OutOfScope,
+    /// No outbound request budget is left; nothing was sent. Each candidate's
+    /// attempts fit the scope's budget, so this guard never ends a search.
+    BudgetSpent,
     /// The operating system refused the send; it is never retried.
     Refused(io::ErrorKind),
     /// The socket failed.
@@ -517,8 +509,6 @@ impl ScanContext {
             Some(SubnetScanIncomplete::NetworkChanged)
         } else if Instant::now() >= self.deadline {
             Some(SubnetScanIncomplete::Deadline)
-        } else if self.budget.load(Ordering::Acquire) == 0 {
-            Some(SubnetScanIncomplete::RequestBudget)
         } else {
             None
         }
@@ -530,7 +520,7 @@ impl ScanContext {
     /// other attempt in this process can come between them. Every condition
     /// is checked again after write readiness and immediately before the
     /// nonblocking send.
-    async fn send<S: SubnetSocket>(&self, socket: &S, destination: SocketAddr) -> SendOutcome {
+    async fn send(&self, socket: &dyn SubnetSocket, destination: SocketAddr) -> SendOutcome {
         if !self.plan.admits(destination) {
             return SendOutcome::OutOfScope;
         }
@@ -560,6 +550,9 @@ impl ScanContext {
                 self.halt(reason);
                 return SendOutcome::Halted;
             }
+            if self.budget.load(Ordering::Acquire) == 0 {
+                return SendOutcome::BudgetSpent;
+            }
             // A local directed broadcast is refused as a broadcast-capable
             // platform refuses it, so every platform behaves the same.
             let result = if self.plan.is_local_broadcast(destination) {
@@ -571,7 +564,7 @@ impl ScanContext {
                 continue;
             }
             let sent_at = Instant::now();
-            // Only the lane holder sends, and `refusal` saw budget left.
+            // Only the lane holder sends, and budget was left just above.
             self.budget.fetch_sub(1, Ordering::AcqRel);
             self.attempted.fetch_add(1, Ordering::AcqRel);
             *next_send = Some(
@@ -609,9 +602,9 @@ fn subnet_endpoint(destination: SocketAddr) -> ProbeEndpoint {
 
 /// Probe one candidate: at most two attempts, each followed by one reply
 /// window, until one identity is accepted or the receive budget is spent.
-async fn probe<S: SubnetSocket>(
+async fn probe(
     context: Arc<ScanContext>,
-    socket: S,
+    socket: Box<dyn SubnetSocket>,
     candidate: Ipv4Addr,
 ) -> CandidateResult {
     let destination = SocketAddr::V4(SocketAddrV4::new(candidate, context.plan.port));
@@ -624,12 +617,16 @@ async fn probe<S: SubnetSocket>(
     result.report.stats.probes_started = 1;
     let mut buffer = [0_u8; MAX_PACKET_SIZE + 1];
     for _ in 0..TypedSubnetScope::ATTEMPTS_PER_CANDIDATE {
-        let sent_at = match context.send(&socket, destination).await {
+        let sent_at = match context.send(socket.as_ref(), destination).await {
             SendOutcome::Sent(sent_at) => sent_at,
             SendOutcome::Halted => return result,
             SendOutcome::OutOfScope => {
                 result.issue =
                     Some("the destination is not a usable host of the confirmed subnet".into());
+                return result;
+            }
+            SendOutcome::BudgetSpent => {
+                result.issue = Some("no outbound request budget was left".into());
                 return result;
             }
             SendOutcome::Refused(kind) => {
@@ -749,9 +746,9 @@ impl Aggregate {
 }
 
 /// Run one search on `lane` through `transport`.
-async fn scan<T: SubnetTransport>(
+async fn scan(
     lane: Arc<SubnetScanLane>,
-    transport: &T,
+    transport: &dyn SubnetTransport,
     plan: ScanPlan,
     authority: Authority,
     cancellation: &CancellationToken,
@@ -785,7 +782,7 @@ async fn scan<T: SubnetTransport>(
             let Some(candidate) = pending.next() else {
                 break;
             };
-            // No probe is admitted without live authority and budget left.
+            // No probe is admitted without live authority.
             if let Some(reason) = context.refusal() {
                 context.halt(reason);
                 break;

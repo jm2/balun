@@ -26,8 +26,7 @@ address so you know which tuner failed.
 | --------- | -------- |
 | Local HDHomeRun discovery (IPv4 broadcast, IPv6 multicast) | ✅ |
 | Find a routed tuner by IP address or hostname (WireGuard and other tunnels) | ✅ Remembered across launches |
-| Search one private subnet (`/23` to `/32`), confirmed before every search | ✅ Linux, macOS, Windows |
-| Approved private-range search (`balun-discover --approved-range`, `/23` or narrower, desktop budgets) | ✅ |
+| Search one private subnet (`/23` to `/32`), confirmed before every search | ✅ Linux, macOS, Windows; also `balun-discover --approved-range` |
 | Multiple devices, each with its own channel lineup | ✅ |
 | Device metadata and lineup inspection without allocating a tuner | ✅ |
 | Reload the selected device's channels after a failure or lineup change | ✅ **Reload channels** in the channel header |

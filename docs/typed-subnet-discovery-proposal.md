@@ -209,96 +209,27 @@ before beta or any increase in scope, rate, retries, or automatic work.
 
 ## Implementation (V2.4)
 
-**Readiness.** `ObservationGate` (`src/discovery/changes/observation.rs`) publishes
-`Ready(generation)` or `Unavailable`; every return to readiness is a new generation.
-The shared watcher (`changes/watch.rs`) declares readiness only after the baseline is
-reconciled with no notification queued or recorded, revokes it where a link or route
-notification is recorded (inside the Linux monitor, the macOS reader, or the Windows
-callback; a recorded change is checked under the gate's lock) and,
-for address notifications, as soon as an immediate inventory re-read differs, so the
-debounce never delays revocation. An ended attempt, the resubscription gap, a
-poisoned or overflowing monitor, a source that gave up, and a dropped source are all
-unavailable. `NetworkChangeSource::subscribe` returns the change stream and this
-`ObservationWatch` together (`src/controller/network.rs`).
+| Contract item | Enforced in | Tests |
+| --- | --- | --- |
+| Canonical private `/23`–`/32` scope | `discovery/typed_subnet.rs` | `malformed_noncanonical_and_disallowed_scopes_reject` |
+| ≤510 candidates, 2 attempts each, ≤1,020 requests | `discovery/subnet.rs` (`probe`, `ScanContext::send`) | `a_slash_23_spends_exactly_its_budget_paced_at_the_send_boundary` |
+| ≥15.625 ms + 0–25% jitter at the send boundary, shared by later searches | `ScanContext::send`, `SubnetScanLane` | `a_slash_23_…`, `repeated_searches_share_one_pacing_boundary_and_one_lane` |
+| ≤16 probes in flight, one search per process | `scan`, `SubnetScanLane::begin` | `a_slash_23_…`, `repeated_searches_…` |
+| 200 ms window, ≤16 datagrams, one identity per candidate | `probe` | `each_attempt_waits_one_reply_window_…`, `a_candidate_reads_sixteen_datagrams_…` |
+| 64 devices or 30 s end the search as incomplete; no later send | `Aggregate::merge`, `ScanContext::refusal` | `reaching_the_device_limit_…`, `deadline_expiry_is_incomplete_…` |
+| Re-check after readiness, before every send and retry | `ScanContext::send` | `revocation_after_readiness_prevents_every_send_including_a_retry`, `native_revocation_after_readiness_…` |
+| Broadcast disabled; refusals never retried; local directed broadcasts refused; unreadable interfaces send nothing | `open_system_socket`, `ScanContext::send`, `search` | `native_broadcast_sends_are_refused_…`, `a_local_directed_broadcast_is_refused_…`, `unreadable_interfaces_refuse_the_search_before_any_send` |
+| Readiness only from a reconciled baseline; revoked on detection; new generation on return | `discovery/changes/{observation,watch}.rs`, platform watchers | `bursts_are_filtered_diffed_counted_and_revoked_on_detection`, `a_route_recorded_before_its_wake_up_blocks_readiness`, `a_native_subscription_becomes_ready_…` |
+| Consent is scope plus generation, consumed once; stale consent refused without cancelling a running probe | `SubnetSearchConsent::admit`, `start_subnet_search` | `consent_binds_the_scope_and_its_generation`, `a_refused_confirmation_leaves_a_running_probe_alone` |
+| A change cancels and joins the search and discards its replies | `reconcile_observation`, `reconcile_network_change` | `a_detected_change_revokes_and_joins_…`, `subnet_evidence_expires_when_…` |
+| Confirmation before every search, voided by a change | `ui/subnet_search_dialog.rs`, `ui/window.rs` | `a_network_change_invalidates_an_open_or_queued_confirmation_for_good`, display tests |
+| CLI consent spent once, never replayed | `bin/balun-discover.rs` (`search_subnet`) | `subnet_consent_waits_for_observation_and_is_spent_once` |
+| Typed origin; incomplete results merge; expiry on lost IPv4 or unattributed changes | `controller/runtime.rs` (`retain_subnet_batch`, `origin_expires`) | `an_incomplete_search_replaces_only_the_addresses_it_answered_from`, `unattributed_changes_retire_typed_subnet_evidence_only` |
+| Only the admitted search's text is remembered, in its own file | `settings/store.rs`, `ui/settings_session.rs`, `ui/window.rs` | `the_subnet_prefix_file_holds_one_canonical_prefix_…`, `a_sent_subnet_search_is_remembered_only_once_seen_admitted` |
 
-**Consent.** `SubnetSearchConsent` (`src/discovery/subnet.rs`) confirms exactly the
-displayed candidate count and request budget for one scope under one generation, is
-neither `Clone` nor `Copy`, and is its own type, separate from exact-address
-approval. `admit` consumes it against the live watch, refusing an unavailable or
-different generation, including one that returns after a change.
-
-**Controller.** `ControllerHandle::try_search_subnet` queues the consent; the actor
-supersedes and joins any discovery, then admits against the live watch and publishes
-`SubnetUnavailable` or `SubnetConfirmationStale` without sending. Readiness changes
-are handled before network changes and commands: a subnet search whose generation
-ended is cancelled, joined, and reported `NetworkChanged` with its replies discarded,
-and a delivered change cancels one even if readiness was never revoked. Snapshots
-carry the observation state, and the desktop offers subnet search only while it is
-ready.
-
-**Runner.** `discover_typed_subnet` searches from one process-wide lane: a second
-search is refused, and the pacing boundary survives between searches. Each attempt
-holds the lane lock across the pacing wait, write readiness, a re-check of
-cancellation, the live generation, the deadline, the remaining budget, and the
-destination's scope, and the nonblocking send; the next attempt may start 15.625 ms
-plus 0–25% jitter after that send returned. Timers round waits up to whole
-milliseconds, never down. At most 16 probes run, each attempt waits at most 200 ms,
-a candidate reads at most 16 datagrams and stops after one accepted identity (no
-retry), the 64th distinct device, the 30-second deadline, cancellation, or a change
-stops the search and joins every probe, and the report says `Complete` or
-`Incomplete` with the reason. Sockets bind `0.0.0.0:0` with broadcast disabled and
-confirmed; a permission-refused send is counted and never retried, and a refusing
-host (ICMP port unreachable) ends its candidate quietly. Windows sends a directed
-broadcast without the broadcast option, so the runner treats every local interface's
-directed-broadcast address as refused at the send boundary on every platform.
-
-**Results.** Replies carry `DiscoveryMethod::TypedSubnet`. The controller keeps the
-latest result for each of at most four subnets, validates that every reply comes from
-a usable host of its subnet on the discovery port, and replays them through the
-registry's identity rules. Deadline and device-limit results keep their devices and
-show *incomplete*; one that stopped early without a reply keeps the subnet's earlier
-results, and only a complete search that found nothing retires them. Because a typed
-reply names no interface, a network change that removes an interface or an IPv4
-address anywhere expires typed-subnet evidence; IPv6-only changes leave it, as they
-leave other IPv4 evidence. HTTP metadata is fetched only for
-a selected device, never for nonresponders.
-
-**Desktop.** **Search a subnet** (`src/ui/subnet_search_dialog.rs`) validates the
-entry, previews the exact budget, and opens a plain-text confirmation, Cancel by
-default, bound to the generation in the current snapshot. A snapshot in any other
-state closes it and invalidates a queued Search response. Only the entered text is
-remembered (`subnet_prefix`, settings schema 3, written only while a prefix is
-remembered); Forget clears it, and it never authorizes a search.
-
-**CLI.** `--approved-range` parses with `TypedSubnetScope`, waits up to ten seconds
-for the native source's first healthy baseline, prints the scope and budget, consumes
-its consent once, runs one search, and exits with an error if the search was
-incomplete; a changed network is never retried.
-
-**Tests.** Paused-clock fixtures with a scripted transport prove the `/23` budget of
-exactly 1,020 attempts, spacing at the send boundary with minimum and maximum jitter,
-the 16-probe cap, the reply window, receive, identity, and device limits, deadline
-expiry as incomplete with no later send, revocation after readiness before first
-attempts and retries, a mid-search change that never revives, the shared pacing
-boundary, and one search per lane. Native loopback fixtures on every platform lane
-send real requests, prove one paced retry, stop after readiness on cancellation or a
-change, and send a local interface's directed broadcast: Linux and macOS refuse it on
-the socket, and the runner, offered it as an ordinary candidate, refuses it before the
-socket, counts it, and never retries it, while broadcast stays disabled. Controller,
-CLI, settings, localization, and desktop projection tests cover the rest; the dialog,
-sidebar, and confirmation-invalidation display tests run in the Linux desktop
-lifecycle job.
-
-**Limits of the evidence.** The directed-broadcast fixture needs a local interface
-with an IPv4 broadcast address and otherwise checks only the limited broadcast, which
-macOS reports as unreachable rather than refused. Local broadcast addresses are read
-when a search starts; an interface change stops the search anyway. A downstream
-router's directed broadcast cannot be observed locally, as the delivery boundary
-accepts. Address-only
-changes are detected by an immediate inventory re-read rather than from the
-notification itself. The display tests check keyboard use through configuration (Enter
-activates Continue in the entry and Cancel in the confirmation) rather than synthesized
-key events. Real-network behaviour on macOS and Windows, such as how often their
-sources report changes, awaits owner confirmation.
+Not provable here: downstream routers' directed-broadcast forwarding (the accepted
+delivery boundary); a directed broadcast when no local interface has a broadcast
+address (only the limited broadcast is checked then); keyboard use beyond
+configuration; and real-network behaviour on macOS and Windows.
 
 [issue #71]: https://github.com/jm2/balun/issues/71

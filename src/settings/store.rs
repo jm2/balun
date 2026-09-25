@@ -12,9 +12,11 @@ use cap_std::ambient_authority;
 use cap_std::fs::{Dir, DirBuilder, File, Metadata, OpenOptions};
 
 use super::{
-    MAX_SETTINGS_BYTES, SETTINGS_FILE_NAME, Settings, SettingsError, SettingsOperation,
-    TEMPORARY_PREFIX, TEMPORARY_SUFFIX, parse_document, serialize_document,
+    MAX_SETTINGS_BYTES, MAX_SUBNET_PREFIX_BYTES, SETTINGS_FILE_NAME, SUBNET_PREFIX_FILE_NAME,
+    Settings, SettingsError, SettingsOperation, TEMPORARY_PREFIX, TEMPORARY_SUFFIX, parse_document,
+    parse_subnet_prefix, serialize_document, serialize_subnet_prefix,
 };
+use crate::discovery::TypedSubnetScope;
 
 const LOCK_NAME: &str = ".settings.lock";
 
@@ -118,41 +120,103 @@ impl SettingsStore {
         let profile = self.profile()?;
         let lock = profile.lock()?;
         let (_, previous) = profile.read()?;
+        profile.publish(
+            &lock,
+            SETTINGS_FILE_NAME,
+            &bytes,
+            previous.as_ref(),
+            cancelled,
+        )
+    }
+
+    /// The subnet last entered for subnet search. A file that is not one
+    /// canonical private `/23`–`/32` prefix is ignored and left untouched; an
+    /// unsafe or oversized file is an error the caller may ignore likewise.
+    pub fn load_subnet_prefix(&self) -> Result<Option<TypedSubnetScope>, SettingsError> {
+        let profile = self.profile()?;
+        let lock = profile.lock()?;
+        let read = profile.read_file(SUBNET_PREFIX_FILE_NAME, MAX_SUBNET_PREFIX_BYTES)?;
+        profile.check_lock(&lock)?;
+        Ok(read.and_then(|(bytes, _)| parse_subnet_prefix(&bytes)))
+    }
+
+    /// Remember `prefix` with the settings document's atomic, private
+    /// publication, or with `None` remove the file.
+    pub fn save_subnet_prefix_unless_cancelled(
+        &self,
+        prefix: Option<TypedSubnetScope>,
+        cancelled: &AtomicBool,
+    ) -> Result<(), SettingsError> {
         check_cancelled(cancelled)?;
-        let mut temporary = profile.temporary()?;
+        let profile = self.profile()?;
+        let lock = profile.lock()?;
+        let previous = profile.inspect(SUBNET_PREFIX_FILE_NAME)?;
+        let Some(prefix) = prefix else {
+            if previous.is_some() {
+                #[cfg(test)]
+                profile.hooks.run(TestStage::Publish);
+                profile.check_lock(&lock)?;
+                profile
+                    .directory
+                    .remove_file(SUBNET_PREFIX_FILE_NAME)
+                    .map_err(|e| SettingsError::io(SettingsOperation::Publish, &e))?;
+            }
+            return Ok(());
+        };
+        let bytes = serialize_subnet_prefix(prefix);
+        profile.publish(
+            &lock,
+            SUBNET_PREFIX_FILE_NAME,
+            &bytes,
+            previous.as_ref(),
+            cancelled,
+        )
+    }
+}
+
+impl Profile {
+    /// Publish `bytes` as `name` through a flushed private temporary sibling,
+    /// unless `name` changed since `previous` was observed.
+    fn publish(
+        &self,
+        lock: &TransactionLock,
+        name: &str,
+        bytes: &[u8],
+        previous: Option<&Metadata>,
+        cancelled: &AtomicBool,
+    ) -> Result<(), SettingsError> {
+        check_cancelled(cancelled)?;
+        let mut temporary = self.temporary()?;
         #[cfg(test)]
-        profile.hooks.run(TestStage::Write);
+        self.hooks.run(TestStage::Write);
         check_cancelled(cancelled)?;
         temporary
             .file
-            .write_all(&bytes)
+            .write_all(bytes)
             .and_then(|()| temporary.file.flush())
             .map_err(|e| SettingsError::io(SettingsOperation::Write, &e))?;
         #[cfg(test)]
-        profile.hooks.run(TestStage::Sync);
+        self.hooks.run(TestStage::Sync);
         check_cancelled(cancelled)?;
         temporary
             .file
             .sync_all()
             .map_err(|e| SettingsError::io(SettingsOperation::Sync, &e))?;
         check_cancelled(cancelled)?;
-        profile.check_lock(&lock)?;
+        self.check_lock(lock)?;
         #[cfg(test)]
-        profile.hooks.run(TestStage::Publish);
-        let current = profile.inspect(SETTINGS_FILE_NAME)?;
-        if !same_optional_snapshot(previous.as_ref(), current.as_ref()) {
+        self.hooks.run(TestStage::Publish);
+        let current = self.inspect(name)?;
+        if !same_optional_snapshot(previous, current.as_ref()) {
             return Err(SettingsError::Changed);
         }
         temporary.check_identity()?;
         check_cancelled(cancelled)?;
-        profile
-            .directory
-            .rename(&temporary.name, &profile.directory, SETTINGS_FILE_NAME)
+        self.directory
+            .rename(&temporary.name, &self.directory, name)
             .map_err(|e| SettingsError::io(SettingsOperation::Publish, &e))?;
         temporary.published = true;
-        let published = profile
-            .inspect(SETTINGS_FILE_NAME)?
-            .ok_or(SettingsError::Changed)?;
+        let published = self.inspect(name)?.ok_or(SettingsError::Changed)?;
         let written = temporary
             .file
             .metadata()
@@ -161,8 +225,7 @@ impl SettingsStore {
             return Err(SettingsError::Changed);
         }
         #[cfg(unix)]
-        profile
-            .directory
+        self.directory
             .try_clone()
             .and_then(|dir| dir.into_std_file().sync_all())
             .map_err(|e| SettingsError::io(SettingsOperation::Sync, &e))?;
@@ -391,14 +454,27 @@ impl Profile {
     }
 
     fn read(&self) -> Result<(Option<Settings>, Option<Metadata>), SettingsError> {
-        let Some(before) = self.inspect(SETTINGS_FILE_NAME)? else {
-            return Ok((None, None));
+        match self.read_file(SETTINGS_FILE_NAME, MAX_SETTINGS_BYTES)? {
+            None => Ok((None, None)),
+            Some((bytes, metadata)) => Ok((Some(parse_document(&bytes)?), Some(metadata))),
+        }
+    }
+
+    /// Read at most `limit` bytes of `name` without following aliases,
+    /// rejecting a file that changes while it is read.
+    fn read_file(
+        &self,
+        name: &str,
+        limit: u64,
+    ) -> Result<Option<(Vec<u8>, Metadata)>, SettingsError> {
+        let Some(before) = self.inspect(name)? else {
+            return Ok(None);
         };
         #[cfg(test)]
         self.hooks.run(TestStage::ReadOpen);
         let file = self
             .directory
-            .open_with(SETTINGS_FILE_NAME, &options(false))
+            .open_with(name, &options(false))
             .map_err(|e| SettingsError::io(SettingsOperation::Read, &e))?;
         let opened = file
             .metadata()
@@ -409,22 +485,20 @@ impl Profile {
         }
         let mut bytes = Vec::new();
         (&file)
-            .take(MAX_SETTINGS_BYTES + 1)
+            .take(limit + 1)
             .read_to_end(&mut bytes)
             .map_err(|e| SettingsError::io(SettingsOperation::Read, &e))?;
-        if bytes.len() as u64 > MAX_SETTINGS_BYTES {
+        if bytes.len() as u64 > limit {
             return Err(SettingsError::TooLarge);
         }
         let after = file
             .metadata()
             .map_err(|e| SettingsError::io(SettingsOperation::Inspect, &e))?;
-        let named = self
-            .inspect(SETTINGS_FILE_NAME)?
-            .ok_or(SettingsError::Changed)?;
+        let named = self.inspect(name)?.ok_or(SettingsError::Changed)?;
         if !same_snapshot(&opened, &after) || !same_snapshot(&after, &named) {
             return Err(SettingsError::Changed);
         }
-        Ok((Some(parse_document(&bytes)?), Some(after)))
+        Ok(Some((bytes, after)))
     }
 
     fn temporary(&self) -> Result<Temporary<'_>, SettingsError> {
@@ -759,6 +833,84 @@ mod tests {
         drop(lock);
         other.save(&Settings::default()).unwrap();
         drop(inherited);
+    }
+
+    /// The subnet-prefix file uses the profile's pinned directory, its
+    /// cooperative lock, and the same fail-closed checks as the settings.
+    #[test]
+    fn subnet_prefix_operations_fail_closed_like_the_settings_document() {
+        use super::super::SUBNET_PREFIX_FILE_NAME;
+
+        let prefix: TypedSubnetScope = "10.0.0.0/24".parse().unwrap();
+        let idle = AtomicBool::new(false);
+
+        // No admissible profile.
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("not-a-profile"), b"").unwrap();
+        let unusable = SettingsStore::new(root.path().join("not-a-profile"));
+        assert!(unusable.load_subnet_prefix().is_err());
+        assert!(
+            unusable
+                .save_subnet_prefix_unless_cancelled(Some(prefix), &idle)
+                .is_err()
+        );
+
+        // A hard-linked lock is refused before anything is read or written.
+        let (root, store) = store();
+        let lock_alias = root.path().join("lock-alias");
+        fs::hard_link(store.directory().join(LOCK_NAME), &lock_alias).unwrap();
+        assert_eq!(store.load_subnet_prefix(), Err(SettingsError::HardLink));
+        assert_eq!(
+            store.save_subnet_prefix_unless_cancelled(Some(prefix), &idle),
+            Err(SettingsError::HardLink)
+        );
+        fs::remove_file(lock_alias).unwrap();
+
+        // Something other than a regular file is never replaced.
+        let file = store.directory().join(SUBNET_PREFIX_FILE_NAME);
+        fs::create_dir(&file).unwrap();
+        assert_eq!(
+            store.save_subnet_prefix_unless_cancelled(Some(prefix), &idle),
+            Err(SettingsError::NotRegularFile)
+        );
+        fs::remove_dir(&file).unwrap();
+
+        store
+            .save_subnet_prefix_unless_cancelled(Some(prefix), &idle)
+            .unwrap();
+        // Losing the lock (Windows denies removing a held one) discards what
+        // was read and removes nothing.
+        #[cfg(unix)]
+        {
+            let lock = store.directory().join(LOCK_NAME);
+            hook(&store, TestStage::ReadOpen, move || {
+                fs::remove_file(lock).unwrap();
+            });
+            assert_eq!(store.load_subnet_prefix(), Err(SettingsError::Changed));
+            assert_eq!(store.load_subnet_prefix(), Ok(Some(prefix)));
+            let lock = store.directory().join(LOCK_NAME);
+            hook(&store, TestStage::Publish, move || {
+                fs::remove_file(lock).unwrap();
+            });
+            assert_eq!(
+                store.save_subnet_prefix_unless_cancelled(None, &idle),
+                Err(SettingsError::Changed)
+            );
+            assert!(file.exists(), "nothing was removed without the lock");
+        }
+
+        // A file that vanishes while it is being forgotten is reported.
+        let removed = file.clone();
+        hook(&store, TestStage::Publish, move || {
+            fs::remove_file(removed).unwrap();
+        });
+        assert!(matches!(
+            store.save_subnet_prefix_unless_cancelled(None, &idle),
+            Err(SettingsError::Io {
+                operation: SettingsOperation::Publish,
+                ..
+            })
+        ));
     }
 
     #[test]

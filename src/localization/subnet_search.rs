@@ -41,15 +41,12 @@ impl SubnetEntryLabels {
     }
 }
 
-/// Copy of the confirmation that authorizes exactly one search of `scope`,
-/// with the candidate count and request budget it displays.
+/// Copy of the confirmation that authorizes exactly one search of `scope`.
 pub struct SubnetConfirmation {
     pub heading: Cow<'static, str>,
     pub body: Cow<'static, str>,
     pub cancel: Cow<'static, str>,
     pub search: Cow<'static, str>,
-    pub candidates: usize,
-    pub requests: usize,
 }
 
 impl SubnetConfirmation {
@@ -61,10 +58,8 @@ impl SubnetConfirmation {
 
     fn for_locale(locale: &str, scope: TypedSubnetScope) -> Self {
         let subnet = scope.to_string();
-        let candidate_count = scope.candidate_count();
-        let request_budget = scope.maximum_request_attempts();
-        let candidates = candidate_count.to_string();
-        let requests = request_budget.to_string();
+        let candidates = scope.candidate_count().to_string();
+        let requests = scope.maximum_request_attempts().to_string();
         Self {
             heading: rust_i18n::t!(
                 "subnet_search.confirm_heading",
@@ -80,8 +75,6 @@ impl SubnetConfirmation {
             ),
             cancel: rust_i18n::t!("subnet_search.cancel", locale = locale),
             search: rust_i18n::t!("subnet_search.search", locale = locale),
-            candidates: candidate_count,
-            requests: request_budget,
         }
     }
 }
@@ -259,8 +252,6 @@ mod tests {
             let scope: TypedSubnetScope = text.parse().unwrap();
             for locale in SUPPORTED_LOCALES {
                 let confirmation = SubnetConfirmation::for_locale(locale, scope);
-                assert_eq!(confirmation.candidates.to_string(), candidates);
-                assert_eq!(confirmation.requests.to_string(), requests);
                 assert!(confirmation.heading.contains(text), "{locale}");
                 assert_eq!(confirmation.body.matches(text).count(), 1, "{locale}");
                 assert!(confirmation.body.contains(candidates), "{locale}");

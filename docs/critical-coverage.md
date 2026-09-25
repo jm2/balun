@@ -129,15 +129,8 @@ repeated reply, a refused send, the range-candidate probe, a registry rebuild
 over its device limit, and the production settings-directory lookup. Every other
 Rust threshold is unchanged.
 
-Typed-subnet search (V2.4) removes the routed-era target probe and its deadline error
-from the discovery client, a legitimate removal: its denominator floor drops from 605
-to 597 regions with the uncovered ceiling unchanged at 109. The controller gains the
-subnet lane (2177 regions), the settings schema its remembered prefix (271), and the
-settings session its prefix staging (173); their uncovered ceilings stay at 197, 10,
-and 36. Log-field regions are evaluated only while a subscriber enables them, so the
-lanes share one start record rather than adding order-dependent regions. The subnet
-runner itself is outside the scope; its paced-clock and native fixtures are described
-in the [typed-subnet contract](typed-subnet-discovery-proposal.md#implementation-v24).
+Typed-subnet search (V2.4) adds `discovery/subnet.rs` (ceiling 30 of 623 regions) and
+raises the other touched files' region totals with their ceilings unchanged.
 
 ## CI ratchet and review policy
 

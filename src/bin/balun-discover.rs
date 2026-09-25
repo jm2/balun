@@ -9,8 +9,8 @@ use std::time::Duration;
 use balun::discovery::{
     DiscoveryClient, DiscoveryReport, ExactDiscoveryTarget, InvalidTypedSubnetScope,
     ObservationGeneration, ObservationWatch, ProbeConfig, RegistryError, SubnetAdmissionError,
-    SubnetConsentError, SubnetScanError, SubnetScanIncomplete, SubnetScanOutcome, SubnetScanPermit,
-    SubnetScanReport, SubnetSearchConsent, TypedSubnetScope,
+    SubnetScanError, SubnetScanIncomplete, SubnetScanOutcome, SubnetScanPermit, SubnetScanReport,
+    SubnetSearchConsent, TypedSubnetScope,
 };
 use balun::domain::DeviceId;
 use balun::hdhr::{
@@ -78,9 +78,6 @@ enum CliError {
 
     #[error("subnet search was cancelled before it started")]
     SubnetCancelled,
-
-    #[error(transparent)]
-    SubnetConsent(#[from] SubnetConsentError),
 
     #[error(transparent)]
     SubnetAdmission(#[from] SubnetAdmissionError),
@@ -183,11 +180,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut inspection = InspectionOutcome::default();
     let mut incomplete = None;
     for action in cli.actions {
+        // A subnet search prints its own scope and budget once admitted.
         match action {
-            Action::Target(_) | Action::ApprovedRange(_) => {
-                print_probe_budget(exact_client.config());
-            }
+            Action::Target(_) => print_probe_budget(exact_client.config()),
             Action::Local => print_probe_budget(client.config()),
+            Action::ApprovedRange(_) => {}
         }
         let report = match action {
             Action::Local => client.discover_local(&cancellation).await?,
@@ -313,7 +310,7 @@ where
         "subnet search: {scope} as entered, {candidates} addresses, at most {requests} \
          outbound requests; the system's current routing selects the path"
     );
-    let consent = SubnetSearchConsent::confirm(scope, candidates, requests, generation)?;
+    let consent = SubnetSearchConsent::confirm(scope, generation);
     let permit = consent.admit(&observation)?;
     Ok(search(permit).await?)
 }
@@ -326,7 +323,6 @@ fn incomplete_reason(outcome: SubnetScanOutcome) -> Option<&'static str> {
             SubnetScanIncomplete::DeviceLimit => "the 64-device limit was reached",
             SubnetScanIncomplete::NetworkChanged => "the network changed",
             SubnetScanIncomplete::Cancelled => "it was cancelled",
-            SubnetScanIncomplete::RequestBudget => "the request budget was spent",
         }),
     }
 }
@@ -758,11 +754,8 @@ mod tests {
         let current = gate.state().generation().unwrap();
         let stale = SubnetSearchConsent::confirm(
             scope,
-            510,
-            1_020,
             ObservationGeneration::new(current.get() - 1).unwrap(),
-        )
-        .unwrap();
+        );
         assert_eq!(
             stale.admit(&earlier).unwrap_err(),
             SubnetAdmissionError::Stale

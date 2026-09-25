@@ -248,23 +248,15 @@ fn show(label: &gtk::Label, text: Option<&str>) {
 /// still authorize, and the dialog to close when it cannot.
 pub(crate) struct PendingConfirmation {
     scope: TypedSubnetScope,
-    displayed_candidates: usize,
-    displayed_requests: usize,
     generation: ObservationGeneration,
     valid: Cell<bool>,
     dialog: RefCell<Option<gtk::glib::WeakRef<adw::AlertDialog>>>,
 }
 
 impl PendingConfirmation {
-    fn new(
-        scope: TypedSubnetScope,
-        confirmation: &SubnetConfirmation,
-        generation: ObservationGeneration,
-    ) -> Self {
+    const fn new(scope: TypedSubnetScope, generation: ObservationGeneration) -> Self {
         Self {
             scope,
-            displayed_candidates: confirmation.candidates,
-            displayed_requests: confirmation.requests,
             generation,
             valid: Cell::new(true),
             dialog: RefCell::new(None),
@@ -286,13 +278,7 @@ impl PendingConfirmation {
             self.valid.set(false);
             return None;
         }
-        SubnetSearchConsent::confirm(
-            self.scope,
-            self.displayed_candidates,
-            self.displayed_requests,
-            self.generation,
-        )
-        .ok()
+        Some(SubnetSearchConsent::confirm(self.scope, self.generation))
     }
 
     /// Close the dialog without a response; nothing it shows can authorize.
@@ -331,7 +317,7 @@ fn build_confirmation(
     on_closed: impl Fn() + 'static,
 ) -> (adw::AlertDialog, Rc<PendingConfirmation>) {
     let confirmation = SubnetConfirmation::current(scope);
-    let pending = Rc::new(PendingConfirmation::new(scope, &confirmation, generation));
+    let pending = Rc::new(PendingConfirmation::new(scope, generation));
     let dialog = adw::AlertDialog::builder()
         .heading(&*confirmation.heading)
         .heading_use_markup(false)
@@ -367,12 +353,7 @@ mod tests {
     }
 
     fn pending(text: &str, shown: u64) -> PendingConfirmation {
-        let scope: TypedSubnetScope = text.parse().unwrap();
-        PendingConfirmation::new(
-            scope,
-            &SubnetConfirmation::current(scope),
-            generation(shown),
-        )
+        PendingConfirmation::new(text.parse().unwrap(), generation(shown))
     }
 
     #[test]

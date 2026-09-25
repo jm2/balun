@@ -96,14 +96,15 @@ policy state, never raw routes, interface names, or prefixes.
 
 ## Remembered subnet (V2.4, 2026-09-24)
 
-Subnet search remembers only the last subnet the user entered, as `subnet_prefix`
-in schema 3. It is editable text for the next search and never authorization:
-every search still needs a fresh confirmation, and a failed save cannot skip one.
-A document is written as schema 3 only while it holds a prefix, and as schema 2
-otherwise, so **Forget subnet** restores a file earlier builds read. Earlier
-builds report a schema-3 file as unsupported and leave it untouched. A prefix
-that is not a canonical private `/23`–`/32` subnet makes the document malformed,
-and it is preserved like any other.
+Subnet search remembers only the last subnet whose search was admitted, in its own
+`subnet-prefix` file beside `settings.json`: one canonical prefix and a newline,
+at most 64 bytes. It uses the same pinned profile, cooperative lock, private
+atomic publication, and file checks, and the same single settings worker.
+`settings.json` stays at schema 2, so v0.1.x keeps loading the profile. A file
+that is not one canonical private `/23`–`/32` prefix is ignored and left
+untouched; the next remembered search replaces it, and **Forget subnet** removes
+it. The text never authorizes a search: every search needs a fresh confirmation,
+and a failed save cannot skip one.
 
 ## Accepted responsiveness and durability tradeoff
 
