@@ -818,7 +818,6 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>  <string>APPL</string>
   <key>CFBundleIconFile</key>     <string>balun</string>
   <key>NSHighResolutionCapable</key> <true/>
-  <key>LSMinimumSystemVersion</key>  <string>13.0</string>
 </dict>
 </plist>
 PLIST
@@ -1001,6 +1000,17 @@ info "Bundled ${TOTAL_DYLIBS} dylibs into Frameworks/."
 
 rm -f "${RESOURCES_DIR}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
 rm -f "${APP_BUNDLE}/Contents/MacOS/gst-registry.bin"
+
+# ── Minimum macOS ────────────────────────────────────────────────────────────
+# Homebrew bottles target the macOS they were built on, so declare the newest
+# minimum among every bundled Mach-O slice. The package gate below rejects a
+# bundle whose Info.plist declares less.
+MACOS_MINIMUM_VERSION="$(python3 "$script_dir/macos_native_closure.py" minimum "$APP_BUNDLE")" \
+    || fail 'Could not derive the minimum macOS version from the bundled Mach-O files.'
+"$MACOS_PLUTIL_COMMAND" -insert LSMinimumSystemVersion -string "$MACOS_MINIMUM_VERSION" \
+    "${APP_BUNDLE}/Contents/Info.plist" \
+    || fail 'Could not record the minimum macOS version in Info.plist.'
+info "Declared LSMinimumSystemVersion ${MACOS_MINIMUM_VERSION} from the bundled Mach-O files."
 
 # ── Package Policy Validation ────────────────────────────────────────────────
 info "Validating staged app icons..."

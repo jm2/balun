@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The macOS app declaring macOS 13 support while its bundled libraries need macOS 15.
+
 ## [0.2.0] — 2026-09-25
 
 ### Added

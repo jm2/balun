@@ -12,10 +12,13 @@ import argparse
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import plistlib
+import re
 import stat
 import struct
 import sys
 import time
+from xml.parsers.expat import ExpatError
 
 
 THIN = {b"\xce\xfa\xed\xfe": ("<", 28), b"\xcf\xfa\xed\xfe": ("<", 32),
@@ -28,6 +31,10 @@ MAX_IMAGES = 4096
 MAX_CONTEXTS = 100_000
 SYSTEM_ROOTS = ("/usr/lib/", "/System/Library/Frameworks/",
                 "/System/Library/PrivateFrameworks/")
+# Apple silicon's first release; the floor when no slice requires more.
+MACOS_FLOOR = (11, 0, 0)
+PLIST_VERSION = re.compile(r"(0|[1-9][0-9]{0,3})(\.(0|[1-9][0-9]{0,2})){1,2}")
+MAX_PLIST_BYTES = 1024 * 1024
 
 
 class Invalid(ValueError):
@@ -52,6 +59,7 @@ class Image:
     kind: int
     imports: tuple
     rpaths: tuple
+    macos: tuple  # minimum (major, minor, patch), or None when undeclared
 
 
 def inspect(path):
@@ -103,7 +111,7 @@ def inspect(path):
             require(0 < count <= 65536 and count * 8 <= command_bytes <= MAX_COMMAND_BYTES
                     and command_bytes <= size - header_size, "invalid load-command extent")
             commands = read(offset + header_size, command_bytes)
-            imports, rpaths = [], []
+            imports, rpaths, versions = [], [], []
             cursor = 0
             for _ in range(count):
                 require(cursor + 8 <= len(commands), "missing load-command header")
@@ -130,11 +138,22 @@ def inspect(path):
                         rpaths.append(name)
                     elif command == 0xE:
                         require(name == "/usr/lib/dyld", "non-system dynamic linker")
+                elif command == 0x24:  # LC_VERSION_MIN_MACOSX: version, sdk
+                    require(length >= 16, "truncated macOS version command")
+                    versions += struct.unpack_from(endian + "I", data, 8)
+                elif command == 0x32:  # LC_BUILD_VERSION: platform, minos, sdk, ntools
+                    require(length >= 24, "truncated build version command")
+                    platform, minimum = struct.unpack_from(endian + "II", data, 8)
+                    if platform == 1:  # PLATFORM_MACOS
+                        versions.append(minimum)
                 cursor += length
             require(cursor == command_bytes, "unaccounted load-command bytes")
             require(not any((image.cpu, image.subtype) == (cpu, subtype) for image in images),
                     "duplicate architecture")
-            images.append(Image(cpu, subtype, kind, tuple(imports), tuple(rpaths)))
+            # Versions pack major.minor.patch into 16.8.8 bits; the largest is the newest.
+            macos = max(versions, default=None)
+            macos = None if macos is None else (macos >> 16, macos >> 8 & 0xFF, macos & 0xFF)
+            images.append(Image(cpu, subtype, kind, tuple(imports), tuple(rpaths), macos))
             require(len(imports) + len(rpaths) <= 4096, "too many native references")
         after = os.fstat(source.fileno())
         require((before.st_size, before.st_mtime_ns, before.st_ctime_ns)
@@ -158,7 +177,8 @@ def compatible(image, cpu, subtype):
     return image.cpu == cpu and (image.subtype == subtype or image.subtype == base)
 
 
-def validate(bundle):
+def members(bundle):
+    """Return a bundle's root, its native members' slices, and a shared time budget."""
     root = Path(bundle).resolve(strict=True)
     require(root.is_dir(), "bundle root is not a directory")
     deadline = time.monotonic() + 120
@@ -191,6 +211,11 @@ def validate(bundle):
                         "bundle has too many native reference bytes")
                 native[path] = images
                 require(len(native) <= MAX_IMAGES, "bundle has too many native images")
+    return root, native, budget
+
+
+def validate(bundle):
+    root, native, budget = members(bundle)
     executables = [(path, image) for path, images in native.items()
                    for image in images if image.kind == 2]
     require(executables, "bundle has no native executable")
@@ -257,9 +282,49 @@ def validate(bundle):
     return len(native)
 
 
+def version_text(version):
+    major, minor, patch = version
+    return f"{major}.{minor}" + (f".{patch}" if patch else "")
+
+
+def required_macos(native):
+    """Return the newest macOS any native slice requires, never below the floor."""
+    versions = [image.macos for images in native.values() for image in images]
+    require(None not in versions, "native slice declares no minimum macOS")
+    return max(versions + [MACOS_FLOOR])
+
+
+def declared_macos(root):
+    """Return Info.plist's LSMinimumSystemVersion, failing closed if absent or malformed."""
+    descriptor = os.open(root / "Contents/Info.plist", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as source:
+        require(stat.S_ISREG(os.fstat(source.fileno()).st_mode), "Info.plist is not a regular file")
+        data = source.read(MAX_PLIST_BYTES + 1)
+    require(len(data) <= MAX_PLIST_BYTES, "Info.plist is oversized")
+    try:
+        properties = plistlib.loads(data)
+    except (ValueError, ExpatError) as error:
+        raise Invalid("Info.plist is not a parseable property list") from error
+    value = properties.get("LSMinimumSystemVersion") if isinstance(properties, dict) else None
+    require(isinstance(value, str) and PLIST_VERSION.fullmatch(value),
+            "Info.plist has no parseable LSMinimumSystemVersion")
+    parts = tuple(int(part) for part in value.split("."))
+    return parts + (0,) * (3 - len(parts))
+
+
+def check_minimum(bundle):
+    """Require Info.plist to declare at least the newest macOS a native slice requires."""
+    root, native, _ = members(bundle)
+    required, declared = required_macos(native), declared_macos(root)
+    require(declared >= required,
+            f"a bundled Mach-O requires macOS {version_text(required)}, "
+            f"above LSMinimumSystemVersion {version_text(declared)}")
+    return required
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("bundle", "imports", "rpaths", "kind"))
+    parser.add_argument("mode", choices=("bundle", "minimum", "imports", "rpaths", "kind"))
     parser.add_argument("path", type=Path)
     parser.add_argument("--report-rejection", action="store_true",
                         help="also emit a bounded, path-free rejection on stdout for package gates")
@@ -267,7 +332,11 @@ def main():
     try:
         if arguments.mode == "bundle":
             count = validate(arguments.path)
-            print(f"Native closure verified for {count} Mach-O files (all architectures).")
+            required = check_minimum(arguments.path)
+            print(f"Native closure verified for {count} Mach-O files (all architectures); "
+                  f"Info.plist covers their minimum macOS {version_text(required)}.")
+        elif arguments.mode == "minimum":
+            print(version_text(required_macos(members(arguments.path)[1])))
         else:
             images = inspect(arguments.path)
             require(images, "expected a native file")

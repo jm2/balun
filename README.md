@@ -172,7 +172,8 @@ host repositories are older.
 
 ### macOS
 
-Apple Silicon: `balun-macos-aarch64.dmg`. Mount it and drag **Balun** to Applications.
+Apple Silicon, macOS 15 or later: `balun-macos-aarch64.dmg`. Mount it and drag **Balun** to
+Applications.
 
 > **macOS note:** The `.dmg` is ad-hoc signed but not notarized, so Gatekeeper will block it on
 > first launch. After mounting the DMG and dragging Balun to Applications, run:
