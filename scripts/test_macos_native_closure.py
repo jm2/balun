@@ -5,6 +5,7 @@ import os
 import contextlib
 import io
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import struct
@@ -54,10 +55,22 @@ def command(kind, value):
     return struct.pack("<III", kind, length, prefix) + bytes(prefix - 12) + payload + bytes(length - prefix - len(payload))
 
 
-def macho(imports=(), rpaths=(), *, cpu=0x100000C, subtype=None, kind=6):
+def build_version(major, minor=0, patch=0, platform=1):
+    """LC_BUILD_VERSION: platform, minos, sdk, and no build tools."""
+    return struct.pack("<IIIIII", 0x32, 24, platform, major << 16 | minor << 8 | patch, 0, 0)
+
+
+def version_min(major, minor=0, patch=0):
+    """LC_VERSION_MIN_MACOSX, which predates LC_BUILD_VERSION: version and sdk."""
+    return struct.pack("<IIII", 0x24, 16, major << 16 | minor << 8 | patch, 0)
+
+
+def macho(imports=(), rpaths=(), *, cpu=0x100000C, subtype=None, kind=6,
+          minimum=(build_version(11),)):
     commands = [struct.pack("<II", 0x1B, 24) + bytes(16)]
     commands += [command(0xC, value) for value in imports]
     commands += [command(0x8000001C, value) for value in rpaths]
+    commands += minimum
     data = b"".join(commands)
     subtype = (3 if cpu == 0x1000007 else 0) if subtype is None else subtype
     return struct.pack("<IIIIIIII", 0xFEEDFACF, cpu, subtype,
@@ -71,6 +84,7 @@ class BundleFixture(unittest.TestCase):
         self.parent = Path(self.temporary.name)
         self.app = self.parent / "Relocated App With Spaces.app"
         self.exe = self.write("Contents/MacOS/Balun-bin", macho(kind=2))
+        self.plist("11.0")
 
     def write(self, name, data):
         target = self.app / name
@@ -78,16 +92,26 @@ class BundleFixture(unittest.TestCase):
         target.write_bytes(data)
         return target
 
+    def plist(self, minimum):
+        properties = {"CFBundleExecutable": "Balun"}
+        if minimum is not None:
+            properties["LSMinimumSystemVersion"] = minimum
+        return self.write("Contents/Info.plist", plistlib.dumps(properties))
+
+    def required(self):
+        return closure.required_macos(closure.members(self.app)[1])
+
+
+def invoke(*arguments):
+    output, error = io.StringIO(), io.StringIO()
+    with mock.patch.object(sys, "argv", ["closure", *map(str, arguments)]), \
+            contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
+        status = closure.main()
+    return status, output.getvalue(), error.getvalue()
+
 
 class ClosureTests(BundleFixture):
     def test_cli_rejects_wrong_linker_and_malformed_strings_without_a_traceback(self):
-        def invoke(mode, path):
-            output, error = io.StringIO(), io.StringIO()
-            with mock.patch.object(sys, "argv", ["closure", mode, str(path)]), \
-                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
-                status = closure.main()
-            return status, output.getvalue(), error.getvalue()
-
         # LC_LOAD_DYLINKER must identify Apple's loader, never a bundled or external substitute.
         for linker in ("/usr/lib/dyld", "/unapproved/dyld"):
             data = bytearray(macho([linker], kind=2))
@@ -109,6 +133,99 @@ class ClosureTests(BundleFixture):
         self.assertEqual(output, "")
         self.assertIn("macOS native closure rejected:", error)
         self.assertNotIn("Traceback", error)
+
+    def test_required_minimum_is_the_newest_macos_slice_and_never_below_eleven(self):
+        self.assertEqual(self.required(), (11, 0, 0))
+        self.exe.write_bytes(macho(kind=2, minimum=(build_version(10, 15),)))
+        self.assertEqual(self.required(), (11, 0, 0))
+        # Every slice counts: a legacy x86_64 slice, and only the macOS entry
+        # of a library that also records another platform's build version.
+        legacy = macho(cpu=0x1000007, minimum=(version_min(10, 13, 4),))
+        modern = macho(minimum=(build_version(14, 2, 1), build_version(17, platform=2)))
+        fat = struct.pack(">IIIIIII", 0xCAFEBABE, 2, 0x1000007, 3, 48, len(legacy), 0)
+        fat += struct.pack(">IIIII", 0x100000C, 0, 48 + len(legacy), len(modern), 0)
+        self.write("Contents/Frameworks/libfat.dylib", fat + legacy + modern)
+        self.assertEqual(self.required(), (14, 2, 1))
+        self.assertEqual(invoke("minimum", self.app), (0, "14.2.1\n", ""))
+        self.write("Contents/Resources/lib/libnewer.dylib", macho(minimum=(build_version(15),)))
+        self.assertEqual(invoke("minimum", self.app), (0, "15.0\n", ""))
+
+    def test_undeclared_or_truncated_minimum_fails_closed(self):
+        library = self.app / "Contents/Frameworks/libfoo.dylib"
+        for minimum, reason in (((), "declares no minimum macOS"),
+                                ((build_version(15, platform=2),), "declares no minimum macOS"),
+                                ((build_version(15)[:4] + struct.pack("<I", 16)
+                                  + build_version(15)[8:16],), "truncated build version"),
+                                ((struct.pack("<II", 0x24, 8),), "truncated macOS version")):
+            with self.subTest(reason=reason):
+                self.write("Contents/Frameworks/libfoo.dylib", macho(minimum=minimum))
+                with self.assertRaisesRegex(closure.Invalid, reason):
+                    self.required()
+                status, output, _ = invoke("minimum", self.app)
+                self.assertEqual((status, output), (1, ""))
+        library.unlink()
+        self.assertEqual(self.required(), (11, 0, 0))
+
+    def test_info_plist_must_cover_every_bundled_minimum(self):
+        self.write("Contents/Frameworks/libfoo.dylib", macho(minimum=(build_version(15),)))
+        self.plist("13.0")
+        with self.assertRaisesRegex(closure.Invalid, r"requires macOS 15\.0, above "
+                                    r"LSMinimumSystemVersion 13\.0$"):
+            closure.check_minimum(self.app)
+        self.assertEqual(invoke("bundle", self.app, "--report-rejection")[:2], (
+            1, "macOS native closure rejected: a bundled Mach-O requires macOS 15.0, "
+               "above LSMinimumSystemVersion 13.0\n"))
+        for declared in ("15.0", "15.0.1", "26.0"):
+            with self.subTest(declared=declared):
+                self.plist(declared)
+                self.assertEqual(closure.check_minimum(self.app), (15, 0, 0))
+        self.plist("15.0")
+        self.assertEqual(invoke("bundle", self.app)[:2], (0, (
+            "Native closure verified for 2 Mach-O files (all architectures); "
+            "Info.plist covers their minimum macOS 15.0.\n")))
+        # A binary carrying only the legacy command is held to the same rule.
+        self.write("Contents/Frameworks/libfoo.dylib", macho(minimum=(version_min(12, 3),)))
+        self.plist("12.0")
+        with self.assertRaisesRegex(closure.Invalid, r"requires macOS 12\.3,"):
+            closure.check_minimum(self.app)
+        self.plist("12.3")
+        self.assertEqual(closure.check_minimum(self.app), (12, 3, 0))
+
+    def test_missing_or_unparseable_declared_minimum_fails_closed(self):
+        plist = self.app / "Contents/Info.plist"
+        for value in (None, 15, 15.0, "", "15", "15.x", "015.0", "15.0.0.1", " 15.0", "15.0\n"):
+            with self.subTest(value=value):
+                self.plist(value)
+                with self.assertRaisesRegex(closure.Invalid, "no parseable LSMinimumSystemVersion"):
+                    closure.check_minimum(self.app)
+        for data, reason in ((plistlib.dumps(["15.0"]), "no parseable LSMinimumSystemVersion"),
+                             (b"not a property list", "not a parseable property list"),
+                             (b"bplist00\xff", "not a parseable property list"),
+                             (plistlib.dumps({"LSMinimumSystemVersion": "15.0"})[:-20],
+                              "not a parseable property list")):
+            with self.subTest(data=data[:24]):
+                plist.write_bytes(data)
+                with self.assertRaisesRegex(closure.Invalid, reason):
+                    closure.check_minimum(self.app)
+        self.plist("15.0")
+        with mock.patch.object(closure, "MAX_PLIST_BYTES", 16), \
+                self.assertRaisesRegex(closure.Invalid, "oversized"):
+            closure.check_minimum(self.app)
+        # The key is read only from a regular Info.plist, never through a link.
+        target = self.app / "Contents/Resources/Info.plist"
+        target.parent.mkdir()
+        plist.replace(target)
+        with self.assertRaises(FileNotFoundError):
+            closure.check_minimum(self.app)
+        self.assertEqual(invoke("bundle", self.app, "--report-rejection")[:2],
+                         (1, "macOS native closure rejected: FileNotFoundError\n"))
+        plist.symlink_to(target)
+        with self.assertRaises(OSError):
+            closure.check_minimum(self.app)
+        plist.unlink()
+        os.mkfifo(plist)
+        with self.assertRaisesRegex(closure.Invalid, "not a regular file"):
+            closure.declared_macos(self.app)
 
     def test_process_subtype_survives_generic_intermediate_and_context_cache(self):
         for cpu, generic, specialized in ((0x100000C, 0, 2), (0x1000007, 3, 8)):
@@ -294,6 +411,13 @@ class ClosureTests(BundleFixture):
 class NativeClosureTests(BundleFixture):
     def run_tool(self, *command):
         return subprocess.run(command, check=True, capture_output=True, text=True)
+
+    def test_real_build_version_sets_the_required_minimum(self):
+        source = self.parent / "main.c"
+        source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        self.run_tool("clang", "-mmacosx-version-min=13.4", str(source), "-o", str(self.exe))
+        self.assertEqual(self.required(), (13, 4, 0))
+        self.assertEqual(invoke("minimum", self.app), (0, "13.4\n", ""))
 
     def test_real_macho_external_unresolved_pixbuf_and_clean_launch(self):
         vendor = self.parent / "Arbitrary Vendor Prefix"
