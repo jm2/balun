@@ -97,7 +97,7 @@ jobs:
 
       - name: Retain portable package coverage
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: critical-coverage-packages
           path: ${{ runner.temp }}/package-coverage/*.json
@@ -140,7 +140,7 @@ jobs:
 
       - name: Retain synthetic counterexample replay records
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: adversarial-smoke-counterexamples
           path: ${{ runner.temp }}/adversarial-counterexamples/*.txt
@@ -315,7 +315,7 @@ jobs:
         run: build-aux/flatpak/validate-bundle-runtime.sh balun.flatpak
 
       - name: Upload the Flatpak bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: balun-flatpak-x86_64
           path: balun.flatpak
@@ -459,7 +459,7 @@ jobs:
 
       - name: Retain critical Rust coverage
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: critical-coverage-rust
           path: ${{ runner.temp }}/rust-coverage/*
@@ -586,7 +586,7 @@ jobs:
 
       - name: Retain installed Homebrew metadata evidence
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: homebrew-native-inputs
           path: ${{ runner.temp }}/homebrew-native-inputs.json
@@ -687,7 +687,7 @@ jobs:
 
       - name: Retain macOS native ownership evidence
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-native-copy-ownership
           path: |
@@ -749,7 +749,7 @@ jobs:
 
       - name: Upload the Windows candidates
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: balun-windows-${{ matrix.windows_arch }}
           path: |
