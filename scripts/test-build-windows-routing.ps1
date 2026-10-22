@@ -1599,6 +1599,18 @@ exit $global:LASTEXITCODE
             Assert-RoutingTestFailure "Inno recipe is missing required text: $RequiredText"
         }
     }
+    foreach ($Directory in @('bin', 'lib', 'libexec', 'share')) {
+        if (-not $InnoText.Contains("Type: filesandordirs; Name: `"{app}\$Directory`"")) {
+            Assert-RoutingTestFailure "Inno recipe does not clear the app-owned $Directory tree on upgrade"
+        }
+    }
+    if ($InnoText -notmatch '(?m)^\[InstallDelete\]\r?$') {
+        Assert-RoutingTestFailure 'Inno recipe has no [InstallDelete] section'
+    }
+    if ($InnoText -match '\bskipifnotsilent\b' -or
+        $InnoText -notmatch '(?m)^Filename: "\{app\}\\bin\\balun\.exe"; Description: "Launch Balun"; Flags: nowait postinstall skipifsilent\r?$') {
+        Assert-RoutingTestFailure 'Inno recipe must offer Launch Balun only to interactive installs (skipifsilent)'
+    }
     if ($InnoText.Contains('ARM64 Windows is not supported yet')) {
         Assert-RoutingTestFailure 'Inno recipe still rejects ARM64 Windows'
     }
