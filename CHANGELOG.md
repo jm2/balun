@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The macOS app declaring macOS 13 support while its bundled libraries need macOS 15.
+- The Windows installer offering "Launch Balun" only to silent installs and upgrades, and upgrades
+  leaving behind files a newer version removed.
+- Software centers listing Balun as needing an Internet connection and a 768 px display.
+- The Debian package description containing the entire README, and its maintainer having no address.
+- The player header showing English "Playback failed" in every language after a stop failure.
+- F5, Ctrl+R, and F11 acting behind open dialogs; search and refresh now use ⌘ on macOS.
+- Hong Kong, Macau, and Singapore Chinese, and any language after an unsupported first preference,
+  falling back to English.
+- Text containing `&` or `<` blanking or garbling banners, notices, and status pages.
 
 ## [0.2.0] — 2026-09-25
 
