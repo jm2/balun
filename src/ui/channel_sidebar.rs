@@ -12,6 +12,7 @@ use balun::controller::{
 use balun::domain::{ChannelKey, DeviceId};
 
 use super::objects::ChannelRowObject;
+use super::plain_text::{description_markup, set_status_description};
 
 const STATUS_PAGE_NAME: &str = "status";
 const CHANNEL_LIST_PAGE_NAME: &str = "channels";
@@ -413,7 +414,9 @@ pub(crate) fn build() -> ChannelSidebar {
     let status = adw::StatusPage::builder()
         .icon_name("view-list-symbolic")
         .title("Select a device")
-        .description("Channels for the selected HDHomeRun device will appear here.")
+        .description(description_markup(
+            "Channels for the selected HDHomeRun device will appear here.",
+        ))
         .child(&spinner)
         .vexpand(true)
         .build();
@@ -740,26 +743,28 @@ fn apply_empty_presentation(status: &adw::StatusPage, presentation: LineupPresen
         LineupPresentation::Unselected => {
             status.set_icon_name(Some("view-list-symbolic"));
             status.set_title("Select a device");
-            status.set_description(Some(
+            set_status_description(
+                status,
                 "Channels for the selected HDHomeRun device will appear here.",
-            ));
+            );
         }
         LineupPresentation::Loading => {
             status.set_icon_name(Some("view-refresh-symbolic"));
             status.set_title("Loading channels");
-            status.set_description(Some("Reading the selected device's channel lineup."));
+            set_status_description(status, "Reading the selected device's channel lineup.");
         }
         LineupPresentation::Ready { .. } => {
             status.set_icon_name(Some("view-list-symbolic"));
             status.set_title("No channels available");
-            status.set_description(Some(
+            set_status_description(
+                status,
                 "The selected device returned an empty channel lineup.",
-            ));
+            );
         }
         LineupPresentation::Failed(failure) => {
             status.set_icon_name(Some("dialog-error-symbolic"));
             status.set_title("Channels could not be loaded");
-            status.set_description(Some(lineup_failure_description(failure)));
+            set_status_description(status, lineup_failure_description(failure));
         }
     }
 }
@@ -767,7 +772,7 @@ fn apply_empty_presentation(status: &adw::StatusPage, presentation: LineupPresen
 fn apply_filtered_out_presentation(status: &adw::StatusPage, criteria: &ChannelFilter) {
     status.set_icon_name(Some("edit-find-symbolic"));
     status.set_title("No matching channels");
-    status.set_description(Some(filtered_out_description(criteria)));
+    set_status_description(status, filtered_out_description(criteria));
 }
 
 const fn filtered_out_description(criteria: &ChannelFilter) -> &'static str {
