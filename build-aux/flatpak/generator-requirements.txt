@@ -3,5 +3,5 @@
 # also a constraint input to generator-lock-requirements.txt, which pins the
 # complete CI/release dependency closure and its reviewed wheel hashes.
 # PyYAML is optional upstream and omitted because Balun never requests YAML.
-aiohttp==3.14.3
+aiohttp==3.14.4
 tomlkit==0.15.1
