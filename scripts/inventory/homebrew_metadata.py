@@ -99,7 +99,7 @@ def query_formula(recipe, deadline):
     # Spool to owned scratch rather than buffering unbounded child output.
     with tempfile.TemporaryFile(dir=os.environ.get("TMPDIR") or "/var/tmp") as output:
         process = subprocess.Popen(["brew", "ruby", str(helper), str(recipe)],
-                                   stdout=output, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                                   stdout=output, stderr=None, stdin=subprocess.DEVNULL,
                                    env=env, start_new_session=True)
         try:
             end = min(deadline, time.monotonic() + QUERY_SECONDS)

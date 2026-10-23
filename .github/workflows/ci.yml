@@ -682,6 +682,8 @@ jobs:
       - name: Bind installed metadata to every copied macOS native input
         if: runner.os == 'macOS'
         run: |
+          brew --version
+          brew config
           python3 -B scripts/inventory/homebrew_metadata.py --cellar "$(brew --cellar)" \
             --copy-ledger dist/Balun.native-copies.json > "$RUNNER_TEMP/macos-native-owners.json"
 
