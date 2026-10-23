@@ -78,6 +78,10 @@ impl MacosNetworkChangeWatcher {
 }
 
 /// Open a nonblocking routing socket and register it with the runtime.
+// Tokio 1.53.3 deprecated the safe constructors in favor of the unsafe
+// `register_with_interest`, which this crate forbids. The socket is an
+// `OwnedFd` moved into the `AsyncFd`, so the I/O-safety contract holds.
+#[allow(deprecated)]
 fn subscribe() -> io::Result<AsyncFd<OwnedFd>> {
     let socket = socket(AddressFamily::ROUTE, SocketType::RAW, None)?;
     sockopt::set_socket_recv_buffer_size(&socket, SOCKET_RECEIVE_BUFFER_BYTES)?;
