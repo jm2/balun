@@ -333,6 +333,11 @@ fn subscribed_socket() -> Result<NlSocket, RtnetlinkMonitorError> {
 
 /// Register an fd for readable readiness without allowing Tokio's documented
 /// missing-I/O-driver panic to escape this security boundary.
+// Tokio 1.53.3 deprecated the safe constructors in favor of the unsafe
+// `register_with_interest`, which this crate forbids. Every caller hands over
+// a value that owns its fd and closes it only on drop (`NlSocket`, and
+// `UnixDatagram` in tests), so the I/O-safety contract holds.
+#[allow(deprecated)]
 fn register_readable<T: AsRawFd>(inner: T) -> Result<AsyncFd<T>, RtnetlinkMonitorError> {
     if Handle::try_current().is_err() {
         return Err(RtnetlinkMonitorError::RuntimeRegistrationFailed);
