@@ -255,15 +255,22 @@ pub struct DiscoveryReport {
 }
 
 impl DiscoveryReport {
+    /// Merge another probe's report into this one.
+    ///
+    /// One device answering one source through several interfaces or methods
+    /// keeps every such observation, so the registry learns each origin and
+    /// losing one interface leaves the others standing. Only a repeat of the
+    /// same device, source, method, and interface counts as a duplicate. The
+    /// result is ordered by that key, independent of merge order.
     pub(crate) fn merge(&mut self, other: Self) {
         let mut observations = self
             .observations
             .drain(..)
-            .map(|observation| ((observation.device_id, observation.source), observation))
+            .map(|observation| (Self::merge_key(&observation), observation))
             .collect::<BTreeMap<_, _>>();
 
         for observation in other.observations {
-            match observations.entry((observation.device_id, observation.source)) {
+            match observations.entry(Self::merge_key(&observation)) {
                 Entry::Vacant(entry) => {
                     entry.insert(observation);
                 }
@@ -276,6 +283,17 @@ impl DiscoveryReport {
         self.observations = observations.into_values().collect();
         self.stats.merge(other.stats);
         self.issues.extend(other.issues);
+    }
+
+    fn merge_key(
+        observation: &DiscoveryObservation,
+    ) -> (DeviceId, SocketAddr, DiscoveryMethod, Option<String>) {
+        (
+            observation.device_id,
+            observation.source,
+            observation.method,
+            observation.interface.clone(),
+        )
     }
 }
 
@@ -509,6 +527,8 @@ impl DiscoveryClient {
                 };
 
                 report.stats.datagrams_accepted += 1;
+                // One endpoint fixes the method and interface, so the device
+                // and source alone identify a repeat within this probe.
                 let key = (observation.device_id, source);
                 if observations.contains_key(&key) {
                     report.stats.duplicate_observations += 1;
@@ -1238,6 +1258,58 @@ mod tests {
         assert_eq!(report.stats.datagrams_accepted, 3);
         assert_eq!(report.stats.duplicate_observations, 1);
         assert_eq!(report.issues.len(), 1);
+    }
+
+    #[test]
+    fn merged_reports_keep_every_interface_origin_in_either_order() {
+        let observation = |interface: &str, method| DiscoveryObservation {
+            device_id: DeviceId::new(0x105A_1232).unwrap(),
+            source: "192.0.2.10:65001".parse().unwrap(),
+            method,
+            interface: Some(interface.to_owned()),
+            device_types: vec![1],
+            tuner_count: Some(2),
+            advertised_base_url: None,
+            advertised_lineup_url: None,
+        };
+        let probe = |interface: &str| DiscoveryReport {
+            observations: vec![observation(interface, DiscoveryMethod::Ipv4Broadcast)],
+            ..DiscoveryReport::default()
+        };
+        let origins = |report: &DiscoveryReport| {
+            report
+                .observations
+                .iter()
+                .map(|observation| (observation.method, observation.interface.clone()))
+                .collect::<Vec<_>>()
+        };
+
+        let mut wired_first = probe("eth0");
+        wired_first.merge(probe("wlan0"));
+        let mut wireless_first = probe("wlan0");
+        wireless_first.merge(probe("eth0"));
+
+        assert_eq!(wired_first, wireless_first);
+        assert_eq!(
+            origins(&wired_first),
+            vec![
+                (DiscoveryMethod::Ipv4Broadcast, Some("eth0".to_owned())),
+                (DiscoveryMethod::Ipv4Broadcast, Some("wlan0".to_owned())),
+            ]
+        );
+        assert_eq!(wired_first.stats.duplicate_observations, 0);
+
+        // Another method on a known interface is a further origin; the same
+        // method on the same interface again is a duplicate.
+        wired_first.merge(DiscoveryReport {
+            observations: vec![
+                observation("eth0", DiscoveryMethod::Ipv6LinkLocalMulticast),
+                observation("eth0", DiscoveryMethod::Ipv4Broadcast),
+            ],
+            ..DiscoveryReport::default()
+        });
+        assert_eq!(wired_first.observations.len(), 3);
+        assert_eq!(wired_first.stats.duplicate_observations, 1);
     }
 
     #[tokio::test]
