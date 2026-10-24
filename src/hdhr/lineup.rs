@@ -79,6 +79,7 @@ impl fmt::Debug for LineupChannel {
 pub struct DeviceLineup {
     device_id: DeviceId,
     channels: Vec<LineupChannel>,
+    skipped_rows: usize,
 }
 
 /// Identity-verified metadata and lineup fetched from one pinned device
@@ -162,6 +163,13 @@ impl DeviceLineup {
     pub fn channels(&self) -> &[LineupChannel] {
         &self.channels
     }
+
+    /// Rows dropped because a presentation-only field (name, tags, flags) was
+    /// unusable or their GuideNumber repeated an earlier accepted row.
+    #[must_use]
+    pub const fn skipped_row_count(&self) -> usize {
+        self.skipped_rows
+    }
 }
 
 impl fmt::Debug for DeviceLineup {
@@ -170,6 +178,7 @@ impl fmt::Debug for DeviceLineup {
             .debug_struct("DeviceLineup")
             .field("device_id", &self.device_id)
             .field("channel_count", &self.channels.len())
+            .field("skipped_rows", &self.skipped_rows)
             .finish()
     }
 }
@@ -178,9 +187,10 @@ impl fmt::Debug for DeviceLineup {
 #[serde(rename_all = "PascalCase")]
 struct RawLineupChannel {
     guide_number: String,
-    guide_name: String,
     #[serde(default)]
-    tags: Option<String>,
+    guide_name: Option<RawText>,
+    #[serde(default)]
+    tags: Option<RawText>,
     #[serde(default)]
     favorite: Option<RawFlag>,
     #[serde(default, rename = "DRM")]
@@ -191,15 +201,36 @@ struct RawLineupChannel {
     url: String,
 }
 
+/// Presentation-only text. A value of the wrong JSON type skips its row
+/// instead of failing the whole lineup, and is discarded without being kept.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawText {
+    Text(String),
+    Invalid(IgnoredAny),
+}
+
 /// Firmware generations disagree on whether lineup attributes live in the
 /// documented comma-separated `Tags` field or in dedicated 0/1 fields. Some
 /// third-party fixtures also use JSON booleans, so accept both representations
-/// while rejecting every other value.
+/// while skipping rows with any other value.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum RawFlag {
     Number(u8),
     Boolean(bool),
+    Invalid(IgnoredAny),
+}
+
+/// Why one row was skipped. Only static labels, never device-supplied values.
+#[derive(Debug)]
+struct RowIssue {
+    field: &'static str,
+    reason: &'static str,
+}
+
+const fn row_issue(field: &'static str, reason: &'static str) -> RowIssue {
+    RowIssue { field, reason }
 }
 
 enum BoundedRawLineup {
@@ -283,20 +314,16 @@ fn parse_lineup(
         }
     };
 
+    // Identity and stream-URL pinning fail the whole lineup closed. Rows whose
+    // only problem is presentation are skipped and counted instead, so one bad
+    // name cannot hide every channel. A duplicate GuideNumber is presentation
+    // only because the pinned path already ties it to the same stream.
     let mut seen_numbers = BTreeSet::new();
     let mut channels = Vec::with_capacity(raw_channels.len());
+    let mut skipped_rows = 0_usize;
     for (index, raw) in raw_channels.into_iter().enumerate() {
         let guide_number = GuideNumber::new(raw.guide_number)
             .map_err(|source| LineupError::InvalidGuideNumber { index, source })?;
-        if !seen_numbers.insert(guide_number.clone()) {
-            return Err(LineupError::DuplicateGuideNumber { guide_number });
-        }
-
-        let name = normalize_name(index, raw.guide_name)?;
-        let mut tags = parse_tags(index, raw.tags)?;
-        merge_flag(index, "Favorite", raw.favorite, "favorite", &mut tags)?;
-        merge_flag(index, "DRM", raw.drm, "drm", &mut tags)?;
-        merge_flag(index, "HD", raw.hd, "hd", &mut tags)?;
         let stream_url = endpoint
             .normalize_stream_url(&raw.url)
             .map_err(|source| LineupError::InvalidStreamUrl { index, source })?;
@@ -308,6 +335,29 @@ fn parse_lineup(
                 reason: "stream path does not match GuideNumber",
             });
         }
+
+        let presentation = normalize_name(raw.guide_name).and_then(|name| {
+            let mut tags = parse_tags(raw.tags)?;
+            merge_flag("Favorite", raw.favorite, "favorite", &mut tags)?;
+            merge_flag("DRM", raw.drm, "drm", &mut tags)?;
+            merge_flag("HD", raw.hd, "hd", &mut tags)?;
+            Ok((name, tags))
+        });
+        let row = match presentation {
+            Ok(_) if seen_numbers.contains(&guide_number) => {
+                Err(row_issue("GuideNumber", "duplicate of an earlier row"))
+            }
+            other => other,
+        };
+        let (name, tags) = match row {
+            Ok(accepted) => accepted,
+            Err(RowIssue { field, reason }) => {
+                skipped_rows += 1;
+                tracing::debug!(target: "balun::hdhr", index, field, reason, "skipped lineup row");
+                continue;
+            }
+        };
+        seen_numbers.insert(guide_number.clone());
 
         channels.push(LineupChannel {
             key: ChannelKey::new(device_id, guide_number),
@@ -321,52 +371,40 @@ fn parse_lineup(
     Ok(DeviceLineup {
         device_id,
         channels,
+        skipped_rows,
     })
 }
 
-fn normalize_name(index: usize, value: String) -> Result<String, LineupError> {
+fn normalize_name(value: Option<RawText>) -> Result<String, RowIssue> {
+    let value = match value {
+        None => return Err(row_issue("GuideName", "value is missing")),
+        Some(RawText::Invalid(_)) => return Err(row_issue("GuideName", "value is not a string")),
+        Some(RawText::Text(value)) => value,
+    };
     let value = value.trim();
     if value.is_empty() {
-        return Err(LineupError::InvalidField {
-            index,
-            field: "GuideName",
-            reason: "value is empty",
-        });
+        return Err(row_issue("GuideName", "value is empty"));
     }
     if value.len() > MAX_GUIDE_NAME_BYTES {
-        return Err(LineupError::InvalidField {
-            index,
-            field: "GuideName",
-            reason: "value is too long",
-        });
+        return Err(row_issue("GuideName", "value is too long"));
     }
     if value.chars().any(char::is_control) {
-        return Err(LineupError::InvalidField {
-            index,
-            field: "GuideName",
-            reason: "control characters are forbidden",
-        });
+        return Err(row_issue("GuideName", "control characters are forbidden"));
     }
     Ok(value.to_owned())
 }
 
-fn parse_tags(index: usize, value: Option<String>) -> Result<BTreeSet<String>, LineupError> {
-    let Some(value) = value else {
-        return Ok(BTreeSet::new());
+fn parse_tags(value: Option<RawText>) -> Result<BTreeSet<String>, RowIssue> {
+    let value = match value {
+        None => return Ok(BTreeSet::new()),
+        Some(RawText::Invalid(_)) => return Err(row_issue("Tags", "value is not a string")),
+        Some(RawText::Text(value)) => value,
     };
     if value.len() > MAX_TAGS_BYTES {
-        return Err(LineupError::InvalidField {
-            index,
-            field: "Tags",
-            reason: "value is too long",
-        });
+        return Err(row_issue("Tags", "value is too long"));
     }
     if value.chars().any(char::is_control) {
-        return Err(LineupError::InvalidField {
-            index,
-            field: "Tags",
-            reason: "control characters are forbidden",
-        });
+        return Err(row_issue("Tags", "control characters are forbidden"));
     }
 
     let mut tags = BTreeSet::new();
@@ -376,40 +414,27 @@ fn parse_tags(index: usize, value: Option<String>) -> Result<BTreeSet<String>, L
         .filter(|token| !token.is_empty())
     {
         if token.len() > MAX_TAG_BYTES {
-            return Err(LineupError::InvalidField {
-                index,
-                field: "Tags",
-                reason: "one tag is too long",
-            });
+            return Err(row_issue("Tags", "one tag is too long"));
         }
         tags.insert(token.to_ascii_lowercase());
         if tags.len() > MAX_TAG_COUNT {
-            return Err(LineupError::InvalidField {
-                index,
-                field: "Tags",
-                reason: "too many tags",
-            });
+            return Err(row_issue("Tags", "too many tags"));
         }
     }
     Ok(tags)
 }
 
 fn merge_flag(
-    index: usize,
     field: &'static str,
     value: Option<RawFlag>,
     tag: &'static str,
     tags: &mut BTreeSet<String>,
-) -> Result<(), LineupError> {
+) -> Result<(), RowIssue> {
     let enabled = match value {
         None | Some(RawFlag::Number(0)) | Some(RawFlag::Boolean(false)) => false,
         Some(RawFlag::Number(1)) | Some(RawFlag::Boolean(true)) => true,
-        Some(RawFlag::Number(_)) => {
-            return Err(LineupError::InvalidField {
-                index,
-                field,
-                reason: "flag must be 0, 1, false, or true",
-            });
+        Some(RawFlag::Number(_)) | Some(RawFlag::Invalid(_)) => {
+            return Err(row_issue(field, "flag must be 0, 1, false, or true"));
         }
     };
     if enabled {
@@ -448,13 +473,23 @@ impl DeviceHttpClient {
             .get_lineup_json(endpoint, cancellation)
             .await
             .map_err(LineupFetchError::Http)?;
-        parse_lineup(
+        let lineup = parse_lineup(
             &body,
             device_id,
             endpoint,
             self.config().max_lineup_channels(),
         )
-        .map_err(LineupFetchError::Lineup)
+        .map_err(LineupFetchError::Lineup)?;
+        if lineup.skipped_row_count() > 0 {
+            tracing::warn!(
+                target: "balun::hdhr",
+                device_id = %device_id,
+                skipped = lineup.skipped_row_count(),
+                accepted = lineup.channels().len(),
+                "lineup rows with unusable presentation fields were skipped"
+            );
+        }
+        Ok(lineup)
     }
 }
 
@@ -490,9 +525,6 @@ pub enum LineupError {
         #[source]
         source: InvalidGuideNumber,
     },
-
-    #[error("lineup contains duplicate GuideNumber {guide_number}")]
-    DuplicateGuideNumber { guide_number: GuideNumber },
 
     #[error("invalid stream URL in lineup row {index}: {source}")]
     InvalidStreamUrl {
@@ -564,17 +596,29 @@ mod tests {
                 Err(LineupError::TooManyChannels { .. })
             ));
             rows.push(rows[0].clone());
-            assert!(matches!(
-                parse_lineup(
-                    &serde_json::to_vec(&rows).unwrap(),
-                    id(),
-                    &endpoint(),
-                    count + 1
-                ),
-                Err(LineupError::DuplicateGuideNumber { .. })
-            ));
+            let duplicated = parse_lineup(
+                &serde_json::to_vec(&rows).unwrap(),
+                id(),
+                &endpoint(),
+                count + 1,
+            )
+            .unwrap();
+            assert_eq!(duplicated.channels().len(), count);
+            assert_eq!(duplicated.skipped_row_count(), 1);
             rows.pop();
-            rows[random.index(count)]["DRM"] = JSON_SECRET_MARKER.into();
+            let target = random.index(count);
+            rows[target]["DRM"] = JSON_SECRET_MARKER.into();
+            let skipped = parse_lineup(
+                &serde_json::to_vec(&rows).unwrap(),
+                id(),
+                &endpoint(),
+                count,
+            )
+            .unwrap();
+            assert_eq!(skipped.channels().len(), count - 1);
+            assert_eq!(skipped.skipped_row_count(), 1);
+            assert!(!format!("{skipped:?}").contains(JSON_SECRET_MARKER));
+            rows[target]["URL"] = serde_json::json!({ "secret": JSON_SECRET_MARKER });
             let error = parse_lineup(
                 &serde_json::to_vec(&rows).unwrap(),
                 id(),
@@ -603,11 +647,9 @@ mod tests {
         for body in [
             marker.clone(),
             format!(
-                r#"[{{"GuideNumber":"1","GuideName":{{"secret":{marker}}},"URL":"http://192.0.2.10:5004/auto/v1"}}]"#
+                r#"[{{"GuideNumber":{{"secret":{marker}}},"GuideName":"fixture","URL":"http://192.0.2.10:5004/auto/v1"}}]"#
             ),
-            format!(
-                r#"[{{"GuideNumber":"1","GuideName":"fixture","URL":"http://192.0.2.10:5004/auto/v1","DRM":{marker}}}]"#
-            ),
+            format!(r#"[{{"GuideNumber":"1","GuideName":"fixture","URL":[{marker}]}}]"#),
             format!(r#"[{{"secret":{marker},"GuideName":]}}]"#),
             format!(r#"[{{"secret":{marker},"GuideName":"#),
             format!(r"[] {marker}"),
@@ -619,6 +661,141 @@ mod tests {
                 error,
             )));
         }
+
+        // Wrong-typed presentation fields skip only their row, keeping nothing.
+        for body in [
+            format!(
+                r#"[{{"GuideNumber":"1","GuideName":{{"secret":{marker}}},"URL":"http://192.0.2.10:5004/auto/v1"}}]"#
+            ),
+            format!(
+                r#"[{{"GuideNumber":"1","GuideName":"fixture","URL":"http://192.0.2.10:5004/auto/v1","DRM":{marker}}}]"#
+            ),
+            format!(
+                r#"[{{"GuideNumber":"1","GuideName":"fixture","Tags":[{marker}],"URL":"http://192.0.2.10:5004/auto/v1"}}]"#
+            ),
+        ] {
+            let lineup = parse_lineup(body.as_bytes(), id(), &endpoint(), 10).unwrap();
+            assert!(lineup.channels().is_empty());
+            assert_eq!(lineup.skipped_row_count(), 1);
+            assert!(!format!("{lineup:?}").contains(JSON_SECRET_MARKER));
+        }
+    }
+
+    /// Wraps one row between two valid ones, so a skip leaves channels 1 and 3.
+    fn between_valid_rows(row: &str) -> String {
+        format!(
+            r#"[{{"GuideNumber":"1","GuideName":"ONE","URL":"http://192.0.2.10:5004/auto/v1"}},{row},{{"GuideNumber":"3","GuideName":"THREE","URL":"http://192.0.2.10:5004/auto/v3"}}]"#
+        )
+    }
+
+    fn assert_skips_only_the_middle_row(row: &str) {
+        let lineup =
+            parse_lineup(between_valid_rows(row).as_bytes(), id(), &endpoint(), 10).unwrap();
+        let numbers: Vec<_> = lineup
+            .channels()
+            .iter()
+            .map(|channel| channel.key().guide_number().as_str())
+            .collect();
+        assert_eq!(numbers, ["1", "3"], "{row}");
+        assert_eq!(lineup.skipped_row_count(), 1, "{row}");
+    }
+
+    #[test]
+    fn skips_and_counts_rows_with_a_blank_or_missing_guide_name() {
+        for row in [
+            r#"{"GuideNumber":"2","GuideName":"   ","URL":"http://192.0.2.10:5004/auto/v2"}"#,
+            r#"{"GuideNumber":"2","GuideName":"","URL":"http://192.0.2.10:5004/auto/v2"}"#,
+            r#"{"GuideNumber":"2","GuideName":null,"URL":"http://192.0.2.10:5004/auto/v2"}"#,
+            r#"{"GuideNumber":"2","URL":"http://192.0.2.10:5004/auto/v2"}"#,
+        ] {
+            assert_skips_only_the_middle_row(row);
+        }
+    }
+
+    #[test]
+    fn skips_and_counts_rows_with_unusable_tags() {
+        let oversized = format!(
+            r#"{{"GuideNumber":"2","GuideName":"TWO","Tags":"{}","URL":"http://192.0.2.10:5004/auto/v2"}}"#,
+            "a".repeat(MAX_TAGS_BYTES + 1)
+        );
+        let long_tag = format!(
+            r#"{{"GuideNumber":"2","GuideName":"TWO","Tags":"{}","URL":"http://192.0.2.10:5004/auto/v2"}}"#,
+            "a".repeat(MAX_TAG_BYTES + 1)
+        );
+        let many_tags = format!(
+            r#"{{"GuideNumber":"2","GuideName":"TWO","Tags":"{}","URL":"http://192.0.2.10:5004/auto/v2"}}"#,
+            (0..=MAX_TAG_COUNT)
+                .map(|tag| format!("t{tag}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        for row in [oversized.as_str(), long_tag.as_str(), many_tags.as_str()] {
+            assert_skips_only_the_middle_row(row);
+        }
+    }
+
+    #[test]
+    fn skips_and_counts_rows_with_invalid_flag_values() {
+        for row in [
+            r#"{"GuideNumber":"2","GuideName":"TWO","Favorite":2,"URL":"http://192.0.2.10:5004/auto/v2"}"#,
+            r#"{"GuideNumber":"2","GuideName":"TWO","DRM":"yes","URL":"http://192.0.2.10:5004/auto/v2"}"#,
+            r#"{"GuideNumber":"2","GuideName":"TWO","HD":300,"URL":"http://192.0.2.10:5004/auto/v2"}"#,
+            r#"{"GuideNumber":"2","GuideName":"TWO","HD":-1,"URL":"http://192.0.2.10:5004/auto/v2"}"#,
+        ] {
+            assert_skips_only_the_middle_row(row);
+        }
+    }
+
+    #[test]
+    fn keeps_the_first_row_of_a_duplicate_guide_number() {
+        let body = br#"[
+          {"GuideNumber":"7.1","GuideName":"FIRST","URL":"http://192.0.2.10:5004/auto/v7.1"},
+          {"GuideNumber":"7.1","GuideName":"SECOND","URL":"http://192.0.2.10:5004/auto/v7.1"},
+          {"GuideNumber":"7.1","GuideName":"THIRD","URL":"http://192.0.2.10:5004/auto/v7.1"}
+        ]"#;
+        let lineup = parse_lineup(body, id(), &endpoint(), 10).unwrap();
+        assert_eq!(lineup.channels().len(), 1);
+        assert_eq!(lineup.channels()[0].name(), "FIRST");
+        assert_eq!(lineup.skipped_row_count(), 2);
+
+        // A skipped row does not claim its GuideNumber.
+        let body = br#"[
+          {"GuideNumber":"7.1","GuideName":"","URL":"http://192.0.2.10:5004/auto/v7.1"},
+          {"GuideNumber":"7.1","GuideName":"USABLE","URL":"http://192.0.2.10:5004/auto/v7.1"}
+        ]"#;
+        let lineup = parse_lineup(body, id(), &endpoint(), 10).unwrap();
+        assert_eq!(lineup.channels()[0].name(), "USABLE");
+        assert_eq!(lineup.skipped_row_count(), 1);
+    }
+
+    #[test]
+    fn one_pinning_or_identity_violation_still_rejects_the_whole_lineup() {
+        for row in [
+            r#"{"GuideNumber":"2","GuideName":"TWO","URL":"http://192.0.2.11:5004/auto/v2"}"#,
+            r#"{"GuideNumber":"2","GuideName":"TWO","URL":"http://192.0.2.10:6000/auto/v2"}"#,
+            r#"{"GuideNumber":"2","GuideName":"TWO","URL":"http://192.0.2.10:5004/auto/v9"}"#,
+            r#"{"GuideNumber":"","GuideName":"TWO","URL":"http://192.0.2.10:5004/auto/v2"}"#,
+            r#"{"GuideNumber":"2","GuideName":"TWO"}"#,
+            // Presentation problems never mask a pinning violation in the same row.
+            r#"{"GuideNumber":"2","GuideName":"","DRM":2,"URL":"http://192.0.2.11:5004/auto/v2"}"#,
+        ] {
+            assert!(
+                parse_lineup(between_valid_rows(row).as_bytes(), id(), &endpoint(), 10).is_err(),
+                "{row}"
+            );
+        }
+        // A duplicate GuideNumber is still pinned before it is skipped.
+        let duplicate =
+            r#"{"GuideNumber":"1","GuideName":"AGAIN","URL":"http://192.0.2.11:5004/auto/v1"}"#;
+        assert!(matches!(
+            parse_lineup(
+                between_valid_rows(duplicate).as_bytes(),
+                id(),
+                &endpoint(),
+                10
+            ),
+            Err(LineupError::InvalidStreamUrl { index: 1, .. })
+        ));
     }
 
     #[test]
@@ -688,14 +865,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_dedicated_flag_values_and_duplicates() {
-        for body in [
-            br#"[{"GuideNumber":"7.1","GuideName":"A","Favorite":2,"URL":"http://192.0.2.10:5004/auto/v7.1"}]"#.as_slice(),
-            br#"[{"GuideNumber":"7.1","GuideName":"A","DRM":"yes","URL":"http://192.0.2.10:5004/auto/v7.1"}]"#.as_slice(),
-            br#"[{"GuideNumber":"7.1","GuideName":"A","HD":1,"HD":1,"URL":"http://192.0.2.10:5004/auto/v7.1"}]"#.as_slice(),
-        ] {
-            assert!(parse_lineup(body, id(), &endpoint(), 10).is_err());
-        }
+    fn rejects_rows_with_repeated_json_fields() {
+        let body = br#"[{"GuideNumber":"7.1","GuideName":"A","HD":1,"HD":1,"URL":"http://192.0.2.10:5004/auto/v7.1"}]"#;
+        assert!(matches!(
+            parse_lineup(body, id(), &endpoint(), 10),
+            Err(LineupError::Json(_))
+        ));
     }
 
     #[test]
@@ -717,16 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_numbers_and_recognized_json_fields() {
-        let duplicate_number = br#"[
-          {"GuideNumber":"7.1","GuideName":"A","URL":"http://192.0.2.10:5004/auto/v7.1"},
-          {"GuideNumber":"7.1","GuideName":"B","URL":"http://192.0.2.10:5004/auto/v7.1"}
-        ]"#;
-        assert!(matches!(
-            parse_lineup(duplicate_number, id(), &endpoint(), 10),
-            Err(LineupError::DuplicateGuideNumber { .. })
-        ));
-
+    fn rejects_duplicate_recognized_json_fields() {
         let duplicate_field = br#"[{
           "GuideNumber":"7.1",
           "GuideNumber":"7.2",
@@ -788,13 +954,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsafe_names_tags_and_invalid_guide_numbers() {
-        for body in [
-            br#"[{"GuideNumber":"","GuideName":"A","URL":"http://192.0.2.10:5004/auto/v1"}]"#.as_slice(),
-            b"[{\"GuideNumber\":\"1\",\"GuideName\":\"bad\\nname\",\"URL\":\"http://192.0.2.10:5004/auto/v1\"}]".as_slice(),
-            b"[{\"GuideNumber\":\"1\",\"GuideName\":\"A\",\"Tags\":\"bad\\ntag\",\"URL\":\"http://192.0.2.10:5004/auto/v1\"}]".as_slice(),
+    fn rejects_invalid_guide_numbers_and_skips_unsafe_names_and_tags() {
+        assert!(matches!(
+            parse_lineup(
+                br#"[{"GuideNumber":"","GuideName":"A","URL":"http://192.0.2.10:5004/auto/v1"}]"#,
+                id(),
+                &endpoint(),
+                10
+            ),
+            Err(LineupError::InvalidGuideNumber { index: 0, .. })
+        ));
+        let long_name = format!(
+            r#"{{"GuideNumber":"2","GuideName":"{}","URL":"http://192.0.2.10:5004/auto/v2"}}"#,
+            "a".repeat(MAX_GUIDE_NAME_BYTES + 1)
+        );
+        for row in [
+            r#"{"GuideNumber":"2","GuideName":"bad\nname","URL":"http://192.0.2.10:5004/auto/v2"}"#,
+            r#"{"GuideNumber":"2","GuideName":"A","Tags":"bad\ntag","URL":"http://192.0.2.10:5004/auto/v2"}"#,
+            long_name.as_str(),
         ] {
-            assert!(parse_lineup(body, id(), &endpoint(), 10).is_err());
+            assert_skips_only_the_middle_row(row);
         }
     }
 
@@ -906,6 +1085,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(connect.channels().len(), 78);
+        assert_eq!(connect.skipped_row_count(), 0);
         assert!(connect.channels().iter().all(|channel| !channel.is_drm()));
         assert_eq!(
             connect
@@ -947,6 +1127,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(flex.channels().len(), 68);
+        assert_eq!(flex.skipped_row_count(), 0);
         assert_eq!(
             flex.channels()
                 .iter()
