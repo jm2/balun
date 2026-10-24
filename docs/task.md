@@ -1,6 +1,6 @@
 # Balun implementation backlog
 
-Last audited: 2026-09-17; see the [reassessment](backlog-review-2026-09-17.md).
+Last audited: 2026-09-17; see the [reassessment](archive/backlog-review-2026-09-17.md).
 
 This is the executable work ledger for v0.1.x hardening and the v0.2 roadmap,
 including the historical v0.1.0 records. Existing architecture and safety
@@ -8,11 +8,11 @@ contracts remain authoritative in [`plan-v0.1.md`](plan-v0.1.md);
 sanitized real-device evidence belongs in
 [`compatibility-v0.1.md`](compatibility-v0.1.md); merged user-visible outcomes
 belong in [`../CHANGELOG.md`](../CHANGELOG.md). The original 64-record ledger is
-archived at 24/64 in [`task-foundation-2026-09.md`](task-foundation-2026-09.md),
+archived at 24/64 in [`archive/task-foundation-2026-09.md`](archive/task-foundation-2026-09.md),
 and the decisions behind this restart are in
 [ADR-0002](architecture/adr-0002-scope-and-diagnostics.md).
 
-The [adopted September review](review-and-backlog-proposal-2026-09.md) supplies
+The [adopted September review](archive/review-and-backlog-proposal-2026-09.md) supplies
 the evidence and acceptance details for H0–H4 and V2 below. Its implementation
 order supersedes the original delivery order for post-alpha work. New records
 remain unchecked; adopting work does not complete its implementation.
@@ -141,7 +141,7 @@ Independent correctness fixes may continue.
   schema preservation, forced replacement tests, and two-second load/close waits.
 
 - [x] **H3.3 — Disposition the older low findings.** Pacing/jitter, CLI admission,
-  and schema fixes are [recorded](discovery-low-findings-2026-09.md), together with
+  and schema fixes are [recorded](archive/discovery-low-findings-2026-09.md), together with
   maintainer-approved loopback and fingerprint-key limits, owners, and review triggers.
 
 - [ ] **H3.4 — Refresh the security evidence.** After relevant H0/H1/H3 fixes,
@@ -182,7 +182,7 @@ Independent correctness fixes may continue.
 
 - [x] **V2.4 — Add explicitly approved subnet discovery ([#71]).** After H0.1 and
   V2.8, implement the
-  [approved traffic, consent, and delivery contract](typed-subnet-discovery-proposal.md) on every
+  [approved traffic, consent, and delivery contract](typed-subnet-discovery.md) on every
   platform; confirm every search and preserve cross-platform cancellation.
 
 - [ ] **V2.5 — Complete deinterlacing quality evidence ([#78]).** Retain the
@@ -352,7 +352,7 @@ V2.9 retired this feature on 2026-09-24; these records remain historical.
 ## Archived foundation
 
 The following records were completed under the original ledger and are
-preserved verbatim in [`task-foundation-2026-09.md`](task-foundation-2026-09.md):
+preserved verbatim in [`archive/task-foundation-2026-09.md`](archive/task-foundation-2026-09.md):
 M0.2, M0.3, M0.5, M1.1, M1.2, M1.3, M1.4, M1.7, M1.8, M1.9, M2.1, M2.2, M2.3,
 M2.4, M2.5, M2.6, M2.7, M2.8, M2.9, M3.1, M3.2, M3.3, M3.8, and M5.1. The
 fake-device teardown-release proofs that closed the test-side half of M2.10

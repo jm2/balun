@@ -65,7 +65,7 @@ the meantime.
 #### Typed-subnet amendment — 2026-09-18
 
 Maintainer jm2 approved the separate V2.4
-[typed-subnet contract](../typed-subnet-discovery-proposal.md), selecting `/23`
+[typed-subnet contract](../typed-subnet-discovery.md), selecting `/23`
 limits and confirmation before every search. That contract supersedes any
 application of the route-derived `/24` ceiling, fingerprint approval, or
 network-change reruns to user-entered subnets. Route-derived discovery retained
@@ -78,7 +78,7 @@ The linked contract defines the shared policy and remaining bounds.
 Persist only the entered prefix; each search requires fresh confirmation of
 its scope and request budget. There are no automatic typed-subnet scans, and
 network changes cancel active searches. The maintainer also accepted the
-[outbound-request boundary](../typed-subnet-discovery-proposal.md#approved-delivery-boundary):
+[outbound-request boundary](../typed-subnet-discovery.md#approved-delivery-boundary):
 socket broadcast stays disabled, and the supported deployment requires downstream
 routers to block directed broadcasts. Balun cannot verify that remote setting
 or guarantee single-host delivery if it is changed. This contract permits
@@ -88,7 +88,7 @@ observation prevents admission, and changes or observation loss revoke the scan.
 Establish that observation before displaying desktop confirmation or consuming
 CLI consent, and bind consent and admission to the same observed generation.
 Platform enablement requires native evidence under the
-[network-change admission contract](../typed-subnet-discovery-proposal.md#network-change-admission).
+[network-change admission contract](../typed-subnet-discovery.md#network-change-admission).
 V2.4 shipped this contract in [#206](https://github.com/jm2/balun/pull/206) on 2026-09-25.
 
 ### Playback

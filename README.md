@@ -49,14 +49,9 @@ address so you know which tuner failed.
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; live timing accounts for delayed media arrival; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, the AUR, and winget |
+| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads and Fedora COPR; AUR and winget pending |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
-| macOS package dependency validation | ✅ Every native file and architecture checked after signing and DMG reopening; relocated probe denies access to Homebrew libraries |
-| Windows package validation | ✅ Pinned policy and full-tree probe receipt; completed installer payload independently extracted, compared, checked, and runtime-probed |
-| Device JSON error privacy | ✅ Parse diagnostics expose fixed categories and positions; device-chosen values are discarded before inspection or CLI output |
-| Native playback log privacy | ✅ Closed error and media labels retain useful diagnostics without plugin error text, arbitrary caps values, or stream identifiers |
 | Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved; a notice appears when settings cannot be saved |
-| Native runtime inventory tooling | 🛠️ Reopened DMG content binding, macOS native copy ownership, installed Homebrew metadata, and native-scope SBOM generation; [catalog assembly, embedded-resource representation, remaining artifact adapters, and release attachment remain pending](docs/native-inventory.md) |
 | Light & dark mode | ✅ Automatic (libadwaita) |
 | i18n/l10n framework (13 catalogs, auto locale detection) | 🚧 Most window, player, and dialog copy; [remaining scope](docs/localization.md) |
 
@@ -114,7 +109,7 @@ fetches the MPEG-TS stream and feeds the built-in `appsrc`.
 
 Pre-built packages for Linux (Flatpak, `.deb`, `.rpm`, Arch), macOS (`.dmg`), and Windows
 (`.exe` installer, `.zip`) are available on the [Releases](https://github.com/jm2/balun/releases)
-page; Fedora, Arch, and Windows users can install from COPR, the AUR, and winget instead. Download
+page; Fedora users can install from COPR instead. Download
 `SHA256SUMS.txt` with a Releases package and verify its SHA-256 entry before installing.
 
 ### Fedora (COPR)
@@ -129,7 +124,8 @@ sudo dnf install balun
 
 ### Arch Linux (AUR)
 
-Balun is available on the [AUR](https://aur.archlinux.org/) in three variants:
+Balun is on the [AUR](https://aur.archlinux.org/) in three variants, but they still build 0.1.0
+until they are updated:
 
 | Package | Description |
 | --- | --- |
@@ -145,7 +141,8 @@ yay -S balun-bin
 
 ### Windows (winget)
 
-Balun is available via [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/):
+The [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/) package is awaiting
+review in microsoft/winget-pkgs; once accepted:
 
 ```powershell
 winget install jm2.Balun

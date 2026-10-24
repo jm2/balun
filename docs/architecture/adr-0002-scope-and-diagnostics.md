@@ -28,7 +28,7 @@ unreachable tuner reported only "Device or stream unavailable".
    discovery on Linux, P3 packages, P4 the alpha release. Hardware evidence
    comes first because it decides the codec contract that packaging needs.
    The 64-record ledger is archived at 24/64 as
-   [`task-foundation-2026-09.md`](../task-foundation-2026-09.md) and
+   [`task-foundation-2026-09.md`](../archive/task-foundation-2026-09.md) and
    [`task.md`](../task.md) restarts with 30 records.
 2. **Guide data moves to v0.2.** In-band PSIP/EIT, XMLTV, and the HDHomeRun
    XMLTV API leave v0.1. A one-day spike in P0 records whether guide tables

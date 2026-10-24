@@ -6,7 +6,7 @@ This document records Balun's implemented GStreamer boundary, private stream
 handoff, generation-owned tune session, video presentation path, essential
 controls, and application-owned direct stream transport with its failure
 classification. Those landed as archived ledger records M2.4-M2.9 in
-[`task-foundation-2026-09.md`](task-foundation-2026-09.md). The product scope
+[`archive/task-foundation-2026-09.md`](archive/task-foundation-2026-09.md). The product scope
 remains authoritative in [`plan-v0.1.md`](plan-v0.1.md), and the active
 countable ledger is [`task.md`](task.md).
 

@@ -4,7 +4,7 @@ Reviewed: 2026-09-09 (US Eastern), completed against the September 10 UTC issue 
 
 ## Adoption status
 
-The maintainer accepted the task expansion after this review. [The active ledger](task.md)
+The maintainer accepted the task expansion after this review. [The active ledger](../task.md)
 now contains 21 H records for defects and assurance, seven V2 roadmap records, and the
 original 30 P records. Its literal count is 29/58; the historical P count remains 29/30.
 P4.1 is carried forward once. All newly adopted implementation records remain unchecked.

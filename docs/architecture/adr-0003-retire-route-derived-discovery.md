@@ -18,7 +18,7 @@ of them tests, and it stayed Linux-only: macOS and Windows never gained a safe
 route-table provider. Keeping it correct needed a steady run of fixes to
 authority observers, IPv6 address refreshes, and revocation during a run.
 
-The maintainer-approved [typed-subnet contract](../typed-subnet-discovery-proposal.md)
+The maintainer-approved [typed-subnet contract](../typed-subnet-discovery.md)
 of 2026-09-18 (V2.4) serves the same case on every platform. The user types one
 private prefix, confirms its request budget before each search, and a live
 network-change source guards the search. It needs no route-table inference, no
