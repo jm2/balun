@@ -36,7 +36,7 @@ Options:
   --output <file>         Write sanitized validation report to specified file
   -h, --help              Show this help and exit
 
-If neither --dmg nor --app is specified, searches in default build output directories.
+If neither --dmg nor --app is specified, uses this checkout's dist/Balun.dmg or dist/Balun.app.
 EOF
 }
 
@@ -116,11 +116,10 @@ trap cleanup EXIT HUP INT TERM
 step "1. Locating Packaged Artifact"
 
 if [[ -z "$DMG_PATH" && -z "$APP_PATH" ]]; then
-  # Auto-detect candidates
+  # Auto-detect only this checkout's build output. A shared directory such as
+  # /tmp could be pre-populated by another local user; pass --dmg or --app.
   CANDIDATE_DMGS=(
     "${REPO_ROOT}/dist/Balun.dmg"
-    "/private/tmp/balun-m2/dist/Balun.dmg"
-    "/tmp/balun-m2/dist/Balun.dmg"
   )
   for candidate in "${CANDIDATE_DMGS[@]}"; do
     if [[ -f "$candidate" ]]; then
@@ -132,8 +131,6 @@ if [[ -z "$DMG_PATH" && -z "$APP_PATH" ]]; then
   if [[ -z "$DMG_PATH" ]]; then
     CANDIDATE_APPS=(
       "${REPO_ROOT}/dist/Balun.app"
-      "/private/tmp/balun-m2/dist/Balun.app"
-      "/tmp/balun-m2/dist/Balun.app"
     )
     for candidate in "${CANDIDATE_APPS[@]}"; do
       if [[ -d "$candidate" ]]; then

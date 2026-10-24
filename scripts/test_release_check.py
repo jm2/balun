@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import io
 import sys
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -162,6 +164,25 @@ class ReleaseCheckTests(unittest.TestCase):
             "1.2.3-alpha.1",
         )
         self.assertIsNone(release_check.rpm_spec_upstream_version("#%global upstream_version 1.2.3\n"))
+
+    def test_release_name_labels_only_plain_alpha_series_releases(self) -> None:
+        for version, name in (
+            ("0.2.0", "Balun v0.2.0 Alpha"),
+            ("0.2.1+build.5", "Balun v0.2.1+build.5 Alpha"),
+            ("0.3.0-beta.1", "Balun v0.3.0-beta.1"),
+            ("0.3.0-rc.1+build", "Balun v0.3.0-rc.1+build"),
+            ("1.0.0", "Balun v1.0.0"),
+            ("10.0.0", "Balun v10.0.0"),
+        ):
+            with self.subTest(version=version):
+                self.assertEqual(release_check.release_name(version), name)
+
+    def test_release_name_cli_prints_the_name_and_rejects_a_non_semver_tag(self) -> None:
+        with redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(release_check.main(["--tag", "v0.3.0-beta.1", "--release-name"]), 0)
+        self.assertEqual(output.getvalue(), "Balun v0.3.0-beta.1\n")
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(release_check.main(["--tag", "0.3.0", "--release-name"]), 1)
 
     def test_rpm_version_encodes_prereleases_with_a_tilde(self) -> None:
         self.assertEqual(release_check.rpm_version_for_semver("1.2.3"), "1.2.3")
