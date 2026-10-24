@@ -458,12 +458,12 @@ pub fn parse_tuner_discover_response(datagram: &[u8]) -> Result<DiscoverResponse
                 let value = parse_wire_string(item.tag, item.value)?;
                 set_once(&mut lineup_url, value, item.tag)?;
             }
-            TAG_DEVICE_AUTH_BIN_DEPRECATED => {
-                require_tag_length(item, 18, "18")?;
-            }
             _ => {
-                // Discovery replies are explicitly extensible. Unknown tags are
-                // length-checked by TlvIter and otherwise ignored.
+                // Discovery replies are explicitly extensible. Unknown tags,
+                // and optional tags Balun does not use (storage, device auth
+                // including the deprecated 18-byte form), are length-checked
+                // by TlvIter and otherwise ignored, as libhdhomerun does.
+                // Identity and URL tags above stay fail-closed.
             }
         }
     }
@@ -955,7 +955,6 @@ mod tests {
                 vec![0, 0, 0, 1, 0],
                 "a nonzero multiple of 4",
             ),
-            (TAG_DEVICE_AUTH_BIN_DEPRECATED, vec![0; 17], "18"),
         ] {
             let frame = response_with_extra_tlv(tag, &value);
             assert_eq!(
@@ -982,6 +981,26 @@ mod tests {
             parse_tuner_discover_response(&frame),
             Err(ProtocolError::InvalidDeviceId(0x105A_1233))
         );
+    }
+
+    #[test]
+    fn response_ignores_malformed_deprecated_auth_tag() {
+        // libhdhomerun skips this unused tag rather than rejecting the reply;
+        // later tags must still be parsed.
+        for length in [0, 17, 19] {
+            let mut payload = base_response_payload();
+            push_tlv(
+                &mut payload,
+                TAG_DEVICE_AUTH_BIN_DEPRECATED,
+                &vec![0; length],
+            );
+            push_tlv(&mut payload, TAG_TUNER_COUNT, &[4]);
+            let frame = encode_frame(TYPE_DISCOVER_REPLY, &payload).unwrap();
+
+            let response = parse_tuner_discover_response(&frame).unwrap();
+            assert_eq!(response.device_id, 0x105A_1232);
+            assert_eq!(response.tuner_count, Some(4));
+        }
     }
 
     #[test]
