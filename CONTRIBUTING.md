@@ -23,8 +23,8 @@ TOML checks locally.
 - Work on a topic branch; nothing goes straight to `main`.
 - Use conventional-commit subjects: `feat:`, `fix:`, `docs:`, `test:`, or `ci:`, and name the
   ledger record in parentheses when one applies, as in `docs: publish the support matrix (P4.4)`.
-- CI must be green. CodeRabbit reviews every pull request automatically; fix or answer each
-  finding and resolve its thread.
+- CI must be green. CodeRabbit reviews pull requests automatically when its review limit allows;
+  fix or answer each finding and resolve its thread.
 - Keep a pull request to one ledger record where possible. Split a large record into reviewable
   slices rather than weakening a contract to make it fit.
 - The repository owner merges. Dependabot's minor and patch updates merge automatically once the

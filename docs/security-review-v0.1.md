@@ -16,7 +16,7 @@ checked in. The default and `desktop` test suites, strict Clippy, and
 
 V2.4 ([#206](https://github.com/jm2/balun/pull/206)) added the desktop's **Search a
 subnet** and moved `balun-discover --approved-range` onto the same
-[typed-subnet contract](typed-subnet-discovery-proposal.md). A search admits one
+[typed-subnet contract](typed-subnet-discovery.md). A search admits one
 canonical RFC 1918 `/23`–`/32` scope only through a consent that is bound to a
 ready network-change observation generation and consumed once
 (`SubnetSearchConsent::admit`, `src/discovery/subnet.rs`). Readiness comes only
@@ -79,7 +79,7 @@ reservation completion, invalidation, and cancellation coverage.
 
 This is a targeted correction, not H3.4's refreshed audit. The historical
 summary and findings below describe their reviewed revisions; the other open
-findings in [the adopted review](review-and-backlog-proposal-2026-09.md) remain
+findings in [the adopted review](archive/review-and-backlog-proposal-2026-09.md) remain
 tracked in [the active ledger](task.md).
 
 ## Summary
@@ -255,7 +255,7 @@ wording in the historical review below. H3.4's consolidated review remains open.
 ### Historical review summary
 
 H3.3 corrections and maintainer-approved bounded acceptances are recorded in the
-[September 17 finding dispositions](discovery-low-findings-2026-09.md).
+[September 17 finding dispositions](archive/discovery-low-findings-2026-09.md).
 Routed positive jitter, stricter CLI admission/reply budgets, and a distinct
 newer-schema quarantine supersede the corresponding historical findings below.
 The maintainer accepted the library-loopback and sibling-key boundaries on
@@ -341,7 +341,7 @@ review's pull request.
 - Low, accepted: IPv4 link-local and directed-broadcast addresses pass the
   exact-target parser; `SO_BROADCAST` is unset, so a send the local OS classifies
   as a broadcast fails. Clarified 2026-09-18: this does not establish downstream
-  delivery behavior. V2.4's [accepted outbound-request boundary](typed-subnet-discovery-proposal.md#approved-delivery-boundary)
+  delivery behavior. V2.4's [accepted outbound-request boundary](typed-subnet-discovery.md#approved-delivery-boundary)
   records its downstream broadcast-blocking requirement and review before beta.
 
 ### Not covered

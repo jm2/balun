@@ -6,7 +6,7 @@ maintainer accepted both bounded exceptions below, including their ownership
 and review triggers. H3.3 completes when this change lands on `main`.
 
 Note (2026-09-24): V2.9 retired route-derived discovery and its approval store
-([ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md)). The
+([ADR-0003](../architecture/adr-0003-retire-route-derived-discovery.md)). The
 approval-store and fingerprint-key dispositions below are historical; the CLI
 admission corrections still apply to `balun-discover`. V2.4
 ([#206](https://github.com/jm2/balun/pull/206)) later superseded the range-scan

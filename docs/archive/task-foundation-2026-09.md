@@ -1,8 +1,8 @@
 # Balun v0.1 foundation ledger (archived)
 
-Archived: 2026-09-02 at 24/64 records complete. Superseded by [`task.md`](task.md),
+Archived: 2026-09-02 at 24/64 records complete. Superseded by [`task.md`](../task.md),
 which restarts the count around the hardware-first order in
-[`plan-v0.1.md`](plan-v0.1.md) and [ADR-0002](architecture/adr-0002-scope-and-diagnostics.md).
+[`plan-v0.1.md`](../plan-v0.1.md) and [ADR-0002](../architecture/adr-0002-scope-and-diagnostics.md).
 The content below is preserved as written; its record IDs (`M0.1`-`M6.6`) are
 historical and are not maintained.
 
@@ -10,9 +10,9 @@ Last audited: 2026-09-02
 
 This is the executable work ledger for `v0.1.0-alpha.1`. The product scope,
 architecture, safety constraints, and acceptance rationale remain authoritative
-in [`plan-v0.1.md`](plan-v0.1.md); sanitized real-device evidence belongs in
-[`compatibility-v0.1.md`](compatibility-v0.1.md), and merged user-visible
-outcomes belong in [`../CHANGELOG.md`](../CHANGELOG.md).
+in [`plan-v0.1.md`](../plan-v0.1.md); sanitized real-device evidence belongs in
+[`compatibility-v0.1.md`](../compatibility-v0.1.md), and merged user-visible
+outcomes belong in [`../CHANGELOG.md`](../../CHANGELOG.md).
 
 ## How to use this file
 

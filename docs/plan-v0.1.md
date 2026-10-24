@@ -12,14 +12,14 @@ outcomes are in [`../CHANGELOG.md`](../CHANGELOG.md); decisions are in
 [ADR-0002](architecture/adr-0002-scope-and-diagnostics.md), and
 [ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md). The original
 milestone plan and its ledger are archived in
-[`task-foundation-2026-09.md`](task-foundation-2026-09.md).
+[`archive/task-foundation-2026-09.md`](archive/task-foundation-2026-09.md).
 
 Post-alpha delivery now follows the adopted H0–H4 and V2 tracks in `task.md`,
-with evidence in the [September review](review-and-backlog-proposal-2026-09.md).
+with evidence in the [September review](archive/review-and-backlog-proposal-2026-09.md).
 Those tracks supersede this plan's original sequencing and beta deferrals;
 existing safety contracts remain in force until an explicit design changes them.
 For V2.4, the maintainer-approved
-[typed-subnet contract](typed-subnet-discovery-proposal.md) of 2026-09-18
+[typed-subnet contract](typed-subnet-discovery.md) of 2026-09-18
 supersedes this plan's former treatment of user-entered ranges as routed
 discovery. Its scope, traffic limits, and per-search consent govern typed
 subnets. The Linux route-derived contract was retired on 2026-09-24 (§5).
@@ -232,7 +232,7 @@ tunnel search of P2 shipped in v0.1.0 and v0.1.1 and was removed by V2.9
 ([#181](https://github.com/jm2/balun/issues/181)) under
 [ADR-0003](architecture/adr-0003-retire-route-derived-discovery.md), because
 explicitly typed subnet search (V2.4, below and in the
-[typed-subnet contract](typed-subnet-discovery-proposal.md)) replaces it on every
+[typed-subnet contract](typed-subnet-discovery.md)) replaces it on every
 platform. Balun no longer derives candidates from route tables, remembers route
 approvals, or runs routed scans; typed-subnet search now serves remote tuners on
 every platform, beside exact addresses and hostnames, and
@@ -241,7 +241,7 @@ validation remains historical evidence.
 
 Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
 
-- The [approved typed-subnet contract](typed-subnet-discovery-proposal.md)
+- The [approved typed-subnet contract](typed-subnet-discovery.md)
   governs this cross-platform scope, using current system routing without
   deriving authority from a route table or a remembered approval.
 - Accept one canonical RFC 1918 IPv4 CIDR, `/23` through `/32`, with at most
@@ -255,18 +255,18 @@ Explicitly typed subnet discovery (V2.4 policy approved 2026-09-18):
   changes. A detected network change cancels the active search; another search
   requires fresh confirmation. The CLI's explicit `--approved-range` argument
   grants consent only for its invocation.
-- Require [live network-change observation](typed-subnet-discovery-proposal.md#network-change-admission)
+- Require [live network-change observation](typed-subnet-discovery.md#network-change-admission)
   before desktop confirmation and before CLI consent is consumed; carry that
   observed generation through admission and sends. Stale confirmations require
   fresh confirmation. An unavailable or unready observer prevents
   sends; detected changes or observation loss cancel the active scan. Each
   platform needs native evidence before enabling typed searches.
-- The accepted [delivery boundary](typed-subnet-discovery-proposal.md#approved-delivery-boundary)
+- The accepted [delivery boundary](typed-subnet-discovery.md#approved-delivery-boundary)
   limits Balun's outbound requests. Keep socket broadcast disabled and require
   downstream routers to block directed broadcasts; Balun cannot verify that
   remote setting or guarantee single-host delivery if it is changed.
 - V2.4 implements this contract on the desktop and in the CLI; the
-  [contract document](typed-subnet-discovery-proposal.md) records where each
+  [contract document](typed-subnet-discovery.md) records where each
   limit is enforced and tested.
 
 Network rules:
