@@ -475,7 +475,6 @@ impl PlayerView {
                 self.status.set_visible(true);
             }
             PlaybackPresentation::Failed(failure) => {
-                self.playback_status.set_label("Playback failed");
                 self.stop_button.set_sensitive(false);
                 self.apply_paintable(None);
                 self.show_session_failure(failure);
@@ -640,6 +639,7 @@ impl PlayerView {
     fn show_stop_failure(&self) {
         self.set_audio_controls_sensitive(false);
         let copy = playback_failure::stop();
+        self.playback_status.set_label(&copy.title);
         self.status.set_title(&copy.title);
         self.set_description_text(&copy.description);
         self.status.set_visible(true);
@@ -1166,7 +1166,11 @@ mod tests {
             failure: PlaybackSessionFailure::PipelineTeardown,
         });
         let stop = playback_failure::stop();
+        assert_eq!(view.playback_status.label(), stop.title.as_ref());
         assert_eq!(view.status.title(), stop.title.as_ref());
+        if locale != "en" {
+            assert_ne!(view.playback_status.label(), "Playback failed");
+        }
         assert_literal_markup(
             view.status.description().as_deref().unwrap(),
             &stop.description,
