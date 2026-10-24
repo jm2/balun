@@ -84,6 +84,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+[InstallDelete]
+; Upgrades replace the app-owned tree wholesale, so files a newer closure
+; dropped never linger where GStreamer scans lib\gstreamer-1.0.
+Type: filesandordirs; Name: "{app}\bin"
+Type: filesandordirs; Name: "{app}\lib"
+Type: filesandordirs; Name: "{app}\libexec"
+Type: filesandordirs; Name: "{app}\share"
+
 [Files]
 ; Copy everything from the bundled dist directory
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -94,4 +102,4 @@ Name: "{group}\Uninstall Balun"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Balun"; Filename: "{app}\bin\balun.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\bin\balun.exe"; Description: "Launch Balun"; Flags: nowait postinstall skipifnotsilent
+Filename: "{app}\bin\balun.exe"; Description: "Launch Balun"; Flags: nowait postinstall skipifsilent
