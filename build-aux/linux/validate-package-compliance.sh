@@ -586,6 +586,19 @@ check_text_metadata_tree()
     check_tree "$1" metadata
 }
 
+# cargo-deb embeds README.md when no extended description is set, and lintian
+# rejects a maintainer without an address. Keep the control file short and
+# its maintainer reachable.
+check_deb_control()
+{
+    control=$1/control
+    [ -f "$control" ] && [ ! -L "$control" ] || fail "Debian package has no control file"
+    [ "$(wc -c < "$control")" -le 4096 ] || \
+        fail "Debian control file exceeds 4096 bytes; set a short extended-description"
+    grep -Eq '^Maintainer: [^<>]+ <[^<>@[:space:]]+@[^<>@[:space:]]+>$' "$control" || \
+        fail "Debian control Maintainer must be 'Name <address>'"
+}
+
 extract_deb()
 (
     package=$1
@@ -606,6 +619,7 @@ extract_deb()
         fail "could not decode and preflight Debian payload"
     extract_validated_tar "$temp_dir/control.tar" "$temp_dir/control"
     check_text_metadata_tree "$temp_dir/control"
+    check_deb_control "$temp_dir/control"
     extract_validated_tar "$temp_dir/payload.tar" "$temp_dir/payload"
     check_tree "$temp_dir/payload"
 )

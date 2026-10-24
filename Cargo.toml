@@ -89,7 +89,11 @@ embed-resource = "3.0"
 winresource = "0.1"
 
 [package.metadata.deb]
-maintainer = "Balun Contributors"
+maintainer = "John-Michael Mulesa <jmulesa@gmail.com>"
+extended-description = """\
+Balun finds HDHomeRun tuners on the local network, by address, or across \
+an approved private subnet, lists each tuner's channel lineup, and plays \
+unprotected live channels with GStreamer."""
 copyright = "2026, Balun Contributors"
 license-file = ["LICENSE", "0"]
 section = "video"

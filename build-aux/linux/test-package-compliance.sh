@@ -370,7 +370,10 @@ mode = os.environ.get("TEST_ARCHIVE_MODE", "allowed")
 token = os.environ.get("TEST_FORBIDDEN_TOKEN", "unused")
 files = {}
 if kind == "deb-control":
-    files["control"] = b"Package: balun\nDepends: gstreamer1.0-plugins-good\n"
+    maintainer = b"Balun Contributors" if mode == "maintainer-without-email" else b"Fixture <fixture@example.invalid>"
+    files["control"] = b"Package: balun\nMaintainer: " + maintainer + b"\nDepends: gstreamer1.0-plugins-good\n"
+    if mode == "readme-control":
+        files["control"] += b"Description: viewer\n" + b" # README line\n" * 400
     files["postinst"] = b"#!/bin/sh\n/sbin/ldconfig\n"
     if mode == "forbidden-dependency":
         files["control"] += f"Recommends: {token}-runtime\n".encode()
@@ -481,7 +484,7 @@ for package_mode in deb rpm arch; do
         "$validator" "--$package_mode" "$package"
     archive_modes="forbidden-dependency forbidden-payload"
     case "$package_mode" in
-        deb) archive_modes="$archive_modes forbidden-script binary-control" ;;
+        deb) archive_modes="$archive_modes forbidden-script binary-control readme-control maintainer-without-email" ;;
         rpm) archive_modes="$archive_modes forbidden-script" ;;
         arch) archive_modes="$archive_modes forbidden-script" ;;
     esac
