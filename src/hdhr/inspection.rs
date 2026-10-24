@@ -85,6 +85,7 @@ pub struct DeviceInspectionSummary {
     channel_count: usize,
     favorite_count: usize,
     drm_count: usize,
+    skipped_row_count: usize,
 }
 
 impl DeviceInspectionSummary {
@@ -131,6 +132,11 @@ impl DeviceInspectionSummary {
     #[must_use]
     pub const fn drm_count(&self) -> usize {
         self.drm_count
+    }
+
+    #[must_use]
+    pub const fn skipped_row_count(&self) -> usize {
+        self.skipped_row_count
     }
 }
 
@@ -270,6 +276,7 @@ struct InspectionDetails {
     channel_count: usize,
     favorite_count: usize,
     drm_count: usize,
+    skipped_row_count: usize,
 }
 
 trait SnapshotInspector {
@@ -320,6 +327,7 @@ impl SnapshotInspector for DeviceHttpClient {
                 .iter()
                 .filter(|channel| channel.is_drm())
                 .count(),
+            skipped_row_count: lineup.skipped_row_count(),
         })
     }
 }
@@ -458,6 +466,7 @@ async fn inspect_discovery_report<I: SnapshotInspector>(
                 channel_count: details.channel_count,
                 favorite_count: details.favorite_count,
                 drm_count: details.drm_count,
+                skipped_row_count: details.skipped_row_count,
             });
             break;
         }
@@ -894,6 +903,7 @@ mod tests {
             channel_count: 0,
             favorite_count: 0,
             drm_count: 0,
+            skipped_row_count: 0,
         }
     }
 

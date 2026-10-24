@@ -484,7 +484,7 @@ fn print_inspection_report(report: &DeviceInspectionReport) {
 
         if let Some(summary) = device.summary() {
             println!(
-                "inspection {} address={} name={:?} model={:?} firmware={:?} tuners={} channels={} favorites={} drm={}",
+                "inspection {} address={} name={:?} model={:?} firmware={:?} tuners={} channels={} favorites={} drm={} skipped={}",
                 summary.device_id(),
                 summary.source(),
                 summary.friendly_name().unwrap_or("-"),
@@ -496,6 +496,7 @@ fn print_inspection_report(report: &DeviceInspectionReport) {
                 summary.channel_count(),
                 summary.favorite_count(),
                 summary.drm_count(),
+                summary.skipped_row_count(),
             );
         } else if device.supported_locator_count() == 0 {
             eprintln!(
