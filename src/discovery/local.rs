@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
@@ -68,7 +68,19 @@ fn endpoints_from_interfaces(interfaces: Vec<Interface>) -> Vec<ProbeEndpoint> {
         }
     }
 
-    endpoints.into_iter().collect()
+    // SLAAC and temporary addresses share one on-link prefix, so a probe per
+    // address would repeat the same scoped multicast with the same accepted
+    // source prefix. Keep the lowest bind address for each (scope, prefix);
+    // distinct prefixes stay separate because replies are source-checked
+    // against exactly one prefix.
+    let mut multicast_groups = HashSet::new();
+    endpoints
+        .into_iter()
+        .filter(|endpoint| {
+            endpoint.method != DiscoveryMethod::Ipv6SiteLocalMulticast
+                || multicast_groups.insert((endpoint.destination, endpoint.accepted_source_network))
+        })
+        .collect()
 }
 
 fn ipv4_endpoint(
@@ -275,6 +287,56 @@ mod tests {
     #[test]
     fn rejects_ipv6_probe_without_scope() {
         assert_eq!(ipv6_endpoint("enp1s0", None, &ula_ipv6(), false), None);
+    }
+
+    fn ipv6_interface(name: &str, index: u32, ip: &str) -> Interface {
+        Interface {
+            name: name.to_owned(),
+            addr: IfAddr::V6(Ifv6Addr {
+                ip: ip.parse().unwrap(),
+                ..ula_ipv6()
+            }),
+            index: Some(index),
+            oper_status: if_addrs::IfOperStatus::Up,
+            is_p2p: false,
+            #[cfg(windows)]
+            adapter_name: "synthetic-adapter".to_owned(),
+        }
+    }
+
+    #[test]
+    fn sends_one_ipv6_multicast_probe_per_interface_prefix() {
+        // Stable and temporary SLAAC addresses on one interface collapse to
+        // the lowest bind address; a second interface keeps its own probe.
+        let endpoints = endpoints_from_interfaces(vec![
+            ipv6_interface("enp1s0", 9, "fd12:3456::9"),
+            ipv6_interface("enp1s0", 9, "fd12:3456::1"),
+            ipv6_interface("enp1s0", 9, "fd12:3456::5"),
+            ipv6_interface("enp2s0", 10, "fd12:3456::7"),
+            ipv6_interface("enp2s0", 10, "fd12:3456::3"),
+        ]);
+
+        let binds: Vec<_> = endpoints.iter().map(|endpoint| endpoint.bind).collect();
+        assert_eq!(
+            binds,
+            [
+                SocketAddr::V6(SocketAddrV6::new("fd12:3456::1".parse().unwrap(), 0, 0, 9)),
+                SocketAddr::V6(SocketAddrV6::new("fd12:3456::3".parse().unwrap(), 0, 0, 10)),
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_distinct_ipv6_prefixes_on_one_interface() {
+        // Each probe accepts replies from one prefix only, so a second prefix
+        // on the same interface still needs its own probe.
+        let endpoints = endpoints_from_interfaces(vec![
+            ipv6_interface("enp1s0", 9, "fd12:3456::1"),
+            ipv6_interface("enp1s0", 9, "fd12:3456::2"),
+            ipv6_interface("enp1s0", 9, "fd12:abcd::1"),
+        ]);
+
+        assert_eq!(endpoints.len(), 2);
     }
 
     #[test]
