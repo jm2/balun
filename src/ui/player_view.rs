@@ -4,6 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use super::idle_inhibitor::PlaybackInhibitor;
+use super::plain_text::description_markup;
 use adw::prelude::*;
 use balun::controller::{
     ApplicationSnapshot, ControllerCommandError, ControllerHandle, StreamHandoff,
@@ -817,13 +818,6 @@ fn update_mute_presentation(button: &gtk::ToggleButton, volume: f64, muted: bool
     button.update_property(&[gtk::accessible::Property::Label(
         accessibility.mute_label.as_ref(),
     )]);
-}
-
-fn description_markup(text: &str) -> gtk::glib::GString {
-    // AdwStatusPage descriptions always parse markup. Compose ordinary text
-    // first, including any device/channel names, then escape once at this
-    // rendering boundary. Titles and GtkLabel::set_label remain plain text.
-    gtk::glib::markup_escape_text(text)
 }
 
 #[cfg(test)]

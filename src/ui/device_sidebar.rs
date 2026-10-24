@@ -13,6 +13,7 @@ use balun::controller::{
 use balun::localization::subnet_search::{self, SubnetEntryLabels};
 
 use super::objects::DeviceRowObject;
+use super::plain_text::{description_markup, set_status_description};
 
 const STATUS_PAGE_NAME: &str = "status";
 /// How long a successful reply stays in the top banner.
@@ -316,7 +317,9 @@ pub(crate) fn build() -> DeviceSidebar {
     let status = adw::StatusPage::builder()
         .icon_name("network-wired-symbolic")
         .title("No HDHomeRun devices")
-        .description("Choose Refresh to search your local network.")
+        .description(description_markup(
+            "Choose Refresh to search your local network.",
+        ))
         .child(&spinner)
         .vexpand(true)
         .build();
@@ -393,7 +396,10 @@ pub(crate) fn build() -> DeviceSidebar {
     header.pack_start(&app_menu_button);
     header.pack_end(&discovery_actions);
 
-    let terminal_banner = adw::Banner::builder().revealed(false).build();
+    let terminal_banner = adw::Banner::builder()
+        .use_markup(false)
+        .revealed(false)
+        .build();
 
     let root = adw::ToolbarView::new();
     root.add_top_bar(&header);
@@ -695,7 +701,7 @@ fn apply_empty_presentation(
     let presentation = discovery_presentation(discovery_kind, discovery_status, issue_count);
     status.set_icon_name(Some(presentation.icon_name));
     status.set_title(&presentation.title);
-    status.set_description(Some(&presentation.description));
+    set_status_description(status, &presentation.description);
 }
 
 /// How the top banner reacts to a discovery outcome.
@@ -1433,6 +1439,7 @@ mod tests {
             1,
             DiscoveryState::idle_for(generation, DiscoveryKind::Local),
         ));
+        assert!(!sidebar.terminal_banner.uses_markup());
         assert!(sidebar.subnet_search_button.is_sensitive());
         assert_eq!(
             sidebar.subnet_search_button.tooltip_text().as_deref(),

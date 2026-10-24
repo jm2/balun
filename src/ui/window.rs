@@ -494,9 +494,12 @@ fn connect_settings_notice(settings: &SettingsSession, toasts: &adw::ToastOverla
         if unavailable.await
             && let Some(toasts) = toasts.upgrade()
         {
-            toasts.add_toast(adw::Toast::new(
-                &balun::localization::settings_unavailable_notice(),
-            ));
+            toasts.add_toast(
+                adw::Toast::builder()
+                    .title(balun::localization::settings_unavailable_notice())
+                    .use_markup(false)
+                    .build(),
+            );
         }
     });
 }
