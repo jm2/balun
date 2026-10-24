@@ -97,9 +97,11 @@ jobs:
           version="${TAG#v}"
           release_name="$(python3 scripts/release_check.py --tag "${TAG}" --release-name)"
 
-          echo "build_ref=${build_ref}" >> "${GITHUB_OUTPUT}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "release_name=${release_name}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "build_ref=${build_ref}"
+            echo "version=${version}"
+            echo "release_name=${release_name}"
+          } >> "${GITHUB_OUTPUT}"
 
       # The draft's body is the changelog section for this exact version, so
       # the release notes are reviewed in the tagged source, not typed later.
