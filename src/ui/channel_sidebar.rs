@@ -15,6 +15,12 @@ use super::objects::ChannelRowObject;
 
 const STATUS_PAGE_NAME: &str = "status";
 const CHANNEL_LIST_PAGE_NAME: &str = "channels";
+// Matches the window's `<primary>` search shortcut: Command on macOS.
+const SEARCH_PLACEHOLDER: &str = if cfg!(target_os = "macos") {
+    "Search channels (⌘F)"
+} else {
+    "Search channels (Ctrl+F)"
+};
 
 /// GTK parts for the selected-device channel pane.
 #[derive(Clone)]
@@ -430,7 +436,7 @@ pub(crate) fn build() -> ChannelSidebar {
 
     let presentation = Rc::new(Cell::new(LineupPresentation::Unselected));
     let search = gtk::SearchEntry::builder()
-        .placeholder_text("Search channels (Ctrl+F)")
+        .placeholder_text(SEARCH_PLACEHOLDER)
         .tooltip_text("Search channels by number or name")
         .sensitive(false)
         .margin_start(6)
