@@ -39,14 +39,18 @@ one named, joined thread gives the generated initializer an explicit 8 MiB stack
 as the catalogs grow. Subsequent initialization calls retain the first result and
 selected locale. Platform packaging probes return before localization startup.
 
-Selection uses the first OS preference returned by `sys-locale`, normalizes
-underscores and ASCII case, and removes POSIX encoding/modifier suffixes. It
-prefers an exact catalog, maps `zh-Hans[-…]` to `zh-CN` and `zh-Hant[-…]` to
-`zh-TW`, then tries a shipped base language. For example, `de_DE.UTF-8` selects
-`de`; `fr-CA` selects `fr`. Unsupported, missing, or overlong identifiers and
-identifiers with empty or non-alphanumeric components quietly select English.
-Regional-only catalogs do not imply support
-for their whole language: `pt-PT` and bare `zh` currently select English.
+Selection walks the OS preferences returned by `sys-locale` (at most 32) and
+uses the first one with a shipped catalog, as GTK and libadwaita do for their
+own strings; English is used when none matches. For example, `LANGUAGE=ca:es`
+selects `es`, and macOS `[pt-PT, pt-BR]` selects `pt-BR`. Each preference is
+normalized for underscores and ASCII case, with POSIX encoding/modifier suffixes
+removed. An exact catalog wins, then `zh-Hans[-…]` maps to `zh-CN` and
+`zh-Hant[-…]` to `zh-TW`, then `zh-HK` and `zh-MO` map to `zh-TW` and `zh-SG`
+to `zh-CN`, then a shipped base language is tried. For example, `de_DE.UTF-8`
+selects `de`; `fr-CA` selects `fr`. Unsupported, missing, or overlong
+identifiers and identifiers with empty or non-alphanumeric components match
+nothing. Regional-only catalogs do not imply support for their whole language:
+`pt-PT` and bare `zh` match nothing on their own.
 
 On Linux, `sys-locale` checks `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, then `LANG`.
 For a deterministic manual check with a display available:
