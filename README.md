@@ -16,7 +16,7 @@ address so you know which tuner failed.
 
 ![Balun main window](data/screenshots/balun-main-window.png)
 
-> **v0.2.0.** Balun plays live TV on Linux, macOS, and Windows and has been verified against real
+> **v0.2.1.** Balun plays live TV on Linux, macOS, and Windows and has been verified against real
 > tuners. Pre-built packages are on the [Releases](https://github.com/jm2/balun/releases) page;
 > the countable status is in [`docs/task.md`](docs/task.md).
 
@@ -553,11 +553,11 @@ link, add the
 `<release>` to the AppStream metainfo, then confirm they agree before tagging:
 
 ```bash
-python3 scripts/release_check.py --tag v0.1.0
+python3 scripts/release_check.py --tag v0.2.1
 ```
 
 Push an annotated `v` tag and run the **Release candidate** workflow with it. Tag signing is
-deferred (H2.1); v0.1.0 and v0.1.1 used unsigned annotated tags by maintainer approval. The workflow
+deferred (H2.1); releases so far used unsigned annotated tags by maintainer approval. The workflow
 repeats the check, builds every artifact from that one commit, verifies the exact inventory, and
 creates a draft GitHub release with `SHA256SUMS.txt` and the changelog section as its notes. It
 refuses to touch a release that is already published; publishing the draft is a manual step.

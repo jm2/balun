@@ -1,6 +1,6 @@
 # Balun v0.1 support matrix
 
-- Status: v0.2.0 Alpha released 2026-09-25
+- Status: v0.2.1 Alpha released 2026-10-24
 - Last updated: 2026-09-25
 
 This matrix is derived from the sanitized evidence in

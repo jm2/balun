@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-24
+
 ### Fixed
 
+- A tuner seen on two network interfaces disappearing when one of them goes down.
+- One malformed channel row hiding the whole lineup; such rows are now skipped and counted.
+- Hong Kong, Macau, and Singapore Chinese, and any language after an unsupported first preference,
+  falling back to English.
+- The player header showing English "Playback failed" in every language after a stop failure.
+- F5, Ctrl+R, and F11 acting behind open dialogs; search and refresh now use ⌘ on macOS.
+- Text containing `&` or `<` blanking or garbling banners, notices, and status pages.
+- Discovery errors blaming redirects for any HTTP status, duplicate IPv6 probes on one network, and
+  a malformed deprecated tag rejecting a tuner's reply.
+- The Windows installer offering "Launch Balun" only to silent installs and upgrades, and upgrades
+  leaving behind files a newer version removed.
+- Software centers listing Balun as needing an Internet connection and a 768 px display.
+- The Debian package description containing the entire README, and its maintainer having no address.
 - The macOS app declaring macOS 13 support while its bundled libraries need macOS 15.
 
 ## [0.2.0] — 2026-09-25
@@ -212,7 +227,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ATSC 3.0** — HEVC video needs gst-libav or a platform decoder, and AC-4 audio has no open
   decoder, so those channels fail closed and cannot be transcoded.
 
-[Unreleased]: https://github.com/jm2/balun/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jm2/balun/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/jm2/balun/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jm2/balun/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/jm2/balun/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/jm2/balun/releases/tag/v0.1.0
