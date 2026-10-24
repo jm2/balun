@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
 # Run under `brew ruby`. Select the exact file loader directly: `brew info`
-# can resolve a path-loaded formula again through its installed tap/API.
+# can resolve a path-loaded formula again through its installed tap/API. The
+# keg loader reads that same file but accepts what Homebrew writes into
+# installed recipes, such as `no_autobump!` reasons absent from the current
+# public list, which the plain path loader rejects.
 require "formulary"
 require "json"
 require "pathname"
@@ -89,7 +92,9 @@ end
 raise ArgumentError, "expected one installed recipe" unless ARGV.length == 1
 
 recipe = Pathname.new(ARGV.fetch(0)).realpath
-formula = Formulary::FromPathLoader.new(recipe).get_formula(:stable)
+raise ArgumentError, "expected a keg's .brew recipe" unless recipe.dirname.basename.to_s == ".brew"
+
+formula = Formulary::FromKegLoader.new(recipe.basename(".rb").to_s, recipe).get_formula(:stable)
 raise ArgumentError, "recipe loader changed path" unless formula.path.realpath == recipe
 
 metadata = formula.to_hash.merge("balun_source_inputs" => source_inputs(formula, recipe))
