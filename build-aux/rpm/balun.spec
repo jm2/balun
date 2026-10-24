@@ -1,10 +1,10 @@
 # The upstream tag version in SemVer spelling; Version is its RPM spelling
 # (a prerelease such as 0.2.0-alpha.1 becomes 0.2.0~alpha.1). The release
 # check binds both to the tag, and Packit rewrites Version the same way.
-%global upstream_version 0.2.0
+%global upstream_version 0.2.1
 
 Name:           balun
-Version:        0.2.0
+Version:        0.2.1
 Release:        1%{?dist}
 Summary:        A lightweight cross-platform HDHomeRun live TV viewer
 
@@ -92,6 +92,9 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/*.metainfo.xml
 %{_datadir}/icons/hicolor/symbolic/apps/io.github.jm2.Balun-symbolic.svg
 
 %changelog
+* Sat Oct 24 2026 John-Michael Mulesa <jmulesa@gmail.com> - 0.2.1-1
+- Fix discovery, lineup, localization, installer, and packaging issues.
+
 * Fri Sep 25 2026 John-Michael Mulesa <jmulesa@gmail.com> - 0.2.0-1
 - Add subnet search and Remember device; remove route-table tunnel discovery.
 
