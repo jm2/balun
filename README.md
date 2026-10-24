@@ -709,7 +709,8 @@ from the selected device. Reloading stops the current channel; select a channel 
 | `Ctrl+R` (`⌘R` on macOS) | Refresh devices |
 | `F5` | Refresh devices |
 
-`F11`, `F5`, and `Escape` are recognized only without modifier keys. Window shortcuts are ignored while a dialog is open.
+`F11`, `F5`, and `Escape` are recognized only without modifier keys. Window shortcuts are ignored
+while a dialog is open.
 
 ---
 
