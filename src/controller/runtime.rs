@@ -49,10 +49,15 @@ pub const MAX_COMMAND_CAPACITY: usize = 1_024;
 /// Maximum distinct exact addresses admitted during one controller session.
 pub const MAX_EXACT_DISCOVERY_TARGETS_PER_SESSION: usize = 32;
 
+/// One local observation per origin of every locator the registry can hold,
+/// since a locator seen through several interfaces arrives once per origin.
 const MAX_RETAINED_LOCAL_OBSERVATIONS: usize = match DeviceRegistry::DEFAULT_MAX_DEVICES
     .checked_mul(DeviceRegistry::DEFAULT_MAX_LOCATORS_PER_DEVICE)
 {
-    Some(limit) => limit,
+    Some(locators) => match locators.checked_mul(DeviceRegistry::DEFAULT_MAX_ORIGINS_PER_LOCATOR) {
+        Some(limit) => limit,
+        None => panic!("default discovery registry limits must have a representable product"),
+    },
     None => panic!("default discovery registry limits must have a representable product"),
 };
 const MAX_RETAINED_EXACT_OBSERVATIONS: usize = 1;
@@ -5674,6 +5679,54 @@ mod tests {
         assert_eq!(rebuilt.devices().len(), 1);
         assert_eq!(rebuilt.devices()[0].locator_count(), 1);
         assert_eq!(rebuilt.network().sequence(), 1);
+        controller.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_tuner_seen_on_two_interfaces_stays_listed_until_both_are_lost() {
+        let mut report = report_of(vec![broadcast_observation(
+            first_id(),
+            "192.0.2.10:65001",
+            "wlan0",
+        )]);
+        report.merge(report_of(vec![broadcast_observation(
+            first_id(),
+            "192.0.2.10:65001",
+            "eth0",
+        )]));
+        let (controller, starts, _selection_starts, _selection, changes) =
+            start_with_changes([ServiceStep::Immediate(Ok(report))], []);
+        let handle = controller.handle();
+        let mut snapshots = handle.subscribe();
+        handle
+            .try_send(ControllerCommand::RefreshLocalDiscovery)
+            .unwrap();
+        recv_start(&starts);
+        let ready = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.discovery().status() == DiscoveryStatus::Ready
+        })
+        .await;
+        assert_eq!(ready.devices().len(), 1);
+        assert_eq!(ready.devices()[0].locator_count(), 1);
+
+        changes.try_send(lost(&["eth0"])).unwrap();
+        let one_lost = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 1
+        })
+        .await;
+        assert_eq!(one_lost.devices().len(), 1);
+        assert_eq!(one_lost.devices()[0].device_id(), first_id());
+        assert_eq!(one_lost.network().removed_devices(), 0);
+        assert_eq!(one_lost.network().expired_locators(), 0);
+
+        changes.try_send(lost(&["wlan0"])).unwrap();
+        let both_lost = wait_for_snapshot(&mut snapshots, |snapshot| {
+            snapshot.network().sequence() == 2
+        })
+        .await;
+        assert!(both_lost.devices().is_empty());
+        assert_eq!(both_lost.network().removed_devices(), 1);
+        assert_eq!(both_lost.network().expired_locators(), 1);
         controller.shutdown().unwrap();
     }
 

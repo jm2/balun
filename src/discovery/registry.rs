@@ -691,6 +691,7 @@ pub enum RegistryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::discovery::DiscoveryReport;
 
     const FIRST_ID: u32 = 0x105A_1232;
     const SECOND_ID: u32 = 0x105A_1243;
@@ -1397,6 +1398,58 @@ mod tests {
             .unwrap();
         assert!(outcome.device_added);
         assert_eq!(outcome.reassigned_from, None);
+    }
+
+    #[test]
+    fn a_locator_merged_from_two_interfaces_survives_losing_one_of_them() {
+        let id = DeviceId::new(FIRST_ID).unwrap();
+        let source = "192.0.2.10:65001";
+        let probe = |interface: &str| {
+            let mut observed = observation(FIRST_ID, source, DiscoveryMethod::Ipv4Broadcast);
+            observed.interface = Some(interface.to_owned());
+            DiscoveryReport {
+                observations: vec![observed],
+                ..DiscoveryReport::default()
+            }
+        };
+        let lost = |interface: &'static str| {
+            move |origin: &LocatorOrigin| origin.interface.as_deref() == Some(interface)
+        };
+        let mut report = probe("wlan0");
+        report.merge(probe("eth0"));
+        let mut registry = DeviceRegistry::default();
+        for observed in report.observations {
+            registry.observe(observed, at(10)).unwrap();
+        }
+        assert_eq!(
+            registry
+                .get(id)
+                .unwrap()
+                .locators()
+                .next()
+                .unwrap()
+                .origins()
+                .len(),
+            2
+        );
+
+        let expired = registry.expire_origins(at(20), lost("eth0")).unwrap();
+        assert_eq!(expired.removed_origins, 1);
+        assert_eq!(expired.removed_locators, 0);
+        assert!(expired.removed_devices.is_empty());
+        let locator = registry.get(id).unwrap().locators().next().unwrap();
+        assert_eq!(
+            locator.origins().cloned().collect::<Vec<_>>(),
+            vec![LocatorOrigin {
+                method: DiscoveryMethod::Ipv4Broadcast,
+                interface: Some("wlan0".to_owned()),
+            }]
+        );
+
+        let expired = registry.expire_origins(at(30), lost("wlan0")).unwrap();
+        assert_eq!(expired.removed_locators, 1);
+        assert_eq!(expired.removed_devices, vec![id]);
+        assert!(registry.is_empty());
     }
 
     #[test]
