@@ -290,8 +290,9 @@ module Formulary
   def self.factory(*)
     raise "generic formula resolution is forbidden in this fixture"
   end
-  class FromPathLoader
-    def initialize(path)
+  class FromKegLoader
+    def initialize(name, path)
+      raise "keg recipe name differs from its file" unless name == path.basename(".rb").to_s
       @path = path
     end
     def get_formula(spec)
@@ -356,7 +357,7 @@ ResourceFixture = Struct.new(:name, :version, :patches) do
   def fetch = raise("must not download")
   def stage = raise("must not stage")
 end
-class Formulary::FromPathLoader
+class Formulary::FromKegLoader
   def stable
     patch = ExternalPatch.new(ResourceFixture.new("patch", nil, []))
     resource = ResourceFixture.new("codec", "7.0", [patch])
@@ -386,7 +387,7 @@ class LocalPatch
   def file = "Patches/fixture/fix.diff"
   def contents = raise("must not read a separate local patch")
 end
-class Formulary::FromPathLoader
+class Formulary::FromKegLoader
   def stable = Struct.new(:resources, :patches).new({}, [LocalPatch.new])
 end
 ''')
@@ -405,7 +406,7 @@ class UnknownPatch
   def strip = :p1
   def contents = raise("must not read an unknown patch")
 end
-class Formulary::FromPathLoader
+class Formulary::FromKegLoader
   def stable = Struct.new(:resources, :patches).new({}, [UnknownPatch.new])
 end
 ''')
