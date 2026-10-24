@@ -32,15 +32,40 @@ pub const SUPPORTED_LOCALES: [&str; 13] = [
     "de", "en", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt-BR", "ru", "zh-CN", "zh-TW",
 ];
 
+/// OS preferences examined before English is assumed; real lists are short.
+const MAX_LOCALE_PREFERENCES: usize = 32;
+
 /// Select a shipped catalog from an OS locale, quietly falling back to English.
 ///
 /// Accept POSIX encoding/modifier suffixes, underscores, and ASCII case variants.
-/// Prefer an exact catalog, then a Chinese script mapping, then a base language.
-/// An unsupported regional-only language (for example `pt-PT`) uses English.
+/// Prefer an exact catalog, then a Chinese script or region mapping, then a base
+/// language. An unsupported regional-only language (for example `pt-PT`) uses
+/// English.
 pub fn select_locale(raw: Option<&str>) -> &'static str {
-    let Some(raw) = raw.filter(|raw| raw.len() <= 128) else {
-        return "en";
-    };
+    raw.and_then(match_locale).unwrap_or("en")
+}
+
+/// Select the first OS preference with a shipped catalog, else English.
+///
+/// GTK and libadwaita follow the whole preference list, so stopping at an
+/// unsupported first entry would mix languages (for example `LANGUAGE=ca:es`).
+pub fn select_preferred_locale<I, S>(preferences: I) -> &'static str
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    preferences
+        .into_iter()
+        .take(MAX_LOCALE_PREFERENCES)
+        .find_map(|raw| match_locale(raw.as_ref()))
+        .unwrap_or("en")
+}
+
+/// Match one OS locale identifier to a shipped catalog, if any.
+fn match_locale(raw: &str) -> Option<&'static str> {
+    if raw.len() > 128 {
+        return None;
+    }
     let normalized = raw
         .split(['.', '@'])
         .next()
@@ -50,27 +75,35 @@ pub fn select_locale(raw: Option<&str>) -> &'static str {
         .split('-')
         .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_alphanumeric()))
     {
-        return "en";
+        return None;
     }
     if let Some(locale) = SUPPORTED_LOCALES
         .iter()
         .find(|locale| locale.eq_ignore_ascii_case(&normalized))
     {
-        return locale;
+        return Some(locale);
     }
     let mut parts = normalized.split('-');
     let language = parts.next().unwrap_or_default();
     if language.eq_ignore_ascii_case("zh") {
-        match parts.next() {
-            Some(script) if script.eq_ignore_ascii_case("Hans") => return "zh-CN",
-            Some(script) if script.eq_ignore_ascii_case("Hant") => return "zh-TW",
-            _ => {}
-        }
+        // A script subtag decides; otherwise the region's conventional script.
+        return match parts.next() {
+            Some(script) if script.eq_ignore_ascii_case("Hans") => Some("zh-CN"),
+            Some(script) if script.eq_ignore_ascii_case("Hant") => Some("zh-TW"),
+            Some(region)
+                if ["HK", "MO"]
+                    .iter()
+                    .any(|traditional| region.eq_ignore_ascii_case(traditional)) =>
+            {
+                Some("zh-TW")
+            }
+            Some(region) if region.eq_ignore_ascii_case("SG") => Some("zh-CN"),
+            _ => None,
+        };
     }
     SUPPORTED_LOCALES
         .into_iter()
         .find(|locale| locale.eq_ignore_ascii_case(language))
-        .unwrap_or("en")
 }
 
 /// Fixed startup failure with no locale, environment, or thread-panic details.
@@ -90,7 +123,7 @@ pub fn initialize() -> Result<&'static str, InitializationError> {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 catalog::initialize();
-                let locale = select_locale(sys_locale::get_locale().as_deref());
+                let locale = select_preferred_locale(sys_locale::get_locales());
                 rust_i18n::set_locale(locale);
                 locale
             })
@@ -161,6 +194,11 @@ mod tests {
             ("zh-Hans", "zh-CN"),
             ("zh-Hant-TW", "zh-TW"),
             ("ja-JP", "ja"),
+            ("zh_HK.UTF-8", "zh-TW"),
+            ("zh-MO", "zh-TW"),
+            ("zh-sg", "zh-CN"),
+            ("zh-Hans-HK", "zh-CN"),
+            ("zh-Hant-SG", "zh-TW"),
         ] {
             assert_eq!(select_locale(Some(raw)), expected, "{raw}");
         }
@@ -175,6 +213,27 @@ mod tests {
             assert_eq!(select_locale(Some(raw)), "en", "{raw}");
         }
         assert_eq!(select_locale(Some(&"de-".repeat(100))), "en");
+    }
+
+    #[test]
+    fn preference_lists_use_the_first_shipped_catalog() {
+        for (preferences, expected) in [
+            (&["ca-ES", "es-ES"][..], "es"),
+            (&["pt-PT", "pt-BR"][..], "pt-BR"),
+            (&["C", "zh-HK", "en-US"][..], "zh-TW"),
+            (&["en-GB", "de-DE"][..], "en"),
+            (&["ar-EG", "pt-PT", "zh"][..], "en"),
+            (&[][..], "en"),
+        ] {
+            assert_eq!(
+                select_preferred_locale(preferences),
+                expected,
+                "{preferences:?}"
+            );
+        }
+        let beyond_bound =
+            std::iter::repeat_n("ar-EG", MAX_LOCALE_PREFERENCES).chain(std::iter::once("de-DE"));
+        assert_eq!(select_preferred_locale(beyond_bound), "en");
     }
 
     #[test]
