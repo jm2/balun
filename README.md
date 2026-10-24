@@ -705,11 +705,12 @@ from the selected device. Reloading stops the current channel; select a channel 
 | ---------- | -------- |
 | `F11` | Toggle fullscreen |
 | `Escape` | Exit fullscreen |
-| `Ctrl+F` | Focus channel search |
-| `Ctrl+R` | Refresh devices |
+| `Ctrl+F` (`⌘F` on macOS) | Focus channel search |
+| `Ctrl+R` (`⌘R` on macOS) | Refresh devices |
 | `F5` | Refresh devices |
 
-`F11`, `F5`, and `Escape` are recognized only without modifier keys.
+`F11`, `F5`, and `Escape` are recognized only without modifier keys. Window shortcuts are ignored
+while a dialog is open.
 
 ---
 

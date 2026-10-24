@@ -249,12 +249,26 @@ enum WindowKeyAction {
     Ignore,
 }
 
+/// GTK's `<primary>` modifier: Command (reported as Meta) on macOS, Control elsewhere.
+const PRIMARY_MODIFIER: gtk::gdk::ModifierType = if cfg!(target_os = "macos") {
+    gtk::gdk::ModifierType::META_MASK
+} else {
+    gtk::gdk::ModifierType::CONTROL_MASK
+};
+
 fn window_key_action(
     key: gtk::gdk::Key,
     modifiers: gtk::gdk::ModifierType,
     fullscreen: bool,
+    dialog_open: bool,
 ) -> WindowKeyAction {
     use gtk::gdk::{Key, ModifierType};
+
+    // AdwDialogs live inside the window tree and let unhandled keys bubble
+    // here; window shortcuts must not act behind a modal.
+    if dialog_open {
+        return WindowKeyAction::Ignore;
+    }
 
     // Filter out ambient lock/legacy modifier bits (Caps Lock, Num Lock, etc.)
     // and accept only exact unmodified or single-modifier bindings.
@@ -276,7 +290,7 @@ fn window_key_action(
         if key == Key::F5 {
             return WindowKeyAction::RefreshDevices;
         }
-    } else if significant == ModifierType::CONTROL_MASK {
+    } else if significant == PRIMARY_MODIFIER {
         if key == Key::f || key == Key::F {
             return WindowKeyAction::FocusSearch;
         }
@@ -557,7 +571,8 @@ fn connect_window_shortcuts(
         let Some(window) = window_weak.upgrade() else {
             return gtk::glib::Propagation::Proceed;
         };
-        match window_key_action(key, modifiers, window.is_fullscreen()) {
+        let dialog_open = window.visible_dialog().is_some();
+        match window_key_action(key, modifiers, window.is_fullscreen(), dialog_open) {
             WindowKeyAction::ToggleFullscreen => {
                 if window.is_fullscreen() {
                     window.unfullscreen();
@@ -2141,68 +2156,70 @@ mod tests {
         use gtk::gdk::{Key, ModifierType};
 
         assert_eq!(
-            window_key_action(Key::F11, ModifierType::empty(), false),
+            window_key_action(Key::F11, ModifierType::empty(), false, false),
             WindowKeyAction::ToggleFullscreen
         );
         assert_eq!(
-            window_key_action(Key::F11, ModifierType::LOCK_MASK, true),
+            window_key_action(Key::F11, ModifierType::LOCK_MASK, true, false),
             WindowKeyAction::ToggleFullscreen
         );
         let ambient_mod2 = ModifierType::from_bits_retain(1 << 4);
         assert_eq!(
-            window_key_action(Key::F11, ambient_mod2, false),
+            window_key_action(Key::F11, ambient_mod2, false, false),
             WindowKeyAction::ToggleFullscreen
         );
         assert_eq!(
-            window_key_action(Key::Escape, ModifierType::empty(), true),
+            window_key_action(Key::Escape, ModifierType::empty(), true, false),
             WindowKeyAction::ExitFullscreen
         );
         assert_eq!(
-            window_key_action(Key::Escape, ModifierType::LOCK_MASK, true),
+            window_key_action(Key::Escape, ModifierType::LOCK_MASK, true, false),
             WindowKeyAction::ExitFullscreen
         );
 
         // F5 refreshes devices
         assert_eq!(
-            window_key_action(Key::F5, ModifierType::empty(), false),
+            window_key_action(Key::F5, ModifierType::empty(), false, false),
             WindowKeyAction::RefreshDevices
         );
         assert_eq!(
-            window_key_action(Key::F5, ModifierType::LOCK_MASK, false),
+            window_key_action(Key::F5, ModifierType::LOCK_MASK, false, false),
             WindowKeyAction::RefreshDevices
         );
 
-        // Ctrl+F focuses search
+        // Primary+F focuses search
         assert_eq!(
-            window_key_action(Key::f, ModifierType::CONTROL_MASK, false),
+            window_key_action(Key::f, PRIMARY_MODIFIER, false, false),
             WindowKeyAction::FocusSearch
         );
         assert_eq!(
-            window_key_action(Key::F, ModifierType::CONTROL_MASK, false),
+            window_key_action(Key::F, PRIMARY_MODIFIER, false, false),
             WindowKeyAction::FocusSearch
         );
         assert_eq!(
             window_key_action(
                 Key::f,
-                ModifierType::CONTROL_MASK | ModifierType::LOCK_MASK,
-                true
+                PRIMARY_MODIFIER | ModifierType::LOCK_MASK,
+                true,
+                false
             ),
             WindowKeyAction::FocusSearch
         );
 
-        // Ctrl+R refreshes devices
+        // Primary+R refreshes devices
         assert_eq!(
-            window_key_action(Key::r, ModifierType::CONTROL_MASK, false),
+            window_key_action(Key::r, PRIMARY_MODIFIER, false, false),
             WindowKeyAction::RefreshDevices
         );
         assert_eq!(
-            window_key_action(Key::R, ModifierType::CONTROL_MASK, false),
+            window_key_action(Key::R, PRIMARY_MODIFIER, false, false),
             WindowKeyAction::RefreshDevices
         );
         assert_eq!(
             window_key_action(
                 Key::r,
-                ModifierType::CONTROL_MASK | ModifierType::LOCK_MASK,
+                PRIMARY_MODIFIER | ModifierType::LOCK_MASK,
+                false,
                 false
             ),
             WindowKeyAction::RefreshDevices
@@ -2218,24 +2235,25 @@ mod tests {
             ModifierType::META_MASK,
         ] {
             assert_eq!(
-                window_key_action(Key::F11, modifiers, false),
+                window_key_action(Key::F11, modifiers, false, false),
                 WindowKeyAction::Ignore
             );
             assert_eq!(
-                window_key_action(Key::Escape, modifiers, true),
+                window_key_action(Key::Escape, modifiers, true, false),
                 WindowKeyAction::Ignore
             );
             assert_eq!(
-                window_key_action(Key::F5, modifiers, false),
+                window_key_action(Key::F5, modifiers, false, false),
                 WindowKeyAction::Ignore
             );
         }
 
-        // Additional modifier combinations with Ctrl are ignored
+        // Additional modifier combinations with Primary are ignored
         assert_eq!(
             window_key_action(
                 Key::f,
-                ModifierType::CONTROL_MASK | ModifierType::SHIFT_MASK,
+                PRIMARY_MODIFIER | ModifierType::SHIFT_MASK,
+                false,
                 false
             ),
             WindowKeyAction::Ignore
@@ -2243,20 +2261,60 @@ mod tests {
         assert_eq!(
             window_key_action(
                 Key::r,
-                ModifierType::CONTROL_MASK | ModifierType::ALT_MASK,
+                PRIMARY_MODIFIER | ModifierType::ALT_MASK,
+                false,
                 false
             ),
             WindowKeyAction::Ignore
         );
 
         assert_eq!(
-            window_key_action(Key::Escape, ModifierType::empty(), false),
+            window_key_action(Key::Escape, ModifierType::empty(), false, false),
             WindowKeyAction::Ignore
         );
         assert_eq!(
-            window_key_action(Key::F10, ModifierType::empty(), true),
+            window_key_action(Key::F10, ModifierType::empty(), true, false),
             WindowKeyAction::Ignore
         );
+
+        // Only the platform's primary modifier binds search and refresh.
+        let other = if PRIMARY_MODIFIER == ModifierType::CONTROL_MASK {
+            ModifierType::META_MASK
+        } else {
+            ModifierType::CONTROL_MASK
+        };
+        assert_eq!(
+            window_key_action(Key::f, other, false, false),
+            WindowKeyAction::Ignore
+        );
+        assert_eq!(
+            window_key_action(Key::r, other, false, false),
+            WindowKeyAction::Ignore
+        );
+    }
+
+    #[test]
+    fn window_shortcuts_never_act_behind_an_open_dialog() {
+        use gtk::gdk::{Key, ModifierType};
+
+        for (key, modifiers, fullscreen) in [
+            (Key::F11, ModifierType::empty(), false),
+            (Key::F11, ModifierType::empty(), true),
+            (Key::Escape, ModifierType::empty(), true),
+            (Key::F5, ModifierType::empty(), false),
+            (Key::f, PRIMARY_MODIFIER, false),
+            (Key::r, PRIMARY_MODIFIER, true),
+        ] {
+            assert_ne!(
+                window_key_action(key, modifiers, fullscreen, false),
+                WindowKeyAction::Ignore
+            );
+            assert_eq!(
+                window_key_action(key, modifiers, fullscreen, true),
+                WindowKeyAction::Ignore,
+                "{key:?} must not act behind a dialog"
+            );
+        }
     }
 
     #[test]
