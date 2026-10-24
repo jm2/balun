@@ -62,6 +62,16 @@ def readme_fixture(line: str) -> str:
     )
 
 
+def spec_fixture(line: str) -> str:
+    return (
+        "Name: fixture\n"
+        f"# Cargo.toml declares rust-version {line}; fail before compiling"
+        " on an older chroot.\n"
+        f"BuildRequires:  rust >= {line}\n"
+        f"BuildRequires:  cargo >= {line}\n"
+    )
+
+
 @contextmanager
 def policy_fixture(
     *, cargo_line: str = "1.94", proposal_line: str = "1.95"
@@ -75,6 +85,7 @@ def policy_fixture(
         ci = workflow_directory / "ci.yml"
         release = workflow_directory / "release.yml"
         readme = root / "README.md"
+        spec = root / "build-aux" / "rpm" / "balun.spec"
 
         manifest.write_text(
             '[package]\nname = "fixture"\nversion = "0.0.0"\n'
@@ -95,6 +106,8 @@ def policy_fixture(
             encoding="utf-8",
         )
         readme.write_text(readme_fixture(cargo_line), encoding="utf-8")
+        spec.parent.mkdir(parents=True)
+        spec.write_text(spec_fixture(cargo_line), encoding="utf-8")
 
         paths = {
             "manifest": manifest,
@@ -102,6 +115,7 @@ def policy_fixture(
             "ci": ci,
             "release": release,
             "readme": readme,
+            "spec": spec,
             "workflows": workflow_directory,
         }
         with patch.multiple(
@@ -111,6 +125,7 @@ def policy_fixture(
             CI=ci,
             WORKFLOW_DIRECTORY=workflow_directory,
             README=readme,
+            RPM_SPEC=spec,
         ):
             yield paths
 
@@ -176,6 +191,7 @@ class RustToolchainPolicyTests(unittest.TestCase):
             release = paths["release"].read_text(encoding="utf-8")
             readme = paths["readme"].read_text(encoding="utf-8")
             toolchain = paths["toolchain"].read_text(encoding="utf-8")
+            spec = paths["spec"].read_text(encoding="utf-8")
 
             self.assertIn('rust-version = "1.95"', manifest)
             self.assertIn('channel = "1.95.0"', toolchain)
@@ -186,7 +202,8 @@ class RustToolchainPolicyTests(unittest.TestCase):
             )
             self.assertEqual(release.count("toolchain: stable"), 1)
             self.assertEqual((ci + release).count(ACTION_SHA), 4)
-            self.assertNotIn("1.94", ci + readme + manifest)
+            self.assertNotIn("1.94", ci + readme + manifest + spec)
+            self.assertEqual(spec, spec_fixture("1.95"))
 
     def test_manual_set_updates_proposal_manifest_too(self) -> None:
         with policy_fixture(proposal_line="1.94") as paths:
@@ -214,6 +231,19 @@ class RustToolchainPolicyTests(unittest.TestCase):
                 if name != "workflows"
             }
             self.assertEqual(after, before)
+
+    def test_rpm_spec_floor_must_match(self) -> None:
+        with policy_fixture(proposal_line="1.94") as paths:
+            sync_rust_toolchain.check_consistency()
+            spec = paths["spec"].read_text(encoding="utf-8")
+            for old in ["rust >= 1.94", "cargo >= 1.94", "rust-version 1.94;"]:
+                with self.subTest(old=old):
+                    paths["spec"].write_text(
+                        spec.replace(old, old.replace("1.94", "1.93")),
+                        encoding="utf-8",
+                    )
+                    with self.assertRaises(sync_rust_toolchain.PolicyError):
+                        sync_rust_toolchain.check_consistency()
 
     def test_stable_check_name_is_required(self) -> None:
         with policy_fixture(proposal_line="1.94") as paths:

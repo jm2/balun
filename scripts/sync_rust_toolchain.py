@@ -32,6 +32,7 @@ TOOLCHAIN_MANIFEST = (
 CI = REPOSITORY / ".github" / "workflows" / "ci.yml"
 WORKFLOW_DIRECTORY = REPOSITORY / ".github" / "workflows"
 README = REPOSITORY / "README.md"
+RPM_SPEC = REPOSITORY / "build-aux" / "rpm" / "balun.spec"
 
 LINE_VERSION = re.compile(r"^[1-9][0-9]*\.[0-9]+$")
 RELEASE_VERSION = re.compile(r"^([1-9][0-9]*\.[0-9]+)\.0$")
@@ -148,12 +149,21 @@ def require_unique(source: str, needle: str, description: str) -> None:
         )
 
 
+def spec_floor_needles(line: str) -> list[tuple[str, str]]:
+    return [
+        (f"declares rust-version {line};", "RPM spec floor rationale"),
+        (f"BuildRequires:  rust >= {line}\n", "RPM spec rust floor"),
+        (f"BuildRequires:  cargo >= {line}\n", "RPM spec cargo floor"),
+    ]
+
+
 def check_consistency_sources(
     manifest_source: str,
     toolchain_source: str,
     ci_source: str,
     readme_source: str,
     workflows: Iterable[tuple[str, str]],
+    spec_source: str,
 ) -> None:
     line = manifest_line_version(manifest_source)
     release = f"{line}.0"
@@ -194,6 +204,9 @@ def check_consistency_sources(
     ]:
         require_unique(readme_source, needle, description)
 
+    for needle, description in spec_floor_needles(line):
+        require_unique(spec_source, needle, description)
+
 
 def check_consistency() -> None:
     check_consistency_sources(
@@ -202,6 +215,7 @@ def check_consistency() -> None:
         CI.read_text(encoding="utf-8"),
         README.read_text(encoding="utf-8"),
         read_workflows(),
+        RPM_SPEC.read_text(encoding="utf-8"),
     )
 
 
@@ -222,6 +236,7 @@ def synchronize(target_line: str, *, update_toolchain_manifest: bool = False) ->
     toolchain_source = TOOLCHAIN_MANIFEST.read_text(encoding="utf-8")
     ci_source = CI.read_text(encoding="utf-8")
     readme_source = README.read_text(encoding="utf-8")
+    spec_source = RPM_SPEC.read_text(encoding="utf-8")
     old_line = manifest_line_version(manifest_source)
     target_release = f"{target_line}.0"
 
@@ -279,6 +294,11 @@ def synchronize(target_line: str, *, update_toolchain_manifest: bool = False) ->
         "README CI description",
     )
 
+    for (old, description), (new, _) in zip(
+        spec_floor_needles(old_line), spec_floor_needles(target_line)
+    ):
+        spec_source = replace_exactly(spec_source, old, new, description)
+
     workflows = read_workflows(ci_override=ci_source)
     check_consistency_sources(
         manifest_source,
@@ -286,12 +306,14 @@ def synchronize(target_line: str, *, update_toolchain_manifest: bool = False) ->
         ci_source,
         readme_source,
         workflows,
+        spec_source,
     )
 
     TOOLCHAIN_MANIFEST.write_text(toolchain_source, encoding="utf-8")
     MANIFEST.write_text(manifest_source, encoding="utf-8")
     CI.write_text(ci_source, encoding="utf-8")
     README.write_text(readme_source, encoding="utf-8")
+    RPM_SPEC.write_text(spec_source, encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:

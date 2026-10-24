@@ -54,6 +54,18 @@ def tag_version(tag: str) -> str | None:
     return match.group("version") if match else None
 
 
+def release_name(version: str) -> str:
+    """Return the GitHub release display name for a Semantic Version.
+
+    A prerelease names its own stage (``v0.3.0-beta.1``). A plain 0.x release
+    belongs to the alpha series, labelled as in Tributary's releases
+    ("Tributary v0.6.2 Alpha"); 1.0 and later carry no stage label.
+    """
+    if "-" in version.split("+", 1)[0] or not version.startswith("0."):
+        return f"Balun v{version}"
+    return f"Balun v{version} Alpha"
+
+
 def cargo_manifest_version(manifest: str) -> str | None:
     in_package = False
     for line in manifest.splitlines():
@@ -250,11 +262,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=Path(__file__).resolve().parent.parent,
         help="repository root (default: this checkout)",
     )
+    parser.add_argument(
+        "--release-name",
+        action="store_true",
+        help="print the release display name for --tag instead of checking files",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.release_name:
+        version = tag_version(args.tag)
+        if version is None:
+            print(f"release check: {args.tag!r} is not a v-prefixed Semantic Version", file=sys.stderr)
+            return 1
+        print(release_name(version))
+        return 0
     try:
         problems = check_release(args.repository, args.tag)
     except ReleaseCheckError as error:
