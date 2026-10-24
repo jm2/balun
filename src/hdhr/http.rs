@@ -778,6 +778,15 @@ impl DeviceHttpClient {
     }
 }
 
+/// Only a 3xx status is explained by the no-redirect policy.
+fn redirect_note(status: u16) -> &'static str {
+    if (300..400).contains(&status) {
+        "; redirects are not followed"
+    } else {
+        ""
+    }
+}
+
 impl Default for DeviceHttpClient {
     fn default() -> Self {
         Self::new(DeviceHttpConfig::default()).expect("the built-in HTTP policy is valid")
@@ -789,7 +798,7 @@ pub enum DeviceHttpError {
     #[error("device HTTP request failed: {0}")]
     Transport(#[source] reqwest::Error),
 
-    #[error("{operation} returned HTTP {status}; redirects are not followed")]
+    #[error("{operation} returned HTTP {status}{}", redirect_note(*status))]
     UnexpectedStatus {
         operation: &'static str,
         status: u16,
@@ -1260,6 +1269,21 @@ mod tests {
             error,
             DeviceHttpError::UnexpectedStatus { status: 302, .. }
         ));
+        assert!(error.to_string().ends_with("; redirects are not followed"));
+    }
+
+    #[test]
+    fn non_redirect_statuses_do_not_mention_redirects() {
+        for status in [404, 503] {
+            let error = DeviceHttpError::UnexpectedStatus {
+                operation: "device info",
+                status,
+            };
+            assert_eq!(
+                error.to_string(),
+                format!("device info returned HTTP {status}")
+            );
+        }
     }
 
     #[tokio::test]
