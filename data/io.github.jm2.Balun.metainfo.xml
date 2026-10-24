@@ -68,12 +68,12 @@
   </releases>
 
   <requires>
-    <display_length compare="ge">768</display_length>
+    <display_length compare="ge">360</display_length>
   </requires>
 
   <recommends>
     <control>keyboard</control>
     <control>pointing</control>
-    <internet>always</internet>
+    <internet>offline-only</internet>
   </recommends>
 </component>
