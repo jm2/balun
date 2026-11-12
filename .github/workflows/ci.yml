@@ -322,6 +322,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Fails for one reason: a known advisory against a locked dependency. It
+  # covers every lock in the repository, not just Cargo.lock; Dependabot
+  # alerts still report advisories published between pushes.
   audit:
     name: Security audit
     runs-on: ubuntu-24.04
@@ -331,10 +334,16 @@ jobs:
           persist-credentials: false
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit --locked --version 0.22.2
 
-      - name: Audit the dependency lockfile
+      - name: Audit Cargo.lock
         run: cargo audit
+
+      - name: Audit the Node lint lock
+        run: npm audit --prefix build-aux/toolchain/node-lint --package-lock-only --include=dev
+
+      - name: Audit pinned Python CI tools
+        run: python3 -B scripts/audit_python_requirements.py
 
   lint:
     name: Lint

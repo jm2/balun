@@ -503,7 +503,8 @@ CI automatically runs on every push/PR:
 
 - **Linux quality** — release-component, packaging, helper, and toolchain policy tests, then
   `cargo fmt`, strict Clippy, and debug plus release tests
-- **Security audit** — `cargo audit` against the RustSec advisory database
+- **Security audit** — `cargo audit`, `npm audit` on the lint tools, and an OSV query for the
+  pinned Python CI tools
 - **Lint** — markdownlint, taplo (TOML), yamllint, and actionlint with the configs at the
   repository root
 - **Desktop metadata** — validates the desktop entry and AppStream metainfo and checks the icon
