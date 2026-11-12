@@ -25,6 +25,7 @@ from native_copy_ledger import read_ledger
 from observe_native import checkpoint, ordinary, signature, snapshot_file
 
 MAX_METADATA = 1024**2
+MAX_API_SNAPSHOT = 64 * 1024**2
 MAX_QUERY = 4 * 1024**2
 MAX_MEMBERS = 4096
 MAX_PACKAGES = 256
@@ -52,6 +53,8 @@ PUBLIC_REJECTIONS = frozenset({
     "missing source metadata",
     "installed recipe has no immutable primary source identity",
     "installed local patch has no immutable tap identity",
+    "Homebrew API snapshot does not describe the installed package version",
+    "Homebrew API snapshot has no checksum for an installed local patch",
     "missing or invalid license metadata",
     "reference must be an HTTPS URL without credentials, query or fragment",
     "selected member is outside the trusted Cellar",
@@ -78,14 +81,14 @@ def json_document(data):
                       parse_constant=lambda _: (_ for _ in ()).throw(Invalid("non-finite JSON")))
 
 
-def read_metadata(path):
+def read_metadata(path, limit=MAX_METADATA):
     before = path.lstat()
     ordinary(before)
-    require(0 < before.st_size <= MAX_METADATA, "installed metadata exceeds its byte budget")
+    require(0 < before.st_size <= limit, "installed metadata exceeds its byte budget")
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
     with os.fdopen(os.open(path, flags), "rb") as stream:
         require(signature(os.fstat(stream.fileno())) == signature(before), "installed metadata changed")
-        data = stream.read(MAX_METADATA + 1)
+        data = stream.read(limit + 1)
         require(len(data) == before.st_size, "installed metadata changed size")
         require(signature(os.fstat(stream.fileno())) == signature(before), "installed metadata changed")
     require(signature(path.lstat()) == signature(before), "installed metadata was replaced")
@@ -170,7 +173,39 @@ def download_source(value):
     return {"reference": source_url, "identity": identity}
 
 
-def source_inputs(value, *, tap_commit=None):
+def api_snapshot(path_value, name, version, revision):
+    """Read the Homebrew API snapshot an installed receipt names as its source.
+
+    Homebrew 7.0.11+ installs from its internal packages API and leaves the
+    receipt's tap_git_head empty. The snapshot it installed from records the
+    homebrew-core commit it was generated at and, per formula, the version,
+    revision and local patch checksums. A poured bottle's recipe has its bottle
+    block removed, so its bytes never match the snapshot's recipe checksum;
+    bind on the exact package version instead. homebrew-core requires a
+    revision bump for any patch change. Homebrew verified the snapshot's
+    signature when it downloaded it; this does not repeat that check.
+    """
+    missing = "installed local patch has no immutable tap identity"
+    require(isinstance(path_value, str), missing)
+    path = Path(path_value)
+    require(path.is_absolute() and path.parent.name == "internal" and path.parent.parent.name == "api"
+            and re.fullmatch(r"packages\.[a-z0-9_]{1,64}\.jws\.json", path.name) is not None, missing)
+    envelope = json_document(read_metadata(path, MAX_API_SNAPSHOT))
+    require(isinstance(envelope, dict) and isinstance(envelope.get("payload"), str), missing)
+    payload = json_document(envelope["payload"].encode("utf-8"))
+    require(isinstance(payload, dict) and isinstance(payload.get("formulae"), dict), missing)
+    commit = payload.get("formula_tap_git_head")
+    require(isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit) is not None, missing)
+    formula = payload["formulae"].get(name)
+    require(isinstance(formula, dict) and formula.get("stable_version") == version
+            and (formula.get("revision") or 0) == revision,
+            "Homebrew API snapshot does not describe the installed package version")
+    checksums = formula.get("local_patch_checksums")
+    require(isinstance(checksums, dict), "Homebrew API snapshot has no checksum for an installed local patch")
+    return commit, checksums
+
+
+def source_inputs(value, *, tap_commit=None, snapshot=None):
     """Normalize evaluated declarations without asserting use in a final member."""
     fields(value, "schema resources patches")
     require(type(value["schema"]) is int and value["schema"] == 1,
@@ -208,15 +243,24 @@ def source_inputs(value, *, tap_commit=None):
                         "duplicate patch member")
                 record.update(source=download_source(item["source"]), files=selected)
             elif kind == "local":
-                require(isinstance(tap_commit, str) and re.fullmatch(r"[0-9a-f]{40}", tap_commit),
-                        "installed local patch has no immutable tap identity")
                 selected = member_path(item["file"])
                 # The trusted installed receipt names the tap revision. Current
                 # tap/cache contents and the currently published formula cannot
                 # substitute for that historical source identity.
-                source_url = "https://github.com/Homebrew/homebrew-core/blob/" + tap_commit + "/" + quote(selected, safe="/-._~")
+                if isinstance(tap_commit, str) and re.fullmatch(r"[0-9a-f]{40}", tap_commit):
+                    commit, identity = tap_commit, "git:" + tap_commit
+                else:
+                    # API installs: the snapshot bound to these recipe bytes
+                    # names the commit and pins the patch content by checksum.
+                    require(snapshot is not None, "installed local patch has no immutable tap identity")
+                    commit, checksums = snapshot()
+                    checksum = checksums.get(selected)
+                    require(isinstance(checksum, str),
+                            "Homebrew API snapshot has no checksum for an installed local patch")
+                    identity = "sha256:" + digest(checksum)
+                source_url = "https://github.com/Homebrew/homebrew-core/blob/" + commit + "/" + quote(selected, safe="/-._~")
                 record.update(file=selected, source={"reference": reference(source_url),
-                                                     "identity": "git:" + tap_commit})
+                                                     "identity": identity})
             else:
                 require(type(item["size"]) is int and 0 < item["size"] <= MAX_METADATA,
                         "embedded patch size exceeds budget")
@@ -284,8 +328,16 @@ def package_metadata(keg, name, package_version, deadline, query):
                 "installed recipe has no immutable primary source identity")
         source_identity = "git:" + source_revision
     license_value = license_record(formula.get("license"))
+    snapshot_cache = []
+
+    def snapshot():
+        # Read the large API snapshot at most once, and only for local patches.
+        if not snapshot_cache:
+            snapshot_cache.append(api_snapshot(source.get("path"), name, version, revision))
+        return snapshot_cache[0]
+
     additional_inputs = source_inputs(formula.get("balun_source_inputs"),
-                                      tap_commit=source.get("tap_git_head"))
+                                      tap_commit=source.get("tap_git_head"), snapshot=snapshot)
     require(read_metadata(recipe) == recipe_bytes and read_metadata(receipt_path) == receipt_bytes,
             "installed metadata changed during Homebrew evaluation")
     checkpoint(deadline)
