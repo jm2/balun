@@ -558,8 +558,8 @@ It does not finish H3.4's consolidated review or decide H3.5's recovery policy.
   (see the September 4 delta below). The `gnome-50` container and all other
   job containers now use [reviewed image-index digests](build-input-pins.md);
   packages installed afterward remain mutable H2.2 inputs.
-- Low, accepted: `cargo install cargo-audit --locked` takes the latest release;
-  the advisory database is fetched live in any case.
+- Resolved 2026-11-12: CI pins cargo-audit 0.22.2 and also audits the npm and
+  Python CI tool locks; the advisory databases are fetched live.
 - Low, accepted: the release workflow installs Inno Setup with an unpinned
   `choco install innosetup`, as Tributary does; the installer payload is the
   tree validated immediately before compilation, and the compiled installer's

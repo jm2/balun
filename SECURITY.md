@@ -40,8 +40,9 @@ value is not.
 - DRM and protected channels. Balun lists them and does not play them; bypasses are not wanted.
 - HDHomeRun firmware and the device's own HTTP and UDP services; report those to SiliconDust.
 - Your network, firewall, or tunnel configuration.
-- Vulnerabilities in GTK, GStreamer, or other dependencies Balun does not ship. `cargo audit`
-  runs in CI, and a dependency bump is welcome as an ordinary pull request.
+- Vulnerabilities in GTK, GStreamer, or other dependencies Balun does not ship. The CI
+  security audit checks every dependency lock, and a dependency bump is welcome as an ordinary
+  pull request.
 
 ## What to expect
 

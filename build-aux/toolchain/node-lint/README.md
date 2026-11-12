@@ -1,20 +1,20 @@
 # Locked Node lint tools
 
 This private npm project supplies only Balun's CI Markdown and TOML checks. It
-uses markdownlint-cli2 **0.24.0** and @taplo/cli **0.7.0**, locking all **90**
+uses markdownlint-cli2 **0.24.1** and @taplo/cli **0.7.0**, locking all **89**
 dependency packages with exact versions, public registry tarball URLs, and
-SHA-512 integrity values. The closure was last resolved on 2026-10-24 with
+SHA-512 integrity values. The closure was last resolved on 2026-11-12 with
 Node 22.23.1 and npm 10.9.8. Node 22 or newer is required and enforced at install
 time. No dependency declares an install script in this lock.
 
-Version 0.24.0 pins markdown-it 15.0.3 and smol-toml 1.9.1, clearing their
-advisories without overrides. Its markdownlint math extension still accepts only
+Version 0.24.1 pins markdown-it 15.0.3, smol-toml 1.9.1 and re2js 2.9.1,
+clearing their advisories without overrides. Its markdownlint math extension still accepts only
 KaTeX 0.16, so an override scoped to `micromark-extension-math` selects
 **KaTeX 0.18.11** for the prototype-pollution advisory fixed in 0.18.2. Linting
 only tokenizes math and never renders it. Review/remove that override when
 changing the direct linter version. The final lock's npm advisory query reported
-zero known vulnerabilities on 2026-10-24; this point-in-time result is not a
-guarantee about future advisories.
+zero known vulnerabilities on 2026-11-12. The required Security audit check
+reruns `npm audit --package-lock-only` on every PR and main push.
 
 CI copies both manifests into a fresh runner temporary directory and uses
 `npm ci --ignore-scripts --engine-strict --include=dev --no-audit --no-fund`.
