@@ -156,6 +156,52 @@ class HomebrewMetadataTests(unittest.TestCase):
                 collector.source_inputs({"schema": 1, "resources": [], "patches": [dict(local, file=path)]},
                                         tap_commit="a" * 40)
 
+    def test_api_install_binds_local_patch_to_snapshot_of_the_installed_version(self):
+        # Homebrew 7.0.11+ API installs leave tap_git_head empty and name the
+        # signed packages snapshot as the receipt source path.
+        local = {"kind": "local", "strip": "p1", "directory": None, "file": "Patches/fixture/fix.diff"}
+        self.metadata["formulae"][0]["balun_source_inputs"]["patches"] = [local]
+        snapshot = self.root / "Caches" / "api" / "internal" / "packages.arm64_tahoe.jws.json"
+        snapshot.parent.mkdir(parents=True)
+        # The snapshot's recipe checksum covers the bottle block a poured
+        # recipe lacks, so it is deliberately not compared.
+        payload = {"formula_tap_git_head": "c" * 40, "formulae": {"fixture": {
+            "stable_version": "1.2.3", "revision": 2, "ruby_source_checksum": "f" * 64,
+            "local_patch_checksums": {local["file"]: "d" * 64}}}}
+
+        def install(payload=payload, path=snapshot):
+            snapshot.write_text(json.dumps({"payload": json.dumps(payload), "signatures": []}))
+            receipt = json.loads(self.receipt.read_text())
+            receipt["source"].update(tap_git_head=None, path=str(path))
+            self.receipt.write_text(json.dumps(receipt))
+
+        install()
+        result = self.collect()["packages"][0]["source_inputs"]["patches"][0]
+        self.assertEqual(result["source"], {
+            "reference": "https://github.com/Homebrew/homebrew-core/blob/" + "c" * 40 + "/Patches/fixture/fix.diff",
+            "identity": "sha256:" + "d" * 64})
+        fixture = payload["formulae"]["fixture"]
+        rejected = [
+            (dict(payload, formulae={"fixture": dict(fixture, stable_version="1.2.4")}), "installed package version"),
+            (dict(payload, formulae={"fixture": dict(fixture, revision=1)}), "installed package version"),
+            (dict(payload, formulae={"fixture": {k: v for k, v in fixture.items() if k != "revision"}}),
+             "installed package version"),
+            (dict(payload, formulae={}), "installed package version"),
+            (dict(payload, formulae={"fixture": dict(fixture, local_patch_checksums={})}), "no checksum"),
+            (dict(payload, formulae={"fixture": dict(fixture, local_patch_checksums={local["file"]: "short"})}),
+             "invalid SHA-256"),
+            (dict(payload, formula_tap_git_head="main"), "immutable tap identity"),
+        ]
+        for changed, message in rejected:
+            install(changed)
+            with self.subTest(message=message), self.assertRaisesRegex(collector.Invalid, message):
+                self.collect()
+        for path in [snapshot.with_name("packages.json"), Path("api/internal/packages.arm64_tahoe.jws.json"),
+                     self.root / "elsewhere" / snapshot.name]:
+            install(path=path)
+            with self.subTest(path=path), self.assertRaisesRegex(collector.Invalid, "immutable tap identity"):
+                self.collect()
+
     def test_public_github_patch_selector_is_preserved_without_admitting_other_queries(self):
         base = "https://github.com/example/project/commit/" + "a" * 40 + ".patch"
         source = {"url": base + "?full_index=1", "checksum": "e" * 64, "revision": None, "git": False}
