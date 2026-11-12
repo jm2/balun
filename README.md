@@ -16,7 +16,7 @@ address so you know which tuner failed.
 
 ![Balun main window](data/screenshots/balun-main-window.png)
 
-> **v0.2.1.** Balun plays live TV on Linux, macOS, and Windows and has been verified against real
+> **v0.2.2.** Balun plays live TV on Linux, macOS, and Windows and has been verified against real
 > tuners. Pre-built packages are on the [Releases](https://github.com/jm2/balun/releases) page;
 > the countable status is in [`docs/task.md`](docs/task.md).
 
@@ -551,7 +551,7 @@ link, add the
 `<release>` to the AppStream metainfo, then confirm they agree before tagging:
 
 ```bash
-python3 scripts/release_check.py --tag v0.2.1
+python3 scripts/release_check.py --tag v0.2.2
 ```
 
 Push an annotated `v` tag and run the **Release candidate** workflow with it. Tag signing is
