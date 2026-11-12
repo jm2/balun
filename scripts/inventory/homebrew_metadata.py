@@ -53,7 +53,7 @@ PUBLIC_REJECTIONS = frozenset({
     "missing source metadata",
     "installed recipe has no immutable primary source identity",
     "installed local patch has no immutable tap identity",
-    "Homebrew API snapshot does not describe the installed recipe bytes",
+    "Homebrew API snapshot does not describe the installed package version",
     "Homebrew API snapshot has no checksum for an installed local patch",
     "missing or invalid license metadata",
     "reference must be an HTTPS URL without credentials, query or fragment",
@@ -173,15 +173,17 @@ def download_source(value):
     return {"reference": source_url, "identity": identity}
 
 
-def api_snapshot(path_value, name, recipe_hash):
+def api_snapshot(path_value, name, version, revision):
     """Read the Homebrew API snapshot an installed receipt names as its source.
 
     Homebrew 7.0.11+ installs from its internal packages API and leaves the
     receipt's tap_git_head empty. The snapshot it installed from records the
-    homebrew-core commit it was generated at and, per formula, the recipe and
-    local patch checksums. Use it only when its recipe checksum matches the
-    installed recipe bytes. Homebrew verified the snapshot's signature when it
-    downloaded it; this does not repeat that check.
+    homebrew-core commit it was generated at and, per formula, the version,
+    revision and local patch checksums. A poured bottle's recipe has its bottle
+    block removed, so its bytes never match the snapshot's recipe checksum;
+    bind on the exact package version instead. homebrew-core requires a
+    revision bump for any patch change. Homebrew verified the snapshot's
+    signature when it downloaded it; this does not repeat that check.
     """
     missing = "installed local patch has no immutable tap identity"
     require(isinstance(path_value, str), missing)
@@ -195,8 +197,9 @@ def api_snapshot(path_value, name, recipe_hash):
     commit = payload.get("formula_tap_git_head")
     require(isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit) is not None, missing)
     formula = payload["formulae"].get(name)
-    require(isinstance(formula, dict) and formula.get("ruby_source_checksum") == recipe_hash,
-            "Homebrew API snapshot does not describe the installed recipe bytes")
+    require(isinstance(formula, dict) and formula.get("stable_version") == version
+            and (formula.get("revision") or 0) == revision,
+            "Homebrew API snapshot does not describe the installed package version")
     checksums = formula.get("local_patch_checksums")
     require(isinstance(checksums, dict), "Homebrew API snapshot has no checksum for an installed local patch")
     return commit, checksums
@@ -330,7 +333,7 @@ def package_metadata(keg, name, package_version, deadline, query):
     def snapshot():
         # Read the large API snapshot at most once, and only for local patches.
         if not snapshot_cache:
-            snapshot_cache.append(api_snapshot(source.get("path"), name, recipe_hash))
+            snapshot_cache.append(api_snapshot(source.get("path"), name, version, revision))
         return snapshot_cache[0]
 
     additional_inputs = source_inputs(formula.get("balun_source_inputs"),

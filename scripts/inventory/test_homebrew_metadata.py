@@ -156,16 +156,18 @@ class HomebrewMetadataTests(unittest.TestCase):
                 collector.source_inputs({"schema": 1, "resources": [], "patches": [dict(local, file=path)]},
                                         tap_commit="a" * 40)
 
-    def test_api_install_binds_local_patch_to_snapshot_matching_installed_recipe(self):
+    def test_api_install_binds_local_patch_to_snapshot_of_the_installed_version(self):
         # Homebrew 7.0.11+ API installs leave tap_git_head empty and name the
         # signed packages snapshot as the receipt source path.
         local = {"kind": "local", "strip": "p1", "directory": None, "file": "Patches/fixture/fix.diff"}
         self.metadata["formulae"][0]["balun_source_inputs"]["patches"] = [local]
         snapshot = self.root / "Caches" / "api" / "internal" / "packages.arm64_tahoe.jws.json"
         snapshot.parent.mkdir(parents=True)
-        recipe_hash = hashlib.sha256(self.recipe.read_bytes()).hexdigest()
+        # The snapshot's recipe checksum covers the bottle block a poured
+        # recipe lacks, so it is deliberately not compared.
         payload = {"formula_tap_git_head": "c" * 40, "formulae": {"fixture": {
-            "ruby_source_checksum": recipe_hash, "local_patch_checksums": {local["file"]: "d" * 64}}}}
+            "stable_version": "1.2.3", "revision": 2, "ruby_source_checksum": "f" * 64,
+            "local_patch_checksums": {local["file"]: "d" * 64}}}}
 
         def install(payload=payload, path=snapshot):
             snapshot.write_text(json.dumps({"payload": json.dumps(payload), "signatures": []}))
@@ -180,8 +182,11 @@ class HomebrewMetadataTests(unittest.TestCase):
             "identity": "sha256:" + "d" * 64})
         fixture = payload["formulae"]["fixture"]
         rejected = [
-            (dict(payload, formulae={"fixture": dict(fixture, ruby_source_checksum="e" * 64)}), "installed recipe bytes"),
-            (dict(payload, formulae={}), "installed recipe bytes"),
+            (dict(payload, formulae={"fixture": dict(fixture, stable_version="1.2.4")}), "installed package version"),
+            (dict(payload, formulae={"fixture": dict(fixture, revision=1)}), "installed package version"),
+            (dict(payload, formulae={"fixture": {k: v for k, v in fixture.items() if k != "revision"}}),
+             "installed package version"),
+            (dict(payload, formulae={}), "installed package version"),
             (dict(payload, formulae={"fixture": dict(fixture, local_patch_checksums={})}), "no checksum"),
             (dict(payload, formulae={"fixture": dict(fixture, local_patch_checksums={local["file"]: "short"})}),
              "invalid SHA-256"),
