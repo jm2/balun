@@ -574,6 +574,18 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: '1'
         run: brew install create-dmg gstreamer gtk4 libadwaita adwaita-icon-theme pkgconf
 
+      - name: Diagnose Homebrew receipts (temporary)
+        if: runner.os == 'macOS'
+        run: |
+          brew --version
+          cellar="$(brew --cellar)"
+          for r in "$cellar"/*/*/INSTALL_RECEIPT.json; do
+            python3 -c 'import json,sys; t=json.load(open(sys.argv[1])); s=t.get("source",{}); print(sys.argv[1].split("/")[-3], s.get("tap"), s.get("tap_git_head"), t.get("poured_from_bottle"), s.get("path"))' "$r"
+          done
+          echo "=== patch declarations"
+          grep -n -H -E '^\s*patch|file |Patches' "$cellar"/*/*/.brew/*.rb || true
+          exit 1
+
       - name: Verify metadata from actual installed Homebrew recipes
         if: runner.os == 'macOS'
         run: |
