@@ -9,7 +9,7 @@
   },
   "devDependencies": {
     "@taplo/cli": "0.7.0",
-    "markdownlint-cli2": "0.24.0"
+    "markdownlint-cli2": "0.24.1"
   },
   "overrides": {
     "micromark-extension-math": {
