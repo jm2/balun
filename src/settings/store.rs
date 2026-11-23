@@ -115,11 +115,38 @@ impl SettingsStore {
         settings: &Settings,
         cancelled: &AtomicBool,
     ) -> Result<(), SettingsError> {
+        self.save_document(None, settings, cancelled)
+    }
+
+    /// As [`Self::save_unless_cancelled`], but first rebase `settings` onto
+    /// the document now on disk, which another running instance may have
+    /// saved since `base` was loaded or saved here. Returns nothing about the
+    /// merged result: the caller keeps `settings` as its next `base`.
+    pub fn save_rebased_unless_cancelled(
+        &self,
+        base: &Settings,
+        settings: &Settings,
+        cancelled: &AtomicBool,
+    ) -> Result<(), SettingsError> {
+        self.save_document(Some(base), settings, cancelled)
+    }
+
+    fn save_document(
+        &self,
+        base: Option<&Settings>,
+        settings: &Settings,
+        cancelled: &AtomicBool,
+    ) -> Result<(), SettingsError> {
         check_cancelled(cancelled)?;
-        let bytes = serialize_document(settings)?;
         let profile = self.profile()?;
         let lock = profile.lock()?;
-        let (_, previous) = profile.read()?;
+        let (current, previous) = profile.read()?;
+        let bytes = match (base, current) {
+            (Some(base), Some(current)) if current != *base => {
+                serialize_document(&settings.rebased(base, &current))?
+            }
+            _ => serialize_document(settings)?,
+        };
         profile.publish(
             &lock,
             SETTINGS_FILE_NAME,

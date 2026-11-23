@@ -501,12 +501,18 @@ mod tests {
             self.store.load()
         }
 
-        fn save(&self, settings: &Settings, cancelled: &AtomicBool) -> Result<(), SettingsError> {
+        fn save(
+            &self,
+            base: &Settings,
+            settings: &Settings,
+            cancelled: &AtomicBool,
+        ) -> Result<(), SettingsError> {
             self.writes.lock().unwrap().push(settings.window());
             if let Some(gate) = self.save_gate.lock().unwrap().take() {
                 gate.wait();
             }
-            self.store.save_unless_cancelled(settings, cancelled)
+            self.store
+                .save_rebased_unless_cancelled(base, settings, cancelled)
         }
 
         fn load_subnet_prefix(&self) -> Result<Option<TypedSubnetScope>, SettingsError> {
@@ -701,12 +707,12 @@ mod tests {
             Ok(None)
         }
 
-        fn save(&self, _: &Settings, _: &AtomicBool) -> Result<(), SettingsError> {
+        fn save(&self, _: &Settings, _: &Settings, _: &AtomicBool) -> Result<(), SettingsError> {
             panic!("injected settings worker panic");
         }
 
         fn load_subnet_prefix(&self) -> Result<Option<TypedSubnetScope>, SettingsError> {
-            Err(SettingsError::Busy)
+            Err(SettingsError::Permissions)
         }
 
         fn save_subnet_prefix(
@@ -754,5 +760,100 @@ mod tests {
                 sentinel
             );
         });
+    }
+
+    /// Fails the first `busy` saves with lock contention, then saves.
+    struct ContendedBackend {
+        store: SettingsStore,
+        busy: Mutex<usize>,
+    }
+
+    impl Backend for ContendedBackend {
+        fn load(&self) -> Result<Option<Settings>, SettingsError> {
+            self.store.load()
+        }
+
+        fn save(
+            &self,
+            base: &Settings,
+            settings: &Settings,
+            cancelled: &AtomicBool,
+        ) -> Result<(), SettingsError> {
+            let mut busy = self.busy.lock().unwrap();
+            if *busy > 0 {
+                *busy -= 1;
+                return Err(SettingsError::Busy);
+            }
+            drop(busy);
+            self.store
+                .save_rebased_unless_cancelled(base, settings, cancelled)
+        }
+
+        fn load_subnet_prefix(&self) -> Result<Option<TypedSubnetScope>, SettingsError> {
+            self.store.load_subnet_prefix()
+        }
+
+        fn save_subnet_prefix(
+            &self,
+            prefix: Option<TypedSubnetScope>,
+            cancelled: &AtomicBool,
+        ) -> Result<(), SettingsError> {
+            self.store
+                .save_subnet_prefix_unless_cancelled(prefix, cancelled)
+        }
+    }
+
+    #[test]
+    fn transient_lock_contention_is_retried_and_keeps_persistence() {
+        let (_directory, store) = store();
+        gtk::glib::MainContext::new().block_on(async {
+            let backend = ContendedBackend {
+                store: store.clone(),
+                busy: Mutex::new(3),
+            };
+            let session = SettingsSession::open_backend(Some(backend), IO_WAIT).await;
+            session.save(session.stage(|s| s.set_window(resized())).expect("save"));
+            session.drain().await;
+            assert_eq!(stored_window(&store), resized());
+            assert!(session.writable(), "a retried save keeps persistence");
+        });
+    }
+
+    #[test]
+    fn persistent_lock_contention_still_disables_persistence() {
+        let (_directory, store) = store();
+        gtk::glib::MainContext::new().block_on(async {
+            let backend = ContendedBackend {
+                store: store.clone(),
+                busy: Mutex::new(usize::MAX),
+            };
+            let session = SettingsSession::open_backend(Some(backend), IO_WAIT).await;
+            let notice = session.take_unavailable_notice().expect("first offer");
+            session.save(session.stage(|s| s.set_window(resized())).expect("save"));
+            assert!(notice.await, "exhausted retries offer the notice");
+            assert!(!session.writable());
+        });
+    }
+
+    #[test]
+    fn two_sessions_keep_each_others_remembered_targets() {
+        let (_directory, store) = store();
+        let first = SettingsSession::open(Some(store.clone()));
+        let second = SettingsSession::open(Some(SettingsStore::new(store.directory().to_owned())));
+        let target = |text: &str| {
+            RememberedTarget::Address(
+                balun::discovery::ExactDiscoveryTarget::parse(text).expect("target"),
+            )
+        };
+        write(&first, first.remember_target(target("192.0.2.1")).unwrap());
+        write(
+            &second,
+            second.remember_target(target("192.0.2.2")).unwrap(),
+        );
+        let loaded = store.load().unwrap().unwrap();
+        assert_eq!(
+            loaded.remembered_targets(),
+            [target("192.0.2.1"), target("192.0.2.2")]
+        );
     }
 }
