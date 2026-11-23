@@ -49,7 +49,7 @@ address so you know which tuner failed.
 | Audible output and complete codec contract | ✅ Audio verified across Linux, macOS, and Windows; live timing accounts for delayed media arrival; codec contract frozen, see the support matrix |
 | ATSC 3.0 channels | ⚠️ HEVC video needs gst-libav or a platform decoder; AC-4 audio has no open decoder |
 | Protected (DRM) channels | ❌ Out of scope |
-| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads and Fedora COPR; AUR and winget pending |
+| Packages (Flatpak, deb, rpm, Arch, DMG, Windows ZIP/installer) | ✅ Releases page downloads, Fedora COPR, AUR, and winget |
 | Cross-platform: Linux, macOS, Windows | ✅ Linux, macOS, and Windows verified with real tuners; live playback and audio confirmed |
 | Private local settings | ✅ Pinned profile, schema-preserving transactions, and two-second load/close waits; a stalled save may leave the newest preferences unsaved; a notice appears when settings cannot be saved |
 | Light & dark mode | ✅ Automatic (libadwaita) |
@@ -124,8 +124,7 @@ sudo dnf install balun
 
 ### Arch Linux (AUR)
 
-Balun is on the [AUR](https://aur.archlinux.org/) in three variants, but they still build 0.1.0
-until they are updated:
+Balun is on the [AUR](https://aur.archlinux.org/) in three variants:
 
 | Package | Description |
 | --- | --- |
@@ -141,8 +140,8 @@ yay -S balun-bin
 
 ### Windows (winget)
 
-The [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/) package is awaiting
-review in microsoft/winget-pkgs; once accepted:
+Balun is in the [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/)
+community repository:
 
 ```powershell
 winget install jm2.Balun
