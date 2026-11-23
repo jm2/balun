@@ -64,7 +64,7 @@ nix = { version = "0.32", default-features = false, features = ["user"] }
 rustix = { version = "1.1", features = ["fs", "process"] }
 
 [target.'cfg(unix)'.dev-dependencies]
-nix = { version = "0.31", default-features = false, features = ["fs"] }
+nix = { version = "0.32", default-features = false, features = ["fs"] }
 
 # The PF_ROUTE routing socket behind macOS network-change observation.
 [target.'cfg(target_os = "macos")'.dependencies]
