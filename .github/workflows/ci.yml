@@ -268,7 +268,7 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       # yamllint disable-line rule:line-length
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50@sha256:1de59efef01a946d9f28f1ec3458bf6f61dcee3507d7fecdd473f8134da4ec77
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50@sha256:78bf5fcf1faca196ce6cdf34a317560e533e870861bbb752bdd3ad66d22ba0e9
       options: --privileged
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -299,6 +299,18 @@ jobs:
         run: |
           unset PYTHONPATH PYTHONHOME
           PYTHON="$RUNNER_TEMP/flatpak-generator/bin/python" bash build-aux/flatpak/generate-cargo-sources.sh
+
+      # The image preinstalls its runtimes in a read-only overlay layer, and
+      # overlayfs cannot rename a lower-layer directory ("Invalid cross-device
+      # link"). Flathub's 2026-11-16 GNOME 50 update needs such renames, after
+      # which flatpak-builder segfaulted. Copy the installation into the
+      # container's writable layer first (flatpak/flatpak-github-actions#267).
+      - name: Move preinstalled Flatpak runtimes into the writable layer
+        run: |
+          cp -a /var/lib/flatpak /var/lib/flatpak.writable
+          rm -rf /var/lib/flatpak
+          mv /var/lib/flatpak.writable /var/lib/flatpak
+          flatpak list --system --runtime --columns=ref
 
       - name: Build the Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
