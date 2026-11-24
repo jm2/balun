@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Two running copies of Balun overwriting each other's remembered tuners.
+- A briefly locked settings file turning off saving until restart; saves now retry first.
+
 ## [0.2.2] — 2026-11-12
 
 ### Changed
