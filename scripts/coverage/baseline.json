@@ -230,16 +230,16 @@
       "percent": 63.64
     },
     "rust-regions:src/settings/mod.rs": {
-      "covered": 234,
-      "total": 244,
+      "covered": 292,
+      "total": 302,
       "uncovered": 10,
-      "percent": 95.9
+      "percent": 96.69
     },
     "rust-regions:src/settings/store.rs": {
-      "covered": 701,
-      "total": 842,
-      "uncovered": 141,
-      "percent": 83.25
+      "covered": 731,
+      "total": 868,
+      "uncovered": 137,
+      "percent": 84.22
     },
     "rust-regions:src/ui/settings_session.rs": {
       "covered": 156,
@@ -248,10 +248,10 @@
       "percent": 81.25
     },
     "rust-regions:src/ui/settings_session/worker.rs": {
-      "covered": 217,
-      "total": 238,
-      "uncovered": 21,
-      "percent": 91.18
+      "covered": 279,
+      "total": 291,
+      "uncovered": 12,
+      "percent": 95.88
     }
   },
   "compiler": "rustc 1.98.0 / LLVM 22.1.8",
