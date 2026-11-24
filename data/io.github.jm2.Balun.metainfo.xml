@@ -50,6 +50,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.2.3" date="2026-11-23">
+      <description>
+        <p>Keep remembered tuners when two copies of Balun are open, retry a briefly locked settings file instead of turning off saving, and update dependencies.</p>
+      </description>
+    </release>
     <release version="0.2.2" date="2026-11-12">
       <description>
         <p>Update Tokio and other dependencies.</p>
