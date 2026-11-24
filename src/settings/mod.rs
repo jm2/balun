@@ -175,6 +175,50 @@ impl Settings {
         self.remembered_targets.retain(|known| known != target);
         self.remembered_targets.len() != before
     }
+
+    /// Rebase this instance's edits onto the document another instance may
+    /// have saved since `base`, the snapshot these edits started from.
+    ///
+    /// The window is this instance's if it changed it, else `current`'s. The
+    /// list keeps `current`'s order without the targets this instance forgot,
+    /// then this instance's newly remembered or re-remembered targets as the
+    /// most recent, unless the other instance forgot them. The oldest entries
+    /// are evicted when the merged list is full.
+    pub(super) fn rebased(&self, base: &Self, current: &Self) -> Self {
+        let mine = &self.remembered_targets;
+        let theirs = &current.remembered_targets;
+        // Remembering moves a target to the end, so this instance's edits are
+        // the suffix after the part of `mine` that still matches `base`.
+        let unchanged = base
+            .remembered_targets
+            .iter()
+            .filter(|target| mine.contains(target))
+            .zip(mine)
+            .take_while(|(kept, target)| kept == target)
+            .count();
+        let recent = &mine[unchanged..];
+        let forgotten = |list: &[RememberedTarget], target: &RememberedTarget| {
+            base.remembered_targets.contains(target) && !list.contains(target)
+        };
+        let mut remembered_targets: Vec<RememberedTarget> = theirs
+            .iter()
+            .filter(|target| !recent.contains(target) && !forgotten(mine, target))
+            .chain(recent.iter().filter(|target| !forgotten(theirs, target)))
+            .cloned()
+            .collect();
+        let excess = remembered_targets
+            .len()
+            .saturating_sub(MAX_REMEMBERED_TARGETS);
+        remembered_targets.drain(..excess);
+        Self {
+            window: if self.window == base.window {
+                current.window
+            } else {
+                self.window
+            },
+            remembered_targets,
+        }
+    }
 }
 
 /// The step of a store operation that failed.
@@ -262,6 +306,14 @@ pub enum SettingsError {
 }
 
 impl SettingsError {
+    /// Whether retrying shortly may succeed: another instance holds the
+    /// transaction lock, a file changed underneath the read, or the OS
+    /// reported an I/O error such as a Windows sharing violation.
+    #[must_use]
+    pub const fn is_transient(self) -> bool {
+        matches!(self, Self::Busy | Self::Changed | Self::Io { .. })
+    }
+
     fn io(operation: SettingsOperation, error: &io::Error) -> Self {
         Self::Io {
             operation,
@@ -510,6 +562,7 @@ impl TryFrom<StoredSettingsV2> for Settings {
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::atomic::AtomicBool;
 
     use tempfile::TempDir;
 
@@ -742,6 +795,103 @@ mod tests {
         fs::create_dir_all(store.path()).expect("create directory at file path");
 
         assert_eq!(store.load(), Err(SettingsError::NotRegularFile));
+    }
+
+    fn targets(settings: &Settings) -> Vec<RememberedTarget> {
+        settings.remembered_targets().to_vec()
+    }
+
+    fn address(last_octet: u8) -> RememberedTarget {
+        RememberedTarget::Address(target(last_octet))
+    }
+
+    #[test]
+    fn rebasing_keeps_both_instances_edits() {
+        let base = populated(); // targets 1, 2
+        let mut mine = base.clone();
+        mine.set_window(WindowState::new(1_000, 700, false).expect("valid window"));
+        assert!(mine.remember_target(address(3)));
+        assert!(mine.forget_target(&address(1)));
+        let mut theirs = base.clone();
+        assert!(theirs.remember_target(address(4)));
+        assert!(theirs.forget_target(&address(2)));
+
+        let merged = mine.rebased(&base, &theirs);
+        assert_eq!(merged.window(), mine.window());
+        // Their new target is older; forgetting on either side sticks.
+        assert_eq!(targets(&merged), [address(4), address(3)]);
+
+        // A target either side re-remembered takes this instance's order.
+        let mut mine = base.clone();
+        assert!(mine.remember_target(address(1)));
+        let mut moved = base.clone();
+        moved.set_window(WindowState::new(800, 600, false).expect("valid window"));
+        let merged = mine.rebased(&base, &moved);
+        assert_eq!(targets(&merged), [address(2), address(1)]);
+        // A window only the other instance changed is kept.
+        assert_eq!(merged.window(), moved.window());
+    }
+
+    #[test]
+    fn rebasing_evicts_the_oldest_entries_when_full() {
+        let base = Settings::default();
+        let mut mine = base.clone();
+        let mut theirs = base.clone();
+        for index in 1..=MAX_REMEMBERED_TARGETS {
+            let index = u8::try_from(index).expect("u8");
+            assert!(mine.remember_target(address(index)));
+            assert!(theirs.remember_target(address(index + 100)));
+        }
+        let merged = mine.rebased(&base, &theirs);
+        assert_eq!(targets(&merged), targets(&mine));
+    }
+
+    #[test]
+    fn a_second_instance_keeps_the_first_instances_target() {
+        let (_directory, store) = test_store();
+        let base = populated();
+        store.save(&base).expect("seed");
+        let first = SettingsStore::new(store.directory().to_owned());
+        let second = SettingsStore::new(store.directory().to_owned());
+
+        let mut one = base.clone();
+        assert!(one.remember_target(address(3)));
+        first
+            .save_rebased_unless_cancelled(&base, &one, &AtomicBool::new(false))
+            .expect("first save");
+        let mut two = base.clone();
+        assert!(two.remember_target(address(4)));
+        second
+            .save_rebased_unless_cancelled(&base, &two, &AtomicBool::new(false))
+            .expect("second save");
+
+        let loaded = store.load().expect("load").expect("document");
+        assert_eq!(
+            targets(&loaded),
+            [address(1), address(2), address(3), address(4)]
+        );
+    }
+
+    #[test]
+    fn only_lock_contention_and_io_errors_are_transient() {
+        assert!(SettingsError::Busy.is_transient());
+        assert!(SettingsError::Changed.is_transient());
+        assert!(
+            SettingsError::Io {
+                operation: SettingsOperation::Publish,
+                kind: io::ErrorKind::PermissionDenied,
+            }
+            .is_transient()
+        );
+        for permanent in [
+            SettingsError::Symlink,
+            SettingsError::TooLarge,
+            SettingsError::UnsupportedSchema { found: 99 },
+            SettingsError::Permissions,
+            SettingsError::Cancelled,
+        ] {
+            assert!(!permanent.is_transient(), "{permanent:?}");
+        }
     }
 
     #[test]

@@ -12,9 +12,27 @@ use super::PendingSave;
 
 pub(super) const IO_WAIT: Duration = Duration::from_secs(2);
 
+/// Pauses before retrying a transient failure, such as another instance
+/// holding the transaction lock or a scanner briefly opening the file. About
+/// 1.5 s in total, inside [`IO_WAIT`], before persistence is disabled.
+const RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+];
+const RETRY_SLICE: Duration = Duration::from_millis(25);
+
 pub(super) trait Backend: Send + 'static {
     fn load(&self) -> Result<Option<Settings>, SettingsError>;
-    fn save(&self, settings: &Settings, cancelled: &AtomicBool) -> Result<(), SettingsError>;
+    /// Save `settings`, keeping what another instance saved since `base`.
+    fn save(
+        &self,
+        base: &Settings,
+        settings: &Settings,
+        cancelled: &AtomicBool,
+    ) -> Result<(), SettingsError>;
     /// The remembered subnet. A failure only leaves it unset: it is a
     /// convenience, and an unreadable file is never repaired.
     fn load_subnet_prefix(&self) -> Result<Option<TypedSubnetScope>, SettingsError>;
@@ -30,8 +48,13 @@ impl Backend for SettingsStore {
         self.load()
     }
 
-    fn save(&self, settings: &Settings, cancelled: &AtomicBool) -> Result<(), SettingsError> {
-        self.save_unless_cancelled(settings, cancelled)
+    fn save(
+        &self,
+        base: &Settings,
+        settings: &Settings,
+        cancelled: &AtomicBool,
+    ) -> Result<(), SettingsError> {
+        self.save_rebased_unless_cancelled(base, settings, cancelled)
     }
 
     fn load_subnet_prefix(&self) -> Result<Option<TypedSubnetScope>, SettingsError> {
@@ -158,10 +181,45 @@ impl Shared {
         }
     }
 
+    /// Run `operation`, retrying transient failures with backoff until it
+    /// succeeds, fails otherwise, runs out of retries, or is cancelled.
+    fn retrying<T>(
+        &self,
+        mut operation: impl FnMut() -> Result<T, SettingsError>,
+    ) -> Result<T, SettingsError> {
+        let mut delays = RETRY_DELAYS.iter();
+        loop {
+            match operation() {
+                Err(error) if error.is_transient() => {
+                    let Some(delay) = delays.next() else {
+                        return Err(error);
+                    };
+                    let mut waited = Duration::ZERO;
+                    while waited < *delay {
+                        if self.cancelled.load(Ordering::Acquire) {
+                            return Err(SettingsError::Cancelled);
+                        }
+                        std::thread::sleep(RETRY_SLICE);
+                        waited += RETRY_SLICE;
+                    }
+                }
+                result => return result,
+            }
+        }
+    }
+
     fn run(&self, backend: impl Backend, loaded: oneshot::Sender<LoadResult>) {
-        let result = backend
-            .load()
-            .map(|settings| (settings, backend.load_subnet_prefix().ok().flatten()));
+        let result = self.retrying(|| backend.load()).map(|settings| {
+            let prefix = self.retrying(|| backend.load_subnet_prefix());
+            (settings, prefix.ok().flatten())
+        });
+        // What this instance last loaded or saved; a save keeps whatever
+        // another instance changed relative to it.
+        let mut base = result
+            .as_ref()
+            .ok()
+            .and_then(|(settings, _)| settings.clone())
+            .unwrap_or_default();
         let usable = result.is_ok();
         self.failed.store(!usable, Ordering::Release);
         self.idle.send_replace(true);
@@ -185,10 +243,14 @@ impl Shared {
             let saved = next
                 .settings
                 .as_ref()
-                .map_or(Ok(()), |settings| backend.save(settings, &self.cancelled))
+                .map_or(Ok(()), |settings| {
+                    self.retrying(|| backend.save(&base, settings, &self.cancelled))?;
+                    base.clone_from(settings);
+                    Ok(())
+                })
                 .and_then(|()| {
                     next.subnet_prefix.map_or(Ok(()), |prefix| {
-                        backend.save_subnet_prefix(prefix, &self.cancelled)
+                        self.retrying(|| backend.save_subnet_prefix(prefix, &self.cancelled))
                     })
                 });
             if let Err(error) = saved {
