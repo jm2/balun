@@ -3879,11 +3879,24 @@ mod tests {
         assert_send::<StreamHandoff>();
 
         let controller = ControllerRuntime::start_default().unwrap();
-        // Nothing moves before the first command.
+        // Nothing but network observation moves before the first command;
+        // the native watcher may already have published its readiness.
+        let snapshot = controller.handle().snapshot();
+        let initial = ApplicationSnapshot::initial();
         assert_eq!(
-            *controller.handle().snapshot(),
-            ApplicationSnapshot::initial()
+            snapshot.discovery_generation(),
+            initial.discovery_generation()
         );
+        assert_eq!(
+            snapshot.selection_generation(),
+            initial.selection_generation()
+        );
+        assert_eq!(snapshot.discovery(), initial.discovery());
+        assert_eq!(snapshot.devices(), initial.devices());
+        assert_eq!(snapshot.selected_device(), initial.selected_device());
+        assert_eq!(snapshot.selected_lineup(), initial.selected_lineup());
+        assert_eq!(snapshot.network(), initial.network());
+        assert_eq!(snapshot.exact_searches(), initial.exact_searches());
         controller.shutdown().unwrap();
     }
 
